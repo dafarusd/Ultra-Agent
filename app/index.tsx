@@ -10,7 +10,7 @@ import {
   Animated,
   Platform,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
@@ -76,9 +76,7 @@ export default function ChatScreen() {
         setAgentCore(core);
         setStatus("Ready");
 
-        const hasKey = core["ai" as keyof AgentCore] &&
-          (core["ai" as keyof AgentCore] as any).hasApiKey();
-        if (!hasKey) {
+        if (!core.hasApiKey()) {
           addMessage(
             "system",
             "Welcome to Agent Ultra. Add your Venice API key in Settings to get started."
@@ -93,6 +91,18 @@ export default function ChatScreen() {
     }
     init();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (agentCore) {
+        agentCore.refreshApiKey().then(() => {
+          if (agentCore.hasApiKey()) {
+            setStatus("Ready");
+          }
+        });
+      }
+    }, [agentCore])
+  );
 
   const addMessage = useCallback(
     (role: ChatMessage["role"], content: string, extra?: Partial<ChatMessage>) => {

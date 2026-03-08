@@ -50,6 +50,10 @@ export class ModelRouter {
   }
 
   async initialize(): Promise<void> {
+    await this.refreshApiKey();
+  }
+
+  async refreshApiKey(): Promise<void> {
     this.apiKey = await this.vault.get('venice_api_key');
     if (!this.apiKey) {
       const envKey = process.env.EXPO_PUBLIC_VENICE_API_KEY || null;
@@ -69,12 +73,16 @@ export class ModelRouter {
   private async discoverModels(): Promise<void> {
     if (!this.apiKey) return;
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
       const resp = await fetch(`${VENICE_BASE_URL}/models`, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (data?.data) {
@@ -158,6 +166,9 @@ export class ModelRouter {
       "You are Agent Ultra, an autonomous AI agent on a user's Android phone. You have device access including file system, contacts, SMS, camera, media, and can build Android apps on-device. Be precise, concise, action-oriented. When generating code, provide complete compilable code with no omissions.";
     try {
       const startTime = Date.now();
+      this.logger.info(`Sending request to ${model}...`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
       const resp = await fetch(`${VENICE_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -173,7 +184,9 @@ export class ModelRouter {
           temperature: options.temperature ?? 0.7,
           max_tokens: options.maxTokens ?? 4000,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (!resp.ok) {
         if (resp.status === 401) throw new Error('Invalid Venice API key.');
         if (resp.status === 429) throw new Error('Rate limited. Wait before retrying.');
@@ -186,6 +199,7 @@ export class ModelRouter {
       this.logger.info(`${model} responded in ${Date.now() - startTime}ms, cost: $${cost.toFixed(6)}`);
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
+      if (error.name === 'AbortError') throw new Error('Request timed out after 30s. Check your connection and try again.');
       if (error.message.includes('Venice API') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
       throw new Error('AI request failed: ' + error.message);
     }
@@ -207,6 +221,8 @@ export class ModelRouter {
     const agentId = options.agentId || 'main';
     if (!this.costTracker.isWithinDailyLimit()) throw new Error('Daily cost limit reached.');
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
       const resp = await fetch(`${VENICE_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -219,7 +235,9 @@ export class ModelRouter {
           temperature: options.temperature ?? 0.7,
           max_tokens: options.maxTokens ?? 4000,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (!resp.ok) throw new Error(`Venice API error: HTTP ${resp.status}`);
       const data = await resp.json();
       const content = data.choices[0].message.content;
@@ -227,6 +245,7 @@ export class ModelRouter {
       const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
+      if (error.name === 'AbortError') throw new Error('Request timed out after 30s. Check your connection and try again.');
       throw new Error('AI conversation failed: ' + error.message);
     }
   }

@@ -59,7 +59,7 @@ export default function SettingsScreen() {
       await vault.set("venice_api_key", apiKey.trim());
       setStoredKey(true);
       setApiKey("••••••••" + apiKey.trim().slice(-4));
-      Alert.alert("Saved", "Venice API key stored securely. Restart the app to use it.");
+      Alert.alert("Saved", "Venice API key stored securely. Go back to start chatting.");
     } catch (err: any) {
       Alert.alert("Error", err.message);
     }

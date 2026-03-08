@@ -153,6 +153,12 @@ export class AgentCore extends EventEmitter {
     return this.singleExecute(originalRequest, { ...intent, riskLevel: 'safe' }, taskId);
   }
 
+  hasApiKey(): boolean { return this.ai.hasApiKey(); }
+
+  async refreshApiKey(): Promise<void> {
+    await this.ai.refreshApiKey();
+  }
+
   getCostSummary() { return this.costTracker.getSummary(); }
   async getStorageBreakdown() { return this.storage.getBreakdown(); }
   getDebugStats() { return this.debugEngine.getStats(); }
