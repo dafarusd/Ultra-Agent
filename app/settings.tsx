@@ -8,11 +8,14 @@ import {
   StyleSheet,
   Alert,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SecureVault } from "@/src/security/SecureVault";
+import { getAgentCoreInstance } from "@/src/core/AgentCore";
+import { ModelDef } from "@/src/core/ModelRouter";
 import { Logger } from "@/src/utils/Logger";
 
 const ACCENT = "#00ff88";
@@ -30,9 +33,13 @@ export default function SettingsScreen() {
   const [taskLimit, setTaskLimit] = useState("1.00");
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
+  const [models, setModels] = useState<ModelDef[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [loadingModels, setLoadingModels] = useState(false);
 
   useEffect(() => {
     loadSettings();
+    loadModels();
   }, []);
 
   const loadSettings = useCallback(async () => {
@@ -52,6 +59,32 @@ export default function SettingsScreen() {
     }
   }, []);
 
+  const loadModels = useCallback(async () => {
+    const core = getAgentCoreInstance();
+    if (!core) return;
+    setLoadingModels(true);
+    try {
+      await core.refreshApiKey();
+      const available = core.getAvailableModels();
+      setModels(available);
+      setSelectedModel(core.getDefaultModel());
+    } catch (err: any) {
+      // silently fail
+    }
+    setLoadingModels(false);
+  }, []);
+
+  const selectModel = useCallback(async (modelId: string) => {
+    const core = getAgentCoreInstance();
+    if (!core) return;
+    try {
+      await core.setDefaultModel(modelId);
+      setSelectedModel(modelId);
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  }, []);
+
   const saveApiKey = useCallback(async () => {
     if (!apiKey || apiKey.startsWith("••")) return;
     try {
@@ -60,10 +93,11 @@ export default function SettingsScreen() {
       setStoredKey(true);
       setApiKey("••••••••" + apiKey.trim().slice(-4));
       Alert.alert("Saved", "Venice API key stored securely. Go back to start chatting.");
+      loadModels();
     } catch (err: any) {
       Alert.alert("Error", err.message);
     }
-  }, [apiKey]);
+  }, [apiKey, loadModels]);
 
   const clearApiKey = useCallback(async () => {
     try {
@@ -71,6 +105,7 @@ export default function SettingsScreen() {
       await vault.delete("venice_api_key");
       setStoredKey(false);
       setApiKey("");
+      setModels([]);
       Alert.alert("Cleared", "API key removed.");
     } catch (err: any) {
       Alert.alert("Error", err.message);
@@ -167,6 +202,80 @@ export default function SettingsScreen() {
               </Pressable>
             )}
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <MaterialCommunityIcons name="robot-outline" size={18} color={ACCENT} />
+            <Text style={styles.sectionTitle}>AI Model</Text>
+          </View>
+          {!storedKey ? (
+            <Text style={styles.sectionDesc}>
+              Add your API key above to see available models.
+            </Text>
+          ) : loadingModels ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color={ACCENT} />
+              <Text style={styles.sectionDesc}>Loading models...</Text>
+            </View>
+          ) : models.length === 0 ? (
+            <View>
+              <Text style={styles.sectionDesc}>
+                No models discovered. Check your API key or connection.
+              </Text>
+              <Pressable
+                onPress={loadModels}
+                style={[styles.btn, styles.secondaryBtn, { alignSelf: "flex-start", marginTop: 8 }]}
+              >
+                <Ionicons name="refresh-outline" size={16} color={ACCENT} />
+                <Text style={styles.secondaryBtnText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.modelList}>
+              <Text style={styles.sectionDesc}>
+                Select the default model for AI requests.
+              </Text>
+              {models.map((m) => {
+                const isSelected = m.id === selectedModel;
+                return (
+                  <Pressable
+                    key={m.id}
+                    onPress={() => selectModel(m.id)}
+                    style={[
+                      styles.modelRow,
+                      isSelected && styles.modelRowSelected,
+                    ]}
+                  >
+                    <View style={styles.modelInfo}>
+                      <Text
+                        style={[
+                          styles.modelName,
+                          isSelected && styles.modelNameSelected,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {m.id}
+                      </Text>
+                      {m.strengths.length > 0 && (
+                        <Text style={styles.modelStrengths} numberOfLines={1}>
+                          {m.strengths.join(" · ")}
+                        </Text>
+                      )}
+                    </View>
+                    <View
+                      style={[
+                        styles.radioOuter,
+                        isSelected && styles.radioOuterSelected,
+                      ]}
+                    >
+                      {isSelected && <View style={styles.radioInner} />}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
         </View>
 
         <View style={styles.section}>
@@ -374,6 +483,65 @@ const styles = StyleSheet.create({
     textAlign: "center",
     borderWidth: 1,
     borderColor: "#222222",
+  },
+  loadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  modelList: {
+    gap: 8,
+  },
+  modelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: SURFACE2,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#222222",
+  },
+  modelRowSelected: {
+    borderColor: ACCENT,
+    backgroundColor: "#001a0d",
+  },
+  modelInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  modelName: {
+    color: "#cccccc",
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+  },
+  modelNameSelected: {
+    color: ACCENT,
+  },
+  modelStrengths: {
+    color: DIM,
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    marginTop: 2,
+  },
+  radioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: "#444444",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  radioOuterSelected: {
+    borderColor: ACCENT,
+  },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: ACCENT,
   },
   logContainer: {
     backgroundColor: SURFACE2,

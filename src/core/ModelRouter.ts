@@ -2,7 +2,7 @@ import { SecureVault } from '../security/SecureVault';
 import { CostTracker } from '../services/CostTracker';
 import { Logger } from '../utils/Logger';
 
-interface ModelDef {
+export interface ModelDef {
   id: string;
   costPer1kInput: number;
   costPer1kOutput: number;
@@ -20,6 +20,7 @@ interface CompletionResult {
 }
 
 const VENICE_BASE_URL = 'https://api.venice.ai/api/v1';
+const REQUEST_TIMEOUT = 60000;
 
 export class ModelRouter {
   private vault: SecureVault;
@@ -34,14 +35,14 @@ export class ModelRouter {
     this.costTracker = costTracker;
     this.logger = new Logger('ModelRouter');
     this.models = new Map();
-    this.defaultModel = 'kimi-k2.5';
+    this.defaultModel = 'llama-3.3-70b';
     this.registerModel({
-      id: 'kimi-k2.5',
-      costPer1kInput: 0.015,
-      costPer1kOutput: 0.015,
+      id: 'llama-3.3-70b',
+      costPer1kInput: 0.01,
+      costPer1kOutput: 0.01,
       maxTokens: 8192,
       tier: 'high',
-      strengths: ['code', 'reasoning', 'architecture', 'debugging'],
+      strengths: ['general', 'code', 'reasoning', 'conversation'],
     });
   }
 
@@ -67,6 +68,24 @@ export class ModelRouter {
     } else {
       this.logger.info('ModelRouter initialized with API key');
       await this.discoverModels();
+    }
+    const savedModel = await this.vault.get('preferred_model');
+    if (savedModel) {
+      if (this.models.has(savedModel)) {
+        this.defaultModel = savedModel;
+        this.logger.info(`Using preferred model: ${savedModel}`);
+      } else {
+        this.registerModel({
+          id: savedModel,
+          costPer1kInput: 0.01,
+          costPer1kOutput: 0.01,
+          maxTokens: 4096,
+          tier: 'medium',
+          strengths: [],
+        });
+        this.defaultModel = savedModel;
+        this.logger.info(`Using saved model (not yet discovered): ${savedModel}`);
+      }
     }
   }
 
@@ -168,7 +187,7 @@ export class ModelRouter {
       const startTime = Date.now();
       this.logger.info(`Sending request to ${model}...`);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
       const resp = await fetch(`${VENICE_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -199,7 +218,7 @@ export class ModelRouter {
       this.logger.info(`${model} responded in ${Date.now() - startTime}ms, cost: $${cost.toFixed(6)}`);
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
-      if (error.name === 'AbortError') throw new Error('Request timed out after 30s. Check your connection and try again.');
+      if (error.name === 'AbortError') throw new Error('Request timed out after 60s. Check your connection and try again.');
       if (error.message.includes('Venice API') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
       throw new Error('AI request failed: ' + error.message);
     }
@@ -222,7 +241,7 @@ export class ModelRouter {
     if (!this.costTracker.isWithinDailyLimit()) throw new Error('Daily cost limit reached.');
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
       const resp = await fetch(`${VENICE_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -245,13 +264,26 @@ export class ModelRouter {
       const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
-      if (error.name === 'AbortError') throw new Error('Request timed out after 30s. Check your connection and try again.');
+      if (error.name === 'AbortError') throw new Error('Request timed out after 60s. Check your connection and try again.');
       throw new Error('AI conversation failed: ' + error.message);
     }
   }
 
   hasApiKey(): boolean {
     return this.apiKey !== null;
+  }
+
+  getDefaultModel(): string {
+    return this.defaultModel;
+  }
+
+  async setDefaultModel(modelId: string): Promise<void> {
+    if (!this.models.has(modelId)) {
+      throw new Error(`Model ${modelId} not available`);
+    }
+    this.defaultModel = modelId;
+    await this.vault.set('preferred_model', modelId);
+    this.logger.info(`Default model set to: ${modelId}`);
   }
 
   getAvailableModels(): ModelDef[] {

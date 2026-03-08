@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SecureVault } from "@/src/security/SecureVault";
-import { AgentCore, ExecutionResult } from "@/src/core/AgentCore";
+import { AgentCore, ExecutionResult, setAgentCoreInstance } from "@/src/core/AgentCore";
 
 interface ChatMessage {
   id: string;
@@ -74,6 +74,7 @@ export default function ChatScreen() {
         });
         await core.initialize();
         setAgentCore(core);
+        setAgentCoreInstance(core);
         setStatus("Ready");
 
         if (!core.hasApiKey()) {

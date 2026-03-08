@@ -51,13 +51,16 @@ server/                 # Express backend
 
 ## Key Features
 
-- **Venice API**: All AI calls go through Venice API. User enters their own key in Settings.
+- **Venice API**: All AI calls go through Venice API. User enters their own key in Settings. Default model: llama-3.3-70b (configurable in Settings model picker).
+- **Model Selection**: Settings screen has a model picker that discovers all available Venice models and lets user choose. Selection persists across restarts via SecureVault.
+- **Smart Routing**: Simple conversational messages bypass intent analysis and go direct to Venice with conversation history (1 API call). Action requests go through full intent analysis → capability execution pipeline.
 - **Native Build System**: AgentNative Java module for on-device Java compilation, DEX conversion, APK packaging. Requires EAS Build (not Expo Go).
 - **Multi-Agent Swarm**: Orchestrator decomposes complex tasks into parallel subtasks executed by independent TaskAgents via AgentBus.
 - **Self-Healing Debug**: DebugEngine runs iterative fix loops on failed compilations, learning from past fixes.
 - **Cost Tracking**: Per-call cost recording with daily and per-task budget limits.
 - **Background Tasks**: expo-background-fetch for periodic background execution.
 - **Biometric Auth**: Optional biometric gate on app launch.
+- **Request Timeout**: All Venice API calls have 60-second AbortController timeout to prevent hanging.
 
 ## Build for APK
 

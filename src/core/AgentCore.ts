@@ -196,9 +196,17 @@ export class AgentCore extends EventEmitter {
     await this.ai.refreshApiKey();
   }
 
+  getAvailableModels() { return this.ai.getAvailableModels(); }
+  getDefaultModel() { return this.ai.getDefaultModel(); }
+  async setDefaultModel(modelId: string) { await this.ai.setDefaultModel(modelId); }
+
   getCostSummary() { return this.costTracker.getSummary(); }
   async getStorageBreakdown() { return this.storage.getBreakdown(); }
   getDebugStats() { return this.debugEngine.getStats(); }
   getLearnedPatterns() { return this.learner.getTopPatterns(); }
   killSwarm(): void { this.orchestrator.killAll(); }
 }
+
+let _agentCoreInstance: AgentCore | null = null;
+export function setAgentCoreInstance(core: AgentCore) { _agentCoreInstance = core; }
+export function getAgentCoreInstance(): AgentCore | null { return _agentCoreInstance; }
