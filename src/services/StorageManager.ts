@@ -1,5 +1,12 @@
-import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
 import { Logger } from '../utils/Logger';
+
+let FileSystem: any = null;
+if (Platform.OS !== 'web') {
+  FileSystem = require('expo-file-system/legacy');
+}
+
+const isNative = Platform.OS !== 'web';
 
 interface StorageBreakdown {
   total: number;
@@ -12,7 +19,7 @@ interface StorageBreakdown {
 
 export class StorageManager {
   private logger: Logger;
-  private static readonly BASE = FileSystem.documentDirectory || '';
+  private baseDir: string;
   private static readonly DIRS: Record<string, string> = {
     logs: 'logs/',
     builds: 'builds/',
@@ -26,11 +33,16 @@ export class StorageManager {
   constructor(budgetMB: number = 500) {
     this.logger = new Logger('StorageManager');
     this.budgetMB = budgetMB;
+    this.baseDir = (isNative && FileSystem?.documentDirectory) || '';
   }
 
   async initialize(): Promise<void> {
+    if (!isNative) {
+      this.logger.info('StorageManager initialized (web mode - no file ops)');
+      return;
+    }
     for (const dir of Object.values(StorageManager.DIRS)) {
-      const fullPath = StorageManager.BASE + dir;
+      const fullPath = this.baseDir + dir;
       const info = await FileSystem.getInfoAsync(fullPath);
       if (!info.exists) {
         await FileSystem.makeDirectoryAsync(fullPath, { intermediates: true });
@@ -42,22 +54,24 @@ export class StorageManager {
 
   getPath(category: string, filename?: string): string {
     const dir = StorageManager.DIRS[category] || '';
-    const base = StorageManager.BASE + dir;
+    const base = this.baseDir + dir;
     return filename ? base + filename : base;
   }
 
   async getBreakdown(): Promise<StorageBreakdown> {
     const b: StorageBreakdown = { total: 0, logs: 0, buildArtifacts: 0, buildTools: 0, preferences: 0, temp: 0 };
-    b.logs = await this.getDirSize(StorageManager.BASE + 'logs/');
-    b.buildArtifacts = await this.getDirSize(StorageManager.BASE + 'builds/');
-    b.buildTools = await this.getDirSize(StorageManager.BASE + 'build-tools/');
-    b.preferences = await this.getDirSize(StorageManager.BASE + 'prefs/');
-    b.temp = await this.getDirSize(StorageManager.BASE + 'temp/');
+    if (!isNative) return b;
+    b.logs = await this.getDirSize(this.baseDir + 'logs/');
+    b.buildArtifacts = await this.getDirSize(this.baseDir + 'builds/');
+    b.buildTools = await this.getDirSize(this.baseDir + 'build-tools/');
+    b.preferences = await this.getDirSize(this.baseDir + 'prefs/');
+    b.temp = await this.getDirSize(this.baseDir + 'temp/');
     b.total = b.logs + b.buildArtifacts + b.buildTools + b.preferences + b.temp;
     return b;
   }
 
   async getDirSize(dirPath: string): Promise<number> {
+    if (!isNative) return 0;
     try {
       const info = await FileSystem.getInfoAsync(dirPath);
       if (!info.exists) return 0;
@@ -74,14 +88,17 @@ export class StorageManager {
   }
 
   async cleanTemp(): Promise<number> {
+    if (!isNative) return 0;
     return this.cleanDir(this.getPath('temp'));
   }
 
   async cleanOldBuilds(maxAgeDays: number = 3): Promise<number> {
+    if (!isNative) return 0;
     return this.cleanOldFiles(this.getPath('builds'), maxAgeDays);
   }
 
   async enforceBudget(): Promise<void> {
+    if (!isNative) return;
     const bd = await this.getBreakdown();
     const totalMB = bd.total / (1024 * 1024);
     if (totalMB > this.budgetMB) {
@@ -95,21 +112,25 @@ export class StorageManager {
   }
 
   async writeFile(category: string, filename: string, content: string): Promise<string> {
+    if (!isNative) return '';
     const filePath = this.getPath(category, filename);
     await FileSystem.writeAsStringAsync(filePath, content);
     return filePath;
   }
 
   async readFile(filePath: string): Promise<string> {
+    if (!isNative) return '';
     return FileSystem.readAsStringAsync(filePath);
   }
 
   async deleteFile(filePath: string): Promise<void> {
+    if (!isNative) return;
     const info = await FileSystem.getInfoAsync(filePath);
     if (info.exists) await FileSystem.deleteAsync(filePath);
   }
 
   async listFiles(category: string): Promise<string[]> {
+    if (!isNative) return [];
     try {
       return await FileSystem.readDirectoryAsync(this.getPath(category));
     } catch {
@@ -118,6 +139,7 @@ export class StorageManager {
   }
 
   async fileExists(filePath: string): Promise<boolean> {
+    if (!isNative) return false;
     const info = await FileSystem.getInfoAsync(filePath);
     return info.exists;
   }

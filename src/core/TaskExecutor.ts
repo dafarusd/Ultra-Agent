@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
 import * as Contacts from 'expo-contacts';
 import * as SMS from 'expo-sms';
 import * as Sharing from 'expo-sharing';
@@ -10,6 +10,13 @@ import { CapabilityRegistry } from './CapabilityRegistry';
 import { PermissionBroker } from './PermissionBroker';
 import { ModelRouter } from './ModelRouter';
 import { Logger } from '../utils/Logger';
+
+let FileSystem: any = null;
+if (Platform.OS !== 'web') {
+  FileSystem = require('expo-file-system/legacy');
+}
+
+const isNative = Platform.OS !== 'web';
 
 export interface TaskResult {
   success: boolean;
@@ -24,6 +31,7 @@ export class TaskExecutor {
   private perms: PermissionBroker;
   private ai: ModelRouter;
   private logger: Logger;
+  private docDir: string;
 
   constructor(build: BuildSystem, debug: DebugEngine, caps: CapabilityRegistry, perms: PermissionBroker, ai: ModelRouter) {
     this.build = build;
@@ -32,6 +40,7 @@ export class TaskExecutor {
     this.perms = perms;
     this.ai = ai;
     this.logger = new Logger('TaskExecutor');
+    this.docDir = (isNative && FileSystem?.documentDirectory) || '';
   }
 
   async initialize(): Promise<void> { this.logger.info('TaskExecutor initialized'); }
@@ -63,33 +72,36 @@ export class TaskExecutor {
   private async exec(capId: string, request: string, taskId: string): Promise<any> {
     switch (capId) {
       case 'file_read': {
-        const dir = FileSystem.documentDirectory || '';
-        const files = await FileSystem.readDirectoryAsync(dir);
-        return { directory: dir, files, count: files.length };
+        if (!isNative) return { error: 'File operations require Android device' };
+        const files = await FileSystem.readDirectoryAsync(this.docDir);
+        return { directory: this.docDir, files, count: files.length };
       }
       case 'file_write': {
+        if (!isNative) return { error: 'File operations require Android device' };
         const r = await this.ai.complete(`User wants to write a file: "${request}". Respond JSON: {"filename":"name","content":"data"}`, { taskId, agentId: 'file-write', maxTokens: 4000 });
         const p = JSON.parse(r.content);
-        const filePath = FileSystem.documentDirectory + p.filename;
+        const filePath = this.docDir + p.filename;
         await FileSystem.writeAsStringAsync(filePath, p.content);
         return { path: filePath, size: p.content.length };
       }
       case 'file_delete': {
+        if (!isNative) return { error: 'File operations require Android device' };
         const r = await this.ai.complete(`Extract filename from: "${request}". Respond filename only.`, { agentId: 'file-del', maxTokens: 100 });
         const fn = r.content.trim();
-        const filePath = FileSystem.documentDirectory + fn;
+        const filePath = this.docDir + fn;
         const info = await FileSystem.getInfoAsync(filePath);
         if (info.exists) { await FileSystem.deleteAsync(filePath); return { deleted: filePath }; }
         return { error: `File not found: ${fn}` };
       }
       case 'file_organize': {
+        if (!isNative) return { error: 'File operations require Android device' };
         const r = await this.ai.complete(`User wants to organize: "${request}". Respond JSON: {"actions":[{"source":"path","destination":"path"}]}`, { taskId, agentId: 'file-org', maxTokens: 2000 });
         const p = JSON.parse(r.content);
         const done: string[] = [];
         for (const a of p.actions) {
           const destDir = a.destination.substring(0, a.destination.lastIndexOf('/'));
-          await FileSystem.makeDirectoryAsync(FileSystem.documentDirectory + destDir, { intermediates: true });
-          await FileSystem.moveAsync({ from: FileSystem.documentDirectory + a.source, to: FileSystem.documentDirectory + a.destination });
+          await FileSystem.makeDirectoryAsync(this.docDir + destDir, { intermediates: true });
+          await FileSystem.moveAsync({ from: this.docDir + a.source, to: this.docDir + a.destination });
           done.push(`${a.source} -> ${a.destination}`);
         }
         return { organized: done.length, actions: done };
@@ -121,18 +133,22 @@ export class TaskExecutor {
       }
       case 'code_generate': {
         const r = await this.ai.complete(`Generate complete production code for: "${request}". All imports, error handling, comments.`, { taskId, agentId: 'codegen', maxTokens: 8000, temperature: 0.5 });
-        const fn = `generated_${Date.now()}.java`;
-        const filePath = FileSystem.documentDirectory + 'projects/' + fn;
-        await FileSystem.writeAsStringAsync(filePath, r.content);
-        return { path: filePath, lines: r.content.split('\n').length, cost: r.cost };
+        if (isNative) {
+          const fn = `generated_${Date.now()}.java`;
+          const filePath = this.docDir + 'projects/' + fn;
+          await FileSystem.writeAsStringAsync(filePath, r.content);
+          return { path: filePath, lines: r.content.split('\n').length, cost: r.cost };
+        }
+        return { lines: r.content.split('\n').length, cost: r.cost, note: 'File save requires Android device' };
       }
       case 'app_build':
         return this.build.buildApp(request, taskId);
       case 'app_install': {
-        const files = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory + 'projects/');
-        const apks = files.filter((f) => f.endsWith('-signed.apk'));
+        if (!isNative) return { error: 'APK install requires Android device' };
+        const files = await FileSystem.readDirectoryAsync(this.docDir + 'projects/');
+        const apks = files.filter((f: string) => f.endsWith('-signed.apk'));
         if (apks.length === 0) return { error: 'No APK found. Build first.' };
-        await this.build.installApk(FileSystem.documentDirectory + 'projects/' + apks[apks.length - 1]);
+        await this.build.installApk(this.docDir + 'projects/' + apks[apks.length - 1]);
         return { installing: apks[apks.length - 1] };
       }
       case 'network_request': {

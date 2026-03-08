@@ -1,11 +1,16 @@
-import { NativeModules } from 'react-native';
-import * as FileSystem from 'expo-file-system';
+import { NativeModules, Platform } from 'react-native';
 import { ModelRouter } from './ModelRouter';
 import { DebugEngine } from './DebugEngine';
 import { StorageManager } from '../services/StorageManager';
 import { Logger } from '../utils/Logger';
 
+let FileSystem: any = null;
+if (Platform.OS !== 'web') {
+  FileSystem = require('expo-file-system/legacy');
+}
+
 const { AgentNative } = NativeModules;
+const isNative = Platform.OS !== 'web';
 
 interface BuildResult {
   success: boolean;
@@ -33,8 +38,8 @@ export class BuildSystem {
   private storage: StorageManager;
   private logger: Logger;
   private toolsReady: boolean;
-  private static readonly TOOLS = `${FileSystem.documentDirectory}build-tools/`;
-  private static readonly PROJECTS = `${FileSystem.documentDirectory}projects/`;
+  private toolsDir: string;
+  private projectsDir: string;
 
   constructor(modelRouter: ModelRouter, debugEngine: DebugEngine, storage: StorageManager) {
     this.modelRouter = modelRouter;
@@ -42,23 +47,31 @@ export class BuildSystem {
     this.storage = storage;
     this.logger = new Logger('BuildSystem');
     this.toolsReady = false;
+    const docDir = (isNative && FileSystem?.documentDirectory) || '';
+    this.toolsDir = docDir + 'build-tools/';
+    this.projectsDir = docDir + 'projects/';
   }
 
   async initialize(): Promise<void> {
-    this.toolsReady = await this.storage.fileExists(BuildSystem.TOOLS + 'ecj.jar');
+    if (!isNative) {
+      this.logger.info('BuildSystem initialized (web mode - build unavailable)');
+      return;
+    }
+    this.toolsReady = await this.storage.fileExists(this.toolsDir + 'ecj.jar');
     if (this.toolsReady) this.logger.info('Build tools found');
     else this.logger.info('Build tools not installed. Will download on first build.');
-    const pi = await FileSystem.getInfoAsync(BuildSystem.PROJECTS);
-    if (!pi.exists) await FileSystem.makeDirectoryAsync(BuildSystem.PROJECTS, { intermediates: true });
+    const pi = await FileSystem.getInfoAsync(this.projectsDir);
+    if (!pi.exists) await FileSystem.makeDirectoryAsync(this.projectsDir, { intermediates: true });
   }
 
   async ensureTools(): Promise<void> {
+    if (!isNative) throw new Error('Build system requires Android device');
     if (this.toolsReady) return;
     this.logger.info('Downloading build tools...');
-    const di = await FileSystem.getInfoAsync(BuildSystem.TOOLS);
-    if (!di.exists) await FileSystem.makeDirectoryAsync(BuildSystem.TOOLS, { intermediates: true });
+    const di = await FileSystem.getInfoAsync(this.toolsDir);
+    if (!di.exists) await FileSystem.makeDirectoryAsync(this.toolsDir, { intermediates: true });
     try {
-      await FileSystem.downloadAsync(TOOL_URLS.ecj, BuildSystem.TOOLS + 'ecj.jar');
+      await FileSystem.downloadAsync(TOOL_URLS.ecj, this.toolsDir + 'ecj.jar');
       this.logger.info('ECJ downloaded');
     } catch (e: any) {
       throw new Error('Failed to download ECJ: ' + e.message);
@@ -68,6 +81,7 @@ export class BuildSystem {
   }
 
   async buildApp(description: string, taskId: string): Promise<BuildResult> {
+    if (!isNative) return { success: false, error: 'Build system requires Android device' };
     let totalCost = 0;
     try {
       await this.ensureTools();
@@ -146,7 +160,7 @@ export class BuildSystem {
   }
 
   private async writeProject(project: BuildProject): Promise<string> {
-    const dir = BuildSystem.PROJECTS + project.name + '/';
+    const dir = this.projectsDir + project.name + '/';
     await FileSystem.makeDirectoryAsync(dir + 'src/', { intermediates: true });
     await FileSystem.makeDirectoryAsync(dir + 'res/layout/', { intermediates: true });
     await FileSystem.makeDirectoryAsync(dir + 'bin/', { intermediates: true });
@@ -168,7 +182,7 @@ export class BuildSystem {
       if (!AgentNative) throw new Error('Native build module not available');
       const srcDir = projectDir + 'src/';
       const outDir = projectDir + 'bin/classes/';
-      const cp = BuildSystem.TOOLS + 'android.jar';
+      const cp = this.toolsDir + 'android.jar';
       await FileSystem.makeDirectoryAsync(outDir, { intermediates: true });
       const result = await AgentNative.compileJava(srcDir, outDir, cp);
       if (result.includes('ERROR') || result.includes('error:')) return { success: false, error: result };
@@ -198,6 +212,7 @@ export class BuildSystem {
   }
 
   async installApk(apkPath: string): Promise<void> {
+    if (!isNative) throw new Error('APK install requires Android device');
     await AgentNative.installApk(apkPath);
   }
 

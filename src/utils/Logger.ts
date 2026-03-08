@@ -1,4 +1,9 @@
-import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
+
+let FileSystem: any = null;
+if (Platform.OS !== 'web') {
+  FileSystem = require('expo-file-system/legacy');
+}
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -13,7 +18,6 @@ interface LogEntry {
 export class Logger {
   private static entries: LogEntry[] = [];
   private static readonly MAX_ENTRIES = 500;
-  private static readonly LOG_DIR = `${FileSystem.documentDirectory}logs/`;
   private context: string;
 
   constructor(context: string) {
@@ -67,15 +71,23 @@ export class Logger {
     return limit ? filtered.slice(0, limit) : filtered;
   }
 
+  private static getLogDir(): string {
+    if (!FileSystem || !FileSystem.documentDirectory) return '';
+    return `${FileSystem.documentDirectory}logs/`;
+  }
+
   static async flush(): Promise<void> {
+    if (Platform.OS === 'web') return;
     try {
-      const dirInfo = await FileSystem.getInfoAsync(Logger.LOG_DIR);
+      const logDir = Logger.getLogDir();
+      if (!logDir) return;
+      const dirInfo = await FileSystem.getInfoAsync(logDir);
       if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(Logger.LOG_DIR, { intermediates: true });
+        await FileSystem.makeDirectoryAsync(logDir, { intermediates: true });
       }
       const filename = `log_${Date.now()}.json`;
       await FileSystem.writeAsStringAsync(
-        `${Logger.LOG_DIR}${filename}`,
+        `${logDir}${filename}`,
         JSON.stringify(Logger.entries)
       );
       Logger.entries = [];
@@ -93,16 +105,19 @@ export class Logger {
   }
 
   static async cleanOldLogs(maxAgeDays: number = 7): Promise<number> {
+    if (Platform.OS === 'web') return 0;
     try {
-      const dirInfo = await FileSystem.getInfoAsync(Logger.LOG_DIR);
+      const logDir = Logger.getLogDir();
+      if (!logDir) return 0;
+      const dirInfo = await FileSystem.getInfoAsync(logDir);
       if (!dirInfo.exists) return 0;
-      const files = await FileSystem.readDirectoryAsync(Logger.LOG_DIR);
+      const files = await FileSystem.readDirectoryAsync(logDir);
       const cutoff = Date.now() - maxAgeDays * 86400000;
       let cleaned = 0;
       for (const file of files) {
         const match = file.match(/log_(\d+)\.json/);
         if (match && parseInt(match[1], 10) < cutoff) {
-          await FileSystem.deleteAsync(`${Logger.LOG_DIR}${file}`);
+          await FileSystem.deleteAsync(`${logDir}${file}`);
           cleaned++;
         }
       }
