@@ -78,12 +78,42 @@ export class AgentCore extends EventEmitter {
     this.emit('log', 'All systems online', 'agent');
   }
 
+  private isSimpleChat(request: string): boolean {
+    const actionKeywords = [
+      'build', 'compile', 'file', 'read', 'write', 'delete', 'contact',
+      'sms', 'text ', 'send', 'install', 'launch', 'open ', 'camera',
+      'photo', 'media', 'organize', 'share', 'network', 'fetch', 'http',
+      'download', 'generate code', 'create app', 'make app',
+      'call ', 'email', 'remind', 'alarm', 'timer', 'lookup', 'search',
+      'navigate', 'scan', 'record', 'upload', 'apk', 'run ',
+    ];
+    const lower = request.toLowerCase().trim();
+    return lower.length < 80 && !actionKeywords.some((k) => lower.includes(k));
+  }
+
+  private buildConversationMessages(): Array<{ role: string; content: string }> {
+    const systemMsg = {
+      role: 'system',
+      content: "You are Agent Ultra, an autonomous AI agent on a user's Android phone. You have device access including file system, contacts, SMS, camera, media, and can build Android apps on-device. Be helpful, conversational, and concise. When asked about yourself, explain your capabilities.",
+    };
+    const recent = this.history.slice(-20);
+    return [systemMsg, ...recent];
+  }
+
   async execute(request: string): Promise<ExecutionResult> {
     if (!this.ready) return { type: 'error', error: 'Agent not initialized' };
     if (!this.ai.hasApiKey()) return { type: 'error', error: 'Venice API key not configured. Open Settings.' };
     const taskId = Date.now().toString(36);
     this.history.push({ role: 'user', content: request });
     try {
+      if (this.isSimpleChat(request)) {
+        this.emit('log', 'Thinking...', 'system');
+        const messages = this.buildConversationMessages();
+        const r = await this.ai.completeWithConversation(messages, { taskId, agentId: 'chat' });
+        this.history.push({ role: 'assistant', content: r.content });
+        return { type: 'result', summary: r.content, cost: r.cost };
+      }
+
       this.emit('log', 'Analyzing...', 'system');
       const intent = await this.analyzeIntent(request, taskId);
       if (intent.needsClarification) return { type: 'clarify', question: intent.clarification, cost: intent.cost };
@@ -129,8 +159,15 @@ export class AgentCore extends EventEmitter {
       if (br.success) return { type: 'result', summary: `App built! APK: ${br.apkPath}${br.debugAttempts ? ` (${br.debugAttempts} debug rounds)` : ''}. Say "install" to install.`, cost: br.totalCost };
       return { type: 'error', error: `Build failed: ${br.error}${br.debugAttempts ? ` after ${br.debugAttempts} attempts` : ''}`, cost: br.totalCost };
     }
-    const result = await this.executor.run(intent.capabilities, request, taskId);
-    await this.learner.learnFromExecution(request, intent.capabilities, result.summary, result.success);
+    const caps = intent.capabilities || [];
+    if (caps.length === 1 && caps[0] === 'ai_query') {
+      const messages = this.buildConversationMessages();
+      const r = await this.ai.completeWithConversation(messages, { taskId, agentId: 'chat' });
+      this.history.push({ role: 'assistant', content: r.content });
+      return { type: 'result', summary: r.content, cost: this.costTracker.getTaskSpend(taskId) };
+    }
+    const result = await this.executor.run(caps, request, taskId);
+    await this.learner.learnFromExecution(request, caps, result.summary, result.success);
     return { type: 'result', summary: result.summary, cost: this.costTracker.getTaskSpend(taskId) };
   }
 
