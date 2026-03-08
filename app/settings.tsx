@@ -1,0 +1,396 @@
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  ScrollView,
+  Pressable,
+  StyleSheet,
+  Alert,
+  Platform,
+} from "react-native";
+import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { SecureVault } from "@/src/security/SecureVault";
+import { Logger } from "@/src/utils/Logger";
+
+const ACCENT = "#00ff88";
+const BG = "#000000";
+const SURFACE = "#111111";
+const SURFACE2 = "#1a1a1a";
+const DIM = "#666666";
+
+export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const [apiKey, setApiKey] = useState("");
+  const [storedKey, setStoredKey] = useState(false);
+  const [dailyLimit, setDailyLimit] = useState("5.00");
+  const [taskLimit, setTaskLimit] = useState("1.00");
+  const [logs, setLogs] = useState<string[]>([]);
+  const [showLogs, setShowLogs] = useState(false);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const vault = await SecureVault.initialize();
+      const key = await vault.get("venice_api_key");
+      if (key) {
+        setStoredKey(true);
+        setApiKey("••••••••" + key.slice(-4));
+      }
+      const dl = await vault.get("daily_cost_limit");
+      if (dl) setDailyLimit(dl);
+      const tl = await vault.get("task_cost_limit");
+      if (tl) setTaskLimit(tl);
+    } catch (err: any) {
+      Alert.alert("Error", "Failed to load settings: " + err.message);
+    }
+  }, []);
+
+  const saveApiKey = useCallback(async () => {
+    if (!apiKey || apiKey.startsWith("••")) return;
+    try {
+      const vault = await SecureVault.initialize();
+      await vault.set("venice_api_key", apiKey.trim());
+      setStoredKey(true);
+      setApiKey("••••••••" + apiKey.trim().slice(-4));
+      Alert.alert("Saved", "Venice API key stored securely. Restart the app to use it.");
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  }, [apiKey]);
+
+  const clearApiKey = useCallback(async () => {
+    try {
+      const vault = await SecureVault.initialize();
+      await vault.delete("venice_api_key");
+      setStoredKey(false);
+      setApiKey("");
+      Alert.alert("Cleared", "API key removed.");
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  }, []);
+
+  const saveLimits = useCallback(async () => {
+    try {
+      const vault = await SecureVault.initialize();
+      await vault.set("daily_cost_limit", dailyLimit);
+      await vault.set("task_cost_limit", taskLimit);
+      Alert.alert("Saved", "Cost limits updated.");
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  }, [dailyLimit, taskLimit]);
+
+  const loadLogs = useCallback(() => {
+    const entries = Logger.getEntries(undefined, 50);
+    setLogs(
+      entries.map(
+        (e) =>
+          `[${new Date(e.timestamp).toLocaleTimeString()}][${e.level}][${e.context}] ${e.message}`
+      )
+    );
+    setShowLogs(!showLogs);
+  }, [showLogs]);
+
+  const webTopInset = Platform.OS === "web" ? 67 : 0;
+  const webBottomInset = Platform.OS === "web" ? 34 : 0;
+
+  return (
+    <View
+      style={[
+        styles.container,
+        {
+          paddingTop: insets.top + webTopInset,
+          paddingBottom: insets.bottom + webBottomInset,
+        },
+      ]}
+    >
+      <View style={styles.header}>
+        <Pressable
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          testID="back-button"
+        >
+          <Ionicons name="chevron-back" size={24} color={ACCENT} />
+        </Pressable>
+        <Text style={styles.headerTitle}>Settings</Text>
+        <View style={{ width: 32 }} />
+      </View>
+
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="key-outline" size={18} color={ACCENT} />
+            <Text style={styles.sectionTitle}>Venice API Key</Text>
+          </View>
+          <Text style={styles.sectionDesc}>
+            Get your API key from venice.ai. Required for all AI features.
+          </Text>
+          <TextInput
+            value={apiKey}
+            onChangeText={setApiKey}
+            placeholder="Enter Venice API key..."
+            placeholderTextColor={DIM}
+            style={styles.textInput}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={!apiKey.startsWith("••")}
+            testID="api-key-input"
+          />
+          <View style={styles.buttonRow}>
+            <Pressable
+              onPress={saveApiKey}
+              style={[styles.btn, styles.primaryBtn]}
+              testID="save-key-button"
+            >
+              <Ionicons name="save-outline" size={16} color={BG} />
+              <Text style={styles.primaryBtnText}>Save Key</Text>
+            </Pressable>
+            {storedKey && (
+              <Pressable
+                onPress={clearApiKey}
+                style={[styles.btn, styles.dangerBtn]}
+              >
+                <Ionicons name="trash-outline" size={16} color="#ff4444" />
+                <Text style={styles.dangerBtnText}>Clear</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="cash-outline" size={18} color={ACCENT} />
+            <Text style={styles.sectionTitle}>Cost Limits</Text>
+          </View>
+          <View style={styles.limitRow}>
+            <Text style={styles.limitLabel}>Daily limit ($)</Text>
+            <TextInput
+              value={dailyLimit}
+              onChangeText={setDailyLimit}
+              style={styles.limitInput}
+              keyboardType="decimal-pad"
+              placeholderTextColor={DIM}
+            />
+          </View>
+          <View style={styles.limitRow}>
+            <Text style={styles.limitLabel}>Per-task limit ($)</Text>
+            <TextInput
+              value={taskLimit}
+              onChangeText={setTaskLimit}
+              style={styles.limitInput}
+              keyboardType="decimal-pad"
+              placeholderTextColor={DIM}
+            />
+          </View>
+          <Pressable
+            onPress={saveLimits}
+            style={[styles.btn, styles.primaryBtn, { alignSelf: "flex-start" }]}
+          >
+            <Ionicons name="save-outline" size={16} color={BG} />
+            <Text style={styles.primaryBtnText}>Save Limits</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <MaterialCommunityIcons name="wrench-outline" size={18} color={ACCENT} />
+            <Text style={styles.sectionTitle}>System</Text>
+          </View>
+          <Pressable
+            onPress={loadLogs}
+            style={[styles.btn, styles.secondaryBtn]}
+          >
+            <Ionicons name="document-text-outline" size={16} color={ACCENT} />
+            <Text style={styles.secondaryBtnText}>
+              {showLogs ? "Hide Logs" : "View Logs"}
+            </Text>
+          </Pressable>
+          {showLogs && (
+            <View style={styles.logContainer}>
+              {logs.length === 0 ? (
+                <Text style={styles.logText}>No logs yet</Text>
+              ) : (
+                logs.map((log, i) => (
+                  <Text key={i} style={styles.logText}>
+                    {log}
+                  </Text>
+                ))
+              )}
+            </View>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="information-circle-outline" size={18} color={ACCENT} />
+            <Text style={styles.sectionTitle}>About</Text>
+          </View>
+          <Text style={styles.aboutText}>Agent Ultra v1.0.0</Text>
+          <Text style={styles.aboutText}>
+            Autonomous AI agent with Venice API integration, multi-agent swarm
+            orchestration, on-device APK compilation, and self-healing debug
+            engine.
+          </Text>
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: BG,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: SURFACE,
+  },
+  backBtn: {
+    padding: 4,
+  },
+  headerTitle: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 16,
+    gap: 24,
+    paddingBottom: 40,
+  },
+  section: {
+    backgroundColor: SURFACE,
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  sectionTitle: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+  },
+  sectionDesc: {
+    color: DIM,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 18,
+  },
+  textInput: {
+    backgroundColor: SURFACE2,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: "#ffffff",
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    borderWidth: 1,
+    borderColor: "#222222",
+  },
+  buttonRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  btn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  primaryBtn: {
+    backgroundColor: ACCENT,
+  },
+  primaryBtnText: {
+    color: BG,
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+  },
+  secondaryBtn: {
+    backgroundColor: SURFACE2,
+    borderWidth: 1,
+    borderColor: "#1a3a2a",
+  },
+  secondaryBtnText: {
+    color: ACCENT,
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+  },
+  dangerBtn: {
+    backgroundColor: "#1a0000",
+    borderWidth: 1,
+    borderColor: "#4a0000",
+  },
+  dangerBtnText: {
+    color: "#ff4444",
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+  },
+  limitRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  limitLabel: {
+    color: "#cccccc",
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
+  limitInput: {
+    backgroundColor: SURFACE2,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: "#ffffff",
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    width: 100,
+    textAlign: "center",
+    borderWidth: 1,
+    borderColor: "#222222",
+  },
+  logContainer: {
+    backgroundColor: SURFACE2,
+    borderRadius: 8,
+    padding: 12,
+    maxHeight: 300,
+  },
+  logText: {
+    color: "#888888",
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 16,
+  },
+  aboutText: {
+    color: DIM,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 18,
+  },
+});
