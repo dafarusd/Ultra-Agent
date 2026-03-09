@@ -11,6 +11,7 @@ import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState } from "react";
 import { StatusBar, View, Text, StyleSheet, Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
@@ -74,48 +75,57 @@ export default function RootLayout() {
 
   if (!fontsLoaded && !fontError) return null;
 
+  const textFont = fontsLoaded ? "Inter_600SemiBold" : undefined;
+  const retryFont = fontsLoaded ? "Inter_400Regular" : undefined;
+
   if (!authChecked) {
     return (
-      <View style={lockStyles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#000000" />
-        <Text style={lockStyles.text}>Authenticating...</Text>
-      </View>
+      <SafeAreaProvider>
+        <View style={lockStyles.container}>
+          <StatusBar barStyle="light-content" backgroundColor="#000000" />
+          <Text style={[lockStyles.text, { fontFamily: textFont }]}>Authenticating...</Text>
+        </View>
+      </SafeAreaProvider>
     );
   }
 
   if (!authenticated) {
     return (
-      <View style={lockStyles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#000000" />
-        <Text style={lockStyles.text}>Authentication required</Text>
-        <Text
-          style={lockStyles.retry}
-          onPress={() => {
-            setAuthChecked(false);
-            const gate = new BiometricGate();
-            gate.authenticate("Authenticate to open Agent Ultra").then((r) => {
-              setAuthenticated(r);
-              setAuthChecked(true);
-            });
-          }}
-        >
-          Tap to retry
-        </Text>
-      </View>
+      <SafeAreaProvider>
+        <View style={lockStyles.container}>
+          <StatusBar barStyle="light-content" backgroundColor="#000000" />
+          <Text style={[lockStyles.text, { fontFamily: textFont }]}>Authentication required</Text>
+          <Text
+            style={[lockStyles.retry, { fontFamily: retryFont }]}
+            onPress={() => {
+              setAuthChecked(false);
+              const gate = new BiometricGate();
+              gate.authenticate("Authenticate to open Agent Ultra").then((r) => {
+                setAuthenticated(r);
+                setAuthChecked(true);
+              });
+            }}
+          >
+            Tap to retry
+          </Text>
+        </View>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          <KeyboardProvider>
-            <StatusBar barStyle="light-content" backgroundColor="#000000" />
-            <RootLayoutNav />
-          </KeyboardProvider>
-        </GestureHandlerRootView>
-      </QueryClientProvider>
-    </ErrorBoundary>
+    <SafeAreaProvider>
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <GestureHandlerRootView style={{ flex: 1 }}>
+            <KeyboardProvider>
+              <StatusBar barStyle="light-content" backgroundColor="#000000" />
+              <RootLayoutNav />
+            </KeyboardProvider>
+          </GestureHandlerRootView>
+        </QueryClientProvider>
+      </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }
 
@@ -130,13 +140,11 @@ const lockStyles = StyleSheet.create({
   text: {
     color: "#00ff88",
     fontSize: 18,
-    fontFamily: "Inter_600SemiBold",
   },
   retry: {
     color: "#00ff88",
     fontSize: 16,
     marginTop: 20,
     textDecorationLine: "underline",
-    fontFamily: "Inter_400Regular",
   },
 });

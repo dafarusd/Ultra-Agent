@@ -79,6 +79,19 @@ Profiles defined in `eas.json`:
 - Backend: port 5000 (Express)
 - No external API keys needed in env — user provides Venice API key in-app
 
+## EAS Build Configuration
+
+- `newArchEnabled: false` (AgentNative uses old bridge APIs)
+- `compileSdkVersion: 35`, `targetSdkVersion: 35`, `minSdkVersion: 26`
+- All expo packages aligned to SDK 54 compatible versions
+- SafeAreaProvider wraps entire app in _layout.tsx
+- Font loading is failure-safe (auth screens render without custom fonts if loading fails)
+- ErrorFallback does not use `reloadAppAsync` (removed to prevent crash loop)
+- AgentNative has null-safety fallback (noop when native module unavailable)
+- AgentCore initialization is defensive (safeInit wrappers per subsystem)
+- `expo-file-system` uses standard import (not `/legacy`)
+- Custom SimpleEmitter replaces Node.js `events` module
+
 ## Adaptations from Original Source
 
 - `axios` replaced with native `fetch` (Expo Go compatible)
