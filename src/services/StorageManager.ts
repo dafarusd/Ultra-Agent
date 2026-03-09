@@ -1,10 +1,8 @@
 import { Platform } from 'react-native';
+import * as ExpoFileSystem from 'expo-file-system';
 import { Logger } from '../utils/Logger';
 
-let FileSystem: any = null;
-if (Platform.OS !== 'web') {
-  FileSystem = require('expo-file-system/legacy');
-}
+const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
 const isNative = Platform.OS !== 'web';
 

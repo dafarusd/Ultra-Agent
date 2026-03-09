@@ -1,4 +1,4 @@
-import { NativeModules } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 
 interface AgentNativeInterface {
   compileJava(sourceDir: string, outputDir: string, classpath: string): Promise<string>;
@@ -10,5 +10,19 @@ interface AgentNativeInterface {
   getStorageInfo(): Promise<{ total: number; free: number; used: number }>;
 }
 
-const AgentNative: AgentNativeInterface = NativeModules.AgentNative;
+const noopModule: AgentNativeInterface = {
+  compileJava: async () => 'AgentNative not available',
+  convertToDex: async () => 'AgentNative not available',
+  packageApk: async () => 'AgentNative not available',
+  signApk: async () => 'AgentNative not available',
+  installApk: async () => {},
+  exec: async () => 'AgentNative not available',
+  getStorageInfo: async () => ({ total: 0, free: 0, used: 0 }),
+};
+
+const AgentNative: AgentNativeInterface =
+  Platform.OS !== 'web' && NativeModules.AgentNative
+    ? NativeModules.AgentNative
+    : noopModule;
+
 export default AgentNative;

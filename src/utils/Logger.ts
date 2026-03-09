@@ -1,9 +1,7 @@
 import { Platform } from 'react-native';
+import * as ExpoFileSystem from 'expo-file-system';
 
-let FileSystem: any = null;
-if (Platform.OS !== 'web') {
-  FileSystem = require('expo-file-system/legacy');
-}
+const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 

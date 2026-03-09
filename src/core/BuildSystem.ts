@@ -1,15 +1,12 @@
 import { NativeModules, Platform } from 'react-native';
+import * as ExpoFileSystem from 'expo-file-system';
 import { ModelRouter } from './ModelRouter';
 import { DebugEngine } from './DebugEngine';
 import { StorageManager } from '../services/StorageManager';
 import { Logger } from '../utils/Logger';
 
-let FileSystem: any = null;
-if (Platform.OS !== 'web') {
-  FileSystem = require('expo-file-system/legacy');
-}
-
-const { AgentNative } = NativeModules;
+const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
+const AgentNative = NativeModules.AgentNative || null;
 const isNative = Platform.OS !== 'web';
 
 interface BuildResult {
@@ -193,6 +190,7 @@ export class BuildSystem {
   }
 
   private async packageApk(projectDir: string, project: BuildProject): Promise<string> {
+    if (!AgentNative) throw new Error('Native build module not available');
     const dexPath = projectDir + 'bin/classes.dex';
     const apkPath = projectDir + 'bin/' + project.name + '.apk';
     await AgentNative.convertToDex(projectDir + 'bin/classes/', dexPath);
@@ -206,13 +204,14 @@ export class BuildSystem {
   }
 
   private async signApk(apkPath: string): Promise<string> {
+    if (!AgentNative) throw new Error('Native build module not available');
     const signed = apkPath.replace('.apk', '-signed.apk');
     await AgentNative.signApk(apkPath, signed);
     return signed;
   }
 
   async installApk(apkPath: string): Promise<void> {
-    if (!isNative) throw new Error('APK install requires Android device');
+    if (!isNative || !AgentNative) throw new Error('APK install requires Android device with native module');
     await AgentNative.installApk(apkPath);
   }
 

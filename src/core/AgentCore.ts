@@ -60,20 +60,31 @@ export class AgentCore extends EventEmitter {
   async initialize(): Promise<void> {
     if (this.ready) return;
     this.emit('log', 'Initializing systems...', 'system');
+
+    const safeInit = async (name: string, fn: () => Promise<void>): Promise<void> => {
+      try {
+        await fn();
+      } catch (err: any) {
+        console.warn(`[AgentCore] ${name} init failed: ${err.message}`);
+      }
+    };
+
     await Promise.all([
-      this.costTracker.initialize(),
-      this.storage.initialize(),
-      this.caps.initialize(),
-      this.perms.initialize(),
-      this.learner.initialize(),
+      safeInit('CostTracker', () => this.costTracker.initialize()),
+      safeInit('Storage', () => this.storage.initialize()),
+      safeInit('Capabilities', () => this.caps.initialize()),
+      safeInit('Permissions', () => this.perms.initialize()),
+      safeInit('Learner', () => this.learner.initialize()),
     ]);
-    await this.ai.initialize();
-    await this.debugEngine.initialize();
-    await this.buildSystem.initialize();
-    await this.executor.initialize();
-    await this.storage.enforceBudget();
-    await Logger.cleanOldLogs(7);
-    await this.costTracker.cleanup(30);
+
+    await safeInit('ModelRouter', () => this.ai.initialize());
+    await safeInit('DebugEngine', () => this.debugEngine.initialize());
+    await safeInit('BuildSystem', () => this.buildSystem.initialize());
+    await safeInit('TaskExecutor', () => this.executor.initialize());
+    await safeInit('StorageBudget', () => this.storage.enforceBudget());
+    await safeInit('LogCleanup', () => Logger.cleanOldLogs(7));
+    await safeInit('CostCleanup', () => this.costTracker.cleanup(30));
+
     this.ready = true;
     this.emit('log', 'All systems online', 'agent');
   }

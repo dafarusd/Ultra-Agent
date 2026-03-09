@@ -4,6 +4,7 @@ import * as SMS from 'expo-sms';
 import * as Sharing from 'expo-sharing';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as MediaLibrary from 'expo-media-library';
+import * as ExpoFileSystem from 'expo-file-system';
 import { BuildSystem } from './BuildSystem';
 import { DebugEngine } from './DebugEngine';
 import { CapabilityRegistry } from './CapabilityRegistry';
@@ -11,10 +12,7 @@ import { PermissionBroker } from './PermissionBroker';
 import { ModelRouter } from './ModelRouter';
 import { Logger } from '../utils/Logger';
 
-let FileSystem: any = null;
-if (Platform.OS !== 'web') {
-  FileSystem = require('expo-file-system/legacy');
-}
+const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
 const isNative = Platform.OS !== 'web';
 
