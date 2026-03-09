@@ -259,10 +259,34 @@ function withAgentNative(config) {
       if (fs.existsSync(mainAppPath)) {
         let mainApp = fs.readFileSync(mainAppPath, 'utf8');
         if (!mainApp.includes('AgentNativePackage')) {
-          mainApp = mainApp.replace(
-            'packages.add(new com.facebook.react.shell.MainReactPackage());',
-            'packages.add(new com.facebook.react.shell.MainReactPackage());\n            packages.add(new AgentNativePackage());'
-          );
+          if (mainApp.includes('packages.add(new com.facebook.react.shell.MainReactPackage());')) {
+            mainApp = mainApp.replace(
+              'packages.add(new com.facebook.react.shell.MainReactPackage());',
+              'packages.add(new com.facebook.react.shell.MainReactPackage());\n            packages.add(new AgentNativePackage());'
+            );
+          } else {
+            const getPackagesMatch = mainApp.match(/protected\s+List<ReactPackage>\s+getPackages\s*\(\)\s*\{[^}]*?(return\s+)/s);
+            if (getPackagesMatch) {
+              const autolinkedMatch = mainApp.match(/(new\s+PackageList\(this\)\.getPackages\(\))/);
+              if (autolinkedMatch) {
+                mainApp = mainApp.replace(
+                  autolinkedMatch[0],
+                  autolinkedMatch[0] + ';\n            packages.add(new AgentNativePackage())'
+                );
+              }
+            }
+
+            if (!mainApp.includes('AgentNativePackage')) {
+              const addPackagesPattern = /(@Override\s+protected\s+List<ReactPackage>\s+getPackages\(\)\s*\{[\s\S]*?)(return\s+packages;)/;
+              const addMatch = mainApp.match(addPackagesPattern);
+              if (addMatch) {
+                mainApp = mainApp.replace(
+                  addMatch[2],
+                  'packages.add(new AgentNativePackage());\n            ' + addMatch[2]
+                );
+              }
+            }
+          }
           fs.writeFileSync(mainAppPath, mainApp);
         }
       }

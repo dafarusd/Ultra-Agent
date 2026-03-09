@@ -1,5 +1,24 @@
-import { EventEmitter } from 'events';
 import { SecureVault } from '../security/SecureVault';
+
+class SimpleEmitter {
+  private listeners: Map<string, Array<(...args: any[]) => void>> = new Map();
+  on(event: string, fn: (...args: any[]) => void): this {
+    if (!this.listeners.has(event)) this.listeners.set(event, []);
+    this.listeners.get(event)!.push(fn);
+    return this;
+  }
+  emit(event: string, ...args: any[]): boolean {
+    const fns = this.listeners.get(event);
+    if (!fns) return false;
+    fns.forEach(fn => { try { fn(...args); } catch {} });
+    return true;
+  }
+  removeAllListeners(event?: string): this {
+    if (event) this.listeners.delete(event);
+    else this.listeners.clear();
+    return this;
+  }
+}
 import { ModelRouter } from './ModelRouter';
 import { CapabilityRegistry } from './CapabilityRegistry';
 import { PermissionBroker } from './PermissionBroker';
@@ -22,7 +41,7 @@ export interface ExecutionResult {
   agentCount?: number;
 }
 
-export class AgentCore extends EventEmitter {
+export class AgentCore extends SimpleEmitter {
   private vault: SecureVault;
   private ai: ModelRouter;
   private caps: CapabilityRegistry;
