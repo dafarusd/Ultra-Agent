@@ -1,6 +1,7 @@
 import { SecureVault } from '../security/SecureVault';
 import { CostTracker } from '../services/CostTracker';
 import { Logger } from '../utils/Logger';
+import type { UltraModelDef, RecommendInput, ModelRecommendation } from '../types/ultra';
 
 export interface ModelDef {
   id: string;
@@ -9,6 +10,9 @@ export interface ModelDef {
   maxTokens: number;
   tier: 'low' | 'medium' | 'high';
   strengths: string[];
+  contextWindow: number;
+  speedTier: 'fast' | 'balanced' | 'heavy';
+  inferredStrengths: Array<'code' | 'analysis' | 'chat' | 'long_context' | 'tool_use'>;
 }
 
 interface CompletionResult {
@@ -43,6 +47,9 @@ export class ModelRouter {
       maxTokens: 8192,
       tier: 'high',
       strengths: ['general', 'code', 'reasoning', 'conversation'],
+      contextWindow: 131072,
+      speedTier: 'heavy',
+      inferredStrengths: ['code', 'analysis', 'chat', 'tool_use'],
     });
   }
 
@@ -82,11 +89,31 @@ export class ModelRouter {
           maxTokens: 4096,
           tier: 'medium',
           strengths: [],
+          contextWindow: 8192,
+          speedTier: this.inferSpeed(savedModel),
+          inferredStrengths: this.inferStrengths(savedModel),
         });
         this.defaultModel = savedModel;
         this.logger.info(`Using saved model (not yet discovered): ${savedModel}`);
       }
     }
+  }
+
+  private inferStrengths(id: string): Array<'code' | 'analysis' | 'chat' | 'long_context' | 'tool_use'> {
+    const m = id.toLowerCase();
+    const strengths: Array<'code' | 'analysis' | 'chat' | 'long_context' | 'tool_use'> = ['chat'];
+    if (m.includes('code') || m.includes('coder') || m.includes('deepseek')) strengths.push('code');
+    if (m.includes('70b') || m.includes('large') || m.includes('405b')) strengths.push('analysis');
+    if (m.includes('long') || m.includes('128k') || m.includes('200k')) strengths.push('long_context');
+    strengths.push('tool_use');
+    return strengths;
+  }
+
+  private inferSpeed(id: string): 'fast' | 'balanced' | 'heavy' {
+    const m = id.toLowerCase();
+    if (m.includes('70b') || m.includes('405b') || m.includes('72b')) return 'heavy';
+    if (m.includes('8b') || m.includes('mini') || m.includes('small') || m.includes('7b')) return 'fast';
+    return 'balanced';
   }
 
   private async discoverModels(): Promise<void> {
@@ -104,21 +131,31 @@ export class ModelRouter {
       clearTimeout(timeout);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      if (data?.data) {
-        for (const m of data.data) {
-          if (!this.models.has(m.id)) {
-            this.registerModel({
-              id: m.id,
-              costPer1kInput: 0.01,
-              costPer1kOutput: 0.01,
-              maxTokens: 4096,
-              tier: 'medium',
-              strengths: [],
-            });
-          }
+      const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+      for (const m of list) {
+        const contextWindow = Number(
+          m.context_length ?? m.context_window ?? m.max_context_tokens ?? m.input_token_limit ?? 8192
+        ) || 8192;
+        if (!this.models.has(m.id)) {
+          this.registerModel({
+            id: m.id,
+            costPer1kInput: 0.01,
+            costPer1kOutput: 0.01,
+            maxTokens: Math.min(contextWindow, 4096),
+            tier: 'medium',
+            strengths: [],
+            contextWindow,
+            speedTier: this.inferSpeed(m.id),
+            inferredStrengths: this.inferStrengths(m.id),
+          });
+        } else {
+          const existing = this.models.get(m.id)!;
+          existing.contextWindow = contextWindow;
+          existing.speedTier = this.inferSpeed(m.id);
+          existing.inferredStrengths = this.inferStrengths(m.id);
         }
-        this.logger.info(`Discovered ${data.data.length} models`);
       }
+      this.logger.info(`Discovered ${list.length} models`);
     } catch (error: any) {
       this.logger.warn('Model discovery failed: ' + error.message);
     }
@@ -155,6 +192,53 @@ export class ModelRouter {
       }
     }
     return cheapest;
+  }
+
+  getModel(modelId: string): UltraModelDef | undefined {
+    const m = this.models.get(modelId);
+    if (!m) return undefined;
+    return {
+      id: m.id,
+      contextWindow: m.contextWindow,
+      speedTier: m.speedTier,
+      strengths: m.inferredStrengths,
+    };
+  }
+
+  getContextWindow(modelId?: string): number {
+    const id = modelId || this.defaultModel;
+    const m = this.models.get(id);
+    return m?.contextWindow ?? 8192;
+  }
+
+  recommendModel(input: RecommendInput): ModelRecommendation | null {
+    const current = this.models.get(input.currentModel);
+    const all = Array.from(this.models.values());
+    if (!all.length) return null;
+
+    const score = (m: ModelDef) => {
+      let s = 0;
+      if (m.contextWindow >= input.requiredContextTokens) s += 30;
+      if (input.taskType === 'code' && m.inferredStrengths.includes('code')) s += 35;
+      if (input.taskType === 'analysis' && m.inferredStrengths.includes('analysis')) s += 20;
+      if (input.taskType === 'conversation' && m.inferredStrengths.includes('chat')) s += 15;
+      if (input.requiredContextTokens > 12000 && m.inferredStrengths.includes('long_context')) s += 20;
+      if (input.taskType === 'simple' && m.speedTier === 'fast') s += 10;
+      return s;
+    };
+
+    const ranked = all.map(m => ({ m, s: score(m) })).sort((a, b) => b.s - a.s);
+    const best = ranked[0]?.m;
+    if (!best || !current || best.id === current.id) return null;
+
+    const currentScore = ranked.find(x => x.m.id === current.id)?.s ?? 0;
+    const gap = ranked[0].s - currentScore;
+    if (gap < 15) return null;
+
+    return {
+      recommended: best.id,
+      reason: `Better fit: task=${input.taskType}, context≈${input.requiredContextTokens} tokens. ${best.id} scores ${ranked[0].s} vs ${current.id} at ${currentScore}.`,
+    };
   }
 
   async complete(

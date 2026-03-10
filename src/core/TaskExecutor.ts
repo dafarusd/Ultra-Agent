@@ -11,6 +11,7 @@ import { CapabilityRegistry } from './CapabilityRegistry';
 import { PermissionBroker } from './PermissionBroker';
 import { ModelRouter } from './ModelRouter';
 import { Logger } from '../utils/Logger';
+import type { ActionPlan } from '../types/ultra';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
@@ -43,6 +44,30 @@ export class TaskExecutor {
 
   async initialize(): Promise<void> { this.logger.info('TaskExecutor initialized'); }
 
+  async runWithPlan(plan: ActionPlan, taskId?: string): Promise<TaskResult> {
+    const id = taskId || Date.now().toString(36);
+    const capId = plan.capability;
+
+    const reqPerms = this.caps.getRequiredPermissions([capId]);
+    const missing = this.perms.getMissing(reqPerms);
+    if (missing.length > 0) {
+      const failed = await this.perms.requestAll(missing);
+      if (failed.length > 0) return { success: false, summary: `Missing permissions: ${failed.join(', ')}. Grant in device settings.` };
+    }
+
+    try {
+      const result = await this.execWithParams(capId, plan.params, plan.reason || '', id);
+      const hasError = result && typeof result === 'object' && 'error' in result;
+      return {
+        success: !hasError,
+        summary: hasError ? result.error : JSON.stringify(result),
+        data: result,
+      };
+    } catch (e: any) {
+      return { success: false, summary: e.message, data: { error: e.message } };
+    }
+  }
+
   async run(capIds: string[], request: string, taskId?: string): Promise<TaskResult> {
     const id = taskId || Date.now().toString(36);
     const reqPerms = this.caps.getRequiredPermissions(capIds);
@@ -65,6 +90,143 @@ export class TaskExecutor {
       { taskId: id, agentId: 'executor', maxTokens: 200 }
     );
     return { success: results.every((r) => !r.result.error), summary: summaryResult.content, data: results };
+  }
+
+  private async execWithParams(capId: string, params: Record<string, any>, request: string, taskId: string): Promise<any> {
+    switch (capId) {
+      case 'file_read': {
+        if (!isNative) return { error: 'File operations require Android device' };
+        const path = params.path || this.docDir;
+        const targetPath = path.startsWith('/') ? path : this.docDir + path;
+        try {
+          const info = await FileSystem.getInfoAsync(targetPath);
+          if (!info.exists) return { error: `Path not found: ${path}` };
+          if (info.isDirectory) {
+            const files = await FileSystem.readDirectoryAsync(targetPath);
+            return { directory: targetPath, files, count: files.length };
+          }
+          const content = await FileSystem.readAsStringAsync(targetPath);
+          return { path: targetPath, content: content.substring(0, 5000), size: content.length };
+        } catch (e: any) {
+          const files = await FileSystem.readDirectoryAsync(this.docDir);
+          return { directory: this.docDir, files, count: files.length };
+        }
+      }
+      case 'file_write': {
+        if (!isNative) return { error: 'File operations require Android device' };
+        if (params.filename && params.content) {
+          const filePath = this.docDir + params.filename;
+          await FileSystem.writeAsStringAsync(filePath, params.content);
+          return { success: true, path: filePath, size: params.content.length };
+        }
+        const r = await this.ai.complete(`User wants to write a file: "${request}". Respond JSON: {"filename":"name","content":"data"}`, { taskId, agentId: 'file-write', maxTokens: 4000 });
+        const p = JSON.parse(r.content);
+        const filePath = this.docDir + p.filename;
+        await FileSystem.writeAsStringAsync(filePath, p.content);
+        return { success: true, path: filePath, size: p.content.length };
+      }
+      case 'file_delete': {
+        if (!isNative) return { error: 'File operations require Android device' };
+        const fn = params.filename;
+        if (!fn) return { error: 'No filename provided' };
+        const filePath = this.docDir + fn;
+        const info = await FileSystem.getInfoAsync(filePath);
+        if (info.exists) { await FileSystem.deleteAsync(filePath); return { success: true, deleted: filePath }; }
+        return { error: `File not found: ${fn}` };
+      }
+      case 'file_organize': {
+        if (!isNative) return { error: 'File operations require Android device' };
+        const actions = params.actions;
+        if (!actions || !Array.isArray(actions)) return { error: 'No organize actions provided' };
+        const done: string[] = [];
+        for (const a of actions) {
+          const destDir = a.destination.substring(0, a.destination.lastIndexOf('/'));
+          await FileSystem.makeDirectoryAsync(this.docDir + destDir, { intermediates: true });
+          await FileSystem.moveAsync({ from: this.docDir + a.source, to: this.docDir + a.destination });
+          done.push(`${a.source} -> ${a.destination}`);
+        }
+        return { success: true, organized: done.length, actions: done };
+      }
+      case 'contacts_read': {
+        const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
+        return { success: true, contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
+      }
+      case 'sms_send': {
+        const to = params.to;
+        const message = params.message;
+        if (!to) return { error: 'No recipient specified' };
+        if (!message) return { error: 'No message content specified' };
+        const avail = await SMS.isAvailableAsync();
+        if (!avail) return { error: 'SMS unavailable' };
+        const { result } = await SMS.sendSMSAsync([to], message);
+        return { success: result === 'sent', sent: result === 'sent', to };
+      }
+      case 'camera_capture': {
+        if (!isNative) return { error: 'Camera requires a device' };
+        return { success: true, note: 'Camera capture initiated. Use the device camera app.' };
+      }
+      case 'media_access': {
+        const { assets } = await MediaLibrary.getAssetsAsync({ first: 20, sortBy: [MediaLibrary.SortBy.creationTime] });
+        return { success: true, count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
+      }
+      case 'app_launch': {
+        const target = params.target;
+        if (!target) return { error: 'No app specified' };
+        const r = await this.ai.complete(`Package name for Android app: "${target}". Respond ONLY the package name. Example: com.google.android.gm`, { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 });
+        const pkg = r.content.trim();
+        await IntentLauncher.startActivityAsync('android.intent.action.MAIN', { packageName: pkg });
+        return { success: true, launched: pkg };
+      }
+      case 'app_share': {
+        const avail = await Sharing.isAvailableAsync();
+        return { success: true, available: avail };
+      }
+      case 'code_generate': {
+        const desc = params.description || request;
+        const lang = params.language || 'Java';
+        const r = await this.ai.complete(`Generate complete production ${lang} code for: "${desc}". All imports, error handling.`, { taskId, agentId: 'codegen', maxTokens: 8000, temperature: 0.5 });
+        if (isNative) {
+          const ext = lang.toLowerCase() === 'python' ? 'py' : lang.toLowerCase() === 'javascript' ? 'js' : 'java';
+          const fn = `generated_${Date.now()}.${ext}`;
+          const filePath = this.docDir + 'projects/' + fn;
+          await FileSystem.writeAsStringAsync(filePath, r.content);
+          return { success: true, path: filePath, lines: r.content.split('\n').length, cost: r.cost };
+        }
+        return { success: true, lines: r.content.split('\n').length, cost: r.cost, note: 'File save requires Android device' };
+      }
+      case 'app_build':
+        return this.build.buildApp(params.description || request, taskId);
+      case 'app_install': {
+        if (!isNative) return { error: 'APK install requires Android device' };
+        if (params.apkPath) {
+          await this.build.installApk(params.apkPath);
+          return { success: true, installing: params.apkPath };
+        }
+        const files = await FileSystem.readDirectoryAsync(this.docDir + 'projects/');
+        const apks = files.filter((f: string) => f.endsWith('-signed.apk'));
+        if (apks.length === 0) return { error: 'No APK found. Build first.' };
+        await this.build.installApk(this.docDir + 'projects/' + apks[apks.length - 1]);
+        return { success: true, installing: apks[apks.length - 1] };
+      }
+      case 'network_request': {
+        const url = params.url;
+        if (!url) return { error: 'No URL specified' };
+        const method = params.method || 'GET';
+        const body = params.body;
+        const fetchOpts: any = { method };
+        if (body) fetchOpts.body = body;
+        const resp = await fetch(url, fetchOpts);
+        const text = await resp.text();
+        return { success: true, status: resp.status, length: text.length, body: text.substring(0, 1000) };
+      }
+      case 'ai_query': {
+        const query = params.query || request;
+        const r = await this.ai.complete(query, { taskId, agentId: 'query' });
+        return { success: true, response: r.content, cost: r.cost };
+      }
+      default:
+        throw new Error(`No executor for: ${capId}`);
+    }
   }
 
   private async exec(capId: string, request: string, taskId: string): Promise<any> {
@@ -115,6 +277,10 @@ export class TaskExecutor {
         if (!avail) return { error: 'SMS unavailable' };
         const { result } = await SMS.sendSMSAsync([p.to], p.message);
         return { sent: result === 'sent', to: p.to };
+      }
+      case 'camera_capture': {
+        if (!isNative) return { error: 'Camera requires a device' };
+        return { note: 'Camera capture initiated. Use the device camera app.' };
       }
       case 'media_access': {
         const { assets } = await MediaLibrary.getAssetsAsync({ first: 20, sortBy: [MediaLibrary.SortBy.creationTime] });

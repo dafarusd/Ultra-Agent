@@ -15,23 +15,21 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SecureVault } from "@/src/security/SecureVault";
-import { AgentCore, ExecutionResult, setAgentCoreInstance } from "@/src/core/AgentCore";
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "agent" | "system" | "confirm";
-  content: string;
-  timestamp: number;
-  cost?: number;
-  agentCount?: number;
-  originalRequest?: string;
-}
+import { AgentCore, setAgentCoreInstance } from "@/src/core/AgentCore";
+import type { ExecuteArgs } from "@/src/core/AgentCore";
+import type { ChatMessage, UltraExecutionResult, ConversationMeta, PromptTrace } from "@/src/types/ultra";
+import ConversationList from "@/components/ConversationList";
+import PromptViewer from "@/components/PromptViewer";
 
 const ACCENT = "#00ff88";
 const BG = "#000000";
 const SURFACE = "#111111";
 const SURFACE2 = "#1a1a1a";
 const DIM = "#666666";
+const AI_COLOR = "#6bc5ff";
+const ULTRA_COLOR = ACCENT;
+const WARN_COLOR = "#ff6600";
+const BLOCKED_COLOR = "#ff4444";
 
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
@@ -41,7 +39,17 @@ export default function ChatScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState("Initializing...");
   const [agentCore, setAgentCore] = useState<AgentCore | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationTitle, setConversationTitle] = useState("Agent Ultra");
+  const [convListVisible, setConvListVisible] = useState(false);
+  const [conversations, setConversations] = useState<ConversationMeta[]>([]);
+  const [promptViewerVisible, setPromptViewerVisible] = useState(false);
+  const [selectedTrace, setSelectedTrace] = useState<PromptTrace | null>(null);
+  const [pendingReplay, setPendingReplay] = useState<{
+    userInput: string;
+    type: "approval" | "model_switch";
+    recommendedModel?: string;
+  } | null>(null);
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
@@ -62,32 +70,54 @@ export default function ChatScreen() {
     ).start();
   }, [pulseAnim]);
 
+  const reloadMessages = useCallback(
+    async (core: AgentCore, convId: string) => {
+      const cm = core.getConversationManager();
+      const conv = await cm.loadConversation(convId);
+      if (conv) {
+        setMessages([...conv.messages].reverse());
+        setConversationTitle(conv.title);
+      }
+    },
+    []
+  );
+
+  const refreshConversations = useCallback(
+    async (core: AgentCore) => {
+      const cm = core.getConversationManager();
+      const list = await cm.listConversations();
+      setConversations(list);
+    },
+    []
+  );
+
   useEffect(() => {
     async function init() {
       try {
         const vault = await SecureVault.initialize();
-        const core = new AgentCore(vault, (msg: string, type: string) => {
+        const core = new AgentCore(vault, (msg: string, _type: string) => {
           setStatus(msg);
-          if (type === "system" || type === "agent") {
-            addMessage("system", msg);
-          }
         });
         await core.initialize();
         setAgentCore(core);
         setAgentCoreInstance(core);
         setStatus("Ready");
 
+        const cm = core.getConversationManager();
+        let activeId = await cm.getMostRecentConversationId();
+        if (!activeId) {
+          const conv = await cm.createConversation();
+          activeId = conv.id;
+        }
+        setConversationId(activeId);
+        await reloadMessages(core, activeId);
+        await refreshConversations(core);
+
         if (!core.hasApiKey()) {
-          addMessage(
-            "system",
-            "Welcome to Agent Ultra. Add your Venice API key in Settings to get started."
-          );
-        } else {
-          addMessage("system", "Agent Ultra online. All systems operational.");
+          setStatus("No API key");
         }
       } catch (err: any) {
         setStatus("Init failed");
-        addMessage("system", "Initialization error: " + err.message);
       }
     }
     init();
@@ -105,156 +135,267 @@ export default function ChatScreen() {
     }, [agentCore])
   );
 
-  const addMessage = useCallback(
-    (role: ChatMessage["role"], content: string, extra?: Partial<ChatMessage>) => {
-      const msg: ChatMessage = {
-        id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-        role,
-        content,
-        timestamp: Date.now(),
-        ...extra,
-      };
-      setMessages((prev) => [msg, ...prev]);
+  const handleResult = useCallback(
+    async (result: UltraExecutionResult, core: AgentCore, convId: string) => {
+      switch (result.type) {
+        case "model_switch_request":
+          setPendingReplay({
+            userInput: result.data?.replayUserInput || "",
+            type: "model_switch",
+            recommendedModel: result.data?.recommendedModel,
+          });
+          break;
+        case "approval_required":
+          setPendingReplay({
+            userInput: result.data?.replayUserInput || "",
+            type: "approval",
+          });
+          break;
+        default:
+          break;
+      }
+      await reloadMessages(core, convId);
+      await refreshConversations(core);
     },
-    []
+    [reloadMessages, refreshConversations]
   );
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || isProcessing || !agentCore) return;
+    if (!text || isProcessing || !agentCore || !conversationId) return;
     setInput("");
-    addMessage("user", text);
-
-    if (pendingConfirm) {
-      const confirmed = text.toLowerCase() === "yes";
-      setIsProcessing(true);
-      setStatus("Processing confirmation...");
-      try {
-        const result = await agentCore.handleConfirmation(confirmed, pendingConfirm);
-        handleResult(result);
-      } catch (err: any) {
-        addMessage("system", "Error: " + err.message);
-      }
-      setPendingConfirm(null);
-      setIsProcessing(false);
-      setStatus("Ready");
-      return;
-    }
-
     setIsProcessing(true);
     setStatus("Processing...");
+
     try {
-      const result = await agentCore.execute(text);
-      handleResult(result);
+      const result = await agentCore.execute({
+        conversationId,
+        userInput: text,
+      });
+      await handleResult(result, agentCore, conversationId);
     } catch (err: any) {
-      addMessage("system", "Error: " + err.message);
+      await reloadMessages(agentCore, conversationId);
     }
     setIsProcessing(false);
     setStatus("Ready");
-  }, [input, isProcessing, agentCore, pendingConfirm, addMessage]);
+  }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages]);
 
-  const handleResult = useCallback(
-    (result: ExecutionResult) => {
-      switch (result.type) {
-        case "result":
-          addMessage("agent", result.summary || "Done.", {
-            cost: result.cost,
-            agentCount: result.agentCount,
-          });
-          break;
-        case "clarify":
-          addMessage("agent", result.question || "Could you clarify?");
-          break;
-        case "confirm":
-          addMessage("confirm", result.warning || "Confirm?");
-          setPendingConfirm(result.warning || "");
-          break;
-        case "error":
-          addMessage("system", result.error || "Unknown error");
-          break;
+  const handleApprove = useCallback(async () => {
+    if (!agentCore || !conversationId || !pendingReplay) return;
+    const replay = pendingReplay;
+    setPendingReplay(null);
+    setIsProcessing(true);
+    setStatus("Executing approved action...");
+
+    try {
+      const args: ExecuteArgs = {
+        conversationId,
+        userInput: replay.userInput,
+        replay: true,
+      };
+      if (replay.type === "approval") {
+        args.approvedAction = true;
+      } else if (replay.type === "model_switch") {
+        args.approvedModel = replay.recommendedModel;
       }
+      const result = await agentCore.execute(args);
+      await handleResult(result, agentCore, conversationId);
+    } catch (err: any) {
+      await reloadMessages(agentCore, conversationId);
+    }
+    setIsProcessing(false);
+    setStatus("Ready");
+  }, [agentCore, conversationId, pendingReplay, handleResult, reloadMessages]);
+
+  const handleDeny = useCallback(async () => {
+    if (!agentCore || !conversationId || !pendingReplay) return;
+    const replay = pendingReplay;
+    setPendingReplay(null);
+
+    if (replay.type === "model_switch") {
+      setIsProcessing(true);
+      setStatus("Continuing with current model...");
+      try {
+        const result = await agentCore.execute({
+          conversationId,
+          userInput: replay.userInput,
+          replay: true,
+          skipModelSwitchPrompt: true,
+        });
+        await handleResult(result, agentCore, conversationId);
+      } catch (err: any) {
+        await reloadMessages(agentCore, conversationId);
+      }
+      setIsProcessing(false);
+      setStatus("Ready");
+    } else {
+      const cm = agentCore.getConversationManager();
+      await cm.addMessage(conversationId, {
+        id: `msg_${Math.random().toString(36).slice(2)}_${Date.now()}`,
+        role: "assistant",
+        content: "Cancelled.",
+        createdAt: Date.now(),
+        source: "ultra",
+      });
+      await reloadMessages(agentCore, conversationId);
+    }
+  }, [agentCore, conversationId, pendingReplay, handleResult, reloadMessages]);
+
+  const handleNewChat = useCallback(async () => {
+    if (!agentCore) return;
+    const cm = agentCore.getConversationManager();
+    const conv = await cm.createConversation();
+    setConversationId(conv.id);
+    setMessages([]);
+    setConversationTitle("New Chat");
+    setPendingReplay(null);
+    setConvListVisible(false);
+    await refreshConversations(agentCore);
+  }, [agentCore, refreshConversations]);
+
+  const handleSelectConversation = useCallback(
+    async (id: string) => {
+      if (!agentCore) return;
+      setConversationId(id);
+      setPendingReplay(null);
+      await reloadMessages(agentCore, id);
+      setConvListVisible(false);
     },
-    [addMessage]
+    [agentCore, reloadMessages]
   );
+
+  const handleDeleteConversation = useCallback(
+    async (id: string) => {
+      if (!agentCore) return;
+      const cm = agentCore.getConversationManager();
+      await cm.deleteConversation(id);
+      if (id === conversationId) {
+        const remaining = await cm.listConversations();
+        if (remaining.length > 0) {
+          setConversationId(remaining[0].id);
+          await reloadMessages(agentCore, remaining[0].id);
+        } else {
+          const conv = await cm.createConversation();
+          setConversationId(conv.id);
+          setMessages([]);
+          setConversationTitle("New Chat");
+        }
+      }
+      await refreshConversations(agentCore);
+    },
+    [agentCore, conversationId, reloadMessages, refreshConversations]
+  );
+
+  const openConvList = useCallback(async () => {
+    if (agentCore) await refreshConversations(agentCore);
+    setConvListVisible(true);
+  }, [agentCore, refreshConversations]);
+
+  const openPromptViewer = useCallback((trace: PromptTrace) => {
+    setSelectedTrace(trace);
+    setPromptViewerVisible(true);
+  }, []);
+
+  const getMessageStyle = (msg: ChatMessage) => {
+    if (msg.role === "user") return "user" as const;
+    if (msg.role === "system") return "system" as const;
+    if (msg.source === "ultra") {
+      const risk = msg.meta?.risk;
+      if (risk === "dangerous" || risk === "blocked") return "blocked" as const;
+      return "ultra" as const;
+    }
+    return "ai" as const;
+  };
 
   const renderMessage = useCallback(
     ({ item }: { item: ChatMessage }) => {
-      const isUser = item.role === "user";
-      const isSystem = item.role === "system";
-      const isConfirm = item.role === "confirm";
+      const msgStyle = getMessageStyle(item);
+      const isUser = msgStyle === "user";
+      const trace = item.meta?.promptTrace;
+      const isApprovalOrSwitch =
+        item.content.startsWith("Approval required") ||
+        item.content.startsWith("I recommend switching");
+      const isLatestMessage = messages.length > 0 && item.id === messages[0].id;
+      const showPendingButtons = !!pendingReplay && isApprovalOrSwitch && isLatestMessage;
 
       return (
         <View
           style={[
             styles.messageBubble,
-            isUser
-              ? styles.userBubble
-              : isConfirm
-              ? styles.confirmBubble
-              : isSystem
-              ? styles.systemBubble
-              : styles.agentBubble,
+            msgStyle === "user" ? styles.userBubble :
+            msgStyle === "ultra" ? styles.ultraBubble :
+            msgStyle === "ai" ? styles.aiBubble :
+            msgStyle === "blocked" ? styles.blockedBubble :
+            styles.systemBubble,
           ]}
         >
           {!isUser && (
             <View style={styles.messageHeader}>
-              {isConfirm ? (
-                <Ionicons name="warning" size={14} color="#ff6600" />
-              ) : isSystem ? (
-                <Ionicons name="information-circle" size={14} color={DIM} />
+              {msgStyle === "ultra" ? (
+                <MaterialCommunityIcons name="robot" size={14} color={ULTRA_COLOR} />
+              ) : msgStyle === "ai" ? (
+                <Ionicons name="sparkles" size={14} color={AI_COLOR} />
+              ) : msgStyle === "blocked" ? (
+                <Ionicons name="shield" size={14} color={BLOCKED_COLOR} />
               ) : (
-                <MaterialCommunityIcons name="robot" size={14} color={ACCENT} />
+                <Ionicons name="information-circle" size={14} color={DIM} />
               )}
               <Text
                 style={[
                   styles.roleLabel,
-                  isConfirm
-                    ? { color: "#ff6600" }
-                    : isSystem
-                    ? { color: DIM }
-                    : { color: ACCENT },
+                  msgStyle === "ultra" ? { color: ULTRA_COLOR } :
+                  msgStyle === "ai" ? { color: AI_COLOR } :
+                  msgStyle === "blocked" ? { color: BLOCKED_COLOR } :
+                  { color: DIM },
                 ]}
               >
-                {isConfirm ? "CONFIRM" : isSystem ? "SYSTEM" : "AGENT"}
+                {msgStyle === "ultra" ? "ULTRA" :
+                 msgStyle === "ai" ? "AI" :
+                 msgStyle === "blocked" ? "BLOCKED" :
+                 "SYSTEM"}
               </Text>
+              {item.meta?.capability && (
+                <Text style={styles.capBadge}>{item.meta.capability}</Text>
+              )}
             </View>
           )}
           <Text style={[styles.messageText, isUser && styles.userText]}>
             {item.content}
           </Text>
-          {(item.cost !== undefined || item.agentCount !== undefined) && (
-            <View style={styles.metaRow}>
-              {item.cost !== undefined && (
-                <View style={styles.metaItem}>
-                  <Ionicons name="cash-outline" size={10} color={DIM} />
-                  <Text style={styles.metaText}>
-                    ${item.cost.toFixed(4)}
-                  </Text>
-                </View>
-              )}
-              {item.agentCount !== undefined && (
-                <View style={styles.metaItem}>
-                  <MaterialCommunityIcons
-                    name="account-group"
-                    size={10}
-                    color={DIM}
-                  />
-                  <Text style={styles.metaText}>
-                    {item.agentCount} agents
-                  </Text>
-                </View>
-              )}
-            </View>
+          {trace && !isUser && (
+            <Pressable
+              onPress={() => openPromptViewer(trace)}
+              style={styles.viewPromptBtn}
+              hitSlop={8}
+            >
+              <Ionicons name="eye-outline" size={12} color={DIM} />
+              <Text style={styles.viewPromptText}>View Prompt</Text>
+            </Pressable>
           )}
-          {isConfirm && (
-            <Text style={styles.confirmHint}>
-              Reply "yes" to proceed or anything else to cancel
-            </Text>
+          {showPendingButtons && (
+            <View style={styles.approvalRow}>
+              <Pressable
+                onPress={handleApprove}
+                style={[styles.approvalBtn, styles.approveBtn]}
+                disabled={isProcessing}
+              >
+                <Ionicons name="checkmark" size={16} color="#000" />
+                <Text style={styles.approveBtnText}>Approve</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleDeny}
+                style={[styles.approvalBtn, styles.denyBtn]}
+                disabled={isProcessing}
+              >
+                <Ionicons name="close" size={16} color="#fff" />
+                <Text style={styles.denyBtnText}>Deny</Text>
+              </Pressable>
+            </View>
           )}
         </View>
       );
     },
-    []
+    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny]
   );
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -264,10 +405,13 @@ export default function ChatScreen() {
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Animated.View
-            style={[styles.statusDot, { opacity: pulseAnim }]}
-          />
-          <Text style={styles.headerTitle}>Agent Ultra</Text>
+          <Pressable onPress={openConvList} style={styles.convListBtn} testID="open-conversations">
+            <Ionicons name="menu" size={22} color="#ffffff" />
+          </Pressable>
+          <Animated.View style={[styles.statusDot, { opacity: pulseAnim }]} />
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {conversationTitle}
+          </Text>
         </View>
         <View style={styles.headerRight}>
           <Text style={styles.statusText}>{status}</Text>
@@ -331,11 +475,7 @@ export default function ChatScreen() {
               ref={inputRef}
               value={input}
               onChangeText={setInput}
-              placeholder={
-                pendingConfirm
-                  ? 'Type "yes" to confirm...'
-                  : "Ask Agent Ultra..."
-              }
+              placeholder="Ask Agent Ultra..."
               placeholderTextColor={DIM}
               style={styles.input}
               multiline
@@ -361,14 +501,28 @@ export default function ChatScreen() {
               <Ionicons
                 name="send"
                 size={20}
-                color={
-                  !input.trim() || isProcessing ? DIM : BG
-                }
+                color={!input.trim() || isProcessing ? DIM : BG}
               />
             </Pressable>
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <ConversationList
+        visible={convListVisible}
+        conversations={conversations}
+        currentConversationId={conversationId}
+        onSelect={handleSelectConversation}
+        onDelete={handleDeleteConversation}
+        onNewChat={handleNewChat}
+        onClose={() => setConvListVisible(false)}
+      />
+
+      <PromptViewer
+        visible={promptViewerVisible}
+        trace={selectedTrace}
+        onClose={() => setPromptViewerVisible(false)}
+      />
     </View>
   );
 }
@@ -382,7 +536,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: SURFACE,
@@ -391,6 +545,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    flex: 1,
+  },
+  convListBtn: {
+    padding: 4,
   },
   statusDot: {
     width: 8,
@@ -400,8 +558,9 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: "#ffffff",
-    fontSize: 18,
+    fontSize: 16,
     fontFamily: "Inter_700Bold",
+    flex: 1,
   },
   headerRight: {
     flexDirection: "row",
@@ -449,23 +608,29 @@ const styles = StyleSheet.create({
     backgroundColor: ACCENT,
     alignSelf: "flex-end",
   },
-  agentBubble: {
+  ultraBubble: {
     backgroundColor: SURFACE,
     alignSelf: "flex-start",
     borderWidth: 1,
     borderColor: "#1a3a2a",
+  },
+  aiBubble: {
+    backgroundColor: SURFACE,
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#1a2a3a",
+  },
+  blockedBubble: {
+    backgroundColor: "#1a0a0a",
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#3a1a1a",
   },
   systemBubble: {
     backgroundColor: SURFACE2,
     alignSelf: "flex-start",
     borderWidth: 1,
     borderColor: "#222222",
-  },
-  confirmBubble: {
-    backgroundColor: "#1a1200",
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderColor: "#4a3000",
   },
   messageHeader: {
     flexDirection: "row",
@@ -477,6 +642,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: "Inter_700Bold",
     textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  capBadge: {
+    fontSize: 9,
+    color: DIM,
+    fontFamily: "Inter_400Regular",
+    backgroundColor: "#1a1a1a",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    overflow: "hidden",
+    marginLeft: 4,
   },
   messageText: {
     color: "#cccccc",
@@ -487,27 +664,46 @@ const styles = StyleSheet.create({
   userText: {
     color: BG,
   },
-  metaRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 6,
-  },
-  metaItem: {
+  viewPromptBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 3,
+    gap: 4,
+    marginTop: 6,
+    alignSelf: "flex-start",
   },
-  metaText: {
+  viewPromptText: {
     color: DIM,
-    fontSize: 10,
-    fontFamily: "Inter_400Regular",
-  },
-  confirmHint: {
-    color: "#996600",
     fontSize: 11,
     fontFamily: "Inter_400Regular",
-    marginTop: 6,
-    fontStyle: "italic",
+  },
+  approvalRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  approvalBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  approveBtn: {
+    backgroundColor: ACCENT,
+  },
+  denyBtn: {
+    backgroundColor: "#333",
+  },
+  approveBtnText: {
+    color: "#000",
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  denyBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
   },
   inputBar: {
     borderTopWidth: 1,
