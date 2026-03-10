@@ -33,10 +33,14 @@ const SCOPE_MAP: Record<string, string[]> = {
   dependency_resolve: ['resolve', 'dependency', 'dependencies', 'maven', 'download library', 'jar'],
   app_control: ['control', 'interact', 'tap', 'click', 'scroll', 'type into', 'automate'],
   app_test: ['test', 'run tests', 'verify', 'check app', 'e2e'],
+  self_modify: ['improve', 'evolve', 'mutate', 'self-improve', 'upgrade yourself', 'self improve'],
+  self_replicate: ['replicate', 'reproduce', 'clone', 'spawn', 'offspring', 'self-replicate', 'self replicate'],
 };
 
 const ALWAYS_APPROVE_CAPABILITIES = [
   'app_control',
+  'self_modify',
+  'self_replicate',
 ];
 
 const MODERATE_CAPABILITIES = [

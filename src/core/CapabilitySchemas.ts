@@ -154,6 +154,23 @@ const schemas: CapabilitySchema[] = [
       packageName: { type: 'string', description: 'Package name of app to test' },
     },
   },
+  {
+    capabilityId: 'self_modify',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      goal: { type: 'string', description: 'Improvement goal for the evolution cycle' },
+      maxCycles: { type: 'number', description: 'Maximum evolution cycles (default 3)' },
+    },
+  },
+  {
+    capabilityId: 'self_replicate',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      goal: { type: 'string', description: 'Optional goal for the offspring agent' },
+    },
+  },
 ];
 
 const schemaMap = new Map<string, CapabilitySchema>();

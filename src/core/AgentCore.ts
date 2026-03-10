@@ -141,6 +141,8 @@ export class AgentCore extends SimpleEmitter {
     if (t.startsWith('ask the ai') || t.startsWith('use ai to') || t.includes('when you ask the ai') || t.includes('when you talk to ai')) {
       return 'ai_instruction';
     }
+    const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
+    if (genomePatterns.test(t)) return 'command';
     const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take)\b/i.test(t);
     if (t.includes('ultra')) return 'command';
     if (imperative) return 'command';
@@ -490,11 +492,18 @@ export class AgentCore extends SimpleEmitter {
               this.emit('log', `[${progress.phase}] ${progress.message}`, 'build_progress');
             }
           );
+        } else if (plan.capability === 'self_modify' || plan.capability === 'self_replicate') {
+          this.executor.setGenomeProgressCallback((phase, msg) => {
+            this.emit('log', `[${phase}] ${msg}`, 'genome_progress');
+          });
+          execResult = await this.executor.runWithPlan(plan, taskId);
+          this.executor.setGenomeProgressCallback(null);
         } else {
           execResult = await this.executor.runWithPlan(plan, taskId);
         }
       } catch (err: any) {
         execResult = { success: false, error: err.message };
+        this.executor.setGenomeProgressCallback(null);
       }
 
       await this.ledger.logEvent({

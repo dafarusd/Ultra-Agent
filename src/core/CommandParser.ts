@@ -92,6 +92,16 @@ const rules: ParseRule[] = [
     capability: 'app_build',
     extractParams: (m) => ({ description: m[1].trim() }),
   },
+  {
+    pattern: /^(?:improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself)(?:\s+(.+))?$/i,
+    capability: 'self_modify',
+    extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
+  },
+  {
+    pattern: /^(?:replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)(?:\s+(.+))?$/i,
+    capability: 'self_replicate',
+    extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
+  },
 ];
 
 export class CommandParser {

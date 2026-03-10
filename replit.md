@@ -38,8 +38,8 @@ src/
     ProjectGenerator.ts # Topological code generation with per-file dependency context
     MavenResolver.ts    # Maven Central JAR/AAR dependency resolver with caching
     TestRunner.ts       # On-device E2E test runner via accessibility service
-    TaskExecutor.ts     # 18 capability executors (file, contacts, SMS, build, test, app control, deps)
-    CapabilityRegistry.ts  # Capability definitions with risk levels (18 capabilities)
+    TaskExecutor.ts     # 20 capability executors (file, contacts, SMS, build, test, app control, deps, genome)
+    CapabilityRegistry.ts  # Capability definitions with risk levels (20 capabilities)
     PermissionBroker.ts    # Device permission management
     AgentBus.ts         # Inter-agent message bus
     TaskGraph.ts        # Dependency-aware task graph
@@ -55,9 +55,23 @@ src/
     CostTracker.ts      # API cost tracking per call/task/day
     StorageManager.ts   # File system management with budget
     BackgroundTaskManager.ts  # Background task scheduling
+  genome/
+    types.ts            # Genome type system (Genome, Capability, MutationRecord, FitnessMetrics, etc.)
+    GenomeFactory.ts    # Default genome creation (17 capabilities, safety invariants)
+    GenomeCompiler.ts   # Genome → source files (template resolution, AI behavioral code gen)
+    GenomeValidator.ts  # Safety invariant validation, dependency graph checks
+    GenomeMutator.ts    # AI-driven mutation engine (10 mutation operations)
+    GenomeFitness.ts    # Weighted composite fitness scoring (0-100)
+    GenomeLineage.ts    # Hash chain ancestry tracking, lineage verification
+    SelfImprover.ts     # Evolution loop orchestrator (analyze → mutate → compile → build → evaluate)
+    templates/
+      BuildTemplates.ts   # Fixed build infrastructure Java sources (9 entries)
+      AgentTemplates.ts   # Handlebars-style Java templates for agent classes
+      GenomeTemplates.ts  # Java templates for GenomeManager + GenomeCompilerNative
   utils/
     Logger.ts           # Multi-level logging with file persistence
     PreferenceLearner.ts  # Pattern learning and user preferences
+    crypto.ts           # Hash utility (expo-crypto SHA-256 on native, fallback on web)
   native/
     AgentNative.ts      # Native build module TypeScript interface (writeFile, compileJava, convertToDex, packageApk, signApk, installApk, exec)
     AppController.ts    # Accessibility service TypeScript interface (screen reading, click, scroll, type, back, home)
@@ -109,7 +123,7 @@ Full self-replicating build pipeline:
 - Audit log: every exec call logged to `exec_audit.log` with timestamp and status
 - Client-side validation in AgentNative.ts mirrors native allowlist
 
-## Capabilities (18)
+## Capabilities (20)
 
 | ID | Risk | Description |
 |---|---|---|
@@ -131,6 +145,8 @@ Full self-replicating build pipeline:
 | dependency_resolve | moderate | Download Maven/JAR dependencies |
 | app_control | dangerous | Control other apps via accessibility |
 | app_test | moderate | Run E2E tests on built apps |
+| self_modify | dangerous | Evolve own genome via mutation and fitness evaluation |
+| self_replicate | dangerous | Compile genome into offspring APK |
 
 ## Agent Core Loop (9 Steps)
 
@@ -148,6 +164,7 @@ Full self-replicating build pipeline:
 
 - **Venice API**: All AI calls go through Venice API. User enters their own key in Settings. Default model: llama-3.3-70b (configurable in Settings model picker).
 - **Self-Replication**: Can design, compile, sign, and install apps as complex as itself
+- **Von Neumann Genome**: Self-evolving genome system — mutation, validation, fitness evaluation, lineage tracking, and SelfImprover evolution loop. Offspring carry their own genome and can reproduce further.
 - **AppSpec Architecture**: Rich build specification with file dependency ordering, activities, theme, Maven dependencies
 - **Programmatic UI Only**: No XML layouts (no aapt2/R.java) — all views built in code
 - **Real APK Signing**: V1 JAR signing with RSA-2048 keypair, SHA-256 digests, PKCS#7 SignedData

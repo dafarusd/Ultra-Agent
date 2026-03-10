@@ -38,6 +38,8 @@ export class CapabilityRegistry {
       { id: 'dependency_resolve', name: 'Resolve Dependencies', description: 'Download Maven/JAR dependencies from Maven Central', riskLevel: 'moderate', available: true, permissionsRequired: ['INTERNET'] },
       { id: 'app_control', name: 'App Control', description: 'Control other apps via accessibility service', riskLevel: 'dangerous', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
       { id: 'app_test', name: 'Test App', description: 'Run E2E tests on a built app via accessibility service', riskLevel: 'moderate', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
+      { id: 'self_modify', name: 'Self Modify', description: 'Evolve own genome via mutation and fitness evaluation', riskLevel: 'dangerous', available: true, permissionsRequired: [] },
+      { id: 'self_replicate', name: 'Self Replicate', description: 'Compile genome into offspring APK', riskLevel: 'dangerous', available: true, permissionsRequired: ['WRITE_EXTERNAL_STORAGE'] },
     ];
     for (const c of caps) this.capabilities.set(c.id, c);
     this.logger.info(`Registered ${this.capabilities.size} capabilities`);

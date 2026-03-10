@@ -51,6 +51,7 @@ export default function ChatScreen() {
     recommendedModel?: string;
   } | null>(null);
   const [buildPhase, setBuildPhase] = useState<string | null>(null);
+  const [genomePhase, setGenomePhase] = useState<string | null>(null);
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
@@ -100,6 +101,9 @@ export default function ChatScreen() {
           setStatus(msg);
           if (type === 'build_progress') {
             setBuildPhase(msg);
+          }
+          if (type === 'genome_progress') {
+            setGenomePhase(msg);
           }
         });
         await core.initialize();
@@ -183,6 +187,7 @@ export default function ChatScreen() {
     setIsProcessing(false);
     setStatus("Ready");
     setBuildPhase(null);
+    setGenomePhase(null);
   }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages]);
 
   const handleApprove = useCallback(async () => {
@@ -479,6 +484,12 @@ export default function ChatScreen() {
             <View style={styles.buildProgressBar}>
               <MaterialCommunityIcons name="hammer-wrench" size={14} color="#ffaa00" />
               <Text style={styles.buildProgressText}>{buildPhase}</Text>
+            </View>
+          )}
+          {genomePhase && isProcessing && (
+            <View style={styles.buildProgressBar}>
+              <MaterialCommunityIcons name="dna" size={14} color="#bb66ff" />
+              <Text style={[styles.buildProgressText, { color: '#bb66ff' }]}>{genomePhase}</Text>
             </View>
           )}
           <View style={styles.inputRow}>

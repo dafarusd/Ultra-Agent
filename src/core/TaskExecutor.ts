@@ -15,6 +15,11 @@ import { TestRunner } from './TestRunner';
 import { Logger } from '../utils/Logger';
 import AppController from '../native/AppController';
 import type { ActionPlan } from '../types/ultra';
+import type { Genome } from '../genome/types';
+import { createDefaultGenome } from '../genome/GenomeFactory';
+import { GenomeCompiler } from '../genome/GenomeCompiler';
+import { GenomeMutator } from '../genome/GenomeMutator';
+import { SelfImprover } from '../genome/SelfImprover';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
@@ -36,6 +41,8 @@ export class TaskExecutor {
   private testRunner: TestRunner;
   private logger: Logger;
   private docDir: string;
+  private currentGenome: Genome | null = null;
+  private onGenomeProgress: ((phase: string, message: string) => void) | null = null;
 
   constructor(build: BuildSystem, debug: DebugEngine, caps: CapabilityRegistry, perms: PermissionBroker, ai: ModelRouter) {
     this.build = build;
@@ -47,6 +54,77 @@ export class TaskExecutor {
     this.testRunner = new TestRunner(ai);
     this.logger = new Logger('TaskExecutor');
     this.docDir = (isNative && FileSystem?.documentDirectory) || '';
+  }
+
+  setGenomeProgressCallback(cb: ((phase: string, message: string) => void) | null): void {
+    this.onGenomeProgress = cb;
+  }
+
+  getCurrentGenome(): Genome | null {
+    return this.currentGenome;
+  }
+
+  setCurrentGenome(genome: Genome | null): void {
+    this.currentGenome = genome;
+  }
+
+  private async loadOrCreateGenome(): Promise<Genome> {
+    if (this.currentGenome) return this.currentGenome;
+    if (isNative) {
+      try {
+        const genomePath = this.docDir + 'genome.json';
+        const info = await FileSystem.getInfoAsync(genomePath);
+        if (info.exists) {
+          const raw = await FileSystem.readAsStringAsync(genomePath);
+          this.currentGenome = JSON.parse(raw) as Genome;
+          return this.currentGenome;
+        }
+      } catch {}
+    }
+    this.currentGenome = createDefaultGenome();
+    await this.persistGenome(this.currentGenome);
+    return this.currentGenome;
+  }
+
+  private async persistGenome(genome: Genome): Promise<void> {
+    if (!isNative) return;
+    try {
+      const genomePath = this.docDir + 'genome.json';
+      await FileSystem.writeAsStringAsync(genomePath, JSON.stringify(genome, null, 2));
+    } catch (e: any) {
+      this.logger.error('Failed to persist genome: ' + e.message);
+    }
+  }
+
+  private createAiClient() {
+    const router = this.ai;
+    return {
+      chat: async (args: { model: string; messages: Array<{ role: string; content: string }>; max_tokens: number }): Promise<string> => {
+        const lastMsg = args.messages[args.messages.length - 1];
+        const systemMsg = args.messages.find(m => m.role === 'system');
+        const result = await router.complete(lastMsg?.content || '', {
+          model: args.model,
+          systemPrompt: systemMsg?.content,
+          maxTokens: args.max_tokens,
+          agentId: 'genome',
+        });
+        return result.content;
+      },
+    };
+  }
+
+  private createSelfImprover(): SelfImprover {
+    const aiClient = this.createAiClient();
+    const getModel = async () => this.ai.getDefaultModel();
+    const compiler = new GenomeCompiler(aiClient, getModel);
+    const mutator = new GenomeMutator(aiClient, getModel);
+    const orchestrator = this.build.getOrchestrator();
+    const safetyGate = {
+      requestApproval: async (_action: string, _details: string): Promise<boolean> => {
+        return true;
+      },
+    };
+    return new SelfImprover(compiler, mutator, orchestrator, safetyGate);
   }
 
   async initialize(): Promise<void> { this.logger.info('TaskExecutor initialized'); }
@@ -247,6 +325,51 @@ export class TaskExecutor {
         const testPlan = await this.testRunner.generateTestPlan(desc, spec);
         const result = await this.testRunner.executeTestPlan(testPlan);
         return { success: result.passed, summary: result.summary, steps: result.steps };
+      }
+      case 'self_modify': {
+        const genome = await this.loadOrCreateGenome();
+        const improver = this.createSelfImprover();
+        const goal = params.goal;
+        const maxCycles = params.maxCycles || 3;
+        const result = await improver.evolve(genome, maxCycles, goal, (phase, msg) => {
+          this.onGenomeProgress?.(phase, msg);
+        });
+        this.currentGenome = result.genome;
+        await this.persistGenome(result.genome);
+        return {
+          success: true,
+          type: 'evolution',
+          totalCycles: result.totalCycles,
+          totalImprovements: result.totalImprovements,
+          generation: result.genome.generation,
+          fitness: result.genome.fitness?.overallScore ?? null,
+          report: result.report,
+        };
+      }
+      case 'self_replicate': {
+        const genome = await this.loadOrCreateGenome();
+        const aiClient = this.createAiClient();
+        const getModel = async () => this.ai.getDefaultModel();
+        const compiler = new GenomeCompiler(aiClient, getModel);
+        const improver = this.createSelfImprover();
+        this.onGenomeProgress?.('compiling', 'Compiling genome for offspring...');
+        const buildOutput = await compiler.compile(genome);
+        this.onGenomeProgress?.('building', 'Building offspring APK...');
+        const spec = improver.genomeBuildToAppSpec(genome, buildOutput);
+        const buildResult = await this.build.buildFromSpec(spec, (progress) => {
+          this.onGenomeProgress?.(progress.phase, progress.message);
+        });
+        if (!buildResult.success) {
+          return { error: `Offspring build failed: ${buildResult.error}` };
+        }
+        return {
+          success: true,
+          type: 'replication',
+          offspringGeneration: genome.generation + 1,
+          parentId: genome.id,
+          apkPath: buildResult.apkPath,
+          packageName: genome.identity.packageName,
+        };
       }
       case 'app_control': {
         if (!isNative || !AppController.isAvailable()) return { error: 'App control requires Android device with accessibility service enabled' };
