@@ -10,7 +10,10 @@ import { DebugEngine } from './DebugEngine';
 import { CapabilityRegistry } from './CapabilityRegistry';
 import { PermissionBroker } from './PermissionBroker';
 import { ModelRouter } from './ModelRouter';
+import { MavenResolver } from './MavenResolver';
+import { TestRunner } from './TestRunner';
 import { Logger } from '../utils/Logger';
+import AppController from '../native/AppController';
 import type { ActionPlan } from '../types/ultra';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
@@ -29,6 +32,8 @@ export class TaskExecutor {
   private caps: CapabilityRegistry;
   private perms: PermissionBroker;
   private ai: ModelRouter;
+  private maven: MavenResolver;
+  private testRunner: TestRunner;
   private logger: Logger;
   private docDir: string;
 
@@ -38,6 +43,8 @@ export class TaskExecutor {
     this.caps = caps;
     this.perms = perms;
     this.ai = ai;
+    this.maven = new MavenResolver();
+    this.testRunner = new TestRunner(ai);
     this.logger = new Logger('TaskExecutor');
     this.docDir = (isNative && FileSystem?.documentDirectory) || '';
   }
@@ -223,6 +230,68 @@ export class TaskExecutor {
         const query = params.query || request;
         const r = await this.ai.complete(query, { taskId, agentId: 'query' });
         return { success: true, response: r.content, cost: r.cost };
+      }
+      case 'dependency_resolve': {
+        if (!isNative) return { error: 'Dependency resolution requires Android device' };
+        const coords = params.coordinates;
+        if (!coords || !Array.isArray(coords)) return { error: 'coordinates array is required' };
+        const paths = await this.maven.resolveAll(coords);
+        return { success: true, resolved: paths.length, total: coords.length, paths };
+      }
+      case 'app_test': {
+        const desc = params.description || request;
+        const spec = params.spec || this.build.getLastBuiltSpec();
+        if (!spec) {
+          return { error: 'No app spec available. Build an app first, then test it.' };
+        }
+        const testPlan = await this.testRunner.generateTestPlan(desc, spec);
+        const result = await this.testRunner.executeTestPlan(testPlan);
+        return { success: result.passed, summary: result.summary, steps: result.steps };
+      }
+      case 'app_control': {
+        if (!isNative || !AppController.isAvailable()) return { error: 'App control requires Android device with accessibility service enabled' };
+        const enabled = await AppController.isServiceEnabled();
+        if (!enabled) {
+          await AppController.openAccessibilitySettings();
+          return { error: 'Accessibility service not enabled. Opening settings — please enable Agent Ultra accessibility service.' };
+        }
+        const targetPackage = params.targetPackage;
+        const action = params.action;
+        if (!targetPackage || !action) return { error: 'targetPackage and action are required' };
+        await AppController.allowPackage(targetPackage);
+        const activePackage = await AppController.getActivePackage();
+        if (activePackage !== targetPackage) return { error: `Target app ${targetPackage} is not in foreground. Current: ${activePackage}` };
+        switch (action) {
+          case 'read': {
+            const tree = await AppController.getScreenContent();
+            return { success: true, screenContent: tree };
+          }
+          case 'click': {
+            if (!params.selector) return { error: 'selector is required for click action' };
+            const clicked = await AppController.performClick(params.selector);
+            return { success: clicked, action: 'click', selector: params.selector };
+          }
+          case 'scroll': {
+            const dir = params.selector as 'up' | 'down' | 'left' | 'right' || 'down';
+            const scrolled = await AppController.performScroll(dir);
+            return { success: scrolled, action: 'scroll', direction: dir };
+          }
+          case 'type': {
+            if (!params.selector || !params.text) return { error: 'selector and text are required for type action' };
+            const typed = await AppController.performText(params.selector, params.text);
+            return { success: typed, action: 'type', selector: params.selector };
+          }
+          case 'back': {
+            const backed = await AppController.performBack();
+            return { success: backed, action: 'back' };
+          }
+          case 'home': {
+            const homed = await AppController.performHome();
+            return { success: homed, action: 'home' };
+          }
+          default:
+            return { error: `Unknown app_control action: ${action}` };
+        }
       }
       default:
         throw new Error(`No executor for: ${capId}`);

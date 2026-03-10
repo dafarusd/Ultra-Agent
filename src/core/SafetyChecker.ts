@@ -30,7 +30,14 @@ const SCOPE_MAP: Record<string, string[]> = {
   app_install: ['install'],
   network_request: ['fetch', 'request', 'download', 'http', 'api'],
   ai_query: ['ask', 'query', 'ai'],
+  dependency_resolve: ['resolve', 'dependency', 'dependencies', 'maven', 'download library', 'jar'],
+  app_control: ['control', 'interact', 'tap', 'click', 'scroll', 'type into', 'automate'],
+  app_test: ['test', 'run tests', 'verify', 'check app', 'e2e'],
 };
+
+const ALWAYS_APPROVE_CAPABILITIES = [
+  'app_control',
+];
 
 const MODERATE_CAPABILITIES = [
   'file_delete',
@@ -63,6 +70,15 @@ export class SafetyChecker {
         risk: blocked ? 'blocked' : 'dangerous',
         requiresApproval: true,
         reasons,
+      };
+    }
+
+    if (ALWAYS_APPROVE_CAPABILITIES.includes(plan.capability)) {
+      return {
+        allowed: true,
+        risk: 'dangerous',
+        requiresApproval: true,
+        reasons: ['Dangerous capability always requires explicit user approval.'],
       };
     }
 

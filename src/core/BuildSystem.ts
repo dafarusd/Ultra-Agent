@@ -1,32 +1,31 @@
-import { NativeModules, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import * as ExpoFileSystem from 'expo-file-system';
 import { ModelRouter } from './ModelRouter';
 import { DebugEngine } from './DebugEngine';
 import { StorageManager } from '../services/StorageManager';
 import { Logger } from '../utils/Logger';
+import { AppArchitect } from './AppArchitect';
+import { ProjectGenerator } from './ProjectGenerator';
+import { MavenResolver } from './MavenResolver';
+import { BuildOrchestrator } from './BuildOrchestrator';
+import type { AppSpec, BuildProgress } from '../types/appspec';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
-const AgentNative = NativeModules.AgentNative || null;
 const isNative = Platform.OS !== 'web';
 
 interface BuildResult {
   success: boolean;
   apkPath?: string;
+  spec?: AppSpec;
   error?: string;
   debugAttempts?: number;
   totalCost?: number;
 }
 
-interface BuildProject {
-  name: string;
-  packageName: string;
-  sourceFiles: Record<string, string>;
-  manifestXml: string;
-  resources: Record<string, string>;
-}
-
 const TOOL_URLS = {
   ecj: 'https://repo1.maven.org/maven2/org/eclipse/jdt/ecj/3.33.0/ecj-3.33.0.jar',
+  d8: 'https://repo1.maven.org/maven2/com/android/tools/r8/8.2.47/r8-8.2.47.jar',
+  androidJar: 'https://raw.githubusercontent.com/nicologies/AnyAndroidSdkStub/main/android-33/android.jar',
 };
 
 export class BuildSystem {
@@ -37,6 +36,8 @@ export class BuildSystem {
   private toolsReady: boolean;
   private toolsDir: string;
   private projectsDir: string;
+  private orchestrator: BuildOrchestrator | null;
+  private lastBuiltSpec: AppSpec | null;
 
   constructor(modelRouter: ModelRouter, debugEngine: DebugEngine, storage: StorageManager) {
     this.modelRouter = modelRouter;
@@ -47,6 +48,8 @@ export class BuildSystem {
     const docDir = (isNative && FileSystem?.documentDirectory) || '';
     this.toolsDir = docDir + 'build-tools/';
     this.projectsDir = docDir + 'projects/';
+    this.orchestrator = null;
+    this.lastBuiltSpec = null;
   }
 
   async initialize(): Promise<void> {
@@ -54,9 +57,12 @@ export class BuildSystem {
       this.logger.info('BuildSystem initialized (web mode - build unavailable)');
       return;
     }
-    this.toolsReady = await this.storage.fileExists(this.toolsDir + 'ecj.jar');
-    if (this.toolsReady) this.logger.info('Build tools found');
-    else this.logger.info('Build tools not installed. Will download on first build.');
+    const ecjExists = await this.storage.fileExists(this.toolsDir + 'ecj.jar');
+    const d8Exists = await this.storage.fileExists(this.toolsDir + 'd8.jar');
+    const androidJarExists = await this.storage.fileExists(this.toolsDir + 'android.jar');
+    this.toolsReady = ecjExists && d8Exists && androidJarExists;
+    if (this.toolsReady) this.logger.info('Build tools found (ecj + d8 + android.jar)');
+    else this.logger.info('Build tools not fully installed. Will download on first build.');
     const pi = await FileSystem.getInfoAsync(this.projectsDir);
     if (!pi.exists) await FileSystem.makeDirectoryAsync(this.projectsDir, { intermediates: true });
   }
@@ -67,161 +73,73 @@ export class BuildSystem {
     this.logger.info('Downloading build tools...');
     const di = await FileSystem.getInfoAsync(this.toolsDir);
     if (!di.exists) await FileSystem.makeDirectoryAsync(this.toolsDir, { intermediates: true });
-    try {
-      await FileSystem.downloadAsync(TOOL_URLS.ecj, this.toolsDir + 'ecj.jar');
-      this.logger.info('ECJ downloaded');
-    } catch (e: any) {
-      throw new Error('Failed to download ECJ: ' + e.message);
+    const downloads: Array<{ name: string; url: string; dest: string }> = [
+      { name: 'ECJ', url: TOOL_URLS.ecj, dest: this.toolsDir + 'ecj.jar' },
+      { name: 'D8/R8', url: TOOL_URLS.d8, dest: this.toolsDir + 'd8.jar' },
+      { name: 'Android SDK stubs', url: TOOL_URLS.androidJar, dest: this.toolsDir + 'android.jar' },
+    ];
+    for (const dl of downloads) {
+      const exists = await this.storage.fileExists(dl.dest);
+      if (exists) {
+        this.logger.info(`${dl.name} already downloaded`);
+        continue;
+      }
+      try {
+        await FileSystem.downloadAsync(dl.url, dl.dest);
+        this.logger.info(`${dl.name} downloaded`);
+      } catch (e: any) {
+        throw new Error(`Failed to download ${dl.name}: ${e.message}`);
+      }
     }
     this.toolsReady = true;
     this.logger.info('Build tools ready');
   }
 
-  async buildApp(description: string, taskId: string): Promise<BuildResult> {
+  getOrchestrator(): BuildOrchestrator {
+    if (!this.orchestrator) {
+      const architect = new AppArchitect(this.modelRouter);
+      const generator = new ProjectGenerator(this.modelRouter);
+      const maven = new MavenResolver();
+      this.orchestrator = new BuildOrchestrator(architect, generator, maven);
+    }
+    return this.orchestrator;
+  }
+
+  async buildApp(description: string, _taskId: string, onProgress?: (p: BuildProgress) => void): Promise<BuildResult> {
     if (!isNative) return { success: false, error: 'Build system requires Android device' };
-    let totalCost = 0;
     try {
       await this.ensureTools();
-      this.logger.info('Generating project code...');
-      const genResult = await this.modelRouter.complete(this.buildGenPrompt(description), {
-        model: this.modelRouter.selectModel('code'),
-        taskId, agentId: 'build-system', maxTokens: 8000, temperature: 0.5,
-      });
-      totalCost += genResult.cost;
-      const project = this.parseProject(genResult.content, description);
-      const projectDir = await this.writeProject(project);
-      this.logger.info('Compiling...');
-      const compResult = await this.compile(projectDir);
-      if (compResult.success) {
-        const apkPath = await this.packageApk(projectDir, project);
-        const signedPath = await this.signApk(apkPath);
-        await this.cleanArtifacts(projectDir);
-        return { success: true, apkPath: signedPath, totalCost };
-      } else {
-        this.logger.info('Compilation failed, entering debug loop...');
-        const mainKey = Object.keys(project.sourceFiles).find((k) => k.includes('MainActivity')) || Object.keys(project.sourceFiles)[0];
-        const debugResult = await this.debugEngine.debugLoop(
-          project.sourceFiles[mainKey],
-          compResult.error || 'Unknown error',
-          taskId,
-          async (fixedCode: string) => {
-            project.sourceFiles[mainKey] = fixedCode;
-            await this.writeProject(project);
-            return this.compile(projectDir);
-          }
-        );
-        totalCost += debugResult.totalCost;
-        if (debugResult.success) {
-          const apkPath = await this.packageApk(projectDir, project);
-          const signedPath = await this.signApk(apkPath);
-          await this.cleanArtifacts(projectDir);
-          return { success: true, apkPath: signedPath, debugAttempts: debugResult.attempts, totalCost };
-        }
-        return { success: false, error: `Build failed after ${debugResult.attempts} debug attempts`, debugAttempts: debugResult.attempts, totalCost };
-      }
+      const orchestrator = this.getOrchestrator();
+      const { apkPath, spec } = await orchestrator.buildFromDescription(description, undefined, onProgress);
+      this.lastBuiltSpec = spec;
+      return { success: true, apkPath, spec };
     } catch (e: any) {
       this.logger.error('Build failed: ' + e.message);
-      return { success: false, error: e.message, totalCost };
-    }
-  }
-
-  private buildGenPrompt(desc: string): string {
-    return `Generate a complete, compilable Android app.\nUser wants: "${desc}"\n\nREQUIREMENTS:\n- Pure Java, no Kotlin\n- Single Activity\n- Target API 26+\n- ALL imports included\n- Complete AndroidManifest.xml\n- Standard Android SDK APIs only\n\nRESPOND IN THIS FORMAT:\n\n===MANIFEST===\n(AndroidManifest.xml)\n\n===JAVA:com/app/MainActivity.java===\n(complete source)\n\n===LAYOUT:activity_main.xml===\n(layout XML)\n\nONLY code. No explanations.`;
-  }
-
-  private parseProject(ai: string, desc: string): BuildProject {
-    const project: BuildProject = {
-      name: desc.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30),
-      packageName: 'com.agent.generated',
-      sourceFiles: {},
-      manifestXml: '',
-      resources: {},
-    };
-    const sections = ai.split(/===(\w+)(?::(.+?))?===/);
-    for (let i = 1; i < sections.length; i += 3) {
-      const type = sections[i]?.trim();
-      const name = sections[i + 1]?.trim();
-      const content = sections[i + 2]?.trim();
-      if (!type || !content) continue;
-      if (type === 'MANIFEST') project.manifestXml = content;
-      else if (type === 'JAVA' && name) project.sourceFiles[name] = content;
-      else if (type === 'LAYOUT' && name) project.resources[name] = content;
-    }
-    if (!project.manifestXml) project.manifestXml = this.defaultManifest(project.packageName);
-    if (Object.keys(project.sourceFiles).length === 0) project.sourceFiles['com/app/MainActivity.java'] = ai;
-    return project;
-  }
-
-  private defaultManifest(pkg: string): string {
-    return `<?xml version="1.0" encoding="utf-8"?>\n<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${pkg}">\n<uses-permission android:name="android.permission.INTERNET"/>\n<application android:allowBackup="true" android:label="Generated App">\n<activity android:name=".MainActivity" android:exported="true">\n<intent-filter>\n<action android:name="android.intent.action.MAIN"/>\n<category android:name="android.intent.category.LAUNCHER"/>\n</intent-filter>\n</activity>\n</application>\n</manifest>`;
-  }
-
-  private async writeProject(project: BuildProject): Promise<string> {
-    const dir = this.projectsDir + project.name + '/';
-    await FileSystem.makeDirectoryAsync(dir + 'src/', { intermediates: true });
-    await FileSystem.makeDirectoryAsync(dir + 'res/layout/', { intermediates: true });
-    await FileSystem.makeDirectoryAsync(dir + 'bin/', { intermediates: true });
-    await FileSystem.writeAsStringAsync(dir + 'AndroidManifest.xml', project.manifestXml);
-    for (const [filePath, content] of Object.entries(project.sourceFiles)) {
-      const full = dir + 'src/' + filePath;
-      const parent = full.substring(0, full.lastIndexOf('/'));
-      await FileSystem.makeDirectoryAsync(parent, { intermediates: true });
-      await FileSystem.writeAsStringAsync(full, content);
-    }
-    for (const [name, content] of Object.entries(project.resources)) {
-      await FileSystem.writeAsStringAsync(dir + 'res/layout/' + name, content);
-    }
-    return dir;
-  }
-
-  private async compile(projectDir: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      if (!AgentNative) throw new Error('Native build module not available');
-      const srcDir = projectDir + 'src/';
-      const outDir = projectDir + 'bin/classes/';
-      const cp = this.toolsDir + 'android.jar';
-      await FileSystem.makeDirectoryAsync(outDir, { intermediates: true });
-      const result = await AgentNative.compileJava(srcDir, outDir, cp);
-      if (result.includes('ERROR') || result.includes('error:')) return { success: false, error: result };
-      return { success: true };
-    } catch (e: any) {
       return { success: false, error: e.message };
     }
   }
 
-  private async packageApk(projectDir: string, project: BuildProject): Promise<string> {
-    if (!AgentNative) throw new Error('Native build module not available');
-    const dexPath = projectDir + 'bin/classes.dex';
-    const apkPath = projectDir + 'bin/' + project.name + '.apk';
-    await AgentNative.convertToDex(projectDir + 'bin/classes/', dexPath);
-    await AgentNative.packageApk(JSON.stringify({
-      dexPath,
-      manifestPath: projectDir + 'AndroidManifest.xml',
-      resDir: projectDir + 'res/',
-      outputPath: apkPath,
-    }));
-    return apkPath;
-  }
-
-  private async signApk(apkPath: string): Promise<string> {
-    if (!AgentNative) throw new Error('Native build module not available');
-    const signed = apkPath.replace('.apk', '-signed.apk');
-    await AgentNative.signApk(apkPath, signed);
-    return signed;
+  async buildFromSpec(spec: AppSpec, onProgress?: (p: BuildProgress) => void): Promise<BuildResult> {
+    if (!isNative) return { success: false, error: 'Build system requires Android device' };
+    try {
+      await this.ensureTools();
+      const orchestrator = this.getOrchestrator();
+      const { apkPath, spec: builtSpec } = await orchestrator.buildFromSpec(spec, onProgress);
+      this.lastBuiltSpec = builtSpec;
+      return { success: true, apkPath, spec: builtSpec };
+    } catch (e: any) {
+      this.logger.error('Build from spec failed: ' + e.message);
+      return { success: false, error: e.message };
+    }
   }
 
   async installApk(apkPath: string): Promise<void> {
-    if (!isNative || !AgentNative) throw new Error('APK install requires Android device with native module');
+    if (!isNative) throw new Error('APK install requires Android device with native module');
+    const AgentNative = (await import('../native/AgentNative')).default;
     await AgentNative.installApk(apkPath);
   }
 
-  private async cleanArtifacts(projectDir: string): Promise<void> {
-    try {
-      const cd = projectDir + 'bin/classes/';
-      const info = await FileSystem.getInfoAsync(cd);
-      if (info.exists) await FileSystem.deleteAsync(cd, { idempotent: true });
-    } catch { /* best effort */ }
-  }
-
   isReady(): boolean { return this.toolsReady; }
+
+  getLastBuiltSpec(): AppSpec | null { return this.lastBuiltSpec; }
 }

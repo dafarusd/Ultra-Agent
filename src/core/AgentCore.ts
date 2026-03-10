@@ -259,7 +259,6 @@ export class AgentCore extends SimpleEmitter {
 
   async execute(args: ExecuteArgs): Promise<UltraExecutionResult> {
     if (!this.ready) return { type: 'error', message: 'Agent not initialized' };
-    if (!this.ai.hasApiKey()) return { type: 'error', message: 'Venice API key not configured. Open Settings.' };
 
     const { conversationId, userInput } = args;
     const taskId = Date.now().toString(36);
@@ -283,6 +282,19 @@ export class AgentCore extends SimpleEmitter {
         meta: {},
       };
       await this.conversations.addMessage(conversationId, userMsg);
+    }
+
+    if (!this.ai.hasApiKey()) {
+      const errMsg: ChatMessage = {
+        id: uid('msg'),
+        role: 'assistant',
+        content: 'Venice API key not configured. Open Settings to add your key.',
+        createdAt: Date.now(),
+        source: 'system',
+        meta: {},
+      };
+      await this.conversations.addMessage(conversationId, errMsg);
+      return { type: 'error', message: 'Venice API key not configured. Open Settings.' };
     }
 
     // === STEP 2: ROUTE ===
@@ -473,7 +485,10 @@ export class AgentCore extends SimpleEmitter {
         if (plan.capability === 'app_build') {
           execResult = await this.buildSystem.buildApp(
             plan.params.description || userInput,
-            taskId
+            taskId,
+            (progress) => {
+              this.emit('log', `[${progress.phase}] ${progress.message}`, 'build_progress');
+            }
           );
         } else {
           execResult = await this.executor.runWithPlan(plan, taskId);

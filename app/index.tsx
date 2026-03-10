@@ -50,6 +50,7 @@ export default function ChatScreen() {
     type: "approval" | "model_switch";
     recommendedModel?: string;
   } | null>(null);
+  const [buildPhase, setBuildPhase] = useState<string | null>(null);
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
@@ -95,8 +96,11 @@ export default function ChatScreen() {
     async function init() {
       try {
         const vault = await SecureVault.initialize();
-        const core = new AgentCore(vault, (msg: string, _type: string) => {
+        const core = new AgentCore(vault, (msg: string, type: string) => {
           setStatus(msg);
+          if (type === 'build_progress') {
+            setBuildPhase(msg);
+          }
         });
         await core.initialize();
         setAgentCore(core);
@@ -178,6 +182,7 @@ export default function ChatScreen() {
     }
     setIsProcessing(false);
     setStatus("Ready");
+    setBuildPhase(null);
   }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages]);
 
   const handleApprove = useCallback(async () => {
@@ -470,6 +475,12 @@ export default function ChatScreen() {
               <Text style={styles.processingText}>{status}</Text>
             </View>
           )}
+          {buildPhase && isProcessing && (
+            <View style={styles.buildProgressBar}>
+              <MaterialCommunityIcons name="hammer-wrench" size={14} color="#ffaa00" />
+              <Text style={styles.buildProgressText}>{buildPhase}</Text>
+            </View>
+          )}
           <View style={styles.inputRow}>
             <TextInput
               ref={inputRef}
@@ -722,6 +733,18 @@ const styles = StyleSheet.create({
     color: ACCENT,
     fontSize: 12,
     fontFamily: "Inter_400Regular",
+  },
+  buildProgressBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingBottom: 6,
+    paddingHorizontal: 4,
+  },
+  buildProgressText: {
+    color: "#ffaa00",
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
   },
   inputRow: {
     flexDirection: "row",

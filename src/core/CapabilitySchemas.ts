@@ -124,6 +124,36 @@ const schemas: CapabilitySchema[] = [
     },
     optionalParams: {},
   },
+  {
+    capabilityId: 'dependency_resolve',
+    version: 1,
+    requiredParams: {
+      coordinates: { type: 'array', description: 'Array of Maven coordinates (group:artifact:version)' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'app_control',
+    version: 1,
+    requiredParams: {
+      targetPackage: { type: 'string', description: 'Package name of app to control' },
+      action: { type: 'string', description: 'Action to perform: click, scroll, type, back, home, read' },
+    },
+    optionalParams: {
+      selector: { type: 'string', description: 'Text or content description to find the target element' },
+      text: { type: 'string', description: 'Text to input (for type action)' },
+    },
+  },
+  {
+    capabilityId: 'app_test',
+    version: 1,
+    requiredParams: {
+      description: { type: 'string', description: 'Description of what the app does (for test plan generation)' },
+    },
+    optionalParams: {
+      packageName: { type: 'string', description: 'Package name of app to test' },
+    },
+  },
 ];
 
 const schemaMap = new Map<string, CapabilitySchema>();

@@ -68,6 +68,30 @@ const rules: ParseRule[] = [
     capability: 'file_read',
     extractParams: (m) => ({ path: m[1].trim() }),
   },
+  {
+    pattern: /^(?:control|interact\s+with)\s+(.+)/i,
+    capability: 'app_control',
+    extractParams: (m) => ({ targetPackage: m[1].trim(), action: 'read' }),
+  },
+  {
+    pattern: /^(?:test|run\s+tests?\s+(?:on|for))\s+(.+)/i,
+    capability: 'app_test',
+    extractParams: (m) => ({ description: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:resolve\s+dependenc(?:y|ies)|download\s+librar(?:y|ies))\s*(.*)$/i,
+    capability: 'dependency_resolve',
+    extractParams: (m) => {
+      const raw = m[1]?.trim();
+      if (!raw) return null;
+      return { coordinates: raw.split(/[,\s]+/).filter(Boolean) };
+    },
+  },
+  {
+    pattern: /^build\s+(?:me\s+)?(?:a\s+)?(?:an?\s+)?(.+?)(?:\s+app)?$/i,
+    capability: 'app_build',
+    extractParams: (m) => ({ description: m[1].trim() }),
+  },
 ];
 
 export class CommandParser {
