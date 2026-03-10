@@ -99,6 +99,14 @@ export interface MutationRecord {
   fitnessImpact: number | null;
 }
 
+export interface TaskPerformance {
+  challengesPassed: number;
+  challengesTotal: number;
+  weightedScore: number;
+  failedChallenges: string[];
+  averageTimeMs: number;
+}
+
 export interface FitnessMetrics {
   buildSuccess: boolean;
   compilationTimeMs: number;
@@ -111,6 +119,7 @@ export interface FitnessMetrics {
   capabilityScore: number;
   overallScore: number;
   evaluatedAt: number;
+  taskPerformance: TaskPerformance | null;
 }
 
 export interface Genome {

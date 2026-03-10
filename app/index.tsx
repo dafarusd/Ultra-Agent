@@ -488,8 +488,27 @@ export default function ChatScreen() {
           )}
           {genomePhase && isProcessing && (
             <View style={styles.buildProgressBar}>
-              <MaterialCommunityIcons name="dna" size={14} color="#bb66ff" />
-              <Text style={[styles.buildProgressText, { color: '#bb66ff' }]}>{genomePhase}</Text>
+              <MaterialCommunityIcons
+                name={
+                  genomePhase.includes('Installing') ? 'package-down' :
+                  genomePhase.includes('Launch') || genomePhase.includes('launching') ? 'rocket-launch' :
+                  genomePhase.includes('Challenge') || genomePhase.includes('testing') || genomePhase.includes('task') ? 'test-tube' :
+                  genomePhase.includes('fitness') || genomePhase.includes('evaluating') || genomePhase.includes('Computing') ? 'chart-line' :
+                  'dna'
+                }
+                size={14}
+                color={
+                  genomePhase.includes('Challenge') || genomePhase.includes('testing') || genomePhase.includes('task') ? '#ff9900' :
+                  genomePhase.includes('fitness') || genomePhase.includes('Computing') ? '#00ccff' :
+                  '#bb66ff'
+                }
+              />
+              <Text style={[styles.buildProgressText, {
+                color:
+                  genomePhase.includes('Challenge') || genomePhase.includes('testing') || genomePhase.includes('task') ? '#ff9900' :
+                  genomePhase.includes('fitness') || genomePhase.includes('Computing') ? '#00ccff' :
+                  '#bb66ff'
+              }]}>{genomePhase}</Text>
             </View>
           )}
           <View style={styles.inputRow}>

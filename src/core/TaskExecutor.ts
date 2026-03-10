@@ -20,6 +20,7 @@ import { createDefaultGenome } from '../genome/GenomeFactory';
 import { GenomeCompiler } from '../genome/GenomeCompiler';
 import { GenomeMutator } from '../genome/GenomeMutator';
 import { SelfImprover } from '../genome/SelfImprover';
+import { TaskEvaluator } from '../genome/TaskEvaluator';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
@@ -124,7 +125,13 @@ export class TaskExecutor {
         return true;
       },
     };
-    return new SelfImprover(compiler, mutator, orchestrator, safetyGate);
+
+    const taskEvaluator = new TaskEvaluator(
+      isNative && AppController.isAvailable() ? AppController : undefined,
+      isNative ? { installApk: (path: string) => this.build.installApk(path) } : undefined
+    );
+
+    return new SelfImprover(compiler, mutator, orchestrator, safetyGate, taskEvaluator, aiClient, getModel);
   }
 
   async initialize(): Promise<void> { this.logger.info('TaskExecutor initialized'); }
@@ -331,11 +338,22 @@ export class TaskExecutor {
         const improver = this.createSelfImprover();
         const goal = params.goal;
         const maxCycles = params.maxCycles || 3;
+        const customChallenges = params.challenges;
         const result = await improver.evolve(genome, maxCycles, goal, (phase, msg) => {
           this.onGenomeProgress?.(phase, msg);
-        });
+        }, customChallenges);
         this.currentGenome = result.genome;
         await this.persistGenome(result.genome);
+
+        const taskPerf = result.genome.fitness?.taskPerformance;
+        const taskSummary = taskPerf
+          ? `Task performance: ${taskPerf.challengesPassed}/${taskPerf.challengesTotal} challenges passed (weighted: ${(taskPerf.weightedScore * 100).toFixed(1)}%)${taskPerf.failedChallenges.length > 0 ? `. Failed: ${taskPerf.failedChallenges.join(', ')}` : ''}`
+          : 'No task evaluation performed';
+
+        const lineage = improver.getLineage();
+        const best = lineage.getBestGeneration();
+        const failures = lineage.getFailurePatterns();
+
         return {
           success: true,
           type: 'evolution',
@@ -343,6 +361,9 @@ export class TaskExecutor {
           totalImprovements: result.totalImprovements,
           generation: result.genome.generation,
           fitness: result.genome.fitness?.overallScore ?? null,
+          taskSummary,
+          bestGeneration: best ? { generation: best.generation, score: best.fitness?.overallScore ?? 0 } : null,
+          persistentFailures: failures.filter(f => f.failureRate > 0.5).map(f => f.challengeId),
           report: result.report,
         };
       }

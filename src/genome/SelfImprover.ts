@@ -1,14 +1,21 @@
 import type { Genome, MutationRequest, FitnessMetrics, GenomeBuildOutput } from './types';
 import type { AppSpec, BuildProgress } from '../types/appspec';
+import type { TaskChallenge } from './TaskChallenges';
 import { GenomeCompiler } from './GenomeCompiler';
 import { GenomeMutator } from './GenomeMutator';
 import { GenomeValidator } from './GenomeValidator';
 import { GenomeFitness } from './GenomeFitness';
 import { GenomeLineage } from './GenomeLineage';
+import { TaskEvaluator } from './TaskEvaluator';
+import { getDefaultChallenges, generateChallengesForGoal } from './TaskChallenges';
 import { BuildOrchestrator } from '../core/BuildOrchestrator';
 
 interface SafetyGate {
   requestApproval: (action: string, details: string) => Promise<boolean>;
+}
+
+interface AiClient {
+  chat: (args: { model: string; messages: Array<{ role: string; content: string }>; max_tokens: number }) => Promise<string>;
 }
 
 type ProgressCallback = (phase: string, message: string) => void;
@@ -21,12 +28,18 @@ export class SelfImprover {
   private lineage: GenomeLineage;
   private buildOrchestrator: BuildOrchestrator;
   private safetyGate: SafetyGate;
+  private taskEvaluator: TaskEvaluator | null;
+  private aiClient: AiClient | null;
+  private getModel: (() => Promise<string>) | null;
 
   constructor(
     compiler: GenomeCompiler,
     mutator: GenomeMutator,
     buildOrchestrator: BuildOrchestrator,
-    safetyGate: SafetyGate
+    safetyGate: SafetyGate,
+    taskEvaluator?: TaskEvaluator,
+    aiClient?: AiClient,
+    getModel?: () => Promise<string>
   ) {
     this.compiler = compiler;
     this.mutator = mutator;
@@ -35,12 +48,16 @@ export class SelfImprover {
     this.lineage = new GenomeLineage();
     this.buildOrchestrator = buildOrchestrator;
     this.safetyGate = safetyGate;
+    this.taskEvaluator = taskEvaluator || null;
+    this.aiClient = aiClient || null;
+    this.getModel = getModel || null;
   }
 
   async improveCycle(
     currentGenome: Genome,
     userGoal?: string,
-    onProgress?: ProgressCallback
+    onProgress?: ProgressCallback,
+    customChallenges?: TaskChallenge[]
   ): Promise<{ genome: Genome; improved: boolean; report: string }> {
     this.lineage.record(currentGenome);
     const report: string[] = [];
@@ -128,21 +145,68 @@ export class SelfImprover {
     }
 
     const compilationTime = Date.now() - buildStartTime;
-
-    onProgress?.('evaluating', 'Evaluating offspring fitness...');
-    const newFitness = await this.fitness.evaluate(mutatedGenome, {
+    const buildResultData = {
       success: true,
       compilationTimeMs: compilationTime,
       apkPath: buildResult.apkPath,
       apkSizeBytes: 0,
-      errors: [],
-    });
+      errors: [] as string[],
+    };
+
+    let newFitness: FitnessMetrics;
+
+    if (this.taskEvaluator) {
+      onProgress?.('installing', 'Installing offspring for testing...');
+      const challenges = await this.resolveChallenges(
+        mutatedGenome.identity.packageName,
+        userGoal,
+        customChallenges
+      );
+
+      report.push(`Running ${challenges.length} task challenges...`);
+
+      onProgress?.('testing', `Running ${challenges.length} real-world task challenges...`);
+      const taskEvaluation = await this.taskEvaluator.evaluateOffspring(
+        mutatedGenome.identity.packageName,
+        buildResult.apkPath,
+        challenges,
+        onProgress
+      );
+
+      report.push(`Task results: ${taskEvaluation.results.filter(r => r.passed).length}/${taskEvaluation.results.length} passed`);
+      report.push(`Weighted task score: ${(taskEvaluation.weightedScore * 100).toFixed(1)}%`);
+      report.push(`Total crashes: ${taskEvaluation.totalCrashes}`);
+
+      for (const r of taskEvaluation.results) {
+        const status = r.passed ? 'PASS' : 'FAIL';
+        report.push(`  [${status}] ${r.challengeId} (${(r.partialScore * 100).toFixed(0)}%) ${r.error || ''}`);
+      }
+
+      onProgress?.('evaluating', 'Computing task-aware fitness score...');
+      newFitness = await this.fitness.evaluateWithTasks(mutatedGenome, buildResultData, taskEvaluation);
+    } else {
+      onProgress?.('evaluating', 'Evaluating offspring fitness (build-only)...');
+      newFitness = await this.fitness.evaluate(mutatedGenome, buildResultData);
+    }
 
     mutatedGenome.fitness = newFitness;
-    report.push(`New fitness: ${newFitness.overallScore}/100`);
+    report.push(`Fitness score: ${newFitness.overallScore}/100`);
+
+    if (newFitness.taskPerformance) {
+      report.push(`Task performance: ${newFitness.taskPerformance.challengesPassed}/${newFitness.taskPerformance.challengesTotal} challenges`);
+    }
 
     const previousScore = currentGenome.fitness?.overallScore ?? 0;
     const improvement = newFitness.overallScore - previousScore;
+
+    if (currentGenome.fitness) {
+      const comparison = this.fitness.compareGenerations(currentGenome.fitness, newFitness);
+      report.push('Generation comparison:');
+      for (const b of comparison.breakdown) {
+        const sign = b.change >= 0 ? '+' : '';
+        report.push(`  ${b.metric}: ${b.parent.toFixed(1)} → ${b.offspring.toFixed(1)} (${sign}${b.change.toFixed(1)})`);
+      }
+    }
 
     for (const mut of mutatedGenome.mutations) {
       if (mut.fitnessImpact === null) {
@@ -164,7 +228,8 @@ export class SelfImprover {
     genome: Genome,
     maxCycles: number = 5,
     userGoal?: string,
-    onProgress?: ProgressCallback
+    onProgress?: ProgressCallback,
+    customChallenges?: TaskChallenge[]
   ): Promise<{ genome: Genome; totalCycles: number; totalImprovements: number; report: string }> {
     let current = genome;
     let totalImprovements = 0;
@@ -174,7 +239,7 @@ export class SelfImprover {
       onProgress?.('cycle', `Evolution cycle ${cycle}/${maxCycles}`);
       fullReport.push(`\n=== Cycle ${cycle} ===`);
 
-      const result = await this.improveCycle(current, userGoal, onProgress);
+      const result = await this.improveCycle(current, userGoal, onProgress, customChallenges);
       fullReport.push(result.report);
 
       if (result.improved) {
@@ -192,6 +257,49 @@ export class SelfImprover {
       totalImprovements,
       report: fullReport.join('\n'),
     };
+  }
+
+  private isValidChallenge(c: any): c is TaskChallenge {
+    return (
+      c &&
+      typeof c === 'object' &&
+      typeof c.id === 'string' &&
+      typeof c.name === 'string' &&
+      Array.isArray(c.steps) &&
+      Array.isArray(c.successCriteria) &&
+      typeof c.timeoutMs === 'number' &&
+      typeof c.weight === 'number'
+    );
+  }
+
+  private async resolveChallenges(
+    packageName: string,
+    userGoal?: string,
+    customChallenges?: TaskChallenge[]
+  ): Promise<TaskChallenge[]> {
+    if (customChallenges && Array.isArray(customChallenges) && customChallenges.length > 0) {
+      const valid = customChallenges.filter(c => this.isValidChallenge(c));
+      if (valid.length > 0) return valid;
+    }
+
+    const defaults = getDefaultChallenges(packageName);
+
+    if (userGoal && this.aiClient && this.getModel) {
+      try {
+        const model = await this.getModel();
+        const goalChallenges = await generateChallengesForGoal(
+          this.aiClient,
+          model,
+          packageName,
+          userGoal
+        );
+        if (goalChallenges.length > 0) {
+          return [...defaults, ...goalChallenges];
+        }
+      } catch {}
+    }
+
+    return defaults;
   }
 
   getLineage(): GenomeLineage {

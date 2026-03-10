@@ -161,6 +161,7 @@ const schemas: CapabilitySchema[] = [
     optionalParams: {
       goal: { type: 'string', description: 'Improvement goal for the evolution cycle' },
       maxCycles: { type: 'number', description: 'Maximum evolution cycles (default 3)' },
+      challenges: { type: 'array', description: 'Custom task challenges to test offspring against (array of challenge descriptions)' },
     },
   },
   {
