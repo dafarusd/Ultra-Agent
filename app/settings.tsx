@@ -269,17 +269,35 @@ export default function SettingsScreen() {
       return;
     }
     try {
-      const path = `${FileSystem.cacheDirectory}agent_ultra_debug_${Date.now()}.txt`;
-      await FileSystem.writeAsStringAsync(path, logText, { encoding: FileSystem.EncodingType.UTF8 });
+      const dir = FileSystem.documentDirectory;
+      if (!dir) {
+        await Clipboard.setStringAsync(logText);
+        Alert.alert("Copied", "File system unavailable. Log copied to clipboard.");
+        return;
+      }
+      const path = `${dir}agent_ultra_debug_${Date.now()}.txt`;
+      await FileSystem.writeAsStringAsync(path, logText, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
-        await Sharing.shareAsync(path, { mimeType: "text/plain", dialogTitle: "Download Agent Ultra Logs" });
+        await Sharing.shareAsync(path, {
+          mimeType: "text/plain",
+          dialogTitle: "Download Agent Ultra Logs",
+          UTI: "public.plain-text",
+        });
       } else {
         await Clipboard.setStringAsync(logText);
         Alert.alert("Copied", "Sharing unavailable. Log copied to clipboard.");
       }
-    } catch {
-      Alert.alert("Error", "Failed to export logs.");
+    } catch (err: any) {
+      console.error("Log download failed:", err);
+      try {
+        await Clipboard.setStringAsync(logText);
+        Alert.alert("Copied", `Share failed (${err.message}). Log copied to clipboard instead.`);
+      } catch {
+        Alert.alert("Error", `Export failed: ${err.message}`);
+      }
     }
   }, []);
 

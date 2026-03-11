@@ -174,17 +174,35 @@ export default function PromptViewer({ visible, trace, onClose }: PromptViewerPr
       return;
     }
     try {
-      const path = `${FileSystem.cacheDirectory}trace_${Date.now()}.txt`;
-      await FileSystem.writeAsStringAsync(path, text, { encoding: FileSystem.EncodingType.UTF8 });
+      const dir = ExpoFileSystem.documentDirectory;
+      if (!dir) {
+        await Clipboard.setStringAsync(text);
+        Alert.alert('Copied', 'File system unavailable. Trace copied to clipboard.');
+        return;
+      }
+      const path = `${dir}trace_${Date.now()}.txt`;
+      await ExpoFileSystem.writeAsStringAsync(path, text, {
+        encoding: ExpoFileSystem.EncodingType.UTF8,
+      });
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
-        await Sharing.shareAsync(path, { mimeType: 'text/plain', dialogTitle: 'Download Execution Trace' });
+        await Sharing.shareAsync(path, {
+          mimeType: 'text/plain',
+          dialogTitle: 'Download Execution Trace',
+          UTI: 'public.plain-text',
+        });
       } else {
         await Clipboard.setStringAsync(text);
         Alert.alert('Copied', 'Sharing unavailable. Trace copied to clipboard.');
       }
-    } catch {
-      Alert.alert('Error', 'Failed to export trace.');
+    } catch (err: any) {
+      console.error('Trace download failed:', err);
+      try {
+        await Clipboard.setStringAsync(text);
+        Alert.alert('Copied', `Share failed (${err.message}). Trace copied to clipboard instead.`);
+      } catch {
+        Alert.alert('Error', `Export failed: ${err.message}`);
+      }
     }
   };
 
