@@ -58,10 +58,16 @@ export class PermissionBroker {
 
   private async checkCamera(): Promise<void> {
     try {
-      const { status } = await Camera.getCameraPermissionsAsync();
-      this.statuses.set('CAMERA', { id: 'CAMERA', granted: status === 'granted', canAsk: status !== 'denied' });
+      const fn = (Camera as any).getCameraPermissionsAsync
+        ?? (Camera as any).Camera?.getCameraPermissionsAsync;
+      if (fn) {
+        const { status } = await fn();
+        this.statuses.set('CAMERA', { id: 'CAMERA', granted: status === 'granted', canAsk: status !== 'denied' });
+      } else {
+        this.statuses.set('CAMERA', { id: 'CAMERA', granted: false, canAsk: true });
+      }
     } catch {
-      this.statuses.set('CAMERA', { id: 'CAMERA', granted: false, canAsk: false });
+      this.statuses.set('CAMERA', { id: 'CAMERA', granted: false, canAsk: true });
     }
   }
 
@@ -108,10 +114,20 @@ export class PermissionBroker {
           return g;
         }
         case 'CAMERA': {
-          const { status } = await Camera.requestCameraPermissionsAsync();
-          const g = status === 'granted';
-          this.statuses.set(permission, { id: permission, granted: g, canAsk: true });
-          return g;
+          try {
+            const fn = (Camera as any).requestCameraPermissionsAsync
+              ?? (Camera as any).Camera?.requestCameraPermissionsAsync;
+            if (fn) {
+              const { status } = await fn();
+              const g = status === 'granted';
+              this.statuses.set(permission, { id: permission, granted: g, canAsk: true });
+              return g;
+            }
+            return false;
+          } catch (e: any) {
+            this.logger.error(`Camera permission request failed: ${e.message}`);
+            return false;
+          }
         }
         case 'ACCESS_FINE_LOCATION': {
           if (Platform.OS === 'web') {

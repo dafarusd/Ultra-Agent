@@ -145,10 +145,10 @@ export class AgentCore extends SimpleEmitter {
     }
     const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
     if (genomePatterns.test(t)) return 'command';
-    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get)\b/i.test(t);
+    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text)\b/i.test(t);
     if (imperative) return 'command';
     if (/^(gps|my\s+(?:location|coordinates|gps))\b/i.test(t)) return 'command';
-    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get)\b/i;
+    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text)\b/i;
     if (ultraCommand.test(t)) return 'command';
     return 'conversation';
   }
@@ -167,7 +167,7 @@ export class AgentCore extends SimpleEmitter {
     } else if (params.mode === 'ai_instruction') {
       behavior = 'The user is giving you meta-instructions about how to handle their request. Follow their instructions precisely while answering the target request. Return natural language.';
     } else {
-      behavior = 'Return a natural language response. Be precise, concise, and helpful.';
+      behavior = 'Return a natural language response. Be precise, concise, and helpful.\nIMPORTANT: In conversation mode you CANNOT perform actions, access device data, read messages, or send texts. If the user wants an action performed, tell them to use a direct command like "send text to mom saying hello" or "open gmail". Never claim you performed an action or accessed real device data unless you show a real capability result.';
     }
 
     return [

@@ -329,26 +329,30 @@ export class TaskExecutor {
         const KNOWN_PACKAGES: Record<string, string> = {
           'gmail': 'com.google.android.gm',
           'google mail': 'com.google.android.gm',
+          'email': 'com.google.android.gm',
           'maps': 'com.google.android.apps.maps',
           'google maps': 'com.google.android.apps.maps',
           'chrome': 'com.android.chrome',
-          'google chrome': 'com.android.chrome',
+          'browser': 'com.android.chrome',
           'youtube': 'com.google.android.youtube',
-          'camera': 'com.android.camera2',
+          'camera': 'com.android.camera',
           'phone': 'com.android.dialer',
           'dialer': 'com.android.dialer',
           'messages': 'com.google.android.apps.messaging',
+          'messaging': 'com.google.android.apps.messaging',
           'sms': 'com.google.android.apps.messaging',
           'settings': 'com.android.settings',
           'calendar': 'com.google.android.calendar',
           'clock': 'com.google.android.deskclock',
+          'alarm': 'com.google.android.deskclock',
           'calculator': 'com.google.android.calculator',
           'contacts': 'com.google.android.contacts',
           'files': 'com.google.android.documentsui',
           'photos': 'com.google.android.apps.photos',
-          'google photos': 'com.google.android.apps.photos',
+          'gallery': 'com.google.android.apps.photos',
           'play store': 'com.android.vending',
           'spotify': 'com.spotify.music',
+          'pandora': 'com.pandora.android',
           'whatsapp': 'com.whatsapp',
           'instagram': 'com.instagram.android',
           'facebook': 'com.facebook.katana',
@@ -361,14 +365,35 @@ export class TaskExecutor {
           'reddit': 'com.reddit.frontpage',
           'netflix': 'com.netflix.mediaclient',
           'amazon': 'com.amazon.mShop.android.shopping',
+          'uber': 'com.ubercab',
+          'lyft': 'com.lyft.android',
+          'venmo': 'com.venmo',
+          'cash app': 'com.squareup.cash',
+          'weather': 'com.google.android.apps.weather',
         };
 
-        const targetLower = target.toLowerCase().trim();
+        // Normalize: strip "the", "a", "app" etc
+        const targetLower = target.toLowerCase().trim()
+          .replace(/^(the|a|an|my)\s+/i, '')
+          .replace(/\s+app$/i, '');
+
+        // Exact match first
         let pkg = KNOWN_PACKAGES[targetLower];
 
+        // Partial match if no exact
+        if (!pkg) {
+          for (const [key, val] of Object.entries(KNOWN_PACKAGES)) {
+            if (targetLower.includes(key) || key.includes(targetLower)) {
+              pkg = val;
+              break;
+            }
+          }
+        }
+
+        // AI fallback for unknown apps
         if (!pkg) {
           const r = await this.ai.complete(
-            `Package name for Android app: "${target}". Respond ONLY the package name, nothing else. Example: com.google.android.gm`,
+            `What is the Android package name for "${target}"? Reply with ONLY the package name. Example: com.google.android.gm`,
             { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 }
           );
           pkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
@@ -379,8 +404,7 @@ export class TaskExecutor {
         }
 
         try {
-          const { Linking } = require('react-native');
-          await Linking.openURL(`intent://#Intent;package=${pkg};action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end`);
+          IntentLauncher.openApplication(pkg);
           return { success: true, launched: pkg };
         } catch (err: any) {
           return { success: false, error: `Failed to launch ${target} (${pkg}): ${err.message}` };
@@ -652,7 +676,7 @@ export class TaskExecutor {
       }
       case 'app_launch': {
         const r = await this.ai.complete(
-          `Package name for: "${request}". Respond package name only. Example: com.google.android.gm`,
+          `What is the Android package name for "${request}"? Reply with ONLY the package name.`,
           { taskId, agentId: 'launch', maxTokens: 100 }
         );
         const pkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
@@ -660,8 +684,7 @@ export class TaskExecutor {
           return { error: `Could not resolve package for "${request}"` };
         }
         try {
-          const { Linking } = require('react-native');
-          await Linking.openURL(`intent://#Intent;package=${pkg};action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end`);
+          IntentLauncher.openApplication(pkg);
           return { success: true, launched: pkg };
         } catch (err: any) {
           return { error: `Failed to launch ${pkg}: ${err.message}` };

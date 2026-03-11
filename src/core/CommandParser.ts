@@ -19,6 +19,26 @@ const rules: ParseRule[] = [
     extractParams: (m) => ({ target: m[1].trim() }),
   },
   {
+    pattern: /^text\s+(.+?)\s+(?:saying|with)\s+(.+)/i,
+    capability: 'sms_send',
+    extractParams: (m) => ({ to: m[1].trim(), message: m[2].trim() }),
+  },
+  {
+    pattern: /^text\s+(.+?)\s+["'](.+)["']/i,
+    capability: 'sms_send',
+    extractParams: (m) => ({ to: m[1].trim(), message: m[2].trim() }),
+  },
+  {
+    pattern: /^text\s+(\S+)\s+(.+)/i,
+    capability: 'sms_send',
+    extractParams: (m) => ({ to: m[1].trim(), message: m[2].trim() }),
+  },
+  {
+    pattern: /^text\s+(.+)/i,
+    capability: 'sms_send',
+    extractParams: (m) => ({ to: m[1].trim() }),
+  },
+  {
     pattern: /^send\s+(?:a\s+)?(?:text|sms|message)\s+to\s+(.+?)\s+saying\s+(.+)/i,
     capability: 'sms_send',
     extractParams: (m) => ({ to: m[1].trim(), message: m[2].trim() }),
@@ -79,7 +99,7 @@ const rules: ParseRule[] = [
     extractParams: (m) => ({ filename: m[1].trim() }),
   },
   {
-    pattern: /^(?:read|open|show)\s+(?:file\s+)?(.+)/i,
+    pattern: /^(?:read|open)\s+(?:the\s+)?file\s+(?:named\s+|called\s+)?["']?([^\s"']+)["']?$/i,
     capability: 'file_read',
     extractParams: (m) => ({ path: m[1].trim() }),
   },
