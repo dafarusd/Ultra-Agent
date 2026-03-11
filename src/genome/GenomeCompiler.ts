@@ -91,7 +91,7 @@ export class GenomeCompiler {
         const fileName = entry.path.split('/').pop()!;
 
         try {
-          const FileSystem = require('expo-file-system');
+          const FileSystem = require('expo-file-system/legacy');
           const docPath = `${FileSystem.documentDirectory}genome_sources/${fileName}`;
           const info = await FileSystem.getInfoAsync(docPath);
           if (info.exists) {
@@ -103,7 +103,7 @@ export class GenomeCompiler {
 
         if (entry.content.startsWith('LOAD_FROM:')) {
           try {
-            const FileSystem = require('expo-file-system');
+            const FileSystem = require('expo-file-system/legacy');
             const filePath = entry.content.replace('LOAD_FROM:', '');
             const content = await FileSystem.readAsStringAsync(
               `${FileSystem.documentDirectory}${filePath}`

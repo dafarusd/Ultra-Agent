@@ -1,7 +1,7 @@
 import { Modal, View, Text, ScrollView, Pressable, StyleSheet, Platform, Share, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import * as ExpoFileSystem from 'expo-file-system';
+import * as ExpoFileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import type { PromptTrace, MessageRole } from '@/src/types/ultra';
 

@@ -6,7 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as MediaLibrary from 'expo-media-library';
-import * as ExpoFileSystem from 'expo-file-system';
+import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { BuildSystem } from './BuildSystem';
 import { DebugEngine } from './DebugEngine';
 import { CapabilityRegistry } from './CapabilityRegistry';
@@ -325,10 +325,74 @@ export class TaskExecutor {
       case 'app_launch': {
         const target = params.target;
         if (!target) return { error: 'No app specified' };
-        const r = await this.ai.complete(`Package name for Android app: "${target}". Respond ONLY the package name. Example: com.google.android.gm`, { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 });
-        const pkg = r.content.trim();
-        await IntentLauncher.startActivityAsync('android.intent.action.MAIN', { packageName: pkg });
-        return { success: true, launched: pkg };
+
+        const KNOWN_PACKAGES: Record<string, string> = {
+          'gmail': 'com.google.android.gm',
+          'google mail': 'com.google.android.gm',
+          'maps': 'com.google.android.apps.maps',
+          'google maps': 'com.google.android.apps.maps',
+          'chrome': 'com.android.chrome',
+          'google chrome': 'com.android.chrome',
+          'youtube': 'com.google.android.youtube',
+          'camera': 'com.android.camera2',
+          'phone': 'com.android.dialer',
+          'dialer': 'com.android.dialer',
+          'messages': 'com.google.android.apps.messaging',
+          'sms': 'com.google.android.apps.messaging',
+          'settings': 'com.android.settings',
+          'calendar': 'com.google.android.calendar',
+          'clock': 'com.google.android.deskclock',
+          'calculator': 'com.google.android.calculator',
+          'contacts': 'com.google.android.contacts',
+          'files': 'com.google.android.documentsui',
+          'photos': 'com.google.android.apps.photos',
+          'google photos': 'com.google.android.apps.photos',
+          'play store': 'com.android.vending',
+          'spotify': 'com.spotify.music',
+          'whatsapp': 'com.whatsapp',
+          'instagram': 'com.instagram.android',
+          'facebook': 'com.facebook.katana',
+          'twitter': 'com.twitter.android',
+          'x': 'com.twitter.android',
+          'tiktok': 'com.zhiliaoapp.musically',
+          'snapchat': 'com.snapchat.android',
+          'telegram': 'org.telegram.messenger',
+          'discord': 'com.discord',
+          'reddit': 'com.reddit.frontpage',
+          'netflix': 'com.netflix.mediaclient',
+          'amazon': 'com.amazon.mShop.android.shopping',
+        };
+
+        const targetLower = target.toLowerCase().trim();
+        let pkg = KNOWN_PACKAGES[targetLower];
+
+        if (!pkg) {
+          const r = await this.ai.complete(
+            `Package name for Android app: "${target}". Respond ONLY the package name, nothing else. Example: com.google.android.gm`,
+            { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 }
+          );
+          pkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
+        }
+
+        if (!pkg || !pkg.includes('.')) {
+          return { success: false, error: `Could not resolve package name for "${target}"` };
+        }
+
+        try {
+          await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
+            packageName: pkg,
+            category: 0,
+          });
+          return { success: true, launched: pkg };
+        } catch (intentErr: any) {
+          try {
+            const { Linking } = require('react-native');
+            await Linking.openURL(`package:${pkg}`);
+            return { success: true, launched: pkg, method: 'linking' };
+          } catch (linkErr: any) {
+            return { success: false, error: `Failed to launch ${target} (${pkg}): ${intentErr.message}` };
+          }
+        }
       }
       case 'app_share': {
         const shareContent = params.content || params.message || params.url;
@@ -595,9 +659,23 @@ export class TaskExecutor {
         return { count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
       }
       case 'app_launch': {
-        const r = await this.ai.complete(`Package name for: "${request}". Respond package name only. Example: com.google.android.gm`, { taskId, agentId: 'launch', maxTokens: 100 });
-        await IntentLauncher.startActivityAsync('android.intent.action.MAIN', { packageName: r.content.trim() });
-        return { launched: r.content.trim() };
+        const r = await this.ai.complete(
+          `Package name for: "${request}". Respond package name only. Example: com.google.android.gm`,
+          { taskId, agentId: 'launch', maxTokens: 100 }
+        );
+        const pkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
+        if (!pkg || !pkg.includes('.')) {
+          return { error: `Could not resolve package for "${request}"` };
+        }
+        try {
+          await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
+            packageName: pkg,
+            category: 0,
+          });
+          return { success: true, launched: pkg };
+        } catch (err: any) {
+          return { error: `Failed to launch ${pkg}: ${err.message}` };
+        }
       }
       case 'app_share': {
         const avail = await Sharing.isAvailableAsync();

@@ -5,7 +5,7 @@ import { MavenResolver } from './MavenResolver';
 import AgentNative from '../native/AgentNative';
 import { Logger } from '../utils/Logger';
 import { Platform } from 'react-native';
-import * as ExpoFileSystem from 'expo-file-system';
+import * as ExpoFileSystem from 'expo-file-system/legacy';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 const isNative = Platform.OS !== 'web';

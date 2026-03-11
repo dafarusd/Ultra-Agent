@@ -1,4 +1,4 @@
-import * as ExpoFileSystem from 'expo-file-system';
+import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 
 const FS: any = Platform.OS !== 'web' ? ExpoFileSystem : null;

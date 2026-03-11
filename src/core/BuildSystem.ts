@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import * as ExpoFileSystem from 'expo-file-system';
+import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { ModelRouter } from './ModelRouter';
 import { DebugEngine } from './DebugEngine';
 import { StorageManager } from '../services/StorageManager';

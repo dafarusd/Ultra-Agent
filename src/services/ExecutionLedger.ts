@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import * as ExpoFileSystem from 'expo-file-system';
+import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { ExecutionEvent, EventPhase, BudgetCheck, SessionStats } from '../types/ultra';
 import { Logger } from '../utils/Logger';
 
