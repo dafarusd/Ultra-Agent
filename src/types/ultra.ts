@@ -20,6 +20,8 @@ export interface ChatMessage {
     mode?: 'command' | 'conversation' | 'ai_instruction';
     capability?: string;
     risk?: 'safe' | 'moderate' | 'dangerous' | 'blocked';
+    isBuildLog?: boolean;
+    data?: any;
   };
 }
 

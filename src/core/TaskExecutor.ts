@@ -81,6 +81,14 @@ export class TaskExecutor {
           return this.currentGenome;
         }
       } catch {}
+    } else {
+      try {
+        const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('ultra:genome') : null;
+        if (raw) {
+          this.currentGenome = JSON.parse(raw) as Genome;
+          return this.currentGenome;
+        }
+      } catch {}
     }
     this.currentGenome = createDefaultGenome();
     await this.persistGenome(this.currentGenome);
@@ -88,12 +96,21 @@ export class TaskExecutor {
   }
 
   private async persistGenome(genome: Genome): Promise<void> {
-    if (!isNative) return;
-    try {
-      const genomePath = this.docDir + 'genome.json';
-      await FileSystem.writeAsStringAsync(genomePath, JSON.stringify(genome, null, 2));
-    } catch (e: any) {
-      this.logger.error('Failed to persist genome: ' + e.message);
+    if (isNative) {
+      try {
+        const genomePath = this.docDir + 'genome.json';
+        await FileSystem.writeAsStringAsync(genomePath, JSON.stringify(genome, null, 2));
+      } catch (e: any) {
+        this.logger.error('Failed to persist genome: ' + e.message);
+      }
+    } else {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('ultra:genome', JSON.stringify(genome));
+        }
+      } catch (e: any) {
+        this.logger.error('Failed to persist genome to localStorage: ' + e.message);
+      }
     }
   }
 

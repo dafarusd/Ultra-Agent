@@ -320,6 +320,7 @@ export default function ChatScreen() {
     if (msg.role === "user") return "user" as const;
     if (msg.role === "system") return "system" as const;
     if (msg.source === "ultra") {
+      if (msg.meta?.isBuildLog) return "buildLog" as const;
       const risk = msg.meta?.risk;
       if (risk === "dangerous" || risk === "blocked") return "blocked" as const;
       return "ultra" as const;
@@ -350,6 +351,7 @@ export default function ChatScreen() {
             msgStyle === "ultra" ? styles.ultraBubble :
             msgStyle === "ai" ? styles.aiBubble :
             msgStyle === "blocked" ? styles.blockedBubble :
+            msgStyle === "buildLog" ? styles.buildLogBubble :
             styles.systemBubble,
             isCopied && styles.copiedBubble,
           ]}
@@ -362,6 +364,8 @@ export default function ChatScreen() {
                 <Ionicons name="sparkles" size={14} color={AI_COLOR} />
               ) : msgStyle === "blocked" ? (
                 <Ionicons name="shield" size={14} color={BLOCKED_COLOR} />
+              ) : msgStyle === "buildLog" ? (
+                <MaterialCommunityIcons name="console" size={14} color="#ff9900" />
               ) : (
                 <Ionicons name="information-circle" size={14} color={DIM} />
               )}
@@ -371,12 +375,14 @@ export default function ChatScreen() {
                   msgStyle === "ultra" ? { color: ULTRA_COLOR } :
                   msgStyle === "ai" ? { color: AI_COLOR } :
                   msgStyle === "blocked" ? { color: BLOCKED_COLOR } :
+                  msgStyle === "buildLog" ? { color: '#ff9900' } :
                   { color: DIM },
                 ]}
               >
                 {msgStyle === "ultra" ? "ULTRA" :
                  msgStyle === "ai" ? "AI" :
                  msgStyle === "blocked" ? "BLOCKED" :
+                 msgStyle === "buildLog" ? "BUILD LOG" :
                  "SYSTEM"}
               </Text>
               {item.meta?.capability && (
@@ -384,7 +390,11 @@ export default function ChatScreen() {
               )}
             </View>
           )}
-          <Text style={[styles.messageText, isUser && styles.userText]}>
+          <Text style={[
+            styles.messageText,
+            isUser && styles.userText,
+            msgStyle === "buildLog" && styles.buildLogText,
+          ]}>
             {item.content}
           </Text>
           {trace && !isUser && (
@@ -687,6 +697,19 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     borderWidth: 1,
     borderColor: "#3a1a1a",
+  },
+  buildLogBubble: {
+    backgroundColor: "#1a1400",
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#3a2a00",
+    maxWidth: "95%",
+  },
+  buildLogText: {
+    fontFamily: Platform.OS === "web" ? "monospace" : "Courier",
+    fontSize: 11,
+    color: "#ccaa44",
+    lineHeight: 16,
   },
   systemBubble: {
     backgroundColor: SURFACE2,

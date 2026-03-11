@@ -50,3 +50,10 @@ The agent should persist conversations and allow switching between them.
 *   **Copy message on long press:** Added `onLongPress` handler to message bubbles using expo-clipboard. Shows "Copied" label and green border flash for 1.5s feedback.
 *   **Command routing improvements:** Added "create an app", "make an app" patterns to CommandParser. Fixed pattern ordering so `app_build` patterns match before the generic `write/save` file pattern. Removed `create` from the file-write pattern to prevent it from eating build commands.
 *   **Empty state text fix:** Separated `scaleY: -1` transform for web vs native to ensure greeting text renders correctly on both platforms with inverted FlatList.
+
+## Build & Offspring Improvements (v1.2)
+*   **Build progress persisted to conversation:** Build progress events (`app_build`, `self_modify`, `self_replicate`) are now captured and saved as a dedicated "BUILD LOG" message in the conversation. Users can scroll back and review the step-by-step build log.
+*   **Build log UI:** Build log messages render with a distinct amber/console style — dark background, monospace font, console icon, and "BUILD LOG" label to differentiate from regular messages.
+*   **Rich build result summaries:** `summarizeResult()` now produces capability-specific summaries for `app_build` (app name, APK path, file count), `self_modify` (cycles, improvements, fitness score, task performance, full evolution report), and `self_replicate` (generation, parent ID, APK path, package name).
+*   **Genome persistence on web:** Genome state now persists to `localStorage` on web (previously only saved to native file system). Users can evolve the genome in web preview without losing progress between sessions.
+*   **ChatMessage type extended:** Added `isBuildLog` and `data` fields to `meta` for richer message metadata.

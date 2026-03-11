@@ -484,18 +484,23 @@ export class AgentCore extends SimpleEmitter {
       this.emit('log', `Executing ${plan.capability}...`, 'system');
 
       let execResult: any;
+      const progressLog: string[] = [];
       try {
         if (plan.capability === 'app_build') {
           execResult = await this.buildSystem.buildApp(
             plan.params.description || userInput,
             taskId,
             (progress) => {
-              this.emit('log', `[${progress.phase}] ${progress.message}`, 'build_progress');
+              const entry = `[${progress.phase}] ${progress.message}`;
+              progressLog.push(entry);
+              this.emit('log', entry, 'build_progress');
             }
           );
         } else if (plan.capability === 'self_modify' || plan.capability === 'self_replicate') {
           this.executor.setGenomeProgressCallback((phase, msg) => {
-            this.emit('log', `[${phase}] ${msg}`, 'genome_progress');
+            const entry = `[${phase}] ${msg}`;
+            progressLog.push(entry);
+            this.emit('log', entry, 'genome_progress');
           });
           execResult = await this.executor.runWithPlan(plan, taskId);
           this.executor.setGenomeProgressCallback(null);
@@ -505,6 +510,18 @@ export class AgentCore extends SimpleEmitter {
       } catch (err: any) {
         execResult = { success: false, error: err.message };
         this.executor.setGenomeProgressCallback(null);
+      }
+
+      if (progressLog.length > 0) {
+        const logMsg: ChatMessage = {
+          id: uid('msg'),
+          role: 'assistant',
+          content: progressLog.join('\n'),
+          createdAt: Date.now(),
+          source: 'ultra',
+          meta: { mode: 'command', capability: plan.capability, isBuildLog: true },
+        };
+        await this.conversations.addMessage(conversationId, logMsg);
       }
 
       await this.ledger.logEvent({
@@ -730,21 +747,55 @@ export class AgentCore extends SimpleEmitter {
     userInput: string,
     verification: { verified: boolean; issues: string[] }
   ): Promise<string> {
-    if (execResult?.success === false && execResult?.error) {
-      return `I tried to run ${capability} but encountered an error: ${execResult.error}`;
+    const result = execResult?.data ?? execResult;
+
+    if (result?.success === false && (result?.error || execResult?.summary)) {
+      const errMsg = result?.error || execResult?.summary;
+      if (capability === 'app_build') {
+        return `Build failed: ${errMsg}\n\nNote: Building apps requires an Android device with the standalone APK installed. On web preview, the build system is unavailable.`;
+      }
+      return `I tried to run ${capability} but encountered an error: ${errMsg}`;
     }
 
-    if (typeof execResult === 'string') {
-      return execResult.length > 2000 ? execResult.slice(0, 2000) + '…' : execResult;
+    if (capability === 'app_build' && result?.success) {
+      const parts = [`App built successfully!`];
+      if (result.spec?.appName) parts.push(`Name: ${result.spec.appName}`);
+      if (result.apkPath) parts.push(`APK: ${result.apkPath}`);
+      if (result.spec?.files?.length) parts.push(`Files: ${result.spec.files.length} source files`);
+      if (result.debugAttempts) parts.push(`Debug iterations: ${result.debugAttempts}`);
+      return parts.join('\n');
+    }
+
+    if (capability === 'self_modify' && result?.type === 'evolution') {
+      const parts = [`Evolution complete.`];
+      parts.push(`Cycles: ${result.totalCycles}, Improvements: ${result.totalImprovements}`);
+      parts.push(`Generation: ${result.generation}`);
+      if (result.fitness !== null) parts.push(`Fitness: ${result.fitness}/100`);
+      if (result.taskSummary) parts.push(result.taskSummary);
+      if (result.report) parts.push(`\n${result.report}`);
+      return parts.join('\n');
+    }
+
+    if (capability === 'self_replicate' && result?.type === 'replication') {
+      const parts = [`Offspring created successfully!`];
+      parts.push(`Generation: ${result.offspringGeneration}`);
+      parts.push(`Parent ID: ${result.parentId}`);
+      if (result.apkPath) parts.push(`APK: ${result.apkPath}`);
+      if (result.packageName) parts.push(`Package: ${result.packageName}`);
+      return parts.join('\n');
+    }
+
+    if (typeof result === 'string') {
+      return result.length > 2000 ? result.slice(0, 2000) + '…' : result;
     }
 
     if (!verification.verified) {
-      const raw = typeof execResult === 'object' ? JSON.stringify(execResult) : String(execResult);
+      const raw = typeof result === 'object' ? JSON.stringify(result) : String(result);
       return `${capability} completed with issues: ${verification.issues.join(', ')}. Result: ${raw.slice(0, 500)}`;
     }
 
     try {
-      const raw = typeof execResult === 'object' ? JSON.stringify(execResult) : String(execResult);
+      const raw = typeof result === 'object' ? JSON.stringify(result) : String(result);
       if (raw.length < 200) {
         return `Done. ${raw}`;
       }
@@ -761,7 +812,7 @@ export class AgentCore extends SimpleEmitter {
       );
       return aiSummary.content || `Done. ${raw.slice(0, 500)}`;
     } catch {
-      const raw = typeof execResult === 'object' ? JSON.stringify(execResult) : String(execResult);
+      const raw = typeof result === 'object' ? JSON.stringify(result) : String(result);
       return `Done. ${raw.slice(0, 500)}`;
     }
   }
