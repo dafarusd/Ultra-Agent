@@ -127,42 +127,161 @@ export default function SettingsScreen() {
   }, [dailyLimit, taskLimit]);
 
   const loadLogs = useCallback(() => {
-    const entries = Logger.getEntries(undefined, 100);
+    const entries = Logger.getEntries(undefined, 200);
     setLogs(
       entries.map(
         (e) =>
-          `[${new Date(e.timestamp).toLocaleTimeString()}][${e.level}][${e.context}] ${e.message}`
+          `[${new Date(e.timestamp).toISOString()}][${e.level}][${e.context}] ${e.message}${e.metadata ? ' ' + JSON.stringify(e.metadata) : ''}`
       )
     );
     setShowLogs(!showLogs);
   }, [showLogs]);
 
-  const shareLogs = useCallback(async () => {
-    if (logs.length === 0) return;
-    const logText = logs.join("\n");
+  const downloadLogs = useCallback(async () => {
+    const hr = '='.repeat(60);
+    const sections: string[] = [];
+    const ts = (t: number) => new Date(t).toISOString();
+
+    sections.push(hr);
+    sections.push('AGENT ULTRA — FULL DEBUG LOG');
+    sections.push(hr);
+    sections.push(`Generated: ${new Date().toISOString()}`);
+    sections.push(`Platform: ${Platform.OS}`);
+    sections.push('');
+
+    const core = getAgentCoreInstance();
+
+    if (core) {
+      try {
+        const cm = core.getConversationManager();
+        const convList = await cm.listConversations();
+        for (let ci = 0; ci < convList.length; ci++) {
+          const convMeta = convList[ci];
+          const conv = await cm.loadConversation(convMeta.id);
+          if (!conv || conv.messages.length === 0) continue;
+
+          sections.push(hr);
+          sections.push(`CONVERSATION ${ci + 1}/${convList.length}: "${conv.title}" (${conv.messages.length} messages)`);
+          sections.push(`ID: ${conv.id}`);
+          sections.push(hr);
+          sections.push('');
+
+          for (const msg of conv.messages) {
+            const role = msg.role.toUpperCase();
+            const source = msg.source ? ` [${msg.source}]` : '';
+            const cap = msg.meta?.capability ? ` {${msg.meta.capability}}` : '';
+            const risk = msg.meta?.risk ? ` risk=${msg.meta.risk}` : '';
+            sections.push(`--- ${ts(msg.createdAt)} ${role}${source}${cap}${risk} ---`);
+            sections.push(msg.content);
+            sections.push('');
+
+            if (msg.meta?.promptTrace) {
+              const t = msg.meta.promptTrace;
+              sections.push('  [TRACE] Model: ' + t.model);
+              if (t.mode) sections.push('  [TRACE] Mode: ' + t.mode);
+              if (t.deterministic !== undefined) sections.push('  [TRACE] Deterministic: ' + t.deterministic);
+              if (t.durationMs !== undefined) sections.push('  [TRACE] Duration: ' + t.durationMs + 'ms');
+              if (t.taskId) sections.push('  [TRACE] Task ID: ' + t.taskId);
+
+              if (t.plan) {
+                sections.push('  [TRACE] Plan: ' + JSON.stringify(t.plan));
+              }
+
+              if (t.safetyCheck) {
+                sections.push('  [TRACE] Safety: risk=' + t.safetyCheck.risk + ' allowed=' + t.safetyCheck.allowed + ' reasons=[' + t.safetyCheck.reasons.join('; ') + ']');
+              }
+
+              if (t.verification) {
+                sections.push('  [TRACE] Verification: verified=' + t.verification.verified + (t.verification.issues.length > 0 ? ' issues=[' + t.verification.issues.join('; ') + ']' : ''));
+              }
+
+              if (t.permissionState) {
+                sections.push('  [TRACE] Permissions: ' + t.permissionState);
+              }
+
+              if (t.error) {
+                sections.push('  [TRACE] ERROR:');
+                sections.push('  ' + t.error);
+              }
+
+              if (t.rawResult) {
+                const rawTrunc = t.rawResult.length > 2000 ? t.rawResult.slice(0, 2000) + '...' : t.rawResult;
+                sections.push('  [TRACE] Raw Result: ' + rawTrunc);
+              }
+
+              if (t.executionSteps && t.executionSteps.length > 0) {
+                sections.push('  [TRACE] Execution Steps:');
+                t.executionSteps.forEach((s, i) => {
+                  sections.push(`    ${i + 1}. ${s.step} [${s.success ? 'PASS' : 'FAIL'}] @ ${ts(s.timestamp)}`);
+                  sections.push(`       ${s.detail}`);
+                });
+              }
+
+              sections.push('  [TRACE] System Prompt: ' + t.systemPrompt.slice(0, 500));
+              sections.push('  [TRACE] Framed Message: ' + t.framedUserMessage);
+              sections.push('');
+            }
+          }
+        }
+      } catch {}
+
+      try {
+        const ledger = core.getExecutionLedger();
+        const events = await ledger.getEvents();
+        if (events.length > 0) {
+          sections.push(hr);
+          sections.push(`EXECUTION LEDGER (${events.length} events)`);
+          sections.push(hr);
+          for (const e of events) {
+            sections.push(`${ts(e.timestamp)} | ${e.phase} | ${e.capability || '-'} | ${e.success ? 'OK' : 'FAIL'} | model=${e.model || '-'} | cost=${e.cost ?? 0}`);
+            sections.push(`  input: ${e.inputSummary}`);
+            sections.push(`  output: ${e.outputSummary}`);
+          }
+          sections.push('');
+        }
+      } catch {}
+    }
+
+    const entries = Logger.getEntries(undefined, 500);
+    if (entries.length > 0) {
+      sections.push(hr);
+      sections.push(`SYSTEM LOGS (${entries.length} entries)`);
+      sections.push(hr);
+      for (const e of entries) {
+        sections.push(`${ts(e.timestamp)} [${e.level.toUpperCase()}][${e.context}] ${e.message}${e.metadata ? ' ' + JSON.stringify(e.metadata) : ''}`);
+      }
+      sections.push('');
+    }
+
+    sections.push(hr);
+    sections.push('END OF LOG');
+    sections.push(hr);
+
+    const logText = sections.join('\n');
+
     if (Platform.OS === "web") {
       try {
         await Clipboard.setStringAsync(logText);
-        Alert.alert("Copied", "Logs copied to clipboard.");
+        Alert.alert("Copied", "Full debug log copied to clipboard.");
       } catch {
         Alert.alert("Error", "Failed to copy logs.");
       }
       return;
     }
     try {
-      const path = `${FileSystem.cacheDirectory}agent_ultra_logs.txt`;
+      const path = `${FileSystem.cacheDirectory}agent_ultra_debug_${Date.now()}.txt`;
       await FileSystem.writeAsStringAsync(path, logText, { encoding: FileSystem.EncodingType.UTF8 });
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
-        await Sharing.shareAsync(path, { mimeType: "text/plain", dialogTitle: "Agent Ultra Logs" });
+        await Sharing.shareAsync(path, { mimeType: "text/plain", dialogTitle: "Download Agent Ultra Logs" });
       } else {
         await Clipboard.setStringAsync(logText);
-        Alert.alert("Copied", "Sharing unavailable. Logs copied to clipboard.");
+        Alert.alert("Copied", "Sharing unavailable. Log copied to clipboard.");
       }
     } catch {
       Alert.alert("Error", "Failed to export logs.");
     }
-  }, [logs]);
+  }, []);
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
@@ -375,13 +494,11 @@ export default function SettingsScreen() {
               </ScrollView>
               {logs.length > 0 && (
                 <Pressable
-                  onPress={shareLogs}
+                  onPress={downloadLogs}
                   style={[styles.btn, styles.secondaryBtn, { marginTop: 8 }]}
                 >
-                  <Ionicons name="share-outline" size={16} color={ACCENT} />
-                  <Text style={styles.secondaryBtnText}>
-                    {Platform.OS === "web" ? "Copy Logs" : "Share Logs"}
-                  </Text>
+                  <Ionicons name="download-outline" size={16} color={ACCENT} />
+                  <Text style={styles.secondaryBtnText}>Download</Text>
                 </Pressable>
               )}
             </View>

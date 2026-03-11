@@ -1,12 +1,51 @@
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 export type MessageSource = 'ultra' | 'model' | 'system';
 
+export interface ExecutionStep {
+  step: string;
+  timestamp: number;
+  detail: string;
+  success: boolean;
+}
+
+export interface TraceSafetyCheck {
+  risk: string;
+  allowed: boolean;
+  reasons: string[];
+}
+
+export interface TraceVerification {
+  verified: boolean;
+  issues: string[];
+}
+
+export interface TraceLedgerEvent {
+  phase: string;
+  capability?: string;
+  inputSummary: string;
+  outputSummary: string;
+  success: boolean;
+  timestamp: number;
+}
+
 export interface PromptTrace {
   model: string;
   systemPrompt: string;
   framedUserMessage: string;
   includedMessages: Array<{ role: MessageRole; content: string }>;
   createdAt: number;
+  executionSteps?: ExecutionStep[];
+  plan?: { capability: string; params: Record<string, any>; reason?: string } | null;
+  rawResult?: string | null;
+  safetyCheck?: TraceSafetyCheck | null;
+  verification?: TraceVerification | null;
+  permissionState?: string;
+  error?: string | null;
+  durationMs?: number;
+  taskId?: string;
+  mode?: 'command' | 'conversation' | 'ai_instruction';
+  deterministic?: boolean;
+  ledgerEvents?: TraceLedgerEvent[];
 }
 
 export interface ChatMessage {

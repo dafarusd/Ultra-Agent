@@ -71,3 +71,9 @@ The agent should persist conversations and allow switching between them.
 *   **CommandParser expanded:** Added patterns for: `pick/choose/select photo`, `share [content]`, `where am i`, `get my location`, `my location/coordinates/gps`, `gps`, `find/show my location/position/coordinates`, `take selfie/picture`.
 *   **SafetyChecker scope keywords updated:** Added comprehensive scope keywords for all capabilities including `device_location`, expanded `camera_capture` and `media_access` keywords.
 *   **detectMode expanded:** Added imperative verbs: `share`, `pick`, `choose`, `select`, `where`, `get`. Added special-case patterns for `gps` and `my location/coordinates/gps`.
+
+## Execution Trace & Debug Logging (v1.4)
+*   **PromptTrace enriched:** Extended `PromptTrace` interface in `src/types/ultra.ts` with `ExecutionStep`, `TraceSafetyCheck`, `TraceVerification`, `TraceLedgerEvent` types and 12 new optional fields (steps, plan, rawResult, safetyCheck, verification, permissionState, error, durationMs, taskId, mode, deterministic, ledgerEvents).
+*   **AgentCore instrumented:** `execute()` now tracks all 9 agent loop phases with step name, timestamp, detail string, and pass/fail. Captures stack traces via `err.stack`. Builds rich `PromptTrace` with all fields. Added `getExecutionLedger()` getter.
+*   **PromptViewer upgraded:** Shows execution timeline, action plan, raw result, safety check, verification, permissions, error/stack trace, ledger events. Added per-trace "Download" button that exports full trace as text file via `Sharing.shareAsync`.
+*   **Download button overhauled:** Settings page "Share Logs" replaced with "Download" button. Exports comprehensive debug log including: full conversation history with prompt traces for every message, execution ledger events, and all Logger entries with ISO timestamps and metadata.

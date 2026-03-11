@@ -21,6 +21,8 @@ import type {
   ActionPlan,
   PromptTrace,
   ExecutionResultType,
+  ExecutionStep,
+  TraceLedgerEvent,
 } from '../types/ultra';
 
 class SimpleEmitter {
@@ -266,8 +268,16 @@ export class AgentCore extends SimpleEmitter {
 
     const { conversationId, userInput } = args;
     const taskId = Date.now().toString(36);
+    const startTime = Date.now();
+    const steps: ExecutionStep[] = [];
+    let execError: string | null = null;
+
+    const step = (name: string, detail: string, success: boolean) => {
+      steps.push({ step: name, timestamp: Date.now(), detail, success });
+    };
 
     // === STEP 1: INGEST ===
+    step('INTAKE', `Received user input: "${userInput.slice(0, 200)}"${args.replay ? ' (replay)' : ''}`, true);
     await this.ledger.logEvent({
       phase: 'INTAKE',
       inputSummary: userInput.slice(0, 200),
@@ -290,6 +300,7 @@ export class AgentCore extends SimpleEmitter {
 
     // === STEP 2: ROUTE ===
     const mode = this.detectMode(userInput);
+    step('ROUTE', `Detected mode: ${mode}`, true);
 
     // === STEP 3: PLAN ===
     const capList = this.caps.getAll().map(c => c.id);
@@ -302,6 +313,7 @@ export class AgentCore extends SimpleEmitter {
 
       if (!plan) {
         if (!this.ai.hasApiKey()) {
+          step('PLAN', 'No deterministic match and no API key configured', false);
           const errMsg: ChatMessage = {
             id: uid('msg'),
             role: 'assistant',
@@ -335,7 +347,14 @@ export class AgentCore extends SimpleEmitter {
           plan = this.parseActionPlan(aiResult.content);
 
           if (!plan) {
+            step('PLAN', `AI routing failed to produce valid plan. AI response: ${aiResult.content.slice(0, 500)}`, false);
             const promptTrace = this.buildPromptTrace(this.ai.getDefaultModel(), systemPrompt, framedUserMessage, finalMessages);
+            promptTrace.executionSteps = steps;
+            promptTrace.mode = mode;
+            promptTrace.taskId = taskId;
+            promptTrace.deterministic = false;
+            promptTrace.permissionState = this.perms.getStatusReport();
+            promptTrace.durationMs = Date.now() - startTime;
             const errMsg: ChatMessage = {
               id: uid('msg'),
               role: 'assistant',
@@ -348,8 +367,13 @@ export class AgentCore extends SimpleEmitter {
             return { type: 'clarify', message: errMsg.content, data: { promptTrace } };
           }
         } catch (err: any) {
+          const stack = err.stack || err.message;
+          step('PLAN', `AI routing threw error: ${stack}`, false);
           return { type: 'error', message: 'Failed to analyze command: ' + err.message };
         }
+        step('PLAN', `AI routed to capability: ${plan.capability} — params: ${JSON.stringify(plan.params).slice(0, 300)}`, true);
+      } else {
+        step('PLAN', `Deterministic parse matched capability: ${plan.capability} — params: ${JSON.stringify(plan.params).slice(0, 300)}`, true);
       }
 
       await this.ledger.logEvent({
@@ -364,6 +388,7 @@ export class AgentCore extends SimpleEmitter {
       // === STEP 4: VERIFY ===
       const schemaResult = validatePlan(plan);
       if (!schemaResult.valid) {
+        step('VERIFY', `Schema validation failed: ${schemaResult.errors.join(', ')}`, false);
         const msg = `Invalid action parameters: ${schemaResult.errors.join(', ')}`;
         const errMsg: ChatMessage = {
           id: uid('msg'),
@@ -378,6 +403,7 @@ export class AgentCore extends SimpleEmitter {
       }
 
       const safetyResult = this.safety.check(userInput, plan);
+      step('VERIFY', `Safety check: risk=${safetyResult.risk}, allowed=${safetyResult.allowed}, reasons=[${safetyResult.reasons.join('; ')}]`, safetyResult.allowed);
 
       await this.ledger.logEvent({
         phase: 'VERIFY',
@@ -405,6 +431,7 @@ export class AgentCore extends SimpleEmitter {
       // === STEP 5: APPROVE ===
       const budgetCheck = await this.ledger.checkBudget();
       if (!budgetCheck.allowed) {
+        step('APPROVE', `Budget exceeded: ${budgetCheck.reason}`, false);
         const msg = `Action blocked by autonomy budget: ${budgetCheck.reason}`;
         const budgetMsg: ChatMessage = {
           id: uid('msg'),
@@ -419,6 +446,7 @@ export class AgentCore extends SimpleEmitter {
       }
 
       if (safetyResult.risk === 'dangerous' && !args.approvedAction) {
+        step('APPROVE', `Dangerous action requires user approval: ${safetyResult.reasons.join('; ')}`, false);
         await this.ledger.logEvent({
           phase: 'APPROVE',
           capability: plan.capability,
@@ -443,6 +471,8 @@ export class AgentCore extends SimpleEmitter {
           data: { plan, safety: safetyResult, replayUserInput: userInput },
         };
       }
+
+      step('APPROVE', args.approvedAction ? 'User pre-approved this action' : `Auto-approved (risk=${safetyResult.risk})`, true);
 
       // Model switch recommendation (only for non-replay, non-skip)
       if (!args.skipModelSwitchPrompt && !args.approvedModel) {
@@ -509,8 +539,13 @@ export class AgentCore extends SimpleEmitter {
         } else {
           execResult = await this.executor.runWithPlan(plan, taskId);
         }
+        const rawStr = JSON.stringify(execResult).slice(0, 1000);
+        step('EXECUTE', `${plan.capability} completed. Result: ${rawStr}${progressLog.length > 0 ? '\nProgress (' + progressLog.length + ' entries):\n' + progressLog.join('\n') : ''}`, execResult?.success !== false);
       } catch (err: any) {
-        execResult = { success: false, error: err.message };
+        const stack = err.stack || err.message;
+        execResult = { success: false, error: err.message, stack };
+        execError = stack;
+        step('EXECUTE', `${plan.capability} threw exception:\n${stack}`, false);
         this.executor.setGenomeProgressCallback(null);
       }
 
@@ -540,6 +575,7 @@ export class AgentCore extends SimpleEmitter {
 
       // === STEP 7: VERIFY RESULT ===
       const verification = this.safety.verifyResult(plan, execResult);
+      step('VERIFY_RESULT', `verified=${verification.verified}${verification.issues.length > 0 ? ', issues: ' + verification.issues.join('; ') : ', no issues'}`, verification.verified);
 
       await this.ledger.logEvent({
         phase: 'VERIFY_RESULT',
@@ -553,15 +589,40 @@ export class AgentCore extends SimpleEmitter {
       const resultSummary = await this.summarizeResult(plan.capability, execResult, userInput, verification);
 
       // === STEP 8: WRITE MEMORY ===
+      step('WRITE_MEMORY', `Summary generated (${resultSummary.length} chars). Writing to conversation history.`, true);
+
       const systemPromptForTrace = this.buildDynamicPrompt({
         mode, userInput, summary: '', capabilities: capList,
       });
+
+      const ledgerEvents = await this.ledger.getEvents({ conversationId });
+      const traceLedger: TraceLedgerEvent[] = ledgerEvents.map(e => ({
+        phase: e.phase,
+        capability: e.capability,
+        inputSummary: e.inputSummary,
+        outputSummary: e.outputSummary,
+        success: e.success,
+        timestamp: e.timestamp,
+      }));
+
       const promptTrace: PromptTrace = {
         model: args.approvedModel || this.ai.getDefaultModel(),
         systemPrompt: planFromParser ? '(deterministic parse — no AI call)' : systemPromptForTrace,
         framedUserMessage: userInput,
         includedMessages: [],
         createdAt: Date.now(),
+        executionSteps: steps,
+        plan: { capability: plan.capability, params: plan.params, reason: plan.reason },
+        rawResult: JSON.stringify(execResult),
+        safetyCheck: { risk: safetyResult.risk, allowed: safetyResult.allowed, reasons: safetyResult.reasons },
+        verification: { verified: verification.verified, issues: verification.issues },
+        permissionState: this.perms.getStatusReport(),
+        error: execError,
+        durationMs: Date.now() - startTime,
+        taskId,
+        mode,
+        deterministic: planFromParser,
+        ledgerEvents: traceLedger,
       };
 
       const resultMsg: ChatMessage = {
@@ -586,6 +647,7 @@ export class AgentCore extends SimpleEmitter {
         resultSummary,
         verification.verified
       );
+      step('ADAPT', `Learned from execution: verified=${verification.verified}`, true);
 
       await this.ledger.logEvent({
         phase: 'LEARN',
@@ -604,6 +666,9 @@ export class AgentCore extends SimpleEmitter {
     }
 
     // === CONVERSATION / AI_INSTRUCTION MODE ===
+    step('PLAN', `Conversation/AI instruction mode — no capability plan needed`, true);
+    step('VERIFY', 'N/A — no capability action to verify in conversation mode', true);
+    step('APPROVE', 'N/A — no approval required for conversation mode', true);
     if (!this.ai.hasApiKey()) {
       const errMsg: ChatMessage = {
         id: uid('msg'),
@@ -678,6 +743,11 @@ export class AgentCore extends SimpleEmitter {
         maxTokens: 4000,
       });
 
+      step('EXECUTE', `AI response received (${aiResult.content.length} chars, model=${aiResult.model}, cost=${aiResult.cost ?? 0})`, true);
+      step('VERIFY_RESULT', 'N/A — no capability result to verify in conversation mode', true);
+      step('WRITE_MEMORY', 'AI response written to conversation history', true);
+      step('ADAPT', 'N/A — no adaptation needed for conversation mode', true);
+
       const filteredForTrace = finalMessages.filter(m => {
         if (m.role === 'system' && m.content === systemPrompt) return false;
         if (m.role === 'user' && m.content === framedUserMessage) return false;
@@ -689,6 +759,13 @@ export class AgentCore extends SimpleEmitter {
         framedUserMessage,
         includedMessages: filteredForTrace.map(m => ({ role: m.role as any, content: m.content })),
         createdAt: Date.now(),
+        executionSteps: steps,
+        rawResult: aiResult.content.slice(0, 2000),
+        permissionState: this.perms.getStatusReport(),
+        durationMs: Date.now() - startTime,
+        taskId,
+        mode,
+        deterministic: false,
       };
 
       const aiMsg: ChatMessage = {
@@ -707,6 +784,8 @@ export class AgentCore extends SimpleEmitter {
         data: { promptTrace, cost: aiResult.cost },
       };
     } catch (err: any) {
+      const stack = err.stack || err.message;
+      step('EXECUTE', `AI request failed: ${stack}`, false);
       return { type: 'error', message: 'AI request failed: ' + err.message };
     }
   }
@@ -733,6 +812,10 @@ export class AgentCore extends SimpleEmitter {
 
   getConversationManager(): ConversationManager {
     return this.conversations;
+  }
+
+  getExecutionLedger(): ExecutionLedger {
+    return this.ledger;
   }
 
   private buildPromptTrace(
