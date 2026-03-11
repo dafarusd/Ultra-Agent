@@ -379,19 +379,11 @@ export class TaskExecutor {
         }
 
         try {
-          await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
-            packageName: pkg,
-            category: 0,
-          });
+          const { Linking } = require('react-native');
+          await Linking.openURL(`intent://#Intent;package=${pkg};action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end`);
           return { success: true, launched: pkg };
-        } catch (intentErr: any) {
-          try {
-            const { Linking } = require('react-native');
-            await Linking.openURL(`package:${pkg}`);
-            return { success: true, launched: pkg, method: 'linking' };
-          } catch (linkErr: any) {
-            return { success: false, error: `Failed to launch ${target} (${pkg}): ${intentErr.message}` };
-          }
+        } catch (err: any) {
+          return { success: false, error: `Failed to launch ${target} (${pkg}): ${err.message}` };
         }
       }
       case 'app_share': {
@@ -668,10 +660,8 @@ export class TaskExecutor {
           return { error: `Could not resolve package for "${request}"` };
         }
         try {
-          await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
-            packageName: pkg,
-            category: 0,
-          });
+          const { Linking } = require('react-native');
+          await Linking.openURL(`intent://#Intent;package=${pkg};action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end`);
           return { success: true, launched: pkg };
         } catch (err: any) {
           return { error: `Failed to launch ${pkg}: ${err.message}` };
