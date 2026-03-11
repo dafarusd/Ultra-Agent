@@ -20,7 +20,7 @@ The agent should persist conversations and allow switching between them.
 **Multi-Agent Orchestration:** `Orchestrator` manages a swarm of individual `TaskAgent` instances, communicating via an `AgentBus`.
 **Safety and Security:** A `SafetyChecker` scans for dangerous patterns and validates scope. `PermissionBroker` manages device permissions. `SecureVault` handles sensitive data storage. `BiometricGate` provides biometric authentication.
 **Core Agent Loop:** A 9-step autonomous loop (INGEST, ROUTE, PLAN, VERIFY, APPROVE, EXECUTE, VERIFY_RESULT, WRITE_MEMORY, ADAPT) guides the agent's decision-making and execution.
-**Capability Management:** `CapabilityRegistry` defines 20 distinct capabilities (e.g., file operations, app build, self-modify) with associated risk levels, executed by `TaskExecutor`.
+**Capability Management:** `CapabilityRegistry` defines 22 distinct capabilities (e.g., file operations, camera capture, device location, app build, self-modify) with associated risk levels, executed by `TaskExecutor`.
 **Error Handling and Debugging:** An `ErrorBoundary` handles UI errors, and a `DebugEngine` provides a self-healing loop for build errors, involving AI-driven fixes and recompilation.
 **Persistence and Monitoring:** `ConversationManager` handles persistent chat storage, `ExecutionLedger` logs events and manages idempotency and autonomy budgets, and `CostTracker` monitors API usage.
 **Native Module Integration:** A custom `AgentNativeModule` (Java classes injected via an Expo config plugin) provides direct access to native functionalities like file writing, Java compilation, APK packaging, signing, installation, and process execution, crucial for the on-device build process. `AppController` utilizes an accessibility service for UI automation and E2E testing of generated apps.
@@ -38,7 +38,9 @@ The agent should persist conversations and allow switching between them.
 *   **`expo-file-system`:** For file system operations on the device.
 *   **`@expo/vector-icons`:** For UI icons.
 *   **`expo-clipboard`:** For copy-to-clipboard functionality on message long-press.
-*   **`expo-sharing`:** For exporting/sharing log files.
+*   **`expo-sharing`:** For exporting/sharing log files and native share sheet.
+*   **`expo-image-picker`:** For camera capture and gallery image picking.
+*   **`expo-location`:** For GPS/device location access.
 
 ## QA Bug Fixes (v1.1)
 *   **"hello ultra" misrouting:** Removed broad `includes('ultra')` check from `detectMode()`. Now only routes to command mode when "ultra" appears as a prefix before an imperative verb (e.g., "ultra open..."). Greetings and casual mentions of "ultra" correctly route to conversation mode.
@@ -57,3 +59,15 @@ The agent should persist conversations and allow switching between them.
 *   **Rich build result summaries:** `summarizeResult()` now produces capability-specific summaries for `app_build` (app name, APK path, file count), `self_modify` (cycles, improvements, fitness score, task performance, full evolution report), and `self_replicate` (generation, parent ID, APK path, package name).
 *   **Genome persistence on web:** Genome state now persists to `localStorage` on web (previously only saved to native file system). Users can evolve the genome in web preview without losing progress between sessions.
 *   **ChatMessage type extended:** Added `isBuildLog` and `data` fields to `meta` for richer message metadata.
+
+## Device Capability Fixes (v1.3)
+*   **compileSdkVersion bumped to 36:** `androidx.core:core-ktx:1.17.0` requires compileSdk 36. Updated `app.json` from 35 to 36 to fix EAS build failure.
+*   **API key gating fix:** Moved Venice API key check from before routing to after deterministic command parsing. Commands that match CommandParser patterns (SMS, contacts, camera, location, file ops, etc.) now execute without needing an API key. Only AI fallback planning and conversation mode require the key.
+*   **Camera capture implemented:** Replaced stub with `ImagePicker.launchCameraAsync()`. Returns photo URI, dimensions, and file size.
+*   **Gallery image picker added:** `media_access` now supports `action: 'pick'` parameter to open the gallery picker via `ImagePicker.launchImageLibraryAsync()`. Default behavior (listing recent media) preserved.
+*   **App share implemented:** Replaced availability-check stub with real sharing. File URIs use `Sharing.shareAsync()`, text content uses React Native `Share.share()`.
+*   **Device location added:** New `device_location` capability using `expo-location` for native GPS and web geolocation API fallback. Registered in CapabilityRegistry, PermissionBroker, SafetyChecker, CommandParser, and CapabilitySchemas.
+*   **SMS contact resolution:** SMS handler now looks up contact names via `expo-contacts` to resolve "mom" → phone number. Message parameter made optional (opens SMS composer without pre-filled text if not specified).
+*   **CommandParser expanded:** Added patterns for: `pick/choose/select photo`, `share [content]`, `where am i`, `get my location`, `my location/coordinates/gps`, `gps`, `find/show my location/position/coordinates`, `take selfie/picture`.
+*   **SafetyChecker scope keywords updated:** Added comprehensive scope keywords for all capabilities including `device_location`, expanded `camera_capture` and `media_access` keywords.
+*   **detectMode expanded:** Added imperative verbs: `share`, `pick`, `choose`, `select`, `where`, `get`. Added special-case patterns for `gps` and `my location/coordinates/gps`.

@@ -1,6 +1,8 @@
+import { Platform } from 'react-native';
 import * as Contacts from 'expo-contacts';
 import * as MediaLibrary from 'expo-media-library';
 import * as Camera from 'expo-camera';
+import * as Location from 'expo-location';
 import { Logger } from '../utils/Logger';
 
 interface PermissionStatus {
@@ -28,6 +30,7 @@ export class PermissionBroker {
       this.checkContacts(),
       this.checkMediaLibrary(),
       this.checkCamera(),
+      this.checkLocation(),
     ]);
   }
 
@@ -62,6 +65,19 @@ export class PermissionBroker {
     }
   }
 
+  private async checkLocation(): Promise<void> {
+    try {
+      if (Platform.OS === 'web') {
+        this.statuses.set('ACCESS_FINE_LOCATION', { id: 'ACCESS_FINE_LOCATION', granted: true, canAsk: true });
+        return;
+      }
+      const { status } = await Location.getForegroundPermissionsAsync();
+      this.statuses.set('ACCESS_FINE_LOCATION', { id: 'ACCESS_FINE_LOCATION', granted: status === 'granted', canAsk: status !== 'denied' });
+    } catch {
+      this.statuses.set('ACCESS_FINE_LOCATION', { id: 'ACCESS_FINE_LOCATION', granted: false, canAsk: false });
+    }
+  }
+
   isGranted(permission: string): boolean {
     return this.statuses.get(permission)?.granted ?? false;
   }
@@ -93,6 +109,16 @@ export class PermissionBroker {
         }
         case 'CAMERA': {
           const { status } = await Camera.requestCameraPermissionsAsync();
+          const g = status === 'granted';
+          this.statuses.set(permission, { id: permission, granted: g, canAsk: true });
+          return g;
+        }
+        case 'ACCESS_FINE_LOCATION': {
+          if (Platform.OS === 'web') {
+            this.statuses.set(permission, { id: permission, granted: true, canAsk: true });
+            return true;
+          }
+          const { status } = await Location.requestForegroundPermissionsAsync();
           const g = status === 'granted';
           this.statuses.set(permission, { id: permission, granted: g, canAsk: true });
           return g;

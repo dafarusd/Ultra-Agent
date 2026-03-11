@@ -31,7 +31,9 @@
         "VIBRATE",
         "FOREGROUND_SERVICE",
         "REQUEST_INSTALL_PACKAGES",
-        "ACCESS_NETWORK_STATE"
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#000000",
@@ -78,12 +80,19 @@
           "savePhotosPermission": "Allow Agent Ultra to save photos"
         }
       ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Agent Ultra to access your location",
+          "locationWhenInUsePermission": "Allow Agent Ultra to access your location"
+        }
+      ],
       "./plugins/withAgentNative",
       [
         "expo-build-properties",
         {
           "android": {
-            "compileSdkVersion": 35,
+            "compileSdkVersion": 36,
             "targetSdkVersion": 35,
             "minSdkVersion": 26
           }

@@ -39,13 +39,33 @@ const rules: ParseRule[] = [
     extractParams: () => ({}),
   },
   {
-    pattern: /^take\s+a?\s*photo/i,
+    pattern: /^take\s+a?\s*(?:photo|picture|selfie)/i,
     capability: 'camera_capture',
     extractParams: () => ({}),
   },
   {
-    pattern: /^(?:show|list)\s+(?:my\s+)?photos/i,
+    pattern: /^(?:pick|choose|select)\s+(?:a\s+)?(?:photo|image|picture)/i,
     capability: 'media_access',
+    extractParams: () => ({ action: 'pick' }),
+  },
+  {
+    pattern: /^(?:show|list)\s+(?:my\s+)?(?:photos|images|pictures|gallery)/i,
+    capability: 'media_access',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^share\s+(.+)/i,
+    capability: 'app_share',
+    extractParams: (m) => ({ content: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:where\s+am\s+i|get\s+(?:my\s+)?location|my\s+(?:location|coordinates|gps)|gps)/i,
+    capability: 'device_location',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:find|show)\s+(?:my\s+)?(?:location|position|coordinates)/i,
+    capability: 'device_location',
     extractParams: () => ({}),
   },
   {
@@ -116,8 +136,9 @@ const rules: ParseRule[] = [
 
 export class CommandParser {
   parse(input: string): ActionPlan | null {
-    const trimmed = input.trim();
+    let trimmed = input.trim();
     if (!trimmed) return null;
+    trimmed = trimmed.replace(/^ultra[\s,]+/i, '');
 
     for (const rule of rules) {
       const match = trimmed.match(rule.pattern);

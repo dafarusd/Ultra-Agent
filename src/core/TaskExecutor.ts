@@ -1,7 +1,9 @@
-import { Platform } from 'react-native';
+import { Platform, Share } from 'react-native';
 import * as Contacts from 'expo-contacts';
 import * as SMS from 'expo-sms';
 import * as Sharing from 'expo-sharing';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as MediaLibrary from 'expo-media-library';
 import * as ExpoFileSystem from 'expo-file-system';
@@ -261,20 +263,46 @@ export class TaskExecutor {
         return { success: true, contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
       }
       case 'sms_send': {
-        const to = params.to;
-        const message = params.message;
+        let to = params.to;
+        const message = params.message || undefined;
         if (!to) return { error: 'No recipient specified' };
-        if (!message) return { error: 'No message content specified' };
         const avail = await SMS.isAvailableAsync();
         if (!avail) return { error: 'SMS unavailable' };
+        try {
+          const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
+          const match = data.find((c) => c.name?.toLowerCase().includes(to.toLowerCase()));
+          if (match && match.phoneNumbers && match.phoneNumbers.length > 0) {
+            to = match.phoneNumbers[0].number || to;
+          }
+        } catch {}
         const { result } = await SMS.sendSMSAsync([to], message);
         return { success: result === 'sent', sent: result === 'sent', to };
       }
       case 'camera_capture': {
         if (!isNative) return { error: 'Camera requires a device' };
-        return { success: true, note: 'Camera capture initiated. Use the device camera app.' };
+        const camResult = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          quality: 0.8,
+        });
+        if (camResult.canceled || !camResult.assets || camResult.assets.length === 0) {
+          return { success: false, error: 'Camera capture cancelled by user' };
+        }
+        const photo = camResult.assets[0];
+        return { success: true, uri: photo.uri, width: photo.width, height: photo.height, fileSize: photo.fileSize || null };
       }
       case 'media_access': {
+        if (params.action === 'pick') {
+          if (!isNative) return { error: 'Gallery picker requires a device' };
+          const pickResult = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 0.8,
+          });
+          if (pickResult.canceled || !pickResult.assets || pickResult.assets.length === 0) {
+            return { success: false, error: 'Image selection cancelled by user' };
+          }
+          const picked = pickResult.assets[0];
+          return { success: true, uri: picked.uri, width: picked.width, height: picked.height, fileSize: picked.fileSize || null };
+        }
         const { assets } = await MediaLibrary.getAssetsAsync({ first: 20, sortBy: [MediaLibrary.SortBy.creationTime] });
         return { success: true, count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
       }
@@ -287,8 +315,28 @@ export class TaskExecutor {
         return { success: true, launched: pkg };
       }
       case 'app_share': {
-        const avail = await Sharing.isAvailableAsync();
-        return { success: true, available: avail };
+        const shareContent = params.content || params.message || params.url;
+        if (shareContent) {
+          const fileUri = shareContent.startsWith?.('file://') || shareContent.startsWith?.('/');
+          if (fileUri) {
+            const shareAvail = await Sharing.isAvailableAsync();
+            if (!shareAvail) return { error: 'Sharing is not available on this device' };
+            await Sharing.shareAsync(shareContent.startsWith('/') ? 'file://' + shareContent : shareContent);
+            return { success: true, shared: shareContent };
+          }
+          try {
+            const shareResult = await Share.share({ message: shareContent });
+            return { success: true, action: shareResult.action };
+          } catch (e: any) {
+            return { error: 'Share failed: ' + e.message };
+          }
+        }
+        try {
+          const shareResult = await Share.share({ message: 'Shared from Agent Ultra' });
+          return { success: true, action: shareResult.action };
+        } catch (e: any) {
+          return { error: 'Share failed: ' + e.message };
+        }
       }
       case 'code_generate': {
         const desc = params.description || request;
@@ -408,6 +456,20 @@ export class TaskExecutor {
           apkPath: buildResult.apkPath,
           packageName: genome.identity.packageName,
         };
+      }
+      case 'device_location': {
+        if (Platform.OS === 'web') {
+          try {
+            const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 15000 });
+            });
+            return { success: true, latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy };
+          } catch (e: any) {
+            return { error: 'Location unavailable on web: ' + e.message };
+          }
+        }
+        const { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        return { success: true, latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, altitude: coords.altitude };
       }
       case 'app_control': {
         if (!isNative || !AppController.isAvailable()) return { error: 'App control requires Android device with accessibility service enabled' };

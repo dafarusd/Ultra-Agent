@@ -143,9 +143,10 @@ export class AgentCore extends SimpleEmitter {
     }
     const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
     if (genomePatterns.test(t)) return 'command';
-    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take)\b/i.test(t);
+    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get)\b/i.test(t);
     if (imperative) return 'command';
-    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take)\b/i;
+    if (/^(gps|my\s+(?:location|coordinates|gps))\b/i.test(t)) return 'command';
+    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get)\b/i;
     if (ultraCommand.test(t)) return 'command';
     return 'conversation';
   }
@@ -287,19 +288,6 @@ export class AgentCore extends SimpleEmitter {
       await this.conversations.addMessage(conversationId, userMsg);
     }
 
-    if (!this.ai.hasApiKey()) {
-      const errMsg: ChatMessage = {
-        id: uid('msg'),
-        role: 'assistant',
-        content: 'Venice API key not configured. Open Settings to add your key.',
-        createdAt: Date.now(),
-        source: 'system',
-        meta: {},
-      };
-      await this.conversations.addMessage(conversationId, errMsg);
-      return { type: 'error', message: 'Venice API key not configured. Open Settings.' };
-    }
-
     // === STEP 2: ROUTE ===
     const mode = this.detectMode(userInput);
 
@@ -311,6 +299,18 @@ export class AgentCore extends SimpleEmitter {
       plan = this.parser.parse(userInput);
 
       if (!plan) {
+        if (!this.ai.hasApiKey()) {
+          const errMsg: ChatMessage = {
+            id: uid('msg'),
+            role: 'assistant',
+            content: 'I understood that as a command but couldn\'t match it to a specific action. Configure your Venice API key in Settings to enable AI-assisted command routing.',
+            createdAt: Date.now(),
+            source: 'system',
+            meta: {},
+          };
+          await this.conversations.addMessage(conversationId, errMsg);
+          return { type: 'error', message: errMsg.content };
+        }
         this.emit('log', 'Analyzing command...', 'system');
         const systemPrompt = this.buildDynamicPrompt({
           mode,
@@ -602,6 +602,18 @@ export class AgentCore extends SimpleEmitter {
     }
 
     // === CONVERSATION / AI_INSTRUCTION MODE ===
+    if (!this.ai.hasApiKey()) {
+      const errMsg: ChatMessage = {
+        id: uid('msg'),
+        role: 'assistant',
+        content: 'Venice API key not configured. Open Settings to add your key.',
+        createdAt: Date.now(),
+        source: 'system',
+        meta: {},
+      };
+      await this.conversations.addMessage(conversationId, errMsg);
+      return { type: 'error', message: 'Venice API key not configured. Open Settings.' };
+    }
     this.emit('log', 'Thinking...', 'system');
 
     const model = args.approvedModel || this.ai.getDefaultModel();

@@ -14,9 +14,10 @@ const schemas: CapabilitySchema[] = [
     version: 1,
     requiredParams: {
       to: { type: 'string', description: 'Recipient phone number or contact name' },
+    },
+    optionalParams: {
       message: { type: 'string', description: 'Message content' },
     },
-    optionalParams: {},
   },
   {
     capabilityId: 'file_read',
@@ -67,17 +68,25 @@ const schemas: CapabilitySchema[] = [
     capabilityId: 'media_access',
     version: 1,
     requiredParams: {},
-    optionalParams: {},
+    optionalParams: {
+      action: { type: 'string', description: 'Action to perform: pick (open gallery picker) or list (default, list recent media)' },
+    },
   },
   {
     capabilityId: 'app_share',
     version: 1,
-    requiredParams: {
-      content: { type: 'string', description: 'Content to share' },
-    },
+    requiredParams: {},
     optionalParams: {
+      content: { type: 'string', description: 'Content or message to share' },
+      url: { type: 'string', description: 'URL to share' },
       type: { type: 'string', description: 'MIME type of the content' },
     },
+  },
+  {
+    capabilityId: 'device_location',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
   },
   {
     capabilityId: 'code_generate',
