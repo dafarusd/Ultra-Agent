@@ -13,8 +13,7 @@ import {
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
+
 import * as Clipboard from "expo-clipboard";
 import { SecureVault } from "@/src/security/SecureVault";
 import { getAgentCoreInstance } from "@/src/core/AgentCore";
@@ -151,6 +150,38 @@ export default function SettingsScreen() {
 
     const core = getAgentCoreInstance();
 
+    // === SYSTEM STATUS HEADER ===
+    if (core) {
+      sections.push(hr);
+      sections.push('SYSTEM STATUS');
+      sections.push(hr);
+      sections.push(`API Key: ${core.hasApiKey() ? 'CONFIGURED' : 'NOT SET'}`);
+      sections.push(`Default Model: ${core.getDefaultModel()}`);
+      sections.push(`Available Models: ${core.getAvailableModels().map((m: any) => m.id).join(', ') || 'none discovered'}`);
+      try {
+        const cost = core.getCostSummary();
+        sections.push(`Total Cost: $${cost.totalCost.toFixed(4)} | Calls: ${cost.totalCalls} | Input: ${cost.totalInputTokens} tok | Output: ${cost.totalOutputTokens} tok`);
+        if (Object.keys(cost.costByModel).length > 0) {
+          sections.push(`Cost by Model: ${Object.entries(cost.costByModel).map(([m, c]) => `${m}: $${(c as number).toFixed(4)}`).join(', ')}`);
+        }
+      } catch {}
+      try {
+        const debug = core.getDebugStats();
+        sections.push(`Debug Engine: ${debug.totalFixes} fixes, ${(debug.successRate * 100).toFixed(0)}% success rate`);
+      } catch {}
+      try {
+        const patterns = core.getLearnedPatterns();
+        if (patterns.length > 0) {
+          sections.push(`Learned Patterns: ${patterns.length}`);
+          patterns.slice(0, 5).forEach((p: any) => {
+            sections.push(`  - "${p.input.slice(0, 60)}" → ${p.capabilities.join(', ')} (used ${p.frequency}x, success ${(p.successRate * 100).toFixed(0)}%)`);
+          });
+        }
+      } catch {}
+      sections.push('');
+    }
+
+    // === CONVERSATIONS WITH FULL TRACES ===
     if (core) {
       try {
         const cm = core.getConversationManager();
@@ -162,7 +193,8 @@ export default function SettingsScreen() {
 
           sections.push(hr);
           sections.push(`CONVERSATION ${ci + 1}/${convList.length}: "${conv.title}" (${conv.messages.length} messages)`);
-          sections.push(`ID: ${conv.id}`);
+          sections.push(`ID: ${conv.id} | Created: ${ts(conv.createdAt)} | Updated: ${ts(conv.updatedAt)}`);
+          if (conv.summary) sections.push(`Summary: ${conv.summary}`);
           sections.push(hr);
           sections.push('');
 
@@ -196,7 +228,8 @@ export default function SettingsScreen() {
               }
 
               if (t.permissionState) {
-                sections.push('  [TRACE] Permissions: ' + t.permissionState);
+                sections.push('  [TRACE] Permissions:');
+                t.permissionState.split('\n').forEach((line: string) => sections.push('    ' + line));
               }
 
               if (t.error) {
@@ -205,26 +238,53 @@ export default function SettingsScreen() {
               }
 
               if (t.rawResult) {
-                const rawTrunc = t.rawResult.length > 2000 ? t.rawResult.slice(0, 2000) + '...' : t.rawResult;
-                sections.push('  [TRACE] Raw Result: ' + rawTrunc);
+                sections.push('  [TRACE] Raw Result:');
+                const rawTrunc = t.rawResult.length > 3000 ? t.rawResult.slice(0, 3000) + '...[truncated]' : t.rawResult;
+                try {
+                  sections.push('  ' + JSON.stringify(JSON.parse(rawTrunc), null, 2).split('\n').join('\n  '));
+                } catch {
+                  sections.push('  ' + rawTrunc);
+                }
               }
 
               if (t.executionSteps && t.executionSteps.length > 0) {
                 sections.push('  [TRACE] Execution Steps:');
-                t.executionSteps.forEach((s, i) => {
+                t.executionSteps.forEach((s: any, i: number) => {
                   sections.push(`    ${i + 1}. ${s.step} [${s.success ? 'PASS' : 'FAIL'}] @ ${ts(s.timestamp)}`);
                   sections.push(`       ${s.detail}`);
                 });
               }
 
-              sections.push('  [TRACE] System Prompt: ' + t.systemPrompt.slice(0, 500));
+              if (t.systemPrompt) {
+                sections.push('  [TRACE] System Prompt:');
+                sections.push('  ' + t.systemPrompt);
+              }
+
               sections.push('  [TRACE] Framed Message: ' + t.framedUserMessage);
+
+              if (t.includedMessages && t.includedMessages.length > 0) {
+                sections.push(`  [TRACE] Included Messages (${t.includedMessages.length}):`);
+                t.includedMessages.forEach((m: any) => {
+                  sections.push(`    [${m.role.toUpperCase()}] ${m.content}`);
+                });
+              }
+
+              if (t.ledgerEvents && t.ledgerEvents.length > 0) {
+                sections.push('  [TRACE] Ledger Events:');
+                t.ledgerEvents.forEach((e: any) => {
+                  sections.push(`    ${ts(e.timestamp)} | ${e.phase} | ${e.capability || '-'} | ${e.success ? 'OK' : 'FAIL'} | ${e.inputSummary} | ${e.outputSummary}`);
+                });
+              }
+
               sections.push('');
             }
           }
         }
-      } catch {}
+      } catch (convErr: any) {
+        sections.push(`[ERROR loading conversations: ${convErr.message}]`);
+      }
 
+      // === EXECUTION LEDGER ===
       try {
         const ledger = core.getExecutionLedger();
         const events = await ledger.getEvents();
@@ -236,12 +296,16 @@ export default function SettingsScreen() {
             sections.push(`${ts(e.timestamp)} | ${e.phase} | ${e.capability || '-'} | ${e.success ? 'OK' : 'FAIL'} | model=${e.model || '-'} | cost=${e.cost ?? 0}`);
             sections.push(`  input: ${e.inputSummary}`);
             sections.push(`  output: ${e.outputSummary}`);
+            if (e.idempotencyKey) sections.push(`  idempotency: ${e.idempotencyKey}`);
           }
           sections.push('');
         }
-      } catch {}
+      } catch (ledgerErr: any) {
+        sections.push(`[ERROR loading ledger: ${ledgerErr.message}]`);
+      }
     }
 
+    // === SYSTEM LOGS ===
     const entries = Logger.getEntries(undefined, 500);
     if (entries.length > 0) {
       sections.push(hr);
@@ -259,45 +323,11 @@ export default function SettingsScreen() {
 
     const logText = sections.join('\n');
 
-    if (Platform.OS === "web") {
-      try {
-        await Clipboard.setStringAsync(logText);
-        Alert.alert("Copied", "Full debug log copied to clipboard.");
-      } catch {
-        Alert.alert("Error", "Failed to copy logs.");
-      }
-      return;
-    }
     try {
-      const dir = FileSystem.documentDirectory;
-      if (!dir) {
-        await Clipboard.setStringAsync(logText);
-        Alert.alert("Copied", "File system unavailable. Log copied to clipboard.");
-        return;
-      }
-      const path = `${dir}agent_ultra_debug_${Date.now()}.txt`;
-      await FileSystem.writeAsStringAsync(path, logText, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(path, {
-          mimeType: "text/plain",
-          dialogTitle: "Download Agent Ultra Logs",
-          UTI: "public.plain-text",
-        });
-      } else {
-        await Clipboard.setStringAsync(logText);
-        Alert.alert("Copied", "Sharing unavailable. Log copied to clipboard.");
-      }
+      await Clipboard.setStringAsync(logText);
+      Alert.alert("Copied", `Full debug log copied to clipboard (${logText.length} chars, ${sections.length} lines).`);
     } catch (err: any) {
-      console.error("Log download failed:", err);
-      try {
-        await Clipboard.setStringAsync(logText);
-        Alert.alert("Copied", `Share failed (${err.message}). Log copied to clipboard instead.`);
-      } catch {
-        Alert.alert("Error", `Export failed: ${err.message}`);
-      }
+      Alert.alert("Copy Failed", err.message || "Unknown clipboard error");
     }
   }, []);
 
@@ -515,8 +545,8 @@ export default function SettingsScreen() {
                   onPress={downloadLogs}
                   style={[styles.btn, styles.secondaryBtn, { marginTop: 8 }]}
                 >
-                  <Ionicons name="download-outline" size={16} color={ACCENT} />
-                  <Text style={styles.secondaryBtnText}>Download</Text>
+                  <Ionicons name="copy-outline" size={16} color={ACCENT} />
+                  <Text style={styles.secondaryBtnText}>Copy Full Log</Text>
                 </Pressable>
               )}
             </View>

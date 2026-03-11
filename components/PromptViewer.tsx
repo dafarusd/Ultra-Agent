@@ -1,11 +1,9 @@
 import { Modal, View, Text, ScrollView, Pressable, StyleSheet, Platform, Share, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import * as ExpoFileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
+// FileSystem and Sharing removed — copy to clipboard only
 import type { PromptTrace, MessageRole } from '@/src/types/ultra';
 
-const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
 interface PromptViewerProps {
   visible: boolean;
@@ -165,44 +163,12 @@ export default function PromptViewer({ visible, trace, onClose }: PromptViewerPr
   if (!trace) return null;
 
   const handleDownload = async () => {
-    const text = formatTraceToText(trace);
-    if (Platform.OS === 'web') {
-      try {
-        await Clipboard.setStringAsync(text);
-        Alert.alert('Copied', 'Trace copied to clipboard.');
-      } catch {}
-      return;
-    }
     try {
-      const dir = ExpoFileSystem.documentDirectory;
-      if (!dir) {
-        await Clipboard.setStringAsync(text);
-        Alert.alert('Copied', 'File system unavailable. Trace copied to clipboard.');
-        return;
-      }
-      const path = `${dir}trace_${Date.now()}.txt`;
-      await ExpoFileSystem.writeAsStringAsync(path, text, {
-        encoding: ExpoFileSystem.EncodingType.UTF8,
-      });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(path, {
-          mimeType: 'text/plain',
-          dialogTitle: 'Download Execution Trace',
-          UTI: 'public.plain-text',
-        });
-      } else {
-        await Clipboard.setStringAsync(text);
-        Alert.alert('Copied', 'Sharing unavailable. Trace copied to clipboard.');
-      }
+      const text = formatTraceToText(trace);
+      await Clipboard.setStringAsync(text);
+      Alert.alert('Copied', `Trace copied to clipboard (${text.length} chars).`);
     } catch (err: any) {
-      console.error('Trace download failed:', err);
-      try {
-        await Clipboard.setStringAsync(text);
-        Alert.alert('Copied', `Share failed (${err.message}). Trace copied to clipboard instead.`);
-      } catch {
-        Alert.alert('Error', `Export failed: ${err.message}`);
-      }
+      Alert.alert('Copy Failed', err.message || 'Unknown error');
     }
   };
 
@@ -393,8 +359,8 @@ export default function PromptViewer({ visible, trace, onClose }: PromptViewerPr
             </View>
 
             <Pressable onPress={handleDownload} style={styles.downloadBtn}>
-              <Ionicons name="download-outline" size={18} color="#000" />
-              <Text style={styles.downloadBtnText}>Download</Text>
+              <Ionicons name="copy-outline" size={18} color="#000" />
+              <Text style={styles.downloadBtnText}>Copy Trace</Text>
             </Pressable>
           </ScrollView>
         </View>
