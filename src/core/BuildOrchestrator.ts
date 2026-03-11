@@ -226,6 +226,15 @@ export class BuildOrchestrator {
         }
       }
 
+      if (fixedAny && attempt === this.config.maxGlobalRetries) {
+        this.emit(onProgress, 'compiling', 'Final verification compile...');
+        const finalResult = await AgentNative.compileJava(sourcePaths, outputDir, classpath);
+        if (finalResult.success) {
+          this.logger.info('Final recompile successful after fixes');
+          return true;
+        }
+      }
+
       if (!fixedAny && attempt >= this.config.maxGlobalRetries) return false;
     }
 

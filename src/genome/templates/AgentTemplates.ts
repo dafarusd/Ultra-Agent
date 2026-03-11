@@ -421,12 +421,11 @@ public class FileManager {
 
 'AppInstaller.java': `package {{packageName}};
 
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
-import android.net.Uri;
-import android.os.Build;
-import androidx.core.content.FileProvider;
-import java.io.File;
+import android.content.pm.PackageInstaller;
+import java.io.*;
 
 public class AppInstaller {
     private final Context context;
@@ -436,19 +435,38 @@ public class AppInstaller {
     }
 
     public void install(String apkPath) {
-        File apkFile = new File(apkPath);
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        Uri apkUri;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            apkUri = FileProvider.getUriForFile(context,
-                context.getPackageName() + ".provider", apkFile);
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } else {
-            apkUri = Uri.fromFile(apkFile);
+        try {
+            PackageInstaller installer = context.getPackageManager().getPackageInstaller();
+            PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
+                PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            int sessionId = installer.createSession(params);
+            PackageInstaller.Session session = installer.openSession(sessionId);
+
+            FileInputStream fis = new FileInputStream(apkPath);
+            OutputStream out = session.openWrite("package", 0, -1);
+            byte[] buf = new byte[65536];
+            int len;
+            while ((len = fis.read(buf)) > 0) out.write(buf, 0, len);
+            session.fsync(out);
+            out.close();
+            fis.close();
+
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            PendingIntent pi = PendingIntent.getActivity(context, sessionId, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+            session.commit(pi.getIntentSender());
+        } catch (Exception e) {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(
+                    android.net.Uri.fromFile(new java.io.File(apkPath)),
+                    "application/vnd.android.package-archive");
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+            } catch (Exception e2) {
+                throw new RuntimeException("Install failed: " + e.getMessage(), e);
+            }
         }
-        intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        context.startActivity(intent);
     }
 }`,
 

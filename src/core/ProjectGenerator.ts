@@ -24,6 +24,13 @@ export class ProjectGenerator {
       const file = spec.files.find(f => f.path === filePath);
       if (!file) continue;
 
+      if (file.content && file.content.length > 0 && file.status === 'generated') {
+        generated.set(file.path, file.content);
+        count++;
+        this.logger.info(`Preserved existing ${file.path} (${count}/${order.length})`);
+        continue;
+      }
+
       onProgress?.({
         phase: 'generating',
         message: `Generating ${file.path.split('/').pop()}...`,

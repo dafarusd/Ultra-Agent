@@ -85,6 +85,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.regex.*;
 
 public class GenomeCompilerNative {
     private final Context context;
@@ -163,6 +164,35 @@ public class GenomeCompilerNative {
         String result = template;
         JSONObject identity = genome.getJSONObject("identity");
         JSONObject ai = genome.getJSONObject("ai");
+        JSONObject safety = genome.getJSONObject("safety");
+
+        Pattern eachPattern = Pattern.compile(
+            "\\\\{\\\\{#each (\\\\w+)\\\\}\\\\}([\\\\s\\\\S]*?)\\\\{\\\\{/each\\\\}\\\\}", Pattern.DOTALL);
+        Matcher eachMatcher = eachPattern.matcher(result);
+        StringBuffer sb = new StringBuffer();
+        while (eachMatcher.find()) {
+            String key = eachMatcher.group(1);
+            String body = eachMatcher.group(2);
+            JSONArray arr = resolveJsonArray(key, safety);
+            StringBuilder expanded = new StringBuilder();
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    String item = arr.getString(i);
+                    String line = body.replace("{{this}}", item);
+                    if (i == arr.length() - 1) {
+                        line = line.replaceAll(
+                            "\\\\{\\\\{#unless @last\\\\}\\\\}[\\\\s\\\\S]*?\\\\{\\\\{/unless\\\\}\\\\}", "");
+                    } else {
+                        line = line.replaceAll(
+                            "\\\\{\\\\{#unless @last\\\\}\\\\}([\\\\s\\\\S]*?)\\\\{\\\\{/unless\\\\}\\\\}", "$1");
+                    }
+                    expanded.append(line);
+                }
+            }
+            eachMatcher.appendReplacement(sb, Matcher.quoteReplacement(expanded.toString()));
+        }
+        eachMatcher.appendTail(sb);
+        result = sb.toString();
 
         result = result.replace("{{packageName}}", identity.getString("packageName"));
         result = result.replace("{{agentName}}", identity.getString("name"));
@@ -182,11 +212,17 @@ public class GenomeCompilerNative {
         result = result.replace("{{agentBubbleColor}}", "#1A1A2E");
         result = result.replace("{{textColor}}", "#E0E0E0");
         result = result.replace("{{accentColor}}", "#6C63FF");
-
         result = result.replace("{{dbName}}", "ultra_agent.db");
         result = result.replace("{{dbVersion}}", "1");
 
         return result;
+    }
+
+    private JSONArray resolveJsonArray(String key, JSONObject safety) {
+        try {
+            if (safety.has(key)) return safety.getJSONArray(key);
+        } catch (Exception ignored) {}
+        return null;
     }
 
     private String rewritePackage(String content, String targetPackage) {

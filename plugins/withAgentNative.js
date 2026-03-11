@@ -449,24 +449,24 @@ public class BinaryManifestWriter {
 
         int manifestIdx = stringIdx.get("manifest");
         writeStartTag(body, -1, manifestIdx, new int[][]{
-            {stringIdx.get("package"), -1, TYPE_STRING, stringIdx.get(packageName)},
-            {stringIdx.get("versionCode"), -1, TYPE_INT, versionCode},
-            {stringIdx.get("versionName"), -1, TYPE_STRING, stringIdx.get(versionName)},
-        }, nsIdx);
+            {-1,     stringIdx.get("package"),     0, TYPE_STRING, stringIdx.get(packageName)},
+            {nsIdx,  stringIdx.get("versionCode"), 0, TYPE_INT,    versionCode},
+            {nsIdx,  stringIdx.get("versionName"), 0, TYPE_STRING, stringIdx.get(versionName)},
+        });
 
         int usesSdkIdx = stringIdx.get("uses-sdk");
         writeStartTag(body, -1, usesSdkIdx, new int[][]{
-            {stringIdx.get("minSdkVersion"), -1, TYPE_INT, minSdk},
-            {stringIdx.get("targetSdkVersion"), -1, TYPE_INT, targetSdk},
-        }, nsIdx);
+            {nsIdx, stringIdx.get("minSdkVersion"),    0, TYPE_INT, minSdk},
+            {nsIdx, stringIdx.get("targetSdkVersion"), 0, TYPE_INT, targetSdk},
+        });
         writeEndTag(body, -1, usesSdkIdx);
 
         int usesPermIdx = stringIdx.get("uses-permission");
-        int nameIdx = stringIdx.get("name");
+        int nameIdx2 = stringIdx.get("name");
         for (String perm : permissions) {
             writeStartTag(body, -1, usesPermIdx, new int[][]{
-                {nameIdx, -1, TYPE_STRING, stringIdx.get(perm)},
-            }, nsIdx);
+                {nsIdx, nameIdx2, 0, TYPE_STRING, stringIdx.get(perm)},
+            });
             writeEndTag(body, -1, usesPermIdx);
         }
 
@@ -474,9 +474,9 @@ public class BinaryManifestWriter {
         int labelIdx = stringIdx.get("label");
         int allowBackupIdx = stringIdx.get("allowBackup");
         writeStartTag(body, -1, appIdx, new int[][]{
-            {labelIdx, -1, TYPE_STRING, stringIdx.get(appLabel)},
-            {allowBackupIdx, -1, TYPE_BOOL, 0xFFFFFFFF},
-        }, nsIdx);
+            {nsIdx, labelIdx,       0, TYPE_STRING, stringIdx.get(appLabel)},
+            {nsIdx, allowBackupIdx, 0, TYPE_BOOL,   0xFFFFFFFF},
+        });
 
         int actIdx = stringIdx.get("activity");
         int exportedIdx = stringIdx.get("exported");
@@ -490,18 +490,18 @@ public class BinaryManifestWriter {
             boolean isExported = "true".equals(act[1]);
             boolean isLauncher = "true".equals(act[2]);
             writeStartTag(body, -1, actIdx, new int[][]{
-                {nameIdx, -1, TYPE_STRING, stringIdx.get(act[0])},
-                {exportedIdx, -1, TYPE_BOOL, isExported ? 0xFFFFFFFF : 0},
-            }, nsIdx);
+                {nsIdx, nameIdx2,    0, TYPE_STRING, stringIdx.get(act[0])},
+                {nsIdx, exportedIdx, 0, TYPE_BOOL,   isExported ? 0xFFFFFFFF : 0},
+            });
             if (isLauncher) {
-                writeStartTag(body, -1, ifIdx, new int[][]{}, nsIdx);
+                writeStartTag(body, -1, ifIdx, new int[][]{});
                 writeStartTag(body, -1, actionIdx, new int[][]{
-                    {nameIdx, -1, TYPE_STRING, mainActionIdx},
-                }, nsIdx);
+                    {nsIdx, nameIdx2, 0, TYPE_STRING, mainActionIdx},
+                });
                 writeEndTag(body, -1, actionIdx);
                 writeStartTag(body, -1, catIdx, new int[][]{
-                    {nameIdx, -1, TYPE_STRING, launcherCatIdx},
-                }, nsIdx);
+                    {nsIdx, nameIdx2, 0, TYPE_STRING, launcherCatIdx},
+                });
                 writeEndTag(body, -1, catIdx);
                 writeEndTag(body, -1, ifIdx);
             }
@@ -585,7 +585,7 @@ public class BinaryManifestWriter {
         writeInt(out, uriIdx);
     }
 
-    private static void writeStartTag(ByteArrayOutputStream out, int nsIdx, int nameIdx, int[][] attrs, int androidNsIdx) throws IOException {
+    private static void writeStartTag(ByteArrayOutputStream out, int nsIdx, int nameIdx, int[][] attrs) throws IOException {
         int attrCount = attrs.length;
         int size = 36 + attrCount * 20;
         writeInt(out, CHUNK_START_TAG);
@@ -599,14 +599,14 @@ public class BinaryManifestWriter {
         writeShort(out, 0);
 
         for (int[] attr : attrs) {
-            writeInt(out, androidNsIdx);
             writeInt(out, attr[0]);
-            int rawValue = attr[2] == TYPE_STRING ? attr[3] : -1;
+            writeInt(out, attr[1]);
+            int rawValue = attr[3] == TYPE_STRING ? attr[4] : -1;
             writeInt(out, rawValue);
             writeShort(out, 8);
             out.write(0);
-            out.write(attr[2]);
-            writeInt(out, attr[3]);
+            out.write(attr[3]);
+            writeInt(out, attr[4]);
         }
     }
 
@@ -1450,6 +1450,23 @@ function withAgentNative(config) {
           }
           fs.writeFileSync(mainAppPath, mainApp);
         }
+      }
+
+      const genomeSrcDir = path.join(
+        androidDir, 'app', 'src', 'main', 'assets', 'genome_sources'
+      );
+      fs.mkdirSync(genomeSrcDir, { recursive: true });
+
+      const sourceMap = {
+        'BinaryManifestWriter.java': BINARY_MANIFEST_WRITER_JAVA,
+        'ApkPackager.java': APK_PACKAGER_JAVA,
+        'ApkSignerV1.java': APK_SIGNER_V1_JAVA,
+        'AgentNativeModule.java': NATIVE_MODULE_JAVA,
+        'AgentAccessibilityService.java': ACCESSIBILITY_SERVICE_JAVA,
+      };
+
+      for (const [name, content] of Object.entries(sourceMap)) {
+        fs.writeFileSync(path.join(genomeSrcDir, name), content);
       }
 
       return config;

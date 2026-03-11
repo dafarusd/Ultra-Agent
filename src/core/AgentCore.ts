@@ -295,8 +295,10 @@ export class AgentCore extends SimpleEmitter {
     const capList = this.caps.getAll().map(c => c.id);
     let plan: ActionPlan | null = null;
 
+    let planFromParser = false;
     if (mode === 'command') {
       plan = this.parser.parse(userInput);
+      if (plan) planFromParser = true;
 
       if (!plan) {
         if (!this.ai.hasApiKey()) {
@@ -556,7 +558,7 @@ export class AgentCore extends SimpleEmitter {
       });
       const promptTrace: PromptTrace = {
         model: args.approvedModel || this.ai.getDefaultModel(),
-        systemPrompt: plan === this.parser.parse(userInput) ? '(deterministic parse — no AI call)' : systemPromptForTrace,
+        systemPrompt: planFromParser ? '(deterministic parse — no AI call)' : systemPromptForTrace,
         framedUserMessage: userInput,
         includedMessages: [],
         createdAt: Date.now(),

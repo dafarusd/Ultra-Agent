@@ -138,7 +138,7 @@ export class TaskEvaluator {
 
     for (const criterion of challenge.successCriteria) {
       try {
-        const met = this.checkCriterion(packageName, criterion, screenCaptures, crashCount);
+        const met = await this.checkCriterion(packageName, criterion, screenCaptures, crashCount);
         criteriaResults.push({ criterion: criterion.description, passed: met });
       } catch {
         criteriaResults.push({ criterion: criterion.description, passed: false });
@@ -202,15 +202,22 @@ export class TaskEvaluator {
     }
   }
 
-  private checkCriterion(
+  private async checkCriterion(
     packageName: string,
     criterion: SuccessCriterion,
     screenCaptures: string[],
     crashCount: number
-  ): boolean {
+  ): Promise<boolean> {
     switch (criterion.type) {
-      case 'app_foreground':
+      case 'app_foreground': {
+        try {
+          if (this.appController) {
+            const active = await this.appController.getActivePackage();
+            return active === (criterion.value || packageName);
+          }
+        } catch {}
         return screenCaptures.length > 0;
+      }
       case 'no_crash':
         return crashCount === 0;
       case 'screen_contains': {

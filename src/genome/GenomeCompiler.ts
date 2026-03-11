@@ -87,20 +87,33 @@ export class GenomeCompiler {
   private async resolveFixedSources(genome: Genome): Promise<SourceEntry[]> {
     const resolved: SourceEntry[] = [];
     for (const entry of genome.fixedSources) {
-      if (entry.content.startsWith('LOAD_FROM:')) {
+      if (entry.content.startsWith('LOAD_FROM:') || entry.content.startsWith('FIXED:')) {
+        const fileName = entry.path.split('/').pop()!;
+
         try {
           const FileSystem = require('expo-file-system');
-          const filePath = entry.content.replace('LOAD_FROM:', '');
-          const content = await FileSystem.readAsStringAsync(
-            `${FileSystem.documentDirectory}${filePath}`
-          );
-          resolved.push({ ...entry, content });
-        } catch {
-          console.warn(`GenomeCompiler: could not load fixed source from ${entry.content}, using embedded`);
-          resolved.push(entry);
+          const docPath = `${FileSystem.documentDirectory}genome_sources/${fileName}`;
+          const info = await FileSystem.getInfoAsync(docPath);
+          if (info.exists) {
+            const content = await FileSystem.readAsStringAsync(docPath);
+            resolved.push({ ...entry, content });
+            continue;
+          }
+        } catch {}
+
+        if (entry.content.startsWith('LOAD_FROM:')) {
+          try {
+            const FileSystem = require('expo-file-system');
+            const filePath = entry.content.replace('LOAD_FROM:', '');
+            const content = await FileSystem.readAsStringAsync(
+              `${FileSystem.documentDirectory}${filePath}`
+            );
+            resolved.push({ ...entry, content });
+            continue;
+          } catch {}
         }
-      } else if (entry.content.startsWith('FIXED:')) {
-        console.warn(`GenomeCompiler: unresolved fixed reference ${entry.content}`);
+
+        console.warn(`GenomeCompiler: unresolved source ${entry.path}`);
         resolved.push(entry);
       } else {
         resolved.push(entry);

@@ -73,6 +73,22 @@ export class TaskExecutor {
 
   private async loadOrCreateGenome(): Promise<Genome> {
     if (this.currentGenome) return this.currentGenome;
+
+    if (isNative) {
+      try {
+        const destDir = this.docDir + 'genome_sources/';
+        const info = await FileSystem.getInfoAsync(destDir);
+        if (!info.exists) {
+          await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
+          const AgentNativeModule = (await import('../native/AgentNative')).default;
+          await AgentNativeModule.exec(
+            `cp -r /android_asset/genome_sources/ ${destDir}`,
+            this.docDir
+          ).catch(() => {});
+        }
+      } catch {}
+    }
+
     if (isNative) {
       try {
         const genomePath = this.docDir + 'genome.json';
