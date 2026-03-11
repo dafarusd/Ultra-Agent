@@ -68,7 +68,15 @@ export class ConversationManager {
     conv.updatedAt = now();
     if (this.mode === 'native') {
       await this.ensureReady();
-      await FileSystem.writeAsStringAsync(this.filePath(conv.id), JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
+      const tmpPath = `${this.dir}/${conv.id}.tmp`;
+      const finalPath = this.filePath(conv.id);
+      await FileSystem.writeAsStringAsync(tmpPath, JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
+      try {
+        await FileSystem.moveAsync({ from: tmpPath, to: finalPath });
+      } catch {
+        await FileSystem.writeAsStringAsync(finalPath, JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
+        try { await FileSystem.deleteAsync(tmpPath, { idempotent: true }); } catch {}
+      }
       return;
     }
     if (this.mode === 'web') {
@@ -103,10 +111,14 @@ export class ConversationManager {
       const files = await FileSystem.readDirectoryAsync(this.dir);
       const jsonFiles = files.filter((f: string) => f.endsWith('.json'));
       const loaded = await Promise.all(jsonFiles.map(async (f: string) => {
-        const raw = await FileSystem.readAsStringAsync(`${this.dir}/${f}`, { encoding: FileSystem.EncodingType.UTF8 });
-        return JSON.parse(raw) as Conversation;
+        try {
+          const raw = await FileSystem.readAsStringAsync(`${this.dir}/${f}`, { encoding: FileSystem.EncodingType.UTF8 });
+          return JSON.parse(raw) as Conversation;
+        } catch {
+          return null;
+        }
       }));
-      convs = loaded;
+      convs = loaded.filter((c): c is Conversation => c !== null);
     } else if (this.mode === 'web') {
       const idx = this.getWebIndex();
       convs = idx

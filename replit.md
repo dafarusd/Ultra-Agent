@@ -37,3 +37,16 @@ The agent should persist conversations and allow switching between them.
 *   **`expo-secure-store`:** For secure key-value storage.
 *   **`expo-file-system`:** For file system operations on the device.
 *   **`@expo/vector-icons`:** For UI icons.
+*   **`expo-clipboard`:** For copy-to-clipboard functionality on message long-press.
+*   **`expo-sharing`:** For exporting/sharing log files.
+
+## QA Bug Fixes (v1.1)
+*   **"hello ultra" misrouting:** Removed broad `includes('ultra')` check from `detectMode()`. Now only routes to command mode when "ultra" appears as a prefix before an imperative verb (e.g., "ultra open..."). Greetings and casual mentions of "ultra" correctly route to conversation mode.
+*   **Raw JSON responses:** Added `summarizeResult()` AI summarization step in AgentCore Step 7. Capability results now display as readable sentences instead of raw JSON dumps. Raw data preserved in `meta.data` for debugging.
+*   **Scrollable/downloadable logs:** Settings log viewer now uses a nested ScrollView with max height 400px. Added "Share Logs" button (uses expo-sharing on native, clipboard on web).
+*   **Prompt trace duplication:** Fixed `buildPromptTrace()` and conversation flow to filter out system prompt and framed user message from `includedMessages` since they're already shown separately in the PromptViewer.
+*   **Biometric re-auth on resume:** Added AppState listener in `_layout.tsx` that triggers biometric re-authentication when app transitions from background to active.
+*   **Conversation persistence:** Added atomic writes (tmp→rename) in `ConversationManager.saveConversation()` to prevent corruption during force stops. Added per-file try/catch in `listConversations()` so one corrupt file doesn't kill the entire list.
+*   **Copy message on long press:** Added `onLongPress` handler to message bubbles using expo-clipboard. Shows "Copied" label and green border flash for 1.5s feedback.
+*   **Command routing improvements:** Added "create an app", "make an app" patterns to CommandParser. Fixed pattern ordering so `app_build` patterns match before the generic `write/save` file pattern. Removed `create` from the file-write pattern to prevent it from eating build commands.
+*   **Empty state text fix:** Separated `scaleY: -1` transform for web vs native to ensure greeting text renders correctly on both platforms with inverted FlatList.

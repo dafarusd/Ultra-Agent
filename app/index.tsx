@@ -10,6 +10,7 @@ import {
   Animated,
   Platform,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
@@ -52,6 +53,7 @@ export default function ChatScreen() {
   } | null>(null);
   const [buildPhase, setBuildPhase] = useState<string | null>(null);
   const [genomePhase, setGenomePhase] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
@@ -306,6 +308,14 @@ export default function ChatScreen() {
     setPromptViewerVisible(true);
   }, []);
 
+  const handleCopyMessage = useCallback(async (msg: ChatMessage) => {
+    try {
+      await Clipboard.setStringAsync(msg.content);
+      setCopiedId(msg.id);
+      setTimeout(() => setCopiedId(null), 1500);
+    } catch {}
+  }, []);
+
   const getMessageStyle = (msg: ChatMessage) => {
     if (msg.role === "user") return "user" as const;
     if (msg.role === "system") return "system" as const;
@@ -328,8 +338,12 @@ export default function ChatScreen() {
       const isLatestMessage = messages.length > 0 && item.id === messages[0].id;
       const showPendingButtons = !!pendingReplay && isApprovalOrSwitch && isLatestMessage;
 
+      const isCopied = copiedId === item.id;
+
       return (
-        <View
+        <Pressable
+          onLongPress={() => handleCopyMessage(item)}
+          delayLongPress={400}
           style={[
             styles.messageBubble,
             msgStyle === "user" ? styles.userBubble :
@@ -337,6 +351,7 @@ export default function ChatScreen() {
             msgStyle === "ai" ? styles.aiBubble :
             msgStyle === "blocked" ? styles.blockedBubble :
             styles.systemBubble,
+            isCopied && styles.copiedBubble,
           ]}
         >
           {!isUser && (
@@ -382,6 +397,9 @@ export default function ChatScreen() {
               <Text style={styles.viewPromptText}>View Prompt</Text>
             </Pressable>
           )}
+          {isCopied && (
+            <Text style={styles.copiedLabel}>Copied</Text>
+          )}
           {showPendingButtons && (
             <View style={styles.approvalRow}>
               <Pressable
@@ -402,10 +420,10 @@ export default function ChatScreen() {
               </Pressable>
             </View>
           )}
-        </View>
+        </Pressable>
       );
     },
-    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny]
+    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId]
   );
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -451,7 +469,10 @@ export default function ChatScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
-            <View style={styles.emptyState}>
+            <View style={[
+              styles.emptyState,
+              Platform.OS !== "web" && { transform: [{ scaleY: -1 }] },
+            ]}>
               <MaterialCommunityIcons
                 name="robot-outline"
                 size={48}
@@ -629,7 +650,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingVertical: 80,
-    transform: [{ scaleY: -1 }],
+    ...(Platform.OS === "web" ? { transform: [{ scaleY: -1 }] } : {}),
   },
   emptyText: {
     color: DIM,
@@ -804,5 +825,16 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: {
     backgroundColor: SURFACE,
+  },
+  copiedBubble: {
+    borderColor: ACCENT,
+    borderWidth: 1,
+  },
+  copiedLabel: {
+    color: ACCENT,
+    fontSize: 10,
+    fontFamily: "Inter_500Medium",
+    marginTop: 4,
+    alignSelf: "flex-end",
   },
 });

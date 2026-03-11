@@ -13,6 +13,9 @@ import {
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
+import * as Clipboard from "expo-clipboard";
 import { SecureVault } from "@/src/security/SecureVault";
 import { getAgentCoreInstance } from "@/src/core/AgentCore";
 import { ModelDef } from "@/src/core/ModelRouter";
@@ -124,7 +127,7 @@ export default function SettingsScreen() {
   }, [dailyLimit, taskLimit]);
 
   const loadLogs = useCallback(() => {
-    const entries = Logger.getEntries(undefined, 50);
+    const entries = Logger.getEntries(undefined, 100);
     setLogs(
       entries.map(
         (e) =>
@@ -133,6 +136,33 @@ export default function SettingsScreen() {
     );
     setShowLogs(!showLogs);
   }, [showLogs]);
+
+  const shareLogs = useCallback(async () => {
+    if (logs.length === 0) return;
+    const logText = logs.join("\n");
+    if (Platform.OS === "web") {
+      try {
+        await Clipboard.setStringAsync(logText);
+        Alert.alert("Copied", "Logs copied to clipboard.");
+      } catch {
+        Alert.alert("Error", "Failed to copy logs.");
+      }
+      return;
+    }
+    try {
+      const path = `${FileSystem.cacheDirectory}agent_ultra_logs.txt`;
+      await FileSystem.writeAsStringAsync(path, logText, { encoding: FileSystem.EncodingType.UTF8 });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(path, { mimeType: "text/plain", dialogTitle: "Agent Ultra Logs" });
+      } else {
+        await Clipboard.setStringAsync(logText);
+        Alert.alert("Copied", "Sharing unavailable. Logs copied to clipboard.");
+      }
+    } catch {
+      Alert.alert("Error", "Failed to export logs.");
+    }
+  }, [logs]);
 
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
@@ -328,14 +358,31 @@ export default function SettingsScreen() {
           </Pressable>
           {showLogs && (
             <View style={styles.logContainer}>
-              {logs.length === 0 ? (
-                <Text style={styles.logText}>No logs yet</Text>
-              ) : (
-                logs.map((log, i) => (
-                  <Text key={i} style={styles.logText}>
-                    {log}
+              <ScrollView
+                nestedScrollEnabled
+                style={styles.logScroll}
+                showsVerticalScrollIndicator
+              >
+                {logs.length === 0 ? (
+                  <Text style={styles.logText}>No logs yet</Text>
+                ) : (
+                  logs.map((log, i) => (
+                    <Text key={i} style={styles.logText}>
+                      {log}
+                    </Text>
+                  ))
+                )}
+              </ScrollView>
+              {logs.length > 0 && (
+                <Pressable
+                  onPress={shareLogs}
+                  style={[styles.btn, styles.secondaryBtn, { marginTop: 8 }]}
+                >
+                  <Ionicons name="share-outline" size={16} color={ACCENT} />
+                  <Text style={styles.secondaryBtnText}>
+                    {Platform.OS === "web" ? "Copy Logs" : "Share Logs"}
                   </Text>
-                ))
+                </Pressable>
               )}
             </View>
           )}
@@ -547,7 +594,9 @@ const styles = StyleSheet.create({
     backgroundColor: SURFACE2,
     borderRadius: 8,
     padding: 12,
-    maxHeight: 300,
+  },
+  logScroll: {
+    maxHeight: 400,
   },
   logText: {
     color: "#888888",

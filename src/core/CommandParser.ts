@@ -59,11 +59,6 @@ const rules: ParseRule[] = [
     extractParams: (m) => ({ filename: m[1].trim() }),
   },
   {
-    pattern: /^(?:write|create|save)\s+(?:file\s+)?(.+)/i,
-    capability: null,
-    extractParams: () => null,
-  },
-  {
     pattern: /^(?:read|open|show)\s+(?:file\s+)?(.+)/i,
     capability: 'file_read',
     extractParams: (m) => ({ path: m[1].trim() }),
@@ -88,7 +83,22 @@ const rules: ParseRule[] = [
     },
   },
   {
+    pattern: /^(?:write|create|save)\s+(?:a\s+)?file\s+(.+)/i,
+    capability: null,
+    extractParams: () => null,
+  },
+  {
+    pattern: /^(?:build|create|make)\s+(?:me\s+)?(?:a\s+)?(?:an?\s+)?app\s+(?:that|which|to)\s+(.+)$/i,
+    capability: 'app_build',
+    extractParams: (m) => ({ description: m[1].trim() }),
+  },
+  {
     pattern: /^build\s+(?:me\s+)?(?:a\s+)?(?:an?\s+)?(.+?)(?:\s+app)?$/i,
+    capability: 'app_build',
+    extractParams: (m) => ({ description: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:create|make)\s+(?:me\s+)?(?:a\s+)?(?:an?\s+)?(.+\s+app)$/i,
     capability: 'app_build',
     extractParams: (m) => ({ description: m[1].trim() }),
   },

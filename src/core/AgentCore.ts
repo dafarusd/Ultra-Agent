@@ -144,8 +144,9 @@ export class AgentCore extends SimpleEmitter {
     const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
     if (genomePatterns.test(t)) return 'command';
     const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take)\b/i.test(t);
-    if (t.includes('ultra')) return 'command';
     if (imperative) return 'command';
+    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take)\b/i;
+    if (ultraCommand.test(t)) return 'command';
     return 'conversation';
   }
 
@@ -530,9 +531,7 @@ export class AgentCore extends SimpleEmitter {
         conversationId,
       });
 
-      const resultSummary = verification.verified
-        ? `Executed ${plan.capability}: ${typeof execResult === 'string' ? execResult : JSON.stringify(execResult)}`
-        : `${plan.capability} completed with issues: ${verification.issues.join(', ')}. Raw: ${JSON.stringify(execResult)}`;
+      const resultSummary = await this.summarizeResult(plan.capability, execResult, userInput, verification);
 
       // === STEP 8: WRITE MEMORY ===
       const systemPromptForTrace = this.buildDynamicPrompt({
@@ -648,11 +647,16 @@ export class AgentCore extends SimpleEmitter {
         maxTokens: 4000,
       });
 
+      const filteredForTrace = finalMessages.filter(m => {
+        if (m.role === 'system' && m.content === systemPrompt) return false;
+        if (m.role === 'user' && m.content === framedUserMessage) return false;
+        return true;
+      });
       const promptTrace: PromptTrace = {
         model: aiResult.model,
         systemPrompt,
         framedUserMessage,
-        includedMessages: finalMessages.map(m => ({ role: m.role as any, content: m.content })),
+        includedMessages: filteredForTrace.map(m => ({ role: m.role as any, content: m.content })),
         createdAt: Date.now(),
       };
 
@@ -706,13 +710,60 @@ export class AgentCore extends SimpleEmitter {
     framedUserMessage: string,
     messages: Array<{ role: string; content: string }>
   ): PromptTrace {
+    const filtered = messages.filter(m => {
+      if (m.role === 'system' && m.content === systemPrompt) return false;
+      if (m.role === 'user' && m.content === framedUserMessage) return false;
+      return true;
+    });
     return {
       model,
       systemPrompt,
       framedUserMessage,
-      includedMessages: messages.map(m => ({ role: m.role as any, content: m.content })),
+      includedMessages: filtered.map(m => ({ role: m.role as any, content: m.content })),
       createdAt: Date.now(),
     };
+  }
+
+  private async summarizeResult(
+    capability: string,
+    execResult: any,
+    userInput: string,
+    verification: { verified: boolean; issues: string[] }
+  ): Promise<string> {
+    if (execResult?.success === false && execResult?.error) {
+      return `I tried to run ${capability} but encountered an error: ${execResult.error}`;
+    }
+
+    if (typeof execResult === 'string') {
+      return execResult.length > 2000 ? execResult.slice(0, 2000) + '…' : execResult;
+    }
+
+    if (!verification.verified) {
+      const raw = typeof execResult === 'object' ? JSON.stringify(execResult) : String(execResult);
+      return `${capability} completed with issues: ${verification.issues.join(', ')}. Result: ${raw.slice(0, 500)}`;
+    }
+
+    try {
+      const raw = typeof execResult === 'object' ? JSON.stringify(execResult) : String(execResult);
+      if (raw.length < 200) {
+        return `Done. ${raw}`;
+      }
+      const taskId = Date.now().toString(36);
+      const aiSummary = await this.ai.complete(
+        `Capability: ${capability}\nUser request: ${userInput}\nRaw result:\n${raw.slice(0, 6000)}`,
+        {
+          systemPrompt: 'Summarize this agent action result in 1-3 short sentences for the user. Be specific about what happened. Do not mention JSON or raw data. Speak naturally.',
+          taskId,
+          agentId: 'summarizer',
+          maxTokens: 300,
+          temperature: 0.3,
+        }
+      );
+      return aiSummary.content || `Done. ${raw.slice(0, 500)}`;
+    } catch {
+      const raw = typeof execResult === 'object' ? JSON.stringify(execResult) : String(execResult);
+      return `Done. ${raw.slice(0, 500)}`;
+    }
   }
 
   hasApiKey(): boolean { return this.ai.hasApiKey(); }

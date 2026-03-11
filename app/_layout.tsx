@@ -8,8 +8,8 @@ import {
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect, useState } from "react";
-import { StatusBar, View, Text, StyleSheet, Platform } from "react-native";
+import React, { useEffect, useState, useRef } from "react";
+import { StatusBar, View, Text, StyleSheet, Platform, AppState, AppStateStatus } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -49,12 +49,15 @@ export default function RootLayout() {
   });
   const [authenticated, setAuthenticated] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const biometricAvailableRef = useRef(false);
 
   useEffect(() => {
     async function checkAuth() {
       try {
         const gate = new BiometricGate();
         const available = await gate.isAvailable();
+        biometricAvailableRef.current = available;
         if (available) {
           const result = await gate.authenticate("Authenticate to open Agent Ultra");
           setAuthenticated(result);
@@ -72,6 +75,29 @@ export default function RootLayout() {
       checkAuth();
     }
   }, [fontsLoaded, fontError]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      if (
+        appStateRef.current !== "active" &&
+        nextState === "active" &&
+        biometricAvailableRef.current
+      ) {
+        setAuthenticated(false);
+        setAuthChecked(false);
+        const gate = new BiometricGate();
+        gate.authenticate("Authenticate to unlock Agent Ultra").then((r) => {
+          setAuthenticated(r);
+          setAuthChecked(true);
+        }).catch(() => {
+          setAuthenticated(false);
+          setAuthChecked(true);
+        });
+      }
+      appStateRef.current = nextState;
+    });
+    return () => sub.remove();
+  }, []);
 
   if (!fontsLoaded && !fontError) return null;
 

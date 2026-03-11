@@ -31,6 +31,7 @@
     "expo-blur": "~15.0.8",
     "expo-build-properties": "^1.0.10",
     "expo-camera": "^17.0.10",
+    "expo-clipboard": "^55.0.8",
     "expo-constants": "~18.0.11",
     "expo-contacts": "^15.0.11",
     "expo-file-system": "^19.0.21",
