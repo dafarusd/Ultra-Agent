@@ -181,6 +181,20 @@ const schemas: CapabilitySchema[] = [
       goal: { type: 'string', description: 'Optional goal for the offspring agent' },
     },
   },
+  {
+    capabilityId: 'image_generate',
+    version: 1,
+    requiredParams: {
+      prompt: { type: 'string', description: 'Text description of the image to generate' },
+    },
+    optionalParams: {
+      model: { type: 'string', description: 'Image model to use' },
+      width: { type: 'number', description: 'Image width (default 1024)' },
+      height: { type: 'number', description: 'Image height (default 1024)' },
+      style: { type: 'string', description: 'Style preset' },
+      negative: { type: 'string', description: 'Negative prompt' },
+    },
+  },
 ];
 
 const schemaMap = new Map<string, CapabilitySchema>();

@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,16 +8,20 @@ import {
   Modal,
   Alert,
   Platform,
+  Animated,
+  Dimensions,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ConversationMeta } from "@/src/types/ultra";
 
 const ACCENT = "#00ff88";
-const BG_OVERLAY = "#000000cc";
-const SURFACE = "#111111";
+const BG = "#000000";
+const SURFACE = "#0e0e0e";
 const SURFACE2 = "#1a1a1a";
-const DIM = "#666666";
+const DIM = "#555555";
+const DRAWER_WIDTH = Dimensions.get("window").width * 0.78;
 
 interface ConversationListProps {
   visible: boolean;
@@ -34,12 +38,12 @@ function formatDate(ts: number): string {
   const now = new Date();
   const diff = now.getTime() - ts;
   if (diff < 60000) return "Just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
   if (d.getFullYear() === now.getFullYear()) {
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" });
 }
 
 function ConversationItem({
@@ -66,8 +70,8 @@ function ConversationItem({
   }, [item.id, item.title, onDelete]);
 
   const preview = item.preview
-    ? item.preview.length > 60
-      ? item.preview.slice(0, 60) + "..."
+    ? item.preview.length > 55
+      ? item.preview.slice(0, 55) + "…"
       : item.preview
     : "No messages yet";
 
@@ -82,18 +86,16 @@ function ConversationItem({
       ]}
       testID={`conversation-item-${item.id}`}
     >
+      {isCurrent && <View style={styles.activeBar} />}
       <View style={styles.convItemContent}>
         <View style={styles.convItemTop}>
-          <Text style={styles.convTitle} numberOfLines={1}>
+          <Text style={[styles.convTitle, isCurrent && styles.convTitleActive]} numberOfLines={1}>
             {item.title}
           </Text>
           <Text style={styles.convDate}>{formatDate(item.updatedAt)}</Text>
         </View>
         <Text style={styles.convPreview} numberOfLines={1}>
           {preview}
-        </Text>
-        <Text style={styles.convMsgCount}>
-          {item.messageCount} {item.messageCount === 1 ? "message" : "messages"}
         </Text>
       </View>
     </Pressable>
@@ -110,8 +112,41 @@ export default function ConversationList({
   onClose,
 }: ConversationListProps) {
   const insets = useSafeAreaInsets();
+  const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          tension: 65,
+          friction: 11,
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, {
+          toValue: -DRAWER_WIDTH,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 0,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [visible, slideAnim, fadeAnim]);
 
   const renderItem = useCallback(
     ({ item }: { item: ConversationMeta }) => (
@@ -129,23 +164,34 @@ export default function ConversationList({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="none"
       onRequestClose={onClose}
+      statusBarTranslucent
     >
-      <View style={styles.overlay}>
-        <View
+      <View style={styles.root}>
+        <TouchableWithoutFeedback onPress={onClose}>
+          <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]} />
+        </TouchableWithoutFeedback>
+
+        <Animated.View
           style={[
-            styles.surface,
+            styles.drawer,
             {
-              paddingTop: insets.top + webTopInset + 16,
-              paddingBottom: Math.max(insets.bottom, webBottomInset) + 16,
+              transform: [{ translateX: slideAnim }],
+              paddingTop: insets.top + webTopInset,
+              paddingBottom: Math.max(insets.bottom, webBottomInset),
             },
           ]}
         >
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>Conversations</Text>
-            <Pressable onPress={onClose} testID="close-conversation-list">
-              <Ionicons name="close" size={24} color="#ffffff" />
+          <View style={styles.drawerHeader}>
+            <View style={styles.drawerLogoRow}>
+              <View style={styles.drawerLogo}>
+                <Text style={styles.drawerLogoText}>U</Text>
+              </View>
+              <Text style={styles.drawerBrand}>Agent Ultra</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.closeBtn} testID="close-conversation-list">
+              <Ionicons name="close" size={20} color={DIM} />
             </Pressable>
           </View>
 
@@ -157,9 +203,15 @@ export default function ConversationList({
             ]}
             testID="new-chat-button"
           >
-            <Ionicons name="add" size={20} color="#000000" />
+            <Ionicons name="add" size={18} color="#000000" />
             <Text style={styles.newChatText}>New Chat</Text>
           </Pressable>
+
+          {conversations.length > 0 && (
+            <Text style={styles.listLabel}>
+              {conversations.length} {conversations.length === 1 ? "conversation" : "conversations"}
+            </Text>
+          )}
 
           <FlatList
             data={conversations}
@@ -168,86 +220,132 @@ export default function ConversationList({
             style={styles.list}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
-            scrollEnabled={conversations.length > 0}
+            scrollEnabled={!!conversations.length}
             ListEmptyComponent={
               <View style={styles.emptyState}>
-                <Ionicons name="chatbubbles-outline" size={36} color={SURFACE2} />
+                <Ionicons name="chatbubbles-outline" size={32} color="#222" />
                 <Text style={styles.emptyText}>No conversations yet</Text>
               </View>
             }
             testID="conversation-list"
           />
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
+  root: {
     flex: 1,
-    backgroundColor: BG_OVERLAY,
+    flexDirection: "row",
   },
-  surface: {
-    flex: 1,
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.65)",
+  },
+  drawer: {
+    width: DRAWER_WIDTH,
     backgroundColor: SURFACE,
-    marginTop: 40,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 16,
+    borderRightWidth: 1,
+    borderRightColor: "#1a1a1a",
+    paddingHorizontal: 0,
   },
-  header: {
+  drawerHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#151515",
   },
-  headerTitle: {
-    color: "#ffffff",
-    fontSize: 20,
+  drawerLogoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  drawerLogo: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: ACCENT,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  drawerLogoText: {
+    color: "#000",
+    fontSize: 14,
     fontWeight: "700" as const,
+  },
+  drawerBrand: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "700" as const,
+  },
+  closeBtn: {
+    padding: 4,
   },
   newChatBtn: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
+    gap: 8,
     backgroundColor: ACCENT,
-    borderRadius: 12,
-    paddingVertical: 12,
-    marginBottom: 16,
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    marginHorizontal: 12,
+    marginVertical: 12,
   },
   newChatBtnPressed: {
     opacity: 0.8,
   },
   newChatText: {
     color: "#000000",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "600" as const,
+  },
+  listLabel: {
+    color: DIM,
+    fontSize: 10,
+    fontWeight: "600" as const,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    marginTop: 4,
   },
   list: {
     flex: 1,
   },
   listContent: {
+    paddingHorizontal: 8,
     paddingBottom: 16,
   },
   convItem: {
-    backgroundColor: SURFACE2,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "#222222",
+    flexDirection: "row",
+    alignItems: "stretch",
+    borderRadius: 8,
+    marginBottom: 2,
+    overflow: "hidden",
   },
   convItemCurrent: {
-    borderColor: ACCENT,
-    borderWidth: 2,
+    backgroundColor: "#161616",
   },
   convItemPressed: {
     opacity: 0.7,
   },
+  activeBar: {
+    width: 3,
+    backgroundColor: ACCENT,
+    borderRadius: 2,
+  },
   convItemContent: {
-    gap: 4,
+    flex: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 3,
   },
   convItemTop: {
     flexDirection: "row",
@@ -255,33 +353,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   convTitle: {
-    color: "#ffffff",
-    fontSize: 15,
-    fontWeight: "600" as const,
+    color: "#aaaaaa",
+    fontSize: 13,
+    fontWeight: "500" as const,
     flex: 1,
-    marginRight: 8,
+    marginRight: 6,
+  },
+  convTitleActive: {
+    color: "#ffffff",
+    fontWeight: "600" as const,
   },
   convDate: {
     color: DIM,
-    fontSize: 11,
+    fontSize: 10,
   },
   convPreview: {
-    color: "#999999",
-    fontSize: 13,
-  },
-  convMsgCount: {
-    color: DIM,
-    fontSize: 11,
-    marginTop: 2,
+    color: "#555555",
+    fontSize: 12,
   },
   emptyState: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 60,
-    gap: 12,
+    paddingVertical: 50,
+    gap: 10,
   },
   emptyText: {
     color: DIM,
-    fontSize: 14,
+    fontSize: 13,
   },
 });

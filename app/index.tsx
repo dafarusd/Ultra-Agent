@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Animated,
   Platform,
+  Alert,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -177,6 +178,18 @@ export default function ChatScreen() {
     setIsProcessing(true);
     setStatus("Processing...");
 
+    // Optimistic: show user message immediately
+    const optimisticId = `optimistic_${Date.now()}`;
+    setMessages((prev) => [
+      {
+        id: optimisticId,
+        role: "user" as const,
+        content: text,
+        createdAt: Date.now(),
+      } as import("@/src/types/ultra").ChatMessage,
+      ...prev,
+    ]);
+
     try {
       const result = await agentCore.execute({
         conversationId,
@@ -297,6 +310,42 @@ export default function ChatScreen() {
     },
     [agentCore, conversationId, reloadMessages, refreshConversations]
   );
+
+  const handleRenameConversation = useCallback(async () => {
+    if (!agentCore || !conversationId) return;
+    const promptRename = () => {
+      if (Platform.OS === "web") {
+        const name = window.prompt("Rename conversation:", conversationTitle);
+        if (name && name.trim()) {
+          agentCore.getConversationManager()
+            .updateTitle(conversationId, name.trim())
+            .then(() => {
+              setConversationTitle(name.trim());
+              refreshConversations(agentCore);
+            })
+            .catch(() => {});
+        }
+      } else {
+        Alert.prompt(
+          "Rename",
+          "New conversation name:",
+          (name?: string) => {
+            if (!name || !name.trim()) return;
+            agentCore.getConversationManager()
+              .updateTitle(conversationId, name.trim())
+              .then(() => {
+                setConversationTitle(name.trim());
+                refreshConversations(agentCore);
+              })
+              .catch(() => {});
+          },
+          "plain-text",
+          conversationTitle
+        );
+      }
+    };
+    promptRename();
+  }, [agentCore, conversationId, conversationTitle, refreshConversations]);
 
   const openConvList = useCallback(async () => {
     if (agentCore) await refreshConversations(agentCore);
@@ -447,9 +496,11 @@ export default function ChatScreen() {
             <Ionicons name="menu" size={22} color="#ffffff" />
           </Pressable>
           <Animated.View style={[styles.statusDot, { opacity: pulseAnim }]} />
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {conversationTitle}
-          </Text>
+          <Pressable onLongPress={handleRenameConversation} delayLongPress={500} style={{ flex: 1 }}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {conversationTitle}
+            </Text>
+          </Pressable>
         </View>
         <View style={styles.headerRight}>
           <Text style={styles.statusText}>{status}</Text>

@@ -32,6 +32,7 @@ export interface AgentNativeInterface {
   installApk(apkPath: string): Promise<string>;
   exec(command: string, workDir: string): Promise<string>;
   getStorageInfo(): Promise<{ total: number; free: number; used: number }>;
+  getInstalledApps(): Promise<Array<{ packageName: string; appName: string }>>;
 }
 
 const ALLOWED_COMMANDS = ['dalvikvm', 'keytool', 'ls', 'mkdir', 'cp', 'cat', 'chmod', 'find'];
@@ -55,6 +56,7 @@ const noopModule: AgentNativeInterface = {
   installApk: async () => 'AgentNative not available',
   exec: async () => 'AgentNative not available',
   getStorageInfo: async () => ({ total: 0, free: 0, used: 0 }),
+  getInstalledApps: async () => [],
 };
 
 function createNativeWrapper(): AgentNativeInterface {
@@ -87,6 +89,7 @@ function createNativeWrapper(): AgentNativeInterface {
       return native.exec(command, workDir);
     },
     getStorageInfo: () => native.getStorageInfo(),
+    getInstalledApps: () => native.getInstalledApps ? native.getInstalledApps() : Promise.resolve([]),
   };
 }
 

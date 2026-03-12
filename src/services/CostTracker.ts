@@ -33,8 +33,8 @@ export class CostTracker {
     this.vault = vault;
     this.logger = new Logger('CostTracker');
     this.entries = [];
-    this.dailyLimit = 5.0;
-    this.taskLimit = 1.0;
+    this.dailyLimit = 0;
+    this.taskLimit = 0;
   }
 
   async initialize(): Promise<void> {
@@ -93,10 +93,12 @@ export class CostTracker {
   }
 
   isWithinDailyLimit(): boolean {
+    if (this.dailyLimit <= 0) return true;
     return this.getDailySpend() < this.dailyLimit;
   }
 
   isWithinTaskLimit(taskId: string): boolean {
+    if (this.taskLimit <= 0) return true;
     return this.getTaskSpend(taskId) < this.taskLimit;
   }
 
@@ -131,12 +133,15 @@ export class CostTracker {
     await this.vault.set('task_cost_limit', limit.toString());
   }
 
+  private modelRatesCache: Record<string, { input: number; output: number }> = {};
+
+  setModelRates(model: string, input: number, output: number): void {
+    this.modelRatesCache[model] = { input, output };
+  }
+
   private getModelRates(model: string): { input: number; output: number } {
-    const rates: Record<string, { input: number; output: number }> = {
-      'kimi-k2.5': { input: 0.015, output: 0.015 },
-      default: { input: 0.01, output: 0.01 },
-    };
-    return rates[model] || rates['default'];
+    if (this.modelRatesCache[model]) return this.modelRatesCache[model];
+    return { input: 0.01, output: 0.01 };
   }
 
   private async persist(): Promise<void> {

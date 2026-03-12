@@ -19,6 +19,11 @@ const rules: ParseRule[] = [
     extractParams: (m) => ({ target: m[1].trim() }),
   },
   {
+    pattern: /^(?:run|start)\s+(.+)/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({ target: m[1].trim() }),
+  },
+  {
     pattern: /^text\s+(.+?)\s+(?:saying|with)\s+(.+)/i,
     capability: 'sms_send',
     extractParams: (m) => ({ to: m[1].trim(), message: m[2].trim() }),
@@ -141,6 +146,11 @@ const rules: ParseRule[] = [
     pattern: /^(?:create|make)\s+(?:me\s+)?(?:a\s+)?(?:an?\s+)?(.+\s+app)$/i,
     capability: 'app_build',
     extractParams: (m) => ({ description: m[1].trim() }),
+  },
+  {
+    pattern: /^generate\s+(?:a\s+)?(?:an?\s+)?(?:image|picture|photo)\s+(?:of\s+)?(.+)/i,
+    capability: 'image_generate',
+    extractParams: (m) => ({ prompt: m[1].trim() }),
   },
   {
     pattern: /^(?:improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself)(?:\s+(.+))?$/i,

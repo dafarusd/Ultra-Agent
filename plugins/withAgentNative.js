@@ -348,6 +348,27 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             promise.reject("STORAGE_ERROR", e.getMessage(), e);
         }
     }
+
+    @ReactMethod
+    public void getInstalledApps(Promise promise) {
+        try {
+            android.content.pm.PackageManager pm = ctx.getPackageManager();
+            java.util.List<android.content.pm.ApplicationInfo> apps = pm.getInstalledApplications(0);
+            WritableArray result = Arguments.createArray();
+            for (android.content.pm.ApplicationInfo app : apps) {
+                android.content.Intent launchIntent = pm.getLaunchIntentForPackage(app.packageName);
+                if (launchIntent == null) continue;
+                WritableMap entry = Arguments.createMap();
+                entry.putString("packageName", app.packageName);
+                CharSequence label = pm.getApplicationLabel(app);
+                entry.putString("appName", label != null ? label.toString() : app.packageName);
+                result.pushMap(entry);
+            }
+            promise.resolve(result);
+        } catch (Exception e) {
+            promise.reject("APP_LIST_ERROR", e.getMessage(), e);
+        }
+    }
 }`;
 
 const BINARY_MANIFEST_WRITER_JAVA = `package com.agent.ultra;
@@ -1521,6 +1542,16 @@ function withAgentNative(config) {
           },
         }],
       });
+    }
+
+    // Add QUERY_ALL_PACKAGES for getInstalledApps
+    const perms = manifest.manifest['uses-permission'] || [];
+    const hasQueryAll = perms.some(
+      (p) => p.$['android:name'] === 'android.permission.QUERY_ALL_PACKAGES'
+    );
+    if (!hasQueryAll) {
+      perms.push({ $: { 'android:name': 'android.permission.QUERY_ALL_PACKAGES' } });
+      manifest.manifest['uses-permission'] = perms;
     }
 
     return config;

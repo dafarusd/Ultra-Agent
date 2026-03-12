@@ -145,10 +145,10 @@ export class AgentCore extends SimpleEmitter {
     }
     const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
     if (genomePatterns.test(t)) return 'command';
-    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text)\b/i.test(t);
+    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate)\b/i.test(t);
     if (imperative) return 'command';
     if (/^(gps|my\s+(?:location|coordinates|gps))\b/i.test(t)) return 'command';
-    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text)\b/i;
+    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate)\b/i;
     if (ultraCommand.test(t)) return 'command';
     return 'conversation';
   }
@@ -917,8 +917,11 @@ export class AgentCore extends SimpleEmitter {
   hasApiKey(): boolean { return this.ai.hasApiKey(); }
   async refreshApiKey(): Promise<void> { await this.ai.refreshApiKey(); }
   getAvailableModels() { return this.ai.getAvailableModels(); }
+  async setApiBaseUrl(url: string) { await this.ai.setBaseUrl(url); }
+  getApiBaseUrl() { return this.ai.getBaseUrl(); }
   getDefaultModel() { return this.ai.getDefaultModel(); }
   async setDefaultModel(modelId: string) { await this.ai.setDefaultModel(modelId); }
+  getModelRouter() { return this.ai; }
   getCostSummary() { return this.costTracker.getSummary(); }
   async getStorageBreakdown() { return this.storage.getBreakdown(); }
   getDebugStats() { return this.debugEngine.getStats(); }

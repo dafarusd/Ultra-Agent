@@ -15,12 +15,12 @@ const DANGEROUS_PATTERNS: RegExp[] = [
 ];
 
 const SCOPE_MAP: Record<string, string[]> = {
-  app_launch: ['open', 'launch', 'start', 'run'],
+  app_launch: ['open', 'launch', 'start', 'run', 'camera'],
   sms_send: ['send text', 'sms', 'message', 'text to', 'text', 'call'],
   file_read: ['read', 'show', 'open file', 'list files', 'show files'],
   file_delete: ['delete', 'remove'],
   file_write: ['write', 'create file', 'save'],
-  file_organize: ['organize', 'move', 'sort'],
+  file_organize: ['organize', 'move', 'sort', 'make', 'create', 'folder', 'album'],
   contacts_read: ['contacts', 'contact', 'call', 'text'],
   camera_capture: ['photo', 'camera', 'picture', 'take a photo', 'selfie', 'take a picture'],
   media_access: ['photos', 'gallery', 'media', 'images', 'pick', 'choose', 'select'],
@@ -30,12 +30,13 @@ const SCOPE_MAP: Record<string, string[]> = {
   app_build: ['build', 'compile'],
   app_install: ['install'],
   network_request: ['fetch', 'request', 'download', 'http', 'api'],
-  ai_query: ['ask', 'query', 'ai'],
+  ai_query: ['ask', 'query', 'ai', 'find out', 'how do', 'what is', 'tell me'],
   dependency_resolve: ['resolve', 'dependency', 'dependencies', 'maven', 'download library', 'jar'],
   app_control: ['control', 'interact', 'tap', 'click', 'scroll', 'type into', 'automate'],
   app_test: ['test', 'run tests', 'verify', 'check app', 'e2e'],
   self_modify: ['improve', 'evolve', 'mutate', 'self-improve', 'upgrade yourself', 'self improve'],
   self_replicate: ['replicate', 'reproduce', 'clone', 'spawn', 'offspring', 'self-replicate', 'self replicate'],
+  image_generate: ['generate', 'image', 'picture', 'photo', 'draw', 'create image'],
 };
 
 const ALWAYS_APPROVE_CAPABILITIES = [

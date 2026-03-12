@@ -31,8 +31,10 @@ export default function SettingsScreen() {
   const router = useRouter();
   const [apiKey, setApiKey] = useState("");
   const [storedKey, setStoredKey] = useState(false);
-  const [dailyLimit, setDailyLimit] = useState("5.00");
-  const [taskLimit, setTaskLimit] = useState("1.00");
+  const [dailyLimit, setDailyLimit] = useState("0");
+  const [taskLimit, setTaskLimit] = useState("0");
+  const [apiUrl, setApiUrl] = useState("https://api.venice.ai/api/v1");
+  const [savedApiUrl, setSavedApiUrl] = useState("https://api.venice.ai/api/v1");
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
   const [models, setModels] = useState<ModelDef[]>([]);
@@ -56,6 +58,11 @@ export default function SettingsScreen() {
       if (dl) setDailyLimit(dl);
       const tl = await vault.get("task_cost_limit");
       if (tl) setTaskLimit(tl);
+      const url = await vault.get("api_base_url");
+      if (url) {
+        setApiUrl(url);
+        setSavedApiUrl(url);
+      }
     } catch (err: any) {
       Alert.alert("Error", "Failed to load settings: " + err.message);
     }
@@ -113,6 +120,25 @@ export default function SettingsScreen() {
       Alert.alert("Error", err.message);
     }
   }, []);
+
+  const saveApiUrl = useCallback(async () => {
+    const trimmed = apiUrl.trim();
+    if (!trimmed) return;
+    try {
+      const core = getAgentCoreInstance();
+      if (core) {
+        await core.setApiBaseUrl(trimmed);
+      } else {
+        const vault = await SecureVault.initialize();
+        await vault.set("api_base_url", trimmed);
+      }
+      setSavedApiUrl(trimmed);
+      Alert.alert("Saved", "API base URL updated. Models will reload.");
+      await loadModels();
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  }, [apiUrl, loadModels]);
 
   const saveLimits = useCallback(async () => {
     try {
@@ -403,6 +429,36 @@ export default function SettingsScreen() {
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
+            <Ionicons name="globe-outline" size={18} color={ACCENT} />
+            <Text style={styles.sectionTitle}>API Base URL</Text>
+          </View>
+          <Text style={styles.sectionDesc}>
+            Change this to use a local or alternative Venice-compatible endpoint.
+          </Text>
+          <TextInput
+            value={apiUrl}
+            onChangeText={setApiUrl}
+            placeholder="https://api.venice.ai/api/v1"
+            placeholderTextColor={DIM}
+            style={styles.textInput}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="api-url-input"
+          />
+          {apiUrl !== savedApiUrl && (
+            <Pressable
+              onPress={saveApiUrl}
+              style={[styles.btn, styles.primaryBtn, { alignSelf: "flex-start" }]}
+              testID="save-url-button"
+            >
+              <Ionicons name="save-outline" size={16} color={BG} />
+              <Text style={styles.primaryBtnText}>Save URL</Text>
+            </Pressable>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
             <MaterialCommunityIcons name="robot-outline" size={18} color={ACCENT} />
             <Text style={styles.sectionTitle}>AI Model</Text>
           </View>
@@ -435,6 +491,14 @@ export default function SettingsScreen() {
               </Text>
               {models.map((m) => {
                 const isSelected = m.id === selectedModel;
+                const typeLabel = m.type === 'image' ? 'Image' :
+                                  m.type === 'video' ? 'Video' :
+                                  m.type === 'audio' ? 'Audio' :
+                                  m.type === 'embedding' ? 'Embed' : 'Text';
+                const caps: string[] = [];
+                if (m.capabilities?.supportsVision) caps.push('Vision');
+                if (m.capabilities?.supportsReasoning) caps.push('Reasoning');
+                if (m.capabilities?.isUncensored) caps.push('Uncensored');
                 return (
                   <Pressable
                     key={m.id}
@@ -445,18 +509,21 @@ export default function SettingsScreen() {
                     ]}
                   >
                     <View style={styles.modelInfo}>
-                      <Text
-                        style={[
-                          styles.modelName,
-                          isSelected && styles.modelNameSelected,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {m.id}
-                      </Text>
-                      {m.strengths.length > 0 && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text
+                          style={[
+                            styles.modelName,
+                            isSelected && styles.modelNameSelected,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {m.name || m.id}
+                        </Text>
+                        <Text style={styles.modelTypeBadge}>{typeLabel}</Text>
+                      </View>
+                      {caps.length > 0 && (
                         <Text style={styles.modelStrengths} numberOfLines={1}>
-                          {m.strengths.join(" · ")}
+                          {caps.join(" · ")}
                         </Text>
                       )}
                     </View>
@@ -730,6 +797,16 @@ const styles = StyleSheet.create({
   },
   modelNameSelected: {
     color: ACCENT,
+  },
+  modelTypeBadge: {
+    color: "#888888",
+    fontSize: 10,
+    fontFamily: "Inter_500Medium",
+    backgroundColor: "#222222",
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: "hidden" as const,
   },
   modelStrengths: {
     color: DIM,

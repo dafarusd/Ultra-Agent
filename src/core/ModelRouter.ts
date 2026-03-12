@@ -1,18 +1,27 @@
 import { SecureVault } from '../security/SecureVault';
 import { CostTracker } from '../services/CostTracker';
 import { Logger } from '../utils/Logger';
-import type { UltraModelDef, RecommendInput, ModelRecommendation } from '../types/ultra';
+import type { UltraModelDef } from '../types/ultra';
 
 export interface ModelDef {
   id: string;
+  name: string;
+  description: string;
+  type: 'text' | 'image' | 'video' | 'audio' | 'embedding';
   costPer1kInput: number;
   costPer1kOutput: number;
   maxTokens: number;
-  tier: 'low' | 'medium' | 'high';
-  strengths: string[];
   contextWindow: number;
   speedTier: 'fast' | 'balanced' | 'heavy';
-  inferredStrengths: Array<'code' | 'analysis' | 'chat' | 'long_context' | 'tool_use'>;
+  capabilities: {
+    supportsVision: boolean;
+    supportsReasoning: boolean;
+    supportsFunctionCalling: boolean;
+    supportsWebSearch: boolean;
+    supportsMultipleImages: boolean;
+    isUncensored: boolean;
+  };
+  offline: boolean;
 }
 
 interface CompletionResult {
@@ -33,6 +42,7 @@ export class ModelRouter {
   private apiKey: string | null = null;
   private models: Map<string, ModelDef>;
   private defaultModel: string;
+  private baseUrl: string;
 
   constructor(vault: SecureVault, costTracker: CostTracker) {
     this.vault = vault;
@@ -40,16 +50,26 @@ export class ModelRouter {
     this.logger = new Logger('ModelRouter');
     this.models = new Map();
     this.defaultModel = 'llama-3.3-70b';
+    this.baseUrl = VENICE_BASE_URL;
     this.registerModel({
       id: 'llama-3.3-70b',
-      costPer1kInput: 0.01,
-      costPer1kOutput: 0.01,
+      name: 'Llama 3.3 70B',
+      description: 'Balanced performance for most use cases',
+      type: 'text',
+      costPer1kInput: 0.00088,
+      costPer1kOutput: 0.00088,
       maxTokens: 8192,
-      tier: 'high',
-      strengths: ['general', 'code', 'reasoning', 'conversation'],
       contextWindow: 131072,
       speedTier: 'heavy',
-      inferredStrengths: ['code', 'analysis', 'chat', 'tool_use'],
+      capabilities: {
+        supportsVision: false,
+        supportsReasoning: false,
+        supportsFunctionCalling: true,
+        supportsWebSearch: true,
+        supportsMultipleImages: false,
+        isUncensored: false,
+      },
+      offline: false,
     });
   }
 
@@ -70,6 +90,10 @@ export class ModelRouter {
         await this.vault.set('venice_api_key', envKey);
       }
     }
+    // Load custom base URL if saved
+    const savedUrl = await this.vault.get('api_base_url');
+    if (savedUrl) this.baseUrl = savedUrl;
+
     if (!this.apiKey) {
       this.logger.warn('No Venice API key configured');
     } else {
@@ -84,29 +108,28 @@ export class ModelRouter {
       } else {
         this.registerModel({
           id: savedModel,
+          name: savedModel,
+          description: '',
+          type: 'text',
           costPer1kInput: 0.01,
           costPer1kOutput: 0.01,
           maxTokens: 4096,
-          tier: 'medium',
-          strengths: [],
           contextWindow: 8192,
           speedTier: this.inferSpeed(savedModel),
-          inferredStrengths: this.inferStrengths(savedModel),
+          capabilities: {
+            supportsVision: false,
+            supportsReasoning: false,
+            supportsFunctionCalling: false,
+            supportsWebSearch: false,
+            supportsMultipleImages: false,
+            isUncensored: false,
+          },
+          offline: false,
         });
         this.defaultModel = savedModel;
         this.logger.info(`Using saved model (not yet discovered): ${savedModel}`);
       }
     }
-  }
-
-  private inferStrengths(id: string): Array<'code' | 'analysis' | 'chat' | 'long_context' | 'tool_use'> {
-    const m = id.toLowerCase();
-    const strengths: Array<'code' | 'analysis' | 'chat' | 'long_context' | 'tool_use'> = ['chat'];
-    if (m.includes('code') || m.includes('coder') || m.includes('deepseek')) strengths.push('code');
-    if (m.includes('70b') || m.includes('large') || m.includes('405b')) strengths.push('analysis');
-    if (m.includes('long') || m.includes('128k') || m.includes('200k')) strengths.push('long_context');
-    strengths.push('tool_use');
-    return strengths;
   }
 
   private inferSpeed(id: string): 'fast' | 'balanced' | 'heavy' {
@@ -121,7 +144,7 @@ export class ModelRouter {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
-      const resp = await fetch(`${VENICE_BASE_URL}/models`, {
+      const resp = await fetch(`${this.baseUrl}/models`, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
@@ -133,27 +156,39 @@ export class ModelRouter {
       const data = await resp.json();
       const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
       for (const m of list) {
-        const contextWindow = Number(
-          m.context_length ?? m.context_window ?? m.max_context_tokens ?? m.input_token_limit ?? 8192
-        ) || 8192;
-        if (!this.models.has(m.id)) {
-          this.registerModel({
-            id: m.id,
-            costPer1kInput: 0.01,
-            costPer1kOutput: 0.01,
-            maxTokens: Math.min(contextWindow, 4096),
-            tier: 'medium',
-            strengths: [],
-            contextWindow,
-            speedTier: this.inferSpeed(m.id),
-            inferredStrengths: this.inferStrengths(m.id),
-          });
-        } else {
-          const existing = this.models.get(m.id)!;
-          existing.contextWindow = contextWindow;
-          existing.speedTier = this.inferSpeed(m.id);
-          existing.inferredStrengths = this.inferStrengths(m.id);
-        }
+        const spec = m.model_spec || {};
+        const caps = spec.capabilities || {};
+        const pricing = spec.pricing || {};
+        const modelType = m.type || 'text';
+        const contextWindow = Number(spec.availableContextTokens ?? m.context_length ?? 8192) || 8192;
+        const inputPrice = pricing.input?.usd ?? 0.01;
+        const outputPrice = pricing.output?.usd ?? 0.01;
+        const isUncensored = (m.id || '').toLowerCase().includes('uncensored') ||
+          (m.id || '').toLowerCase().includes('role-play') ||
+          (spec.privacy === 'unfiltered');
+
+        const def: ModelDef = {
+          id: m.id,
+          name: spec.name || m.id,
+          description: spec.description || '',
+          type: modelType as ModelDef['type'],
+          costPer1kInput: inputPrice / 1000,
+          costPer1kOutput: outputPrice / 1000,
+          maxTokens: Math.min(contextWindow, 4096),
+          contextWindow,
+          speedTier: this.inferSpeed(m.id),
+          capabilities: {
+            supportsVision: caps.supportsVision ?? false,
+            supportsReasoning: caps.supportsReasoning ?? false,
+            supportsFunctionCalling: caps.supportsFunctionCalling ?? false,
+            supportsWebSearch: caps.supportsWebSearch ?? false,
+            supportsMultipleImages: caps.supportsMultipleImages ?? false,
+            isUncensored,
+          },
+          offline: spec.offline ?? false,
+        };
+
+        this.models.set(m.id, def);
       }
       this.logger.info(`Discovered ${list.length} models`);
     } catch (error: any) {
@@ -161,37 +196,8 @@ export class ModelRouter {
     }
   }
 
-  selectModel(taskType: string, budget?: number): string {
-    if (budget !== undefined && budget < 0.01) return this.getCheapestModel();
-    const codeTypes = ['code', 'build', 'compile', 'debug', 'fix', 'write', 'create', 'develop'];
-    const simpleTypes = ['classify', 'format', 'name', 'list', 'summarize', 'simple'];
-    if (codeTypes.some((t) => taskType.toLowerCase().includes(t))) {
-      return this.getModelByTier('high') || this.defaultModel;
-    }
-    if (simpleTypes.some((t) => taskType.toLowerCase().includes(t))) {
-      return this.getCheapestModel();
-    }
+  selectModel(_taskType: string, _budget?: number): string {
     return this.defaultModel;
-  }
-
-  private getModelByTier(tier: string): string | null {
-    for (const [id, m] of this.models) {
-      if (m.tier === tier) return id;
-    }
-    return null;
-  }
-
-  private getCheapestModel(): string {
-    let cheapest = this.defaultModel;
-    let lowest = Infinity;
-    for (const [id, m] of this.models) {
-      const avg = (m.costPer1kInput + m.costPer1kOutput) / 2;
-      if (avg < lowest) {
-        lowest = avg;
-        cheapest = id;
-      }
-    }
-    return cheapest;
   }
 
   getModel(modelId: string): UltraModelDef | undefined {
@@ -201,7 +207,7 @@ export class ModelRouter {
       id: m.id,
       contextWindow: m.contextWindow,
       speedTier: m.speedTier,
-      strengths: m.inferredStrengths,
+      strengths: [],
     };
   }
 
@@ -211,34 +217,8 @@ export class ModelRouter {
     return m?.contextWindow ?? 8192;
   }
 
-  recommendModel(input: RecommendInput): ModelRecommendation | null {
-    const current = this.models.get(input.currentModel);
-    const all = Array.from(this.models.values());
-    if (!all.length) return null;
-
-    const score = (m: ModelDef) => {
-      let s = 0;
-      if (m.contextWindow >= input.requiredContextTokens) s += 30;
-      if (input.taskType === 'code' && m.inferredStrengths.includes('code')) s += 35;
-      if (input.taskType === 'analysis' && m.inferredStrengths.includes('analysis')) s += 20;
-      if (input.taskType === 'conversation' && m.inferredStrengths.includes('chat')) s += 15;
-      if (input.requiredContextTokens > 12000 && m.inferredStrengths.includes('long_context')) s += 20;
-      if (input.taskType === 'simple' && m.speedTier === 'fast') s += 10;
-      return s;
-    };
-
-    const ranked = all.map(m => ({ m, s: score(m) })).sort((a, b) => b.s - a.s);
-    const best = ranked[0]?.m;
-    if (!best || !current || best.id === current.id) return null;
-
-    const currentScore = ranked.find(x => x.m.id === current.id)?.s ?? 0;
-    const gap = ranked[0].s - currentScore;
-    if (gap < 15) return null;
-
-    return {
-      recommended: best.id,
-      reason: `Better fit: task=${input.taskType}, context≈${input.requiredContextTokens} tokens. ${best.id} scores ${ranked[0].s} vs ${current.id} at ${currentScore}.`,
-    };
+  recommendModel(_input: any): null {
+    return null;
   }
 
   async complete(
@@ -250,6 +230,7 @@ export class ModelRouter {
       maxTokens?: number;
       taskId?: string;
       agentId?: string;
+      timeout?: number;
     } = {}
   ): Promise<CompletionResult> {
     if (!this.apiKey) {
@@ -271,8 +252,8 @@ export class ModelRouter {
       const startTime = Date.now();
       this.logger.info(`Sending request to ${model}...`);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-      const resp = await fetch(`${VENICE_BASE_URL}/chat/completions`, {
+      const timeout = setTimeout(() => controller.abort(), options.timeout || REQUEST_TIMEOUT);
+      const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
@@ -326,7 +307,7 @@ export class ModelRouter {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-      const resp = await fetch(`${VENICE_BASE_URL}/chat/completions`, {
+      const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
@@ -372,5 +353,68 @@ export class ModelRouter {
 
   getAvailableModels(): ModelDef[] {
     return Array.from(this.models.values());
+  }
+
+  async setBaseUrl(url: string): Promise<void> {
+    this.baseUrl = url.replace(/\/+$/, '');
+    await this.vault.set('api_base_url', this.baseUrl);
+    this.logger.info(`API base URL set to: ${this.baseUrl}`);
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  getModelsByType(type: string): ModelDef[] {
+    return Array.from(this.models.values()).filter(m => m.type === type);
+  }
+
+  async generateImage(
+    prompt: string,
+    options: {
+      model?: string;
+      width?: number;
+      height?: number;
+      steps?: number;
+      stylePreset?: string;
+      negativePrompt?: string;
+      taskId?: string;
+    } = {}
+  ): Promise<{ images: string[]; model: string; cost: number }> {
+    if (!this.apiKey) throw new Error('API key not configured.');
+    const model = options.model || 'fluently-xl';
+    const taskId = options.taskId || 'image';
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000);
+      const resp = await fetch(`${this.baseUrl}/image/generate`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          prompt,
+          width: options.width || 1024,
+          height: options.height || 1024,
+          steps: options.steps,
+          style_preset: options.stylePreset,
+          negative_prompt: options.negativePrompt,
+          return_binary: false,
+          safe_mode: false,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!resp.ok) throw new Error(`Image generation failed: HTTP ${resp.status}`);
+      const data = await resp.json();
+      const images = data.images || [];
+      const cost = await this.costTracker.record(model, 0, 0, taskId, 'image');
+      return { images, model, cost };
+    } catch (error: any) {
+      if (error.name === 'AbortError') throw new Error('Image generation timed out.');
+      throw new Error('Image generation failed: ' + error.message);
+    }
   }
 }

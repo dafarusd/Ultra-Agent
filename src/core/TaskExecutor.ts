@@ -132,7 +132,7 @@ export class TaskExecutor {
     }
   }
 
-  private createAiClient() {
+  private createAiClient(timeoutMs?: number) {
     const router = this.ai;
     return {
       chat: async (args: { model: string; messages: Array<{ role: string; content: string }>; max_tokens: number }): Promise<string> => {
@@ -143,6 +143,7 @@ export class TaskExecutor {
           systemPrompt: systemMsg?.content,
           maxTokens: args.max_tokens,
           agentId: 'genome',
+          timeout: timeoutMs,
         });
         return result.content;
       },
@@ -280,7 +281,7 @@ export class TaskExecutor {
       }
       case 'sms_send': {
         let to = params.to;
-        const message = params.message || undefined;
+        const message = params.message || '';
         if (!to) return { error: 'No recipient specified' };
         const avail = await SMS.isAvailableAsync();
         if (!avail) return { error: 'SMS unavailable' };
@@ -288,7 +289,12 @@ export class TaskExecutor {
           const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
           const match = data.find((c) => c.name?.toLowerCase().includes(to.toLowerCase()));
           if (match && match.phoneNumbers && match.phoneNumbers.length > 0) {
-            to = match.phoneNumbers[0].number || to;
+            const realNumber = match.phoneNumbers.find(
+              (p) => p.number && p.number.replace(/\D/g, '').length >= 7
+            );
+            if (realNumber && realNumber.number) {
+              to = realNumber.number;
+            }
           }
         } catch {}
         const { result } = await SMS.sendSMSAsync([to], message);
@@ -326,81 +332,43 @@ export class TaskExecutor {
         const target = params.target;
         if (!target) return { error: 'No app specified' };
 
-        const KNOWN_PACKAGES: Record<string, string> = {
-          'gmail': 'com.google.android.gm',
-          'google mail': 'com.google.android.gm',
-          'email': 'com.google.android.gm',
-          'maps': 'com.google.android.apps.maps',
-          'google maps': 'com.google.android.apps.maps',
-          'chrome': 'com.android.chrome',
-          'browser': 'com.android.chrome',
-          'youtube': 'com.google.android.youtube',
-          'camera': 'com.android.camera',
-          'phone': 'com.android.dialer',
-          'dialer': 'com.android.dialer',
-          'messages': 'com.google.android.apps.messaging',
-          'messaging': 'com.google.android.apps.messaging',
-          'sms': 'com.google.android.apps.messaging',
-          'settings': 'com.android.settings',
-          'calendar': 'com.google.android.calendar',
-          'clock': 'com.google.android.deskclock',
-          'alarm': 'com.google.android.deskclock',
-          'calculator': 'com.google.android.calculator',
-          'contacts': 'com.google.android.contacts',
-          'files': 'com.google.android.documentsui',
-          'photos': 'com.google.android.apps.photos',
-          'gallery': 'com.google.android.apps.photos',
-          'play store': 'com.android.vending',
-          'spotify': 'com.spotify.music',
-          'pandora': 'com.pandora.android',
-          'whatsapp': 'com.whatsapp',
-          'instagram': 'com.instagram.android',
-          'facebook': 'com.facebook.katana',
-          'twitter': 'com.twitter.android',
-          'x': 'com.twitter.android',
-          'tiktok': 'com.zhiliaoapp.musically',
-          'snapchat': 'com.snapchat.android',
-          'telegram': 'org.telegram.messenger',
-          'discord': 'com.discord',
-          'reddit': 'com.reddit.frontpage',
-          'netflix': 'com.netflix.mediaclient',
-          'amazon': 'com.amazon.mShop.android.shopping',
-          'uber': 'com.ubercab',
-          'lyft': 'com.lyft.android',
-          'venmo': 'com.venmo',
-          'cash app': 'com.squareup.cash',
-          'weather': 'com.google.android.apps.weather',
-        };
-
-        // Normalize: strip "the", "a", "app" etc
         const targetLower = target.toLowerCase().trim()
           .replace(/^(the|a|an|my)\s+/i, '')
           .replace(/\s+app$/i, '');
 
-        // Exact match first
-        let pkg = KNOWN_PACKAGES[targetLower];
+        let pkg: string | undefined;
 
-        // Partial match if no exact
-        if (!pkg) {
-          for (const [key, val] of Object.entries(KNOWN_PACKAGES)) {
-            if (targetLower.includes(key) || key.includes(targetLower)) {
-              pkg = val;
-              break;
+        // Step 1: Query device for installed apps
+        try {
+          const AgentNativeModule = (await import('../native/AgentNative')).default;
+          const installed = await AgentNativeModule.getInstalledApps();
+          if (installed && installed.length > 0) {
+            const exact = installed.find(
+              (a: any) => a.appName.toLowerCase() === targetLower
+            );
+            if (exact) {
+              pkg = exact.packageName;
+            } else {
+              const partial = installed.find(
+                (a: any) => a.appName.toLowerCase().includes(targetLower) ||
+                            targetLower.includes(a.appName.toLowerCase())
+              );
+              if (partial) pkg = partial.packageName;
             }
           }
-        }
+        } catch {}
 
-        // AI fallback for unknown apps
+        // Step 2: AI fallback only if device query found nothing
         if (!pkg) {
           const r = await this.ai.complete(
-            `What is the Android package name for "${target}"? Reply with ONLY the package name. Example: com.google.android.gm`,
+            `What is the exact Android package name for the app "${target}"? Reply with ONLY the package name, nothing else.`,
             { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 }
           );
           pkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
         }
 
         if (!pkg || !pkg.includes('.')) {
-          return { success: false, error: `Could not resolve package name for "${target}"` };
+          return { success: false, error: `Could not find "${target}" on this device` };
         }
 
         try {
@@ -530,7 +498,7 @@ export class TaskExecutor {
       }
       case 'self_replicate': {
         const genome = await this.loadOrCreateGenome();
-        const aiClient = this.createAiClient();
+        const aiClient = this.createAiClient(180000);
         const getModel = async () => this.ai.getDefaultModel();
         const compiler = new GenomeCompiler(aiClient, getModel);
         const improver = this.createSelfImprover();
@@ -675,19 +643,31 @@ export class TaskExecutor {
         return { count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
       }
       case 'app_launch': {
-        const r = await this.ai.complete(
-          `What is the Android package name for "${request}"? Reply with ONLY the package name.`,
-          { taskId, agentId: 'launch', maxTokens: 100 }
-        );
-        const pkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
-        if (!pkg || !pkg.includes('.')) {
-          return { error: `Could not resolve package for "${request}"` };
+        let pkg2: string | undefined;
+        try {
+          const AgentNativeModule2 = (await import('../native/AgentNative')).default;
+          const apps = await AgentNativeModule2.getInstalledApps();
+          const t = request.toLowerCase();
+          const match = apps?.find((a: any) =>
+            t.includes(a.appName.toLowerCase()) || a.appName.toLowerCase().includes(t)
+          );
+          if (match) pkg2 = match.packageName;
+        } catch {}
+        if (!pkg2) {
+          const r = await this.ai.complete(
+            `What is the exact Android package name for "${request}"? Reply ONLY the package name.`,
+            { taskId, agentId: 'launch', maxTokens: 100 }
+          );
+          pkg2 = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
+        }
+        if (!pkg2 || !pkg2.includes('.')) {
+          return { error: `Could not find app for "${request}"` };
         }
         try {
-          IntentLauncher.openApplication(pkg);
-          return { success: true, launched: pkg };
+          IntentLauncher.openApplication(pkg2);
+          return { success: true, launched: pkg2 };
         } catch (err: any) {
-          return { error: `Failed to launch ${pkg}: ${err.message}` };
+          return { error: `Failed to launch ${pkg2}: ${err.message}` };
         }
       }
       case 'app_share': {
@@ -724,6 +704,28 @@ export class TaskExecutor {
       case 'ai_query': {
         const r = await this.ai.complete(request, { taskId, agentId: 'query' });
         return { response: r.content, cost: r.cost };
+      }
+      case 'image_generate': {
+        const prompt = request;
+        if (!prompt) return { error: 'No image prompt specified' };
+        try {
+          const result = await this.ai.generateImage(prompt, { taskId });
+          if (result.images.length === 0) return { error: 'No images generated' };
+          const imagePath = `${this.docDir}generated_${Date.now()}.png`;
+          if (isNative && FileSystem) {
+            await FileSystem.writeAsStringAsync(imagePath, result.images[0], {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+          }
+          return {
+            success: true,
+            imageCount: result.images.length,
+            path: isNative ? imagePath : undefined,
+            model: result.model,
+          };
+        } catch (err: any) {
+          return { error: `Image generation failed: ${err.message}` };
+        }
       }
       default:
         throw new Error(`No executor for: ${capId}`);
