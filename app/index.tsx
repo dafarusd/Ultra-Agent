@@ -80,8 +80,12 @@ export default function ChatScreen() {
       const cm = core.getConversationManager();
       const conv = await cm.loadConversation(convId);
       if (conv) {
+        // Drop any optimistic (locally-injected) bubbles before replacing with real data
         setMessages([...conv.messages].reverse());
         setConversationTitle(conv.title);
+      } else {
+        // Conversation gone — clear optimistic messages too
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith('optimistic_')));
       }
     },
     []
@@ -179,7 +183,7 @@ export default function ChatScreen() {
     setStatus("Processing...");
 
     // Optimistic: show user message immediately
-    const optimisticId = `optimistic_${Date.now()}`;
+    const optimisticId = `optimistic_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     setMessages((prev) => [
       {
         id: optimisticId,

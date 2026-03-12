@@ -356,7 +356,9 @@ export class TaskExecutor {
               if (partial) pkg = partial.packageName;
             }
           }
-        } catch {}
+        } catch (e: any) {
+          this.logger.warn('getInstalledApps failed, using AI fallback', { error: e.message });
+        }
 
         // Step 2: AI fallback only if device query found nothing
         if (!pkg) {
@@ -652,7 +654,9 @@ export class TaskExecutor {
             t.includes(a.appName.toLowerCase()) || a.appName.toLowerCase().includes(t)
           );
           if (match) pkg2 = match.packageName;
-        } catch {}
+        } catch (e: any) {
+          this.logger.warn('getInstalledApps failed in exec, using AI fallback', { error: e.message });
+        }
         if (!pkg2) {
           const r = await this.ai.complete(
             `What is the exact Android package name for "${request}"? Reply ONLY the package name.`,
@@ -711,7 +715,8 @@ export class TaskExecutor {
         try {
           const result = await this.ai.generateImage(prompt, { taskId });
           if (result.images.length === 0) return { error: 'No images generated' };
-          const imagePath = `${this.docDir}generated_${Date.now()}.png`;
+          const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
+          const imagePath = `${docDirSlash}generated_${Date.now()}.png`;
           if (isNative && FileSystem) {
             await FileSystem.writeAsStringAsync(imagePath, result.images[0], {
               encoding: FileSystem.EncodingType.Base64,

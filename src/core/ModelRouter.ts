@@ -159,7 +159,11 @@ export class ModelRouter {
         const spec = m.model_spec || {};
         const caps = spec.capabilities || {};
         const pricing = spec.pricing || {};
-        const modelType = m.type || 'text';
+        const validModelTypes: ModelDef['type'][] = ['text', 'image', 'video', 'audio', 'embedding'];
+        const rawType = m.type || 'text';
+        const modelType: ModelDef['type'] = validModelTypes.includes(rawType as ModelDef['type'])
+          ? (rawType as ModelDef['type'])
+          : 'text';
         const contextWindow = Number(spec.availableContextTokens ?? m.context_length ?? 8192) || 8192;
         const inputPrice = pricing.input?.usd ?? 0.01;
         const outputPrice = pricing.output?.usd ?? 0.01;
@@ -171,9 +175,9 @@ export class ModelRouter {
           id: m.id,
           name: spec.name || m.id,
           description: spec.description || '',
-          type: modelType as ModelDef['type'],
-          costPer1kInput: inputPrice / 1000,
-          costPer1kOutput: outputPrice / 1000,
+          type: modelType,
+          costPer1kInput: inputPrice,
+          costPer1kOutput: outputPrice,
           maxTokens: Math.min(contextWindow, 4096),
           contextWindow,
           speedTier: this.inferSpeed(m.id),
@@ -387,28 +391,32 @@ export class ModelRouter {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 120000);
-      const resp = await fetch(`${this.baseUrl}/image/generate`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          prompt,
-          width: options.width || 1024,
-          height: options.height || 1024,
-          steps: options.steps,
-          style_preset: options.stylePreset,
-          negative_prompt: options.negativePrompt,
-          return_binary: false,
-          safe_mode: false,
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (!resp.ok) throw new Error(`Image generation failed: HTTP ${resp.status}`);
-      const data = await resp.json();
+      let resp: Response;
+      try {
+        resp = await fetch(`${this.baseUrl}/image/generate`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model,
+            prompt,
+            width: options.width || 1024,
+            height: options.height || 1024,
+            steps: options.steps,
+            style_preset: options.stylePreset,
+            negative_prompt: options.negativePrompt,
+            return_binary: false,
+            safe_mode: false,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!resp!.ok) throw new Error(`Image generation failed: HTTP ${resp!.status}`);
+      const data = await resp!.json();
       const images = data.images || [];
       const cost = await this.costTracker.record(model, 0, 0, taskId, 'image');
       return { images, model, cost };
