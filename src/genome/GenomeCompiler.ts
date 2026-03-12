@@ -113,8 +113,7 @@ export class GenomeCompiler {
           } catch {}
         }
 
-        console.warn(`GenomeCompiler: unresolved source ${entry.path}`);
-        resolved.push(entry);
+        throw new Error(`GenomeCompiler: source "${entry.path}" not found on device. Run self_replicate first to stage genome sources.`);
       } else {
         resolved.push(entry);
       }

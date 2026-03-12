@@ -718,7 +718,8 @@ export class TaskExecutor {
           const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
           const imagePath = `${docDirSlash}generated_${Date.now()}.png`;
           if (isNative && FileSystem) {
-            await FileSystem.writeAsStringAsync(imagePath, result.images[0], {
+            const raw = result.images[0].replace(/^data:image\/\w+;base64,/, '');
+            await FileSystem.writeAsStringAsync(imagePath, raw, {
               encoding: FileSystem.EncodingType.Base64,
             });
           }

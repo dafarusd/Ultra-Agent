@@ -102,18 +102,24 @@ export class TaskEvaluator {
     let crashCount = 0;
     const criteriaResults: Array<{ criterion: string; passed: boolean }> = [];
 
-    const timeoutPromise = new Promise<'timeout'>(resolve =>
-      setTimeout(() => resolve('timeout'), challenge.timeoutMs)
-    );
+    const abortController = new AbortController();
+    const { signal } = abortController;
+
+    const timeoutPromise = new Promise<'timeout'>((resolve) => {
+      const t = setTimeout(() => resolve('timeout'), challenge.timeoutMs);
+      signal.addEventListener('abort', () => clearTimeout(t));
+    });
 
     const runPromise = (async (): Promise<'done'> => {
       for (const step of challenge.steps) {
+        if (signal.aborted) break;
         try {
           await this.executeStep(packageName, step);
         } catch (e) {
           crashCount++;
         }
 
+        if (signal.aborted) break;
         if (step.action === 'verify' || step.action === 'wait') {
           try {
             const isForeground = await this.checkForeground(packageName);
@@ -133,6 +139,7 @@ export class TaskEvaluator {
 
     const raceResult = await Promise.race([runPromise, timeoutPromise]);
     if (raceResult === 'timeout') {
+      abortController.abort();
       crashCount++;
     }
 
