@@ -77,3 +77,43 @@ The agent should persist conversations and allow switching between them.
 *   **AgentCore instrumented:** `execute()` now tracks all 9 agent loop phases with step name, timestamp, detail string, and pass/fail. Captures stack traces via `err.stack`. Builds rich `PromptTrace` with all fields. Added `getExecutionLedger()` getter.
 *   **PromptViewer upgraded:** Shows execution timeline, action plan, raw result, safety check, verification, permissions, error/stack trace, ledger events. Added per-trace "Download" button that exports full trace as text file via `Sharing.shareAsync`.
 *   **Download button overhauled:** Settings page "Share Logs" replaced with "Download" button. Exports comprehensive debug log including: full conversation history with prompt traces for every message, execution ledger events, and all Logger entries with ISO timestamps and metadata.
+
+## Ultra Overhaul v3.0
+*   **ModelRouter full overhaul:** `baseUrl` property added (defaults to `https://api.venice.ai/api/v1`). `setBaseUrl()`/`getBaseUrl()` added. `getModelsByType(type)` filters by model type. `complete()` accepts a `timeout` parameter (default 60 000 ms). `discoverModels()` now stores `pricing.input.usd` directly as `costPer1kInput` (no `/1000` division — Venice returns per-1K price). Type validation whitelist (`text`, `code`, `image`, `embedding`) with safe fallback to `'text'` for unknown types.
+*   **AgentCore delegate:** `setApiBaseUrl()` delegates to `ModelRouter.setBaseUrl()`. `getModelRouter()` getter exposed for settings screen.
+*   **TaskExecutor overhaul:** `app_launch` runs device-aware: native path uses `Linking.openURL()` with `android-app://` intent URI; web path opens a tab. SMS `action: 'send'` uses `Linking.openURL('smsto:...')`. `image_generate` AbortController timeout (180 s for self_replicate, 60 s default); base64 data-URI prefix stripped defensively before `writeAsStringAsync`. `self_replicate` timeout extended to 180 s.
+*   **getInstalledApps native module:** Java `getInstalledApps()` implemented via `QUERY_ALL_PACKAGES` permission. Both catch blocks now emit `logger.warn` (previously silent).
+*   **CapabilityRegistry / CapabilitySchemas:** `image_generate` capability registered with full JSON schema.
+*   **CommandParser:** Recognises `run`/`start` as `app_launch` verbs; `generate image`, `create image`, `draw` patterns added for `image_generate`.
+*   **SafetyChecker:** Scope keyword map updated for all new capabilities.
+*   **CostTracker:** Defaults (`enabled: false`, `monthlyLimitUsd: 0`, `dailyLimitUsd: 0`).
+
+## UI Overhaul v3.0
+*   **ConversationList redesign:** Left-side animated spring drawer (width 280, translucent backdrop). Spring animation on open/close. Conversation items show timestamp and truncated last message.
+*   **index.tsx:** Optimistic message rendering (instant bubble before network round-trip, deduplication on reloadMessages). Conversation rename via long-press on header title (inline TextInput). Unique optimistic IDs use `Date.now() + random` to avoid collision.
+*   **settings.tsx:** Model dropdown shows type badge per model. API URL field (editable base URL). Cost limits default to 0.
+
+## Bug Fixes & Audit Response (v3.1)
+*   **Forensic audit findings investigated (13 total):** 8 confirmed false, 3 real (fixed), 2 already fixed or intentional.
+*   **TaskEvaluator race condition fixed:** `AbortController` wired through `runChallenge()`. On timeout, `abort()` is called and every loop iteration checks `signal.aborted` before proceeding. Prevents background resource leak after `Promise.race` resolves.
+*   **GenomeCompiler unresolved source:** Silent fallback (passing raw `FIXED:build_toolchain` string to the Java compiler) replaced with a clear `throw new Error(...)` that names the missing file and instructs the user to run `self_replicate` first.
+*   **Image write defensive strip:** `result.images[0].replace(/^data:image\/\w+;base64,/, '')` applied before `writeAsStringAsync` so the image write works whether Venice returns raw base64 or a data-URI-prefixed string.
+*   **Metro blockList anchored:** `/scripts\/.*/` regex was accidentally blocking `node_modules/react-native-reanimated/scripts/validate-worklets-version`, preventing the web bundle from building. Fixed by anchoring to `path.join(__dirname, 'scripts')` so only the project-root `scripts/` directory is excluded.
+
+## Key File Reference
+| File | Purpose |
+|---|---|
+| `src/core/AgentCore.ts` | 9-step agent loop, mode detection, safety gate, cost gate |
+| `src/core/ModelRouter.ts` | Venice API client, model discovery, image generation |
+| `src/core/TaskExecutor.ts` | 22 capability implementations |
+| `src/core/CommandParser.ts` | NLP pattern → capability routing |
+| `src/core/SafetyChecker.ts` | Risk scoring and scope validation |
+| `src/genome/GenomeCompiler.ts` | Genome → Java source → APK compilation |
+| `src/genome/GenomeMutator.ts` | AI-driven genome mutation |
+| `src/genome/TaskEvaluator.ts` | Fitness evaluation via accessibility service |
+| `src/services/CostTracker.ts` | API spend tracking with monthly/daily limits |
+| `plugins/withAgentNative.js` | Expo config plugin — injects Java native modules |
+| `app/index.tsx` | Chat screen with optimistic messages and rename |
+| `components/ConversationList.tsx` | Animated left-side drawer |
+| `app/settings.tsx` | API key, model selector, cost limits |
+| `ultra-full-source.txt` | Full 55-file source snapshot (regenerated after every change) |
