@@ -8,7 +8,7 @@ config.watchFolders = [__dirname];
 config.resolver.blockList = [
   /attached_assets\/.*/,
   /\.local\/.*/,
-  /scripts\/.*/,
+  new RegExp('^' + path.join(__dirname, 'scripts').replace(/\\/g, '\\\\') + '.*'),
   /patches\/.*/,
 ];
 
