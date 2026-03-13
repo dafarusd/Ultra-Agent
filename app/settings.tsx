@@ -239,6 +239,7 @@ export default function SettingsScreen() {
       if (primary) {
         await vault.set("venice_api_key", primary.apiKey || "");
         await vault.set("api_base_url", primary.baseUrl);
+        DebugLog.settingsApiSave(primary.id, primary.baseUrl);
         const core = getAgentCoreInstance();
         if (core) {
           await core.refreshApiKey();
@@ -249,14 +250,15 @@ export default function SettingsScreen() {
         await vault.set("api_base_url", "");
       }
     } catch (err: any) {
+      DebugLog.uiError("settings_saveApi", err.message);
       Alert.alert("Error", err.message);
     }
   }, [editingApi, isNewApi, apis]);
 
   const deleteApi = useCallback(async (id: string) => {
+    DebugLog.settingsApiDelete(id);
     const updated = apis.filter((a) => a.id !== id);
     setApis(updated);
-    // Clean up defaults that referenced this API
     const cleanDefaults = { ...defaults };
     for (const role of Object.keys(cleanDefaults) as DefaultRole[]) {
       if (cleanDefaults[role] === id) cleanDefaults[role] = "";
@@ -274,9 +276,11 @@ export default function SettingsScreen() {
     try {
       const vault = await SecureVault.initialize();
       await vault.set("api_defaults", JSON.stringify(defaults));
+      DebugLog.settingsDefaultsSave(defaults);
       setSavedFeedback("defaults");
       setTimeout(() => setSavedFeedback(null), 2000);
     } catch (err: any) {
+      DebugLog.uiError("settings_saveDefaults", err.message);
       Alert.alert("Error", err.message);
     }
   }, [defaults]);
@@ -287,6 +291,7 @@ export default function SettingsScreen() {
       const vault = await SecureVault.initialize();
       await vault.set("daily_cost_limit", dailyLimit);
       await vault.set("task_cost_limit", taskLimit);
+      DebugLog.settingsCostLimitSave(dailyLimit, taskLimit);
       Alert.alert("Saved", "Cost limits updated.");
     } catch (err: any) {
       Alert.alert("Error", err.message);
@@ -548,7 +553,10 @@ export default function SettingsScreen() {
                                     return (
                                       <Pressable
                                         key={m.id}
-                                        onPress={() => setDefaults({ ...defaults, [role]: m.id })}
+                                        onPress={() => {
+                                          DebugLog.settingsDefaultPick(role, m.id, m.name || m.id);
+                                          setDefaults({ ...defaults, [role]: m.id });
+                                        }}
                                         style={[styles.defaultOption, isActive && styles.defaultOptionActive, isRec && !isActive && styles.recommendedOption]}
                                       >
                                         {isRec && <Ionicons name="star" size={10} color={isActive ? BG : "#f59e0b"} style={{ marginRight: 2 }} />}

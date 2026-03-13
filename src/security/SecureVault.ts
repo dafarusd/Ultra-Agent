@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { Logger } from '../utils/Logger';
+import { DebugLog } from '../utils/DebugLog';
 
 const webStorage: Record<string, string> = {};
 
@@ -66,21 +67,28 @@ export class SecureVault {
     try {
       await storeSet(`vu_${key}`, value);
       this.cache.set(key, value);
-      this.logger.debug(`Stored: ${key}`);
+      DebugLog.vaultSet(key, value.length);
     } catch (error: any) {
       this.cache.set(key, value);
+      DebugLog.vaultError('SET', key, error.message);
       this.logger.error(`Store failed for ${key}: ${error.message}`);
     }
   }
 
   async get(key: string): Promise<string | null> {
     if (!this.initialized) throw new Error('Vault not initialized');
-    if (this.cache.has(key)) return this.cache.get(key)!;
+    if (this.cache.has(key)) {
+      const cached = this.cache.get(key)!;
+      DebugLog.vaultGet(key, cached, 'cache');
+      return cached;
+    }
     try {
       const value = await storeGet(`vu_${key}`);
       if (value) this.cache.set(key, value);
+      DebugLog.vaultGet(key, value, 'store');
       return value;
     } catch (error: any) {
+      DebugLog.vaultError('GET', key, error.message);
       this.logger.error(`Retrieve failed for ${key}: ${error.message}`);
       return null;
     }
@@ -90,9 +98,10 @@ export class SecureVault {
     try {
       await storeDel(`vu_${key}`);
       this.cache.delete(key);
-      this.logger.debug(`Deleted: ${key}`);
+      DebugLog.vaultDelete(key);
     } catch (error: any) {
       this.cache.delete(key);
+      DebugLog.vaultError('DEL', key, error.message);
       this.logger.error(`Delete failed for ${key}: ${error.message}`);
     }
   }

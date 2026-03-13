@@ -1,5 +1,6 @@
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
+import { DebugLog } from '../utils/DebugLog';
 import type { ChatMessage, Conversation, ConversationMeta } from '../types/ultra';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
@@ -50,9 +51,10 @@ export class ConversationManager {
   async createConversation(initialUserMessage?: string): Promise<Conversation> {
     const id = uid('conv');
     const createdAt = now();
+    const title = initialUserMessage ? titleFromText(initialUserMessage) : 'New Chat';
     const conv: Conversation = {
       id,
-      title: initialUserMessage ? titleFromText(initialUserMessage) : 'New Chat',
+      title,
       createdAt,
       updatedAt: createdAt,
       summary: '',
@@ -61,21 +63,28 @@ export class ConversationManager {
       messages: [],
     };
     await this.saveConversation(conv);
+    DebugLog.conversationCreated(id, title);
     return conv;
   }
 
   async saveConversation(conv: Conversation): Promise<void> {
     conv.updatedAt = now();
     if (this.mode === 'native') {
-      await this.ensureReady();
-      const tmpPath = `${this.dir}/${conv.id}.tmp`;
-      const finalPath = this.filePath(conv.id);
-      await FileSystem.writeAsStringAsync(tmpPath, JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
       try {
-        await FileSystem.moveAsync({ from: tmpPath, to: finalPath });
-      } catch {
-        await FileSystem.writeAsStringAsync(finalPath, JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
-        try { await FileSystem.deleteAsync(tmpPath, { idempotent: true }); } catch {}
+        await this.ensureReady();
+        const tmpPath = `${this.dir}/${conv.id}.tmp`;
+        const finalPath = this.filePath(conv.id);
+        await FileSystem.writeAsStringAsync(tmpPath, JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
+        try {
+          await FileSystem.moveAsync({ from: tmpPath, to: finalPath });
+        } catch {
+          await FileSystem.writeAsStringAsync(finalPath, JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
+          try { await FileSystem.deleteAsync(tmpPath, { idempotent: true }); } catch {}
+        }
+        DebugLog.conversationSaved(conv.id, conv.messages.length);
+      } catch (err: any) {
+        DebugLog.conversationError('save', conv.id, err.message);
+        throw err;
       }
       return;
     }
@@ -83,24 +92,38 @@ export class ConversationManager {
       localStorage.setItem(`${PREFIX}${conv.id}`, JSON.stringify(conv));
       const idx = this.getWebIndex();
       if (!idx.includes(conv.id)) this.setWebIndex([conv.id, ...idx]);
+      DebugLog.conversationSaved(conv.id, conv.messages.length);
       return;
     }
     MEMORY.set(conv.id, conv);
+    DebugLog.conversationSaved(conv.id, conv.messages.length);
   }
 
   async loadConversation(id: string): Promise<Conversation | null> {
-    if (this.mode === 'native') {
-      await this.ensureReady();
-      const info = await FileSystem.getInfoAsync(this.filePath(id));
-      if (!info.exists) return null;
-      const raw = await FileSystem.readAsStringAsync(this.filePath(id), { encoding: FileSystem.EncodingType.UTF8 });
-      return JSON.parse(raw) as Conversation;
+    try {
+      if (this.mode === 'native') {
+        await this.ensureReady();
+        const info = await FileSystem.getInfoAsync(this.filePath(id));
+        if (!info.exists) return null;
+        const raw = await FileSystem.readAsStringAsync(this.filePath(id), { encoding: FileSystem.EncodingType.UTF8 });
+        const conv = JSON.parse(raw) as Conversation;
+        DebugLog.conversationLoaded(id, conv.messages.length);
+        return conv;
+      }
+      if (this.mode === 'web') {
+        const raw = localStorage.getItem(`${PREFIX}${id}`);
+        if (!raw) return null;
+        const conv = JSON.parse(raw) as Conversation;
+        DebugLog.conversationLoaded(id, conv.messages.length);
+        return conv;
+      }
+      const conv = MEMORY.get(id) ?? null;
+      if (conv) DebugLog.conversationLoaded(id, conv.messages.length);
+      return conv;
+    } catch (err: any) {
+      DebugLog.conversationError('load', id, err.message);
+      return null;
     }
-    if (this.mode === 'web') {
-      const raw = localStorage.getItem(`${PREFIX}${id}`);
-      return raw ? (JSON.parse(raw) as Conversation) : null;
-    }
-    return MEMORY.get(id) ?? null;
   }
 
   async listConversations(): Promise<ConversationMeta[]> {
@@ -129,7 +152,7 @@ export class ConversationManager {
       convs = Array.from(MEMORY.values());
     }
 
-    return convs
+    const result = convs
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .map((c) => ({
         id: c.id,
@@ -140,9 +163,12 @@ export class ConversationManager {
         messageCount: c.messages.length,
         starred: !!c.meta?.starred,
       }));
+    DebugLog.conversationList(result.length);
+    return result;
   }
 
   async deleteConversation(id: string): Promise<void> {
+    DebugLog.conversationDeleted(id);
     if (this.mode === 'native') {
       const info = await FileSystem.getInfoAsync(this.filePath(id));
       if (info.exists) await FileSystem.deleteAsync(this.filePath(id), { idempotent: true });
@@ -165,6 +191,7 @@ export class ConversationManager {
     conv.messageCountSinceSummary = (conv.messageCountSinceSummary ?? 0) + 1;
     if (conv.title === 'New Chat' && msg.role === 'user') conv.title = titleFromText(msg.content);
     await this.saveConversation(conv);
+    DebugLog.conversationMessage(conversationId, msg.role, msg.content?.length ?? 0, msg.source);
     return conv;
   }
 

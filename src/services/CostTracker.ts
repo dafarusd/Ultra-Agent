@@ -48,7 +48,9 @@ export class CostTracker {
       const tLimit = await this.vault.get('task_cost_limit');
       if (tLimit) this.taskLimit = parseFloat(tLimit);
       this.logger.info(`CostTracker initialized. Daily limit: $${this.dailyLimit}`);
+      DebugLog.systemEvent('CostTracker', `Initialized with ${this.entries.length} entries, daily limit $${this.dailyLimit}`);
     } catch (error: any) {
+      DebugLog.error('CostTracker', 'init failed: ' + error.message);
       this.logger.error('CostTracker init failed: ' + error.message);
     }
   }
@@ -77,8 +79,8 @@ export class CostTracker {
       this.entries = this.entries.slice(0, CostTracker.MAX_ENTRIES);
     }
     await this.persist();
-    this.logger.debug(`Recorded: $${cost.toFixed(6)} for ${model} (task: ${taskId})`);
     DebugLog.costRecord(model, cost, taskId);
+    this.logger.debug(`Recorded: $${cost.toFixed(6)} for ${model} (task: ${taskId})`);
     return cost;
   }
 
@@ -97,12 +99,18 @@ export class CostTracker {
 
   isWithinDailyLimit(): boolean {
     if (this.dailyLimit <= 0) return true;
-    return this.getDailySpend() < this.dailyLimit;
+    const spent = this.getDailySpend();
+    const allowed = spent < this.dailyLimit;
+    DebugLog.costLimitCheck('daily', this.dailyLimit, spent, allowed);
+    return allowed;
   }
 
   isWithinTaskLimit(taskId: string): boolean {
     if (this.taskLimit <= 0) return true;
-    return this.getTaskSpend(taskId) < this.taskLimit;
+    const spent = this.getTaskSpend(taskId);
+    const allowed = spent < this.taskLimit;
+    DebugLog.costLimitCheck('task', this.taskLimit, spent, allowed);
+    return allowed;
   }
 
   getRemainingDailyBudget(): number {
@@ -131,11 +139,13 @@ export class CostTracker {
   async setDailyLimit(limit: number): Promise<void> {
     this.dailyLimit = limit;
     await this.vault.set('daily_cost_limit', limit.toString());
+    DebugLog.systemEvent('CostTracker', `Daily limit set to $${limit}`);
   }
 
   async setTaskLimit(limit: number): Promise<void> {
     this.taskLimit = limit;
     await this.vault.set('task_cost_limit', limit.toString());
+    DebugLog.systemEvent('CostTracker', `Task limit set to $${limit}`);
   }
 
   private modelRatesCache: Record<string, { input: number; output: number }> = {};
@@ -153,6 +163,7 @@ export class CostTracker {
     try {
       await this.vault.set(CostTracker.STORAGE_KEY, JSON.stringify(this.entries));
     } catch (error: any) {
+      DebugLog.error('CostTracker', 'persist failed: ' + error.message);
       this.logger.error('Failed to persist cost data: ' + error.message);
     }
   }
@@ -163,6 +174,7 @@ export class CostTracker {
     this.entries = this.entries.filter((e) => e.timestamp > cutoff);
     if (this.entries.length < before) {
       await this.persist();
+      DebugLog.systemEvent('CostTracker', `Cleaned ${before - this.entries.length} old entries`);
       this.logger.info(`Cleaned ${before - this.entries.length} old cost entries`);
     }
   }

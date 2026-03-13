@@ -109,11 +109,16 @@ export class AgentCore extends SimpleEmitter {
   async initialize(): Promise<void> {
     if (this.ready) return;
     this.emit('log', 'Initializing systems...', 'system');
+    DebugLog.agentInitStart();
+    const initStart = Date.now();
 
     const safeInit = async (name: string, fn: () => Promise<void>): Promise<void> => {
+      const t0 = Date.now();
       try {
         await fn();
+        DebugLog.agentInitSubsystem(name, true, Date.now() - t0);
       } catch (err: any) {
+        DebugLog.agentInitSubsystem(name, false, Date.now() - t0, err.message);
         console.warn(`[AgentCore] ${name} init failed: ${err.message}`);
       }
     };
@@ -135,7 +140,7 @@ export class AgentCore extends SimpleEmitter {
     await safeInit('LogCleanup', async () => { await Logger.cleanOldLogs(7); });
     await safeInit('DebugLogCleanup', async () => { await DebugLog.cleanOldLogs(7); });
     await safeInit('CostCleanup', () => this.costTracker.cleanup(30));
-    DebugLog.systemEvent('AgentCore', 'Initialization complete');
+    DebugLog.agentInitComplete(Date.now() - initStart);
 
     this.ready = true;
     this.emit('log', 'All systems online', 'agent');
@@ -274,14 +279,15 @@ export class AgentCore extends SimpleEmitter {
     const startTime = Date.now();
     const steps: ExecutionStep[] = [];
     let execError: string | null = null;
+    DebugLog.agentExecuteStart(taskId, conversationId, userInput.length, !!args.replay);
 
     const step = (name: string, detail: string, success: boolean) => {
       steps.push({ step: name, timestamp: Date.now(), detail, success });
+      DebugLog.agentStep(taskId, name, detail.slice(0, 500), success);
     };
 
     // === STEP 1: INGEST ===
     DebugLog.userMessage(conversationId, userInput);
-    DebugLog.agentStep(taskId, 'INTAKE', `User input (${userInput.length} chars): "${userInput}"`, true);
     step('INTAKE', `Received user input: "${userInput.slice(0, 200)}"${args.replay ? ' (replay)' : ''}`, true);
     await this.ledger.logEvent({
       phase: 'INTAKE',

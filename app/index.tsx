@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SecureVault } from "@/src/security/SecureVault";
+import { DebugLog } from "@/src/utils/DebugLog";
 import { AgentCore, setAgentCoreInstance } from "@/src/core/AgentCore";
 import type { ExecuteArgs } from "@/src/core/AgentCore";
 import type { ChatMessage, UltraExecutionResult, ConversationMeta, PromptTrace } from "@/src/types/ultra";
@@ -153,8 +154,10 @@ export default function ChatScreen() {
   // ── Init ───────────────────────────────────────────
   useEffect(() => {
     async function init() {
+      DebugLog.uiInit("start", "Beginning app initialization");
       try {
         const vault = await SecureVault.initialize();
+        DebugLog.uiInit("vault", "SecureVault initialized");
         const core = new AgentCore(vault, (msg: string, type: string) => {
           setStatus(msg);
           if (type === "build_progress") setBuildPhase(msg);
@@ -163,24 +166,30 @@ export default function ChatScreen() {
         await core.initialize();
         setAgentCore(core);
         setAgentCoreInstance(core);
+        DebugLog.uiInit("agentCore", "AgentCore initialized, default model: " + core.getDefaultModel());
 
         const savedRaw = await vault.get("api_defaults");
         if (savedRaw) {
           try {
             const parsed = JSON.parse(savedRaw);
             setSavedDefaults(parsed);
+            DebugLog.uiDefaultsLoaded("init", parsed);
             const chatDefault = parsed["chat"];
             if (chatDefault) {
               await core.setDefaultModel(chatDefault);
               setActiveModelId(chatDefault);
+              DebugLog.uiModelApply(chatDefault, "chat", "init_default", true);
             } else {
               setActiveModelId(core.getDefaultModel());
+              DebugLog.uiInit("model", "No chat default saved, using engine default: " + core.getDefaultModel());
             }
           } catch {
             setActiveModelId(core.getDefaultModel());
+            DebugLog.uiInit("model", "Failed to parse saved defaults, using engine default");
           }
         } else {
           setActiveModelId(core.getDefaultModel());
+          DebugLog.uiInit("model", "No saved defaults, using engine default: " + core.getDefaultModel());
         }
         setStatus("Ready");
 
@@ -193,9 +202,11 @@ export default function ChatScreen() {
         setConversationId(activeId);
         await reloadMessages(core, activeId);
         await refreshConversations(core);
+        DebugLog.uiInit("complete", `Ready. Conv: ${activeId}, Model: ${core.getDefaultModel()}`);
 
         if (!core.hasApiKey()) setStatus("No API key");
-      } catch {
+      } catch (err: any) {
+        DebugLog.uiError("init", err?.message ?? "Unknown init error");
         setStatus("Init failed");
       }
     }
@@ -205,6 +216,7 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!agentCore) return;
+      DebugLog.uiFocusEffect("triggered", currentMode, Object.keys(savedDefaults), activeModelId);
       agentCore.refreshApiKey().then(() => {
         if (agentCore.hasApiKey()) setStatus("Ready");
       });
@@ -214,6 +226,7 @@ export default function ChatScreen() {
           if (raw) {
             const parsed = JSON.parse(raw);
             setSavedDefaults(parsed);
+            DebugLog.uiDefaultsLoaded("focusEffect", parsed);
           }
         } catch {}
       });
@@ -241,6 +254,7 @@ export default function ChatScreen() {
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = (overrideText || input).trim();
     if (!text || isProcessing || !agentCore || !conversationId) return;
+    DebugLog.uiSendMessage(text.length, currentMode, activeModelId, isProcessing);
     if (!overrideText) setInput("");
     setIsProcessing(true);
     setStatus("Processing...");
@@ -334,13 +348,14 @@ export default function ChatScreen() {
 
   const handleSelectConversation = useCallback(async (id: string) => {
     if (!agentCore) return;
+    DebugLog.uiConvSwitch(conversationId ?? "none", id);
     setConversationId(id);
     setPendingReplay(null);
     const conv = await agentCore.getConversationManager().loadConversation(id);
     setConversationStarred(!!conv?.meta?.starred);
     await reloadMessages(agentCore, id);
     setConvListVisible(false);
-  }, [agentCore, reloadMessages]);
+  }, [agentCore, reloadMessages, conversationId]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
     if (!agentCore) return;
@@ -452,9 +467,11 @@ export default function ChatScreen() {
 
   const handleModelSelect = useCallback(async (modelId: string) => {
     if (!agentCore) return;
+    const prev = activeModelId;
+    DebugLog.uiPickerSelect(modelId, prev);
     await agentCore.setDefaultModel(modelId);
     setActiveModelId(modelId);
-  }, [agentCore]);
+  }, [agentCore, activeModelId]);
 
   // ── Misc handlers ──────────────────────────────────
   const openConvList = useCallback(async () => {
@@ -679,7 +696,9 @@ export default function ChatScreen() {
                 const modeToFilter: Record<string, "all" | "text" | "image" | "code" | "reasoning" | "video"> = {
                   chat: "text", image: "image", code: "code", reasoning: "reasoning", video: "video",
                 };
-                setModelPickerInitialFilter(modeToFilter[currentMode] || "all");
+                const filter = modeToFilter[currentMode] || "all";
+                DebugLog.uiPickerOpen(filter, currentMode, activeModelId);
+                setModelPickerInitialFilter(filter);
                 setModelPickerVisible(true);
               }}
               style={({ pressed }) => [styles.modelPill, pressed && styles.modelPillPressed]}
@@ -717,6 +736,7 @@ export default function ChatScreen() {
             {isProcessing ? (
               <Pressable
                 onPress={() => {
+                  DebugLog.uiStopRequest(!!agentCore);
                   if (agentCore) agentCore.abortCurrentRequest();
                 }}
                 style={styles.stopBtn}
@@ -782,13 +802,21 @@ export default function ChatScreen() {
         visible={plusMenuVisible}
         currentType={currentMode}
         onSelect={async (type) => {
+          DebugLog.uiModeSwitch(currentMode, type, "plusMenu");
+          DebugLog.uiPlusMenuSelect(type, !!savedDefaults[type], savedDefaults[type] || null);
           setCurrentMode(type);
           setPlusMenuVisible(false);
           const defaultModelId = savedDefaults[type];
           if (defaultModelId && agentCore) {
-            await agentCore.setDefaultModel(defaultModelId);
-            setActiveModelId(defaultModelId);
+            try {
+              await agentCore.setDefaultModel(defaultModelId);
+              setActiveModelId(defaultModelId);
+              DebugLog.uiModelApply(defaultModelId, type, "plusMenu_savedDefault", true);
+            } catch (err: any) {
+              DebugLog.uiModelApply(defaultModelId, type, "plusMenu_savedDefault", false, err?.message);
+            }
           } else if (agentCore) {
+            DebugLog.uiPickerOpen("auto_from_plus", type, activeModelId);
             const filterMap: Record<string, typeof modelPickerInitialFilter> = {
               chat: "text", image: "image", code: "code",
               reasoning: "reasoning", video: "video",

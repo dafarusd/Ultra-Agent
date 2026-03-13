@@ -1,3 +1,4 @@
+import { DebugLog } from '../utils/DebugLog';
 import type { ActionPlan, SafetyCheckResult } from '../types/ultra';
 
 const DANGEROUS_PATTERNS: RegExp[] = [
@@ -56,6 +57,7 @@ const MODERATE_CAPABILITIES = [
 
 export class SafetyChecker {
   check(userRequest: string, plan: ActionPlan): SafetyCheckResult {
+    DebugLog.permissionCheck(plan.capability, true);
     const reasons: string[] = [];
     const blob = `${plan.capability} ${JSON.stringify(plan.params || {})} ${plan.raw || ''}`;
 

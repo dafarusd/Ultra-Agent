@@ -4,6 +4,25 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.6.0] — 2026-03-13 — All-Encompassing Debug Logging System
+
+### Added — Production-grade DebugLog with 40+ categories instrumented across every subsystem
+- **DebugLog.ts fully rewritten** — 5000-entry memory buffer, auto-flush to JSONL files, human-readable formatter for every category
+- **SecureVault instrumented** — Every `get()`, `set()`, `delete()` logs key, value length, source (cache vs store), and errors
+- **ModelRouter instrumented** — Model discovery start/result/error, API request/response/error with timing and token counts, model default changes with source tracking, abort events, image generation lifecycle
+- **AgentCore instrumented** — Init with per-subsystem timing, execute start with task/conv/replay context, all 9 agent loop steps now auto-log via `step()` wrapper
+- **ConversationManager instrumented** — Create, load, save, delete, addMessage, listConversations all logged with conversation ID and message counts
+- **CostTracker instrumented** — Record with model/cost/task, limit checks (daily/task) with spent/allowed, cleanup events
+- **BuildSystem instrumented** — Build start/phase/complete with timing, progress callbacks wrapped to log each phase
+- **SafetyChecker instrumented** — Permission checks logged for every capability evaluation
+- **UI (index.tsx) fully instrumented** — Init lifecycle (vault → agentCore → defaults → model → conversation), useFocusEffect triggers, mode switches via PlusMenu with saved default application, model picker open/select/close, send message with mode/model/processing state, stop button, conversation switching
+- **Settings (settings.tsx) instrumented** — API save/delete, defaults save with full defaults map, cost limit saves, individual default model picks by role
+
+### Changed
+- `ultra-full-source.txt` regenerated (15,723 lines)
+
+---
+
 ## [v3.5.2] — 2026-03-13 — Defaults Sync for ALL Modes
 
 ### Fixed

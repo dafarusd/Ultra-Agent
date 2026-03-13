@@ -92,7 +92,6 @@ export class ModelRouter {
         await this.vault.set('venice_api_key', envKey);
       }
     }
-    // Load custom base URL if saved
     const savedUrl = await this.vault.get('api_base_url');
     if (savedUrl) this.baseUrl = savedUrl;
 
@@ -106,7 +105,9 @@ export class ModelRouter {
     const savedModel = await this.vault.get('preferred_model');
     if (savedModel) {
       if (this.models.has(savedModel)) {
+        const prev = this.defaultModel;
         this.defaultModel = savedModel;
+        DebugLog.modelSetDefault(savedModel, prev, 'vault_restore');
         this.logger.info(`Using preferred model: ${savedModel}`);
       } else {
         this.registerModel({
@@ -129,7 +130,9 @@ export class ModelRouter {
           },
           offline: false,
         });
+        const prev = this.defaultModel;
         this.defaultModel = savedModel;
+        DebugLog.modelSetDefault(savedModel, prev, 'vault_restore_undiscovered');
         this.logger.info(`Using saved model (not yet discovered): ${savedModel}`);
       }
     }
@@ -144,6 +147,7 @@ export class ModelRouter {
 
   private async discoverModels(): Promise<void> {
     if (!this.apiKey) return;
+    DebugLog.modelDiscoveryStart(this.baseUrl);
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
@@ -198,8 +202,9 @@ export class ModelRouter {
         this.models.set(m.id, def);
       }
       this.logger.info(`Discovered ${list.length} models`);
-      DebugLog.systemEvent('ModelRouter', `Discovered ${list.length} models`);
+      DebugLog.modelDiscoveryResult(list.length, list.map((m: any) => m.id));
     } catch (error: any) {
+      DebugLog.modelDiscoveryError(error.message);
       this.logger.warn('Model discovery failed: ' + error.message);
     }
   }
@@ -256,8 +261,11 @@ export class ModelRouter {
     const systemPrompt =
       options.systemPrompt ||
       "You are Agent Ultra, an autonomous AI agent on a user's Android phone. You have device access including file system, contacts, SMS, camera, media, and can build Android apps on-device. Be precise, concise, action-oriented. When generating code, provide complete compilable code with no omissions.";
+
+    const promptTokens = Math.ceil((prompt.length + systemPrompt.length) / 4);
+    DebugLog.modelApiRequest(model, taskId, promptTokens, options.maxTokens ?? 4000);
+    const startTime = Date.now();
     try {
-      const startTime = Date.now();
       this.logger.info(`Sending request to ${model}...`);
       const controller = new AbortController();
       this.activeController = controller;
@@ -290,9 +298,13 @@ export class ModelRouter {
       const content = data.choices[0].message.content;
       const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
       const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
-      this.logger.info(`${model} responded in ${Date.now() - startTime}ms, cost: $${cost.toFixed(6)}`);
+      const durationMs = Date.now() - startTime;
+      DebugLog.modelApiResponse(model, taskId, usage.prompt_tokens, usage.completion_tokens, cost, durationMs);
+      this.logger.info(`${model} responded in ${durationMs}ms, cost: $${cost.toFixed(6)}`);
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
+      const durationMs = Date.now() - startTime;
+      DebugLog.modelApiError(model, taskId, error.message, durationMs);
       if (error.name === 'AbortError') throw new Error('Request timed out after 60s. Check your connection and try again.');
       if (error.message.includes('Venice API') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
       throw new Error('AI request failed: ' + error.message);
@@ -314,9 +326,13 @@ export class ModelRouter {
     const taskId = options.taskId || 'default';
     const agentId = options.agentId || 'main';
     if (!this.costTracker.isWithinDailyLimit()) throw new Error('Daily cost limit reached.');
+
+    const totalChars = messages.reduce((s, m) => s + (m.content?.length ?? 0), 0);
+    DebugLog.modelApiRequest(model, taskId, Math.ceil(totalChars / 4), options.maxTokens ?? 4000);
     const callStart = Date.now();
     try {
       const controller = new AbortController();
+      this.activeController = controller;
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -333,15 +349,18 @@ export class ModelRouter {
         signal: controller.signal,
       });
       clearTimeout(timeout);
+      this.activeController = null;
       if (!resp.ok) throw new Error(`Venice API error: HTTP ${resp.status}`);
       const data = await resp.json();
       const content = data.choices[0].message.content;
       const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
       const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
-      DebugLog.apiCall(taskId, model, usage.prompt_tokens, usage.completion_tokens, cost, Date.now() - callStart);
+      const durationMs = Date.now() - callStart;
+      DebugLog.modelApiResponse(model, taskId, usage.prompt_tokens, usage.completion_tokens, cost, durationMs);
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
-      DebugLog.error('API_CALL', error.message, error.stack);
+      const durationMs = Date.now() - callStart;
+      DebugLog.modelApiError(model, taskId, error.message, durationMs);
       if (error.name === 'AbortError') throw new Error('Request timed out after 60s. Check your connection and try again.');
       throw new Error('AI conversation failed: ' + error.message);
     }
@@ -349,8 +368,10 @@ export class ModelRouter {
 
   abortCurrentRequest(): void {
     if (this.activeController) {
+      const model = this.defaultModel;
       this.activeController.abort();
       this.activeController = null;
+      DebugLog.modelAbort(model);
       this.logger.info('Request aborted by user');
     }
   }
@@ -365,10 +386,13 @@ export class ModelRouter {
 
   async setDefaultModel(modelId: string): Promise<void> {
     if (!this.models.has(modelId)) {
+      DebugLog.modelSetDefaultError(modelId, 'Model not available');
       throw new Error(`Model ${modelId} not available`);
     }
+    const prev = this.defaultModel;
     this.defaultModel = modelId;
     await this.vault.set('preferred_model', modelId);
+    DebugLog.modelSetDefault(modelId, prev, 'setDefaultModel');
     this.logger.info(`Default model set to: ${modelId}`);
   }
 
@@ -405,6 +429,8 @@ export class ModelRouter {
     if (!this.apiKey) throw new Error('API key not configured.');
     const model = options.model || 'fluently-xl';
     const taskId = options.taskId || 'image';
+    DebugLog.modelImageRequest(model, prompt.length);
+    const startTime = Date.now();
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 120000);
@@ -436,8 +462,10 @@ export class ModelRouter {
       const data = await resp!.json();
       const images = data.images || [];
       const cost = await this.costTracker.record(model, 0, 0, taskId, 'image');
+      DebugLog.modelImageResponse(model, images.length, cost, Date.now() - startTime);
       return { images, model, cost };
     } catch (error: any) {
+      DebugLog.modelImageError(model, error.message);
       if (error.name === 'AbortError') throw new Error('Image generation timed out.');
       throw new Error('Image generation failed: ' + error.message);
     }

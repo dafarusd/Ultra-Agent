@@ -4,6 +4,7 @@ import { ModelRouter } from './ModelRouter';
 import { DebugEngine } from './DebugEngine';
 import { StorageManager } from '../services/StorageManager';
 import { Logger } from '../utils/Logger';
+import { DebugLog } from '../utils/DebugLog';
 import { AppArchitect } from './AppArchitect';
 import { ProjectGenerator } from './ProjectGenerator';
 import { MavenResolver } from './MavenResolver';
@@ -107,13 +108,21 @@ export class BuildSystem {
 
   async buildApp(description: string, _taskId: string, onProgress?: (p: BuildProgress) => void): Promise<BuildResult> {
     if (!isNative) return { success: false, error: 'Build system requires Android device' };
+    DebugLog.buildStart(_taskId, description);
+    const startTime = Date.now();
     try {
       await this.ensureTools();
       const orchestrator = this.getOrchestrator();
-      const { apkPath, spec } = await orchestrator.buildFromDescription(description, undefined, onProgress);
+      const wrappedProgress = onProgress ? (p: BuildProgress) => {
+        DebugLog.buildPhase(_taskId, p.phase, p.message);
+        onProgress(p);
+      } : undefined;
+      const { apkPath, spec } = await orchestrator.buildFromDescription(description, undefined, wrappedProgress);
       this.lastBuiltSpec = spec;
+      DebugLog.buildComplete(_taskId, true, Date.now() - startTime);
       return { success: true, apkPath, spec };
     } catch (e: any) {
+      DebugLog.buildComplete(_taskId, false, Date.now() - startTime, e.message);
       this.logger.error('Build failed: ' + e.message);
       return { success: false, error: e.message };
     }
