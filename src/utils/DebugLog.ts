@@ -12,7 +12,7 @@ export interface DebugEntry {
 
 export class DebugLog {
   private static entries: DebugEntry[] = [];
-  private static readonly MAX_MEMORY = 5000;
+  private static readonly MAX_MEMORY = 15000;
   private static writing = false;
   private static pendingFlush = false;
   private static sessionId = Date.now().toString(36);
@@ -287,6 +287,57 @@ export class DebugLog {
   }
   static permissionRequest(capability: string, result: string) {
     DebugLog.push('PERM_REQUEST', { capability, result });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // STATE SNAPSHOTS — full state capture at critical moments
+  // ═══════════════════════════════════════════════════════════
+  static snapshot(label: string, state: Record<string, unknown>) {
+    DebugLog.push('STATE', { label, ...state });
+  }
+
+  static uiState(label: string, state: {
+    currentMode?: string;
+    activeModelId?: string;
+    isProcessing?: boolean;
+    conversationId?: string | null;
+    messageCount?: number;
+    savedDefaults?: Record<string, string>;
+    modelsLoaded?: number;
+    hasApiKey?: boolean;
+    status?: string;
+    buildPhase?: string | null;
+    genomePhase?: string | null;
+    pendingReplay?: boolean;
+    pickerVisible?: boolean;
+    plusMenuVisible?: boolean;
+    convListVisible?: boolean;
+  }) {
+    DebugLog.push('UI_STATE', { label, ...state });
+  }
+
+  static settingsState(label: string, state: {
+    tab?: string;
+    defaults?: Record<string, string>;
+    apiCount?: number;
+    availableModelsCount?: number;
+    defaultsExpanded?: boolean;
+    editingApi?: boolean;
+    isNewApi?: boolean;
+    dailyLimit?: string;
+    taskLimit?: string;
+  }) {
+    DebugLog.push('SETTINGS_STATE', { label, ...state });
+  }
+
+  static modelState(label: string, state: {
+    discoveredCount?: number;
+    defaultModel?: string;
+    hasApiKey?: boolean;
+    baseUrl?: string;
+    modelIds?: string[];
+  }) {
+    DebugLog.push('MODEL_STATE', { label, ...state });
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -575,6 +626,23 @@ export class DebugLog {
           return `[${e.ts}][PERM] ${d.capability}: ${d.granted ? 'granted' : 'denied'}`;
         case 'PERM_REQUEST':
           return `[${e.ts}][PERM] Request ${d.capability}: ${d.result}`;
+
+        case 'STATE': {
+          const { label: sl, ...rest } = d;
+          return `[${e.ts}][STATE] ${sl}: ${JSON.stringify(rest).slice(0, 500)}`;
+        }
+        case 'UI_STATE': {
+          const { label: ul, ...urest } = d;
+          return `[${e.ts}][UI_STATE] ${ul}: ${JSON.stringify(urest).slice(0, 500)}`;
+        }
+        case 'SETTINGS_STATE': {
+          const { label: stl, ...srest } = d;
+          return `[${e.ts}][SETTINGS_STATE] ${stl}: ${JSON.stringify(srest).slice(0, 500)}`;
+        }
+        case 'MODEL_STATE': {
+          const { label: ml, ...mrest } = d;
+          return `[${e.ts}][MODEL_STATE] ${ml}: ${JSON.stringify(mrest).slice(0, 500)}`;
+        }
 
         case 'SYSTEM':
           return `[${e.ts}][SYS][${d.context}] ${d.message}`;

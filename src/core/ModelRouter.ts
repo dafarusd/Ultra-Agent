@@ -203,8 +203,21 @@ export class ModelRouter {
       }
       this.logger.info(`Discovered ${list.length} models`);
       DebugLog.modelDiscoveryResult(list.length, list.map((m: any) => m.id));
+      DebugLog.modelState("post_discovery", {
+        discoveredCount: this.models.size,
+        defaultModel: this.defaultModel,
+        hasApiKey: !!this.apiKey,
+        baseUrl: this.baseUrl,
+        modelIds: Array.from(this.models.keys()).slice(0, 20),
+      });
     } catch (error: any) {
       DebugLog.modelDiscoveryError(error.message);
+      DebugLog.modelState("discovery_failed", {
+        discoveredCount: this.models.size,
+        defaultModel: this.defaultModel,
+        hasApiKey: !!this.apiKey,
+        baseUrl: this.baseUrl,
+      });
       this.logger.warn('Model discovery failed: ' + error.message);
     }
   }

@@ -4,13 +4,18 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
-## [v3.6.2] — 2026-03-13 — Default Models Picker Fix
+## [v3.7.0] — 2026-03-13 — State Snapshot Logging System
+
+### Changed — Fundamental shift from event-only logging to state-enriched logging
+- **Memory buffer tripled** — 5,000 → 15,000 entries in memory. Display limit raised to 5,000 formatted entries. Scroll area increased to 800px.
+- **New `UI_STATE` snapshots** — Every critical action in index.tsx now captures full React state: currentMode, activeModelId, isProcessing, conversationId, messageCount, savedDefaults, modelsLoaded count, hasApiKey, status, buildPhase, genomePhase, pendingReplay, pickerVisible, plusMenuVisible, convListVisible. Snapshots at: init_complete, focus_effect, before_send, model_select, conv_switch, plus_menu_select, picker_open, stop_request.
+- **New `SETTINGS_STATE` snapshots** — Settings page captures: tab, defaults map, apiCount, availableModelsCount, defaultsExpanded, editingApi, isNewApi, dailyLimit, taskLimit. Snapshots at: loaded (mount), defaults_expanded (section opened with model count), default_pick (each model selection with full defaults map), defaults_saved (save action with all context).
+- **New `MODEL_STATE` snapshots** — ModelRouter captures: discoveredCount, defaultModel, hasApiKey, baseUrl, first 20 modelIds. Snapshots at: post_discovery (after successful model fetch), discovery_failed (on error with partial state), post_init (after AgentCore initializes ModelRouter).
+- **Generic `snapshot()` method** — For ad-hoc state captures from any subsystem.
+- **Formatters added** — STATE, UI_STATE, SETTINGS_STATE, MODEL_STATE all have human-readable formatters with 500-char JSON truncation.
 
 ### Fixed
-- **Models not appearing in default mode picker** — The horizontal models slider in Settings > API Setup > "Default Models by Mode" was showing empty because it tried to fetch models synchronously before AgentCore had loaded them. Now uses a `useEffect` that triggers when the section is expanded, properly fetching `getAvailableModels()` from the initialized AgentCore and caching in local state. Models now display correctly with proper recommendations and active state highlighting.
-
-### Changed
-- `ultra-full-source.txt` regenerated (15,726 lines)
+- **Models not appearing in default mode picker** — Settings now uses useEffect + local state to load models when section expands.
 
 ---
 

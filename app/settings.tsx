@@ -126,10 +126,15 @@ export default function SettingsScreen() {
   useEffect(() => {
     if (defaultsExpanded) {
       const core = getAgentCoreInstance();
-      if (core) {
-        const models = core.getAvailableModels() || [];
-        setAvailableModels(models);
-      }
+      const models = core ? core.getAvailableModels() || [] : [];
+      setAvailableModels(models);
+      DebugLog.settingsState("defaults_expanded", {
+        tab,
+        defaults,
+        apiCount: apis.length,
+        availableModelsCount: models.length,
+        defaultsExpanded: true,
+      });
     }
   }, [defaultsExpanded]);
 
@@ -169,6 +174,18 @@ export default function SettingsScreen() {
       setDailyLimit(dl || "0");
       const tl = await vault.get("task_cost_limit");
       setTaskLimit(tl || "0");
+
+      try {
+        DebugLog.settingsState("loaded", {
+          tab: initialTab,
+          defaults: savedDefaults ? JSON.parse(savedDefaults) : {},
+          apiCount: savedApis ? JSON.parse(savedApis).length : 0,
+          availableModelsCount: 0,
+          defaultsExpanded: false,
+          dailyLimit: dl || "0",
+          taskLimit: tl || "0",
+        });
+      } catch {}
     } catch (err: any) {
       Alert.alert("Error", "Failed to load settings: " + err.message);
     }
@@ -289,13 +306,20 @@ export default function SettingsScreen() {
       const vault = await SecureVault.initialize();
       await vault.set("api_defaults", JSON.stringify(defaults));
       DebugLog.settingsDefaultsSave(defaults);
+      DebugLog.settingsState("defaults_saved", {
+        tab,
+        defaults,
+        apiCount: apis.length,
+        availableModelsCount: availableModels.length,
+        defaultsExpanded,
+      });
       setSavedFeedback("defaults");
       setTimeout(() => setSavedFeedback(null), 2000);
     } catch (err: any) {
       DebugLog.uiError("settings_saveDefaults", err.message);
       Alert.alert("Error", err.message);
     }
-  }, [defaults]);
+  }, [defaults, tab, apis.length, availableModels.length, defaultsExpanded]);
 
   // ── Cost limit save ────────────────────────────────
   const saveLimits = useCallback(async () => {
@@ -330,7 +354,7 @@ export default function SettingsScreen() {
   }, [logs]);
 
   const loadDebugLogs = useCallback(async () => {
-    const formatted = DebugLog.getMemoryEntriesFormatted(2000);
+    const formatted = DebugLog.getMemoryEntriesFormatted(5000);
     setDebugLogs(formatted);
     setDebugLogsLoaded(true);
   }, []);
@@ -566,6 +590,11 @@ export default function SettingsScreen() {
                                         key={m.id}
                                         onPress={() => {
                                           DebugLog.settingsDefaultPick(role, m.id, m.name || m.id);
+                                          DebugLog.settingsState("default_pick", {
+                                            defaults: { ...defaults, [role]: m.id },
+                                            availableModelsCount: availableModels.length,
+                                            defaultsExpanded,
+                                          });
                                           setDefaults({ ...defaults, [role]: m.id });
                                         }}
                                         style={[styles.defaultOption, isActive && styles.defaultOptionActive, isRec && !isActive && styles.recommendedOption]}
@@ -818,7 +847,7 @@ const styles = StyleSheet.create({
   logHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   logActions: { flexDirection: "row", gap: 8 },
   logActionBtn: { padding: 4 },
-  logScroll: { maxHeight: 600, backgroundColor: SURFACE, borderRadius: 8, padding: 10 },
+  logScroll: { maxHeight: 800, backgroundColor: SURFACE, borderRadius: 8, padding: 10 },
   logLine: {
     color: "#888", fontSize: 10,
     fontFamily: Platform.OS === "web" ? "monospace" : "Courier",

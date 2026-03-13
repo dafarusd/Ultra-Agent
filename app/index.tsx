@@ -151,6 +151,32 @@ export default function ChatScreen() {
     setConversations(list);
   }, []);
 
+  // ── State ref for stale-closure-safe snapshots ────
+  const uiStateRef = useRef<Record<string, unknown>>({});
+  useEffect(() => {
+    uiStateRef.current = {
+      currentMode,
+      activeModelId,
+      isProcessing,
+      conversationId,
+      messageCount: messages.length,
+      savedDefaults,
+      modelsLoaded: agentCore?.getAvailableModels()?.length ?? 0,
+      hasApiKey: agentCore?.hasApiKey() ?? false,
+      status,
+      buildPhase,
+      genomePhase,
+      pendingReplay: !!pendingReplay,
+      pickerVisible: modelPickerVisible,
+      plusMenuVisible: plusMenuVisible,
+      convListVisible: convListVisible,
+    };
+  });
+
+  const snapUI = useCallback((label: string, extras?: Record<string, unknown>) => {
+    DebugLog.uiState(label, { ...uiStateRef.current, ...extras });
+  }, []);
+
   // ── Init ───────────────────────────────────────────
   useEffect(() => {
     async function init() {
@@ -166,7 +192,9 @@ export default function ChatScreen() {
         await core.initialize();
         setAgentCore(core);
         setAgentCoreInstance(core);
+        const modelsAvailable = core.getAvailableModels()?.length ?? 0;
         DebugLog.uiInit("agentCore", "AgentCore initialized, default model: " + core.getDefaultModel());
+        DebugLog.modelState("post_init", { discoveredCount: modelsAvailable, defaultModel: core.getDefaultModel(), hasApiKey: core.hasApiKey() });
 
         const savedRaw = await vault.get("api_defaults");
         if (savedRaw) {
@@ -203,6 +231,15 @@ export default function ChatScreen() {
         await reloadMessages(core, activeId);
         await refreshConversations(core);
         DebugLog.uiInit("complete", `Ready. Conv: ${activeId}, Model: ${core.getDefaultModel()}`);
+        DebugLog.uiState("init_complete", {
+          currentMode: "chat",
+          activeModelId: core.getDefaultModel(),
+          isProcessing: false,
+          conversationId: activeId,
+          modelsLoaded: modelsAvailable,
+          hasApiKey: core.hasApiKey(),
+          status: "Ready",
+        });
 
         if (!core.hasApiKey()) setStatus("No API key");
       } catch (err: any) {
@@ -217,6 +254,7 @@ export default function ChatScreen() {
     useCallback(() => {
       if (!agentCore) return;
       DebugLog.uiFocusEffect("triggered", currentMode, Object.keys(savedDefaults), activeModelId);
+      snapUI("focus_effect");
       agentCore.refreshApiKey().then(() => {
         if (agentCore.hasApiKey()) setStatus("Ready");
       });
@@ -255,6 +293,7 @@ export default function ChatScreen() {
     const text = (overrideText || input).trim();
     if (!text || isProcessing || !agentCore || !conversationId) return;
     DebugLog.uiSendMessage(text.length, currentMode, activeModelId, isProcessing);
+    snapUI("before_send");
     if (!overrideText) setInput("");
     setIsProcessing(true);
     setStatus("Processing...");
@@ -349,6 +388,7 @@ export default function ChatScreen() {
   const handleSelectConversation = useCallback(async (id: string) => {
     if (!agentCore) return;
     DebugLog.uiConvSwitch(conversationId ?? "none", id);
+    snapUI("conv_switch");
     setConversationId(id);
     setPendingReplay(null);
     const conv = await agentCore.getConversationManager().loadConversation(id);
@@ -469,9 +509,10 @@ export default function ChatScreen() {
     if (!agentCore) return;
     const prev = activeModelId;
     DebugLog.uiPickerSelect(modelId, prev);
+    snapUI("model_select");
     await agentCore.setDefaultModel(modelId);
     setActiveModelId(modelId);
-  }, [agentCore, activeModelId]);
+  }, [agentCore, activeModelId, snapUI]);
 
   // ── Misc handlers ──────────────────────────────────
   const openConvList = useCallback(async () => {
@@ -698,6 +739,7 @@ export default function ChatScreen() {
                 };
                 const filter = modeToFilter[currentMode] || "all";
                 DebugLog.uiPickerOpen(filter, currentMode, activeModelId);
+                snapUI("picker_open");
                 setModelPickerInitialFilter(filter);
                 setModelPickerVisible(true);
               }}
@@ -737,6 +779,7 @@ export default function ChatScreen() {
               <Pressable
                 onPress={() => {
                   DebugLog.uiStopRequest(!!agentCore);
+                  snapUI("stop_request");
                   if (agentCore) agentCore.abortCurrentRequest();
                 }}
                 style={styles.stopBtn}
@@ -804,6 +847,7 @@ export default function ChatScreen() {
         onSelect={async (type) => {
           DebugLog.uiModeSwitch(currentMode, type, "plusMenu");
           DebugLog.uiPlusMenuSelect(type, !!savedDefaults[type], savedDefaults[type] || null);
+          snapUI("plus_menu_select");
           setCurrentMode(type);
           setPlusMenuVisible(false);
           const defaultModelId = savedDefaults[type];
