@@ -78,9 +78,36 @@ export default function SettingsScreen() {
   const [logs, setLogs] = useState<string[]>([]);
   const [logsLoaded, setLogsLoaded] = useState(false);
 
+  // ── Draft persistence (survives app switches) ──────
+  const saveDraft = useCallback(async (draft: SavedApi | null, isNew: boolean) => {
+    try {
+      const vault = await SecureVault.initialize();
+      if (draft) {
+        await vault.set("api_edit_draft", JSON.stringify({ draft, isNew }));
+      } else {
+        await vault.set("api_edit_draft", "");
+      }
+    } catch {}
+  }, []);
+
+  const loadDraft = useCallback(async () => {
+    try {
+      const vault = await SecureVault.initialize();
+      const raw = await vault.get("api_edit_draft");
+      if (raw) {
+        const { draft, isNew } = JSON.parse(raw);
+        if (draft && draft.id) {
+          setEditingApi(draft);
+          setIsNewApi(isNew);
+        }
+      }
+    } catch {}
+  }, []);
+
   // ── Load settings on mount ─────────────────────────
   useEffect(() => {
     loadSettings();
+    loadDraft();
     loadCostData();
     if (initialTab === "logs") loadLogs();
   }, []);
@@ -147,15 +174,23 @@ export default function SettingsScreen() {
     } catch {}
   }, []);
 
+  // ── Auto-save draft on field changes ────────────────
+  useEffect(() => {
+    if (editingApi) {
+      saveDraft(editingApi, isNewApi);
+    }
+  }, [editingApi, isNewApi]);
+
   // ── API CRUD ───────────────────────────────────────
   const startNewApi = useCallback(() => {
-    setEditingApi({
+    const draft: SavedApi = {
       id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: "",
-      baseUrl: "",
+      name: "Venice",
+      baseUrl: "https://api.venice.ai/api/v1",
       apiKey: "",
       password: "",
-    });
+    };
+    setEditingApi(draft);
     setIsNewApi(true);
   }, []);
 
@@ -185,6 +220,7 @@ export default function SettingsScreen() {
     setApis(updated);
     setEditingApi(null);
     setIsNewApi(false);
+    saveDraft(null, false);
 
     try {
       const vault = await SecureVault.initialize();
@@ -356,7 +392,7 @@ export default function SettingsScreen() {
                     <Ionicons name="save-outline" size={16} color={BG} />
                     <Text style={styles.primaryBtnText}>Save API</Text>
                   </Pressable>
-                  <Pressable onPress={() => { setEditingApi(null); setIsNewApi(false); }} style={[styles.btn, styles.secondaryBtn]}>
+                  <Pressable onPress={() => { setEditingApi(null); setIsNewApi(false); saveDraft(null, false); }} style={[styles.btn, styles.secondaryBtn]}>
                     <Text style={styles.secondaryBtnText}>Cancel</Text>
                   </Pressable>
                 </View>
