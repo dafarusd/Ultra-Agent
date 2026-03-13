@@ -82,6 +82,7 @@ export default function SettingsScreen() {
   const [debugLogsLoaded, setDebugLogsLoaded] = useState(false);
 
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
+  const [defaultsExpanded, setDefaultsExpanded] = useState(false);
 
   // ── Draft persistence (survives app switches) ──────
   const saveDraft = useCallback(async (draft: SavedApi | null, isNew: boolean) => {
@@ -482,70 +483,95 @@ export default function SettingsScreen() {
                   ))
                 )}
 
-                {/* Model Defaults by Mode */}
+                {/* Model Defaults by Mode (collapsible) */}
                 {apis.length > 0 && (
                   <View style={styles.card}>
-                    <Text style={styles.cardTitle}>Default Models by Mode</Text>
-                    <Text style={styles.cardSubtitle}>
-                      Pick a preferred model for each mode. Used when you tap "+" in chat.
-                    </Text>
-
-                    {(["chat", "image", "code", "reasoning", "video"] as DefaultRole[]).map((role) => {
-                      const core = getAgentCoreInstance();
-                      const allModels = core ? core.getAvailableModels() : [];
-                      const isRecommended = (m: any): boolean => {
-                        const t = (m.type || "text").toLowerCase();
-                        const id = (m.id || "").toLowerCase();
-                        const caps = m.capabilities || {};
-                        if (role === "chat") return t === "text" && !caps.supportsReasoning && !id.includes("code");
-                        if (role === "image") return t === "image";
-                        if (role === "code") return t === "text" && (id.includes("code") || id.includes("codestral") || id.includes("deepseek-coder"));
-                        if (role === "reasoning") return t === "text" && (caps.supportsReasoning || id.includes("reason") || id.includes("qwq") || id.includes("deepseek-r1"));
-                        if (role === "video") return t === "video";
-                        return false;
-                      };
-                      const recommended = allModels.filter(isRecommended);
-                      const others = allModels.filter((m: any) => !isRecommended(m));
-                      const sortedModels = [...recommended, ...others];
-                      return (
-                        <View key={role} style={styles.defaultRow}>
-                          <Text style={styles.defaultLabel}>{role.charAt(0).toUpperCase() + role.slice(1)}</Text>
-                          <View style={styles.defaultPicker}>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
-                              <Pressable
-                                onPress={() => setDefaults({ ...defaults, [role]: "" })}
-                                style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}
-                              >
-                                <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>Auto</Text>
-                              </Pressable>
-                              {sortedModels.map((m: any) => {
-                                const isRec = isRecommended(m);
-                                const isActive = defaults[role] === m.id;
-                                return (
-                                  <Pressable
-                                    key={m.id}
-                                    onPress={() => setDefaults({ ...defaults, [role]: m.id })}
-                                    style={[styles.defaultOption, isActive && styles.defaultOptionActive, isRec && !isActive && styles.recommendedOption]}
-                                  >
-                                    {isRec && <Ionicons name="star" size={10} color={isActive ? BG : "#f59e0b"} style={{ marginRight: 2 }} />}
-                                    <Text style={[styles.defaultOptionText, isActive && styles.defaultOptionTextActive]} numberOfLines={1}>
-                                      {(m.name || m.id).replace(/^(Venice|v1)\s*/i, "").slice(0, 20)}
-                                    </Text>
-                                  </Pressable>
-                                );
-                              })}
-                            </ScrollView>
-                          </View>
-                        </View>
-                      );
-                    })}
-
-                    <Pressable onPress={saveDefaults} style={[styles.btn, savedFeedback === "defaults" ? styles.savedBtn : styles.primaryBtn, { marginTop: 12 }]}>
-                      <Ionicons name={savedFeedback === "defaults" ? "checkmark-circle" : "save-outline"} size={16} color={savedFeedback === "defaults" ? "#fff" : BG} />
-                      <Text style={savedFeedback === "defaults" ? styles.savedBtnText : styles.primaryBtnText}>
-                        {savedFeedback === "defaults" ? "Saved!" : "Save Defaults"}
-                      </Text>
+                    <Pressable
+                      onPress={() => setDefaultsExpanded(!defaultsExpanded)}
+                      style={styles.collapsibleHeader}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.cardTitle}>Default Models by Mode</Text>
+                        {!defaultsExpanded && (
+                          <Text style={[styles.cardSubtitle, { marginBottom: 0 }]}>
+                            Tap to configure
+                          </Text>
+                        )}
+                      </View>
+                      <Ionicons
+                        name={defaultsExpanded ? "chevron-up" : "chevron-down"}
+                        size={20}
+                        color={DIM}
+                      />
                     </Pressable>
+
+                    {defaultsExpanded && (
+                      <>
+                        <Text style={[styles.cardSubtitle, { marginTop: 10 }]}>
+                          Pick a preferred model for each mode. Used when you tap "+" in chat.
+                        </Text>
+
+                        {(["chat", "image", "code", "reasoning", "video"] as DefaultRole[]).map((role) => {
+                          const core = getAgentCoreInstance();
+                          const allModels = core ? core.getAvailableModels() : [];
+                          const isRecommended = (m: any): boolean => {
+                            const t = (m.type || "text").toLowerCase();
+                            const id = (m.id || "").toLowerCase();
+                            const caps = m.capabilities || {};
+                            if (role === "chat") return t === "text" && !caps.supportsReasoning && !id.includes("code");
+                            if (role === "image") return t === "image";
+                            if (role === "code") return t === "text" && (id.includes("code") || id.includes("codestral") || id.includes("deepseek-coder"));
+                            if (role === "reasoning") return t === "text" && (caps.supportsReasoning || id.includes("reason") || id.includes("qwq") || id.includes("deepseek-r1"));
+                            if (role === "video") return t === "video";
+                            return false;
+                          };
+                          const recommended = allModels.filter(isRecommended);
+                          const others = allModels.filter((m: any) => !isRecommended(m));
+                          const sortedModels = [...recommended, ...others];
+
+                          return (
+                            <View key={role} style={styles.defaultRow}>
+                              <Text style={styles.defaultLabel}>
+                                {role.charAt(0).toUpperCase() + role.slice(1)}
+                              </Text>
+                              <View style={styles.defaultPicker}>
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
+                                  <Pressable
+                                    onPress={() => setDefaults({ ...defaults, [role]: "" })}
+                                    style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}
+                                  >
+                                    <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>Auto</Text>
+                                  </Pressable>
+                                  {sortedModels.map((m: any) => {
+                                    const isRec = isRecommended(m);
+                                    const isActive = defaults[role] === m.id;
+                                    return (
+                                      <Pressable
+                                        key={m.id}
+                                        onPress={() => setDefaults({ ...defaults, [role]: m.id })}
+                                        style={[styles.defaultOption, isActive && styles.defaultOptionActive, isRec && !isActive && styles.recommendedOption]}
+                                      >
+                                        {isRec && <Ionicons name="star" size={10} color={isActive ? BG : "#f59e0b"} style={{ marginRight: 2 }} />}
+                                        <Text style={[styles.defaultOptionText, isActive && styles.defaultOptionTextActive]} numberOfLines={1}>
+                                          {(m.name || m.id).replace(/^(Venice|v1)\s*/i, "").slice(0, 20)}
+                                        </Text>
+                                      </Pressable>
+                                    );
+                                  })}
+                                </ScrollView>
+                              </View>
+                            </View>
+                          );
+                        })}
+
+                        <Pressable onPress={saveDefaults} style={[styles.btn, savedFeedback === "defaults" ? styles.savedBtn : styles.primaryBtn, { marginTop: 12 }]}>
+                          <Ionicons name={savedFeedback === "defaults" ? "checkmark-circle" : "save-outline"} size={16} color={savedFeedback === "defaults" ? "#fff" : BG} />
+                          <Text style={savedFeedback === "defaults" ? styles.savedBtnText : styles.primaryBtnText}>
+                            {savedFeedback === "defaults" ? "Saved!" : "Save Defaults"}
+                          </Text>
+                        </Pressable>
+                      </>
+                    )}
                   </View>
                 )}
               </>
@@ -727,6 +753,12 @@ const styles = StyleSheet.create({
   },
   primaryBtn: { backgroundColor: ACCENT },
   primaryBtnText: { color: BG, fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  collapsibleHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 2,
+  },
   savedBtn: { backgroundColor: "#22804a" },
   savedBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
   secondaryBtn: { backgroundColor: SURFACE3 },

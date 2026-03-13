@@ -190,15 +190,34 @@ export default function ChatScreen() {
         agentCore.refreshApiKey().then(() => {
           if (agentCore.hasApiKey()) setStatus("Ready");
         });
-        setActiveModelId(agentCore.getDefaultModel());
       }
       SecureVault.initialize().then(async (v) => {
         try {
           const raw = await v.get("api_defaults");
-          if (raw) setSavedDefaults(JSON.parse(raw));
-        } catch {}
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            setSavedDefaults(parsed);
+            const modeDefault = parsed[currentMode];
+            if (modeDefault && agentCore) {
+              const available = agentCore.getAvailableModels();
+              const exists = available.some((m: any) => m.id === modeDefault);
+              if (exists) {
+                await agentCore.setDefaultModel(modeDefault);
+                setActiveModelId(modeDefault);
+              } else {
+                setActiveModelId(agentCore.getDefaultModel());
+              }
+            } else if (agentCore) {
+              setActiveModelId(agentCore.getDefaultModel());
+            }
+          } else if (agentCore) {
+            setActiveModelId(agentCore.getDefaultModel());
+          }
+        } catch {
+          if (agentCore) setActiveModelId(agentCore.getDefaultModel());
+        }
       });
-    }, [agentCore])
+    }, [agentCore, currentMode])
   );
 
   // ── Result handler ─────────────────────────────────

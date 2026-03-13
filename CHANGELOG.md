@@ -4,6 +4,19 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.5.1] — 2026-03-13 — Defaults Sync Fix + Collapsible Settings
+
+### Fixed
+- **Defaults sync to AI pill (root cause fix)** — `useFocusEffect` now looks up the current mode's saved default and calls `setDefaultModel()` + `setActiveModelId()` when returning from Settings. Previously it only read the engine's last-used model, ignoring saved per-mode defaults. Added `currentMode` as a dependency so mode switches also trigger the correct default lookup. Model existence is validated against available models before applying.
+
+### Added
+- **Collapsible "Default Models by Mode"** — The settings card is now collapsed by default with a "Tap to configure" hint and chevron toggle. Reduces visual clutter in the API Setup tab.
+
+### Changed
+- `ultra-full-source.txt` regenerated (15,241 lines).
+
+---
+
 ## [v3.5] — 2026-03-13 — UX Polish + Quick Actions + Model Defaults Overhaul
 
 ### Fixed
