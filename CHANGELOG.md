@@ -4,6 +4,16 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.6.2] — 2026-03-13 — Default Models Picker Fix
+
+### Fixed
+- **Models not appearing in default mode picker** — The horizontal models slider in Settings > API Setup > "Default Models by Mode" was showing empty because it tried to fetch models synchronously before AgentCore had loaded them. Now uses a `useEffect` that triggers when the section is expanded, properly fetching `getAvailableModels()` from the initialized AgentCore and caching in local state. Models now display correctly with proper recommendations and active state highlighting.
+
+### Changed
+- `ultra-full-source.txt` regenerated (15,726 lines)
+
+---
+
 ## [v3.6.1] — 2026-03-13 — Debug Log Display Expansion
 
 ### Fixed

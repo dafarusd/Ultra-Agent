@@ -83,6 +83,7 @@ export default function SettingsScreen() {
 
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
   const [defaultsExpanded, setDefaultsExpanded] = useState(false);
+  const [availableModels, setAvailableModels] = useState<any[]>([]);
 
   // ── Draft persistence (survives app switches) ──────
   const saveDraft = useCallback(async (draft: SavedApi | null, isNew: boolean) => {
@@ -120,6 +121,17 @@ export default function SettingsScreen() {
       loadDebugLogs();
     }
   }, []);
+
+  // ── Load models when defaults section expands ─────
+  useEffect(() => {
+    if (defaultsExpanded) {
+      const core = getAgentCoreInstance();
+      if (core) {
+        const models = core.getAvailableModels() || [];
+        setAvailableModels(models);
+      }
+    }
+  }, [defaultsExpanded]);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -517,8 +529,7 @@ export default function SettingsScreen() {
                         </Text>
 
                         {(["chat", "image", "code", "reasoning", "video"] as DefaultRole[]).map((role) => {
-                          const core = getAgentCoreInstance();
-                          const allModels = core ? core.getAvailableModels() : [];
+                          const allModels = availableModels;
                           const isRecommended = (m: any): boolean => {
                             const t = (m.type || "text").toLowerCase();
                             const id = (m.id || "").toLowerCase();
