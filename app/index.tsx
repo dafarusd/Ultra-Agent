@@ -771,18 +771,20 @@ export default function ChatScreen() {
         currentType={currentMode}
         onSelect={async (type) => {
           setCurrentMode(type);
-          let defaults = savedDefaults;
-          if (!defaults || Object.keys(defaults).length === 0) {
-            try {
-              const v = await SecureVault.initialize();
-              const raw = await v.get("api_defaults");
-              if (raw) {
-                defaults = JSON.parse(raw);
-                setSavedDefaults(defaults);
-              }
-            } catch {}
+          let defaults = { ...savedDefaults };
+          try {
+            const v = await SecureVault.initialize();
+            const raw = await v.get("api_defaults");
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              defaults = parsed;
+              setSavedDefaults(parsed);
+            }
+          } catch (e) {
+            console.log("[PlusMenu] vault read error:", e);
           }
           const defaultModelId = defaults[type];
+          console.log("[PlusMenu] type:", type, "defaults:", JSON.stringify(defaults), "resolved:", defaultModelId, "agentCore:", !!agentCore);
           if (defaultModelId && agentCore) {
             await agentCore.setDefaultModel(defaultModelId);
             setActiveModelId(defaultModelId);
