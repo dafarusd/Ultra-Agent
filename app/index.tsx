@@ -439,7 +439,7 @@ export default function ChatScreen() {
   const getPickerModels = useCallback((): PickerModel[] => {
     if (!agentCore) return [];
     const models = agentCore.getAvailableModels();
-    const currentModel = agentCore.getDefaultModel();
+    const currentModel = activeModelId || agentCore.getDefaultModel();
     return models.map((m: any) => {
       let pickerType: PickerModel["type"] = m.type || "text";
       if (pickerType === "text") {
@@ -460,7 +460,7 @@ export default function ChatScreen() {
         isSelected: m.id === currentModel,
       };
     });
-  }, [agentCore]);
+  }, [agentCore, activeModelId]);
 
   const handleModelSelect = useCallback(async (modelId: string) => {
     if (!agentCore) return;
@@ -687,7 +687,13 @@ export default function ChatScreen() {
           {/* Model indicator pill */}
           <View style={styles.modelIndicatorRow}>
             <Pressable
-              onPress={() => setModelPickerVisible(true)}
+              onPress={() => {
+                const modeToFilter: Record<string, "all" | "text" | "image" | "code" | "reasoning" | "video"> = {
+                  chat: "text", image: "image", code: "code", reasoning: "reasoning", video: "video",
+                };
+                setModelPickerInitialFilter(modeToFilter[currentMode] || "all");
+                setModelPickerVisible(true);
+              }}
               style={({ pressed }) => [styles.modelPill, pressed && styles.modelPillPressed]}
             >
               <MaterialCommunityIcons name="robot" size={12} color={DIM} />
@@ -798,11 +804,8 @@ export default function ChatScreen() {
               defaults = parsed;
               setSavedDefaults(parsed);
             }
-          } catch (e) {
-            console.log("[PlusMenu] vault read error:", e);
-          }
+          } catch {}
           const defaultModelId = defaults[type];
-          console.log("[PlusMenu] type:", type, "defaults:", JSON.stringify(defaults), "resolved:", defaultModelId, "agentCore:", !!agentCore);
           if (defaultModelId && agentCore) {
             await agentCore.setDefaultModel(defaultModelId);
             setActiveModelId(defaultModelId);
