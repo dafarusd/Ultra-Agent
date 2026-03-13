@@ -104,6 +104,7 @@ export default function ChatScreen() {
   // Current mode & replay
   const [currentMode, setCurrentMode] = useState<ActionType>("chat");
   const [savedDefaults, setSavedDefaults] = useState<Record<string, string>>({});
+  const [activeModelId, setActiveModelId] = useState<string>("");
   const [pendingReplay, setPendingReplay] = useState<{
     userInput: string;
     type: "approval" | "model_switch";
@@ -162,6 +163,7 @@ export default function ChatScreen() {
         await core.initialize();
         setAgentCore(core);
         setAgentCoreInstance(core);
+        setActiveModelId(core.getDefaultModel());
         setStatus("Ready");
 
         const cm = core.getConversationManager();
@@ -188,6 +190,7 @@ export default function ChatScreen() {
         agentCore.refreshApiKey().then(() => {
           if (agentCore.hasApiKey()) setStatus("Ready");
         });
+        setActiveModelId(agentCore.getDefaultModel());
       }
       SecureVault.initialize().then(async (v) => {
         try {
@@ -431,6 +434,7 @@ export default function ChatScreen() {
   const handleModelSelect = useCallback(async (modelId: string) => {
     if (!agentCore) return;
     await agentCore.setDefaultModel(modelId);
+    setActiveModelId(modelId);
   }, [agentCore]);
 
   // ── Misc handlers ──────────────────────────────────
@@ -576,7 +580,7 @@ export default function ChatScreen() {
   // ── Layout values ──────────────────────────────────
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
-  const currentModelName = agentCore?.getDefaultModel() || "No model";
+  const currentModelName = activeModelId || agentCore?.getDefaultModel() || "No model";
   const shortModelName = currentModelName.length > 18 ? currentModelName.slice(0, 18) + "…" : currentModelName;
 
   return (
@@ -743,7 +747,7 @@ export default function ChatScreen() {
       <ModelPickerSheet
         visible={modelPickerVisible}
         models={getPickerModels()}
-        currentModelId={agentCore?.getDefaultModel() || ""}
+        currentModelId={activeModelId || agentCore?.getDefaultModel() || ""}
         onSelect={handleModelSelect}
         onClose={() => { setModelPickerVisible(false); setModelPickerInitialFilter("all"); }}
         initialFilter={modelPickerInitialFilter}
@@ -757,6 +761,7 @@ export default function ChatScreen() {
           const defaultModelId = savedDefaults[type];
           if (defaultModelId && agentCore) {
             await agentCore.setDefaultModel(defaultModelId);
+            setActiveModelId(defaultModelId);
             setStatus(`Switched to ${type}`);
             setPlusMenuVisible(false);
           } else {
