@@ -73,6 +73,7 @@ export interface Conversation {
   summaryUpdatedAt?: number;
   messageCountSinceSummary?: number;
   messages: ChatMessage[];
+  meta?: Record<string, unknown>;
 }
 
 export interface ConversationMeta {
@@ -82,6 +83,7 @@ export interface ConversationMeta {
   updatedAt: number;
   preview: string;
   messageCount: number;
+  starred?: boolean;
 }
 
 export interface UltraModelDef {

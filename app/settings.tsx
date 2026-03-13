@@ -229,15 +229,18 @@ export default function SettingsScreen() {
       const vault = await SecureVault.initialize();
       await vault.set("saved_apis", JSON.stringify(updated));
 
-      // If this is the first API saved, also set it as the Venice key for backwards compat
-      if (updated.length === 1 && updated[0].apiKey) {
-        await vault.set("venice_api_key", updated[0].apiKey);
-        await vault.set("api_base_url", updated[0].baseUrl);
+      const primary = updated[0];
+      if (primary) {
+        await vault.set("venice_api_key", primary.apiKey || "");
+        await vault.set("api_base_url", primary.baseUrl);
         const core = getAgentCoreInstance();
         if (core) {
           await core.refreshApiKey();
-          await core.setApiBaseUrl(updated[0].baseUrl);
+          await core.setApiBaseUrl(primary.baseUrl);
         }
+      } else {
+        await vault.set("venice_api_key", "");
+        await vault.set("api_base_url", "");
       }
     } catch (err: any) {
       Alert.alert("Error", err.message);
@@ -357,7 +360,7 @@ export default function SettingsScreen() {
         ))}
       </View>
 
-      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
         {/* ══════════════════════════════════════════
             TAB: API SETUP
@@ -486,7 +489,7 @@ export default function SettingsScreen() {
                         <Text style={styles.defaultLabel}>{role.charAt(0).toUpperCase() + role.slice(1)}</Text>
                         <View style={styles.defaultPicker}>
                           {/* Simple button-group style picker */}
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
                             <Pressable
                               onPress={() => setDefaults({ ...defaults, [role]: "" })}
                               style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}

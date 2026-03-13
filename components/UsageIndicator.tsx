@@ -81,6 +81,7 @@ export default function UsageIndicator({
         </Text>
         <Text style={styles.pillCalls}>{totalCalls} calls</Text>
       </Pressable>
+      <Text style={styles.costNote}>Estimated costs — may be included in your API plan</Text>
 
       <Modal visible={expanded} transparent animationType="none" onRequestClose={() => setExpanded(false)} statusBarTranslucent>
         <View style={styles.sheetRoot}>
@@ -193,6 +194,13 @@ const styles = StyleSheet.create({
     color: DIM,
     fontSize: 10,
     fontFamily: "Inter_400Regular",
+  },
+  costNote: {
+    color: "#444",
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+    marginTop: 4,
+    textAlign: "center" as const,
   },
   sheetRoot: { flex: 1, justifyContent: "flex-end" },
   backdrop: {

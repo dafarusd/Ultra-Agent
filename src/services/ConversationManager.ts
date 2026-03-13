@@ -138,6 +138,7 @@ export class ConversationManager {
         updatedAt: c.updatedAt,
         preview: c.messages[c.messages.length - 1]?.content ?? '',
         messageCount: c.messages.length,
+        starred: !!c.meta?.starred,
       }));
   }
 
@@ -180,6 +181,13 @@ export class ConversationManager {
     conv.summary = summary;
     conv.summaryUpdatedAt = now();
     conv.messageCountSinceSummary = 0;
+    await this.saveConversation(conv);
+  }
+
+  async updateMeta(conversationId: string, patch: Record<string, unknown>): Promise<void> {
+    const conv = await this.loadConversation(conversationId);
+    if (!conv) return;
+    conv.meta = { ...(conv.meta || {}), ...patch };
     await this.saveConversation(conv);
   }
 

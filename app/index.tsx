@@ -41,13 +41,15 @@ const WARN_COLOR = "#ff6600";
 const BLOCKED_COLOR = "#ff4444";
 
 // ── 3-dot menu items ───────────────────────────────────
-const HEADER_MENU_ITEMS: ActionMenuItem[] = [
-  { id: "rename", label: "Rename", icon: "create-outline" },
-  { id: "star", label: "Star", icon: "star-outline", disabled: false },
-  { id: "add_home", label: "Add to home", icon: "home-outline", disabled: true },
-  { id: "delete", label: "Delete", icon: "trash-outline", destructive: true },
-  { id: "new_chat", label: "New chat", icon: "add-circle-outline" },
-];
+function getHeaderMenuItems(starred: boolean): ActionMenuItem[] {
+  return [
+    { id: "rename", label: "Rename", icon: "create-outline" },
+    { id: "star", label: starred ? "Unstar" : "Star", icon: starred ? "star" : "star-outline", disabled: false },
+    { id: "add_home", label: "Add to home", icon: "home-outline", disabled: true },
+    { id: "delete", label: "Delete", icon: "trash-outline", destructive: true },
+    { id: "new_chat", label: "New chat", icon: "add-circle-outline" },
+  ];
+}
 
 // ── Activity icon helper ───────────────────────────────
 function getActivityIcon(status: string, buildPhase: string | null, genomePhase: string | null): {
@@ -87,6 +89,7 @@ export default function ChatScreen() {
   const [agentCore, setAgentCore] = useState<AgentCore | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("Agent Ultra");
+  const [conversationStarred, setConversationStarred] = useState(false);
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
 
   // UI panel state
@@ -95,6 +98,7 @@ export default function ChatScreen() {
   const [selectedTrace, setSelectedTrace] = useState<PromptTrace | null>(null);
   const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
+  const [modelPickerInitialFilter, setModelPickerInitialFilter] = useState<"all" | "text" | "image" | "code" | "reasoning" | "video">("all");
   const [plusMenuVisible, setPlusMenuVisible] = useState(false);
 
   // Current mode & replay
@@ -132,6 +136,7 @@ export default function ChatScreen() {
     if (conv) {
       setMessages([...conv.messages].reverse());
       setConversationTitle(conv.title);
+      setConversationStarred(!!conv.meta?.starred);
     } else {
       setMessages((prev) => prev.filter((m) => !m.id.startsWith("optimistic_")));
     }
@@ -288,6 +293,7 @@ export default function ChatScreen() {
     setConversationId(conv.id);
     setMessages([]);
     setConversationTitle("New Chat");
+    setConversationStarred(false);
     setPendingReplay(null);
     setConvListVisible(false);
     await refreshConversations(agentCore);
@@ -297,6 +303,8 @@ export default function ChatScreen() {
     if (!agentCore) return;
     setConversationId(id);
     setPendingReplay(null);
+    const conv = await agentCore.getConversationManager().loadConversation(id);
+    setConversationStarred(!!conv?.meta?.starred);
     await reloadMessages(agentCore, id);
     setConvListVisible(false);
   }, [agentCore, reloadMessages]);
@@ -315,6 +323,7 @@ export default function ChatScreen() {
         setConversationId(conv.id);
         setMessages([]);
         setConversationTitle("New Chat");
+        setConversationStarred(false);
       }
     }
     await refreshConversations(agentCore);
@@ -354,32 +363,58 @@ export default function ChatScreen() {
       case "rename": handleRenameConversation(); break;
       case "delete":
         if (conversationId) {
-          Alert.alert("Delete", "Delete this conversation?", [
-            { text: "Cancel", style: "cancel" },
-            { text: "Delete", style: "destructive", onPress: () => handleDeleteConversation(conversationId) },
-          ]);
+          if (Platform.OS === "web") {
+            const confirmed = window.confirm("Delete this conversation?");
+            if (confirmed) handleDeleteConversation(conversationId);
+          } else {
+            Alert.alert("Delete", "Delete this conversation?", [
+              { text: "Cancel", style: "cancel" },
+              { text: "Delete", style: "destructive", onPress: () => handleDeleteConversation(conversationId) },
+            ]);
+          }
+        }
+        break;
+      case "star":
+        if (agentCore && conversationId) {
+          const cm = agentCore.getConversationManager();
+          cm.loadConversation(conversationId).then(async (conv) => {
+            if (!conv) return;
+            const isStarred = !!conv.meta?.starred;
+            await cm.updateMeta(conversationId, { starred: !isStarred });
+            setConversationStarred(!isStarred);
+            await refreshConversations(agentCore);
+          });
         }
         break;
       case "new_chat": handleNewChat(); break;
-      // star, add_home: placeholder — no-op for now
     }
-  }, [handleRenameConversation, handleDeleteConversation, handleNewChat, conversationId]);
+  }, [handleRenameConversation, handleDeleteConversation, handleNewChat, conversationId, agentCore, refreshConversations]);
 
   // ── Model picker data ──────────────────────────────
   const getPickerModels = useCallback((): PickerModel[] => {
     if (!agentCore) return [];
     const models = agentCore.getAvailableModels();
     const currentModel = agentCore.getDefaultModel();
-    // TODO: When multi-API is implemented, models will come from all saved APIs.
-    // For now they come from the single Venice API connection.
-    return models.map((m: any) => ({
-      id: m.id,
-      name: m.name || m.id,
-      type: m.type || "text",
-      apiName: "Venice", // TODO: pull from saved API label
-      costIndicator: m.costPer1kInput > 0 ? `$${m.costPer1kInput.toFixed(4)}/1K` : "Free",
-      isSelected: m.id === currentModel,
-    }));
+    return models.map((m: any) => {
+      let pickerType: PickerModel["type"] = m.type || "text";
+      if (pickerType === "text") {
+        const idLower = (m.id || "").toLowerCase();
+        const nameLower = (m.name || "").toLowerCase();
+        if (m.capabilities?.supportsReasoning || idLower.includes("reason") || nameLower.includes("reason") || idLower.includes("qwq") || idLower.includes("deepseek-r1")) {
+          pickerType = "reasoning";
+        } else if (idLower.includes("code") || nameLower.includes("code") || idLower.includes("codestral") || idLower.includes("deepseek-coder")) {
+          pickerType = "code";
+        }
+      }
+      return {
+        id: m.id,
+        name: m.name || m.id,
+        type: pickerType,
+        apiName: "Venice",
+        costIndicator: m.costPer1kInput > 0 ? `$${m.costPer1kInput.toFixed(4)}/1K` : "Free",
+        isSelected: m.id === currentModel,
+      };
+    });
   }, [agentCore]);
 
   const handleModelSelect = useCallback(async (modelId: string) => {
@@ -635,7 +670,7 @@ export default function ChatScreen() {
               returnKeyType="send"
               onSubmitEditing={() => handleSend()}
               blurOnSubmit={false}
-              editable={!isProcessing}
+              editable
             />
 
             <Pressable
@@ -674,7 +709,7 @@ export default function ChatScreen() {
 
       <ActionMenu
         visible={headerMenuVisible}
-        items={HEADER_MENU_ITEMS}
+        items={getHeaderMenuItems(conversationStarred)}
         onSelect={handleMenuAction}
         onClose={() => setHeaderMenuVisible(false)}
         anchorRight={12}
@@ -686,7 +721,8 @@ export default function ChatScreen() {
         models={getPickerModels()}
         currentModelId={agentCore?.getDefaultModel() || ""}
         onSelect={handleModelSelect}
-        onClose={() => setModelPickerVisible(false)}
+        onClose={() => { setModelPickerVisible(false); setModelPickerInitialFilter("all"); }}
+        initialFilter={modelPickerInitialFilter}
       />
 
       <PlusMenu
@@ -694,9 +730,14 @@ export default function ChatScreen() {
         currentType={currentMode}
         onSelect={(type) => {
           setCurrentMode(type);
-          // TODO: When multi-API is wired, switch the active API+model
-          // to the user's saved default for this mode type.
-          // For now this only tracks the visual mode selection.
+          const filterMap: Record<string, typeof modelPickerInitialFilter> = {
+            chat: "text", image: "image", code: "code",
+            reasoning: "reasoning", video: "video",
+          };
+          const mappedFilter = filterMap[type] || "all";
+          setModelPickerInitialFilter(mappedFilter);
+          setPlusMenuVisible(false);
+          setModelPickerVisible(true);
         }}
         onClose={() => setPlusMenuVisible(false)}
       />

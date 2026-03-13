@@ -48,6 +48,7 @@ interface ModelPickerSheetProps {
   currentModelId: string;
   onSelect: (modelId: string) => void;
   onClose: () => void;
+  initialFilter?: FilterTab;
 }
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
@@ -65,6 +66,7 @@ export default function ModelPickerSheet({
   currentModelId,
   onSelect,
   onClose,
+  initialFilter,
 }: ModelPickerSheetProps) {
   const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<FilterTab>("all");
@@ -73,6 +75,7 @@ export default function ModelPickerSheet({
 
   React.useEffect(() => {
     if (visible) {
+      if (initialFilter) setFilter(initialFilter);
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
         Animated.spring(slideAnim, { toValue: 0, tension: 65, friction: 11, useNativeDriver: true }),

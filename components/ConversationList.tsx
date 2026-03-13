@@ -99,9 +99,9 @@ function ConversationItem({
       ]}
     >
       <Ionicons
-        name="chatbubble-outline"
+        name={item.starred ? "star" : "chatbubble-outline"}
         size={16}
-        color={isCurrent ? ACCENT : "#333"}
+        color={item.starred ? "#f59e0b" : isCurrent ? ACCENT : "#333"}
         style={styles.convIcon}
       />
       <View style={styles.convContent}>
