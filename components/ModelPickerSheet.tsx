@@ -14,7 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
-const ACCENT = "#4ade80";
+const ACCENT = "#34d399";
 const BG = "#000000";
 const SURFACE = "#111111";
 const SURFACE2 = "#1a1a1a";

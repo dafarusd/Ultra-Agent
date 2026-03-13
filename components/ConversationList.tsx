@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ConversationMeta } from "@/src/types/ultra";
 
-const ACCENT = "#4ade80";
+const ACCENT = "#34d399";
 const BG = "#000000";
 const SURFACE = "#0a0a0a";
 const SURFACE2 = "#141414";
@@ -44,7 +44,17 @@ interface ConversationListProps {
   onClose: () => void;
   onOpenSettings: () => void;
   onOpenLogs: () => void;
+  onQuickCommand?: (command: string) => void;
 }
+
+const QUICK_COMMANDS = [
+  { id: "status", label: "System Status", icon: "pulse-outline" as const, command: "/status" },
+  { id: "capabilities", label: "Show Capabilities", icon: "list-outline" as const, command: "/capabilities" },
+  { id: "cost", label: "Usage & Costs", icon: "wallet-outline" as const, command: "/cost" },
+  { id: "models", label: "List Models", icon: "server-outline" as const, command: "/models" },
+  { id: "help", label: "Help", icon: "help-circle-outline" as const, command: "/help" },
+  { id: "clear_context", label: "Clear Context", icon: "refresh-outline" as const, command: "/clear" },
+];
 
 // ── Helpers ────────────────────────────────────────────
 function formatDate(ts: number): string {
@@ -126,6 +136,7 @@ export default function ConversationList({
   onClose,
   onOpenSettings,
   onOpenLogs,
+  onQuickCommand,
 }: ConversationListProps) {
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
@@ -231,6 +242,26 @@ export default function ConversationList({
             <Ionicons name="settings-outline" size={20} color={TEXT} />
             <Text style={styles.menuRowText}>Settings</Text>
           </Pressable>
+
+          {/* ── Divider ─────────────────────────────────── */}
+          <View style={styles.divider} />
+
+          {/* ── QUICK ACTIONS ────────────────────────────── */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
+          </View>
+          <View style={styles.quickActionsGrid}>
+            {QUICK_COMMANDS.map((cmd) => (
+              <Pressable
+                key={cmd.id}
+                onPress={() => { onClose(); onQuickCommand?.(cmd.command); }}
+                style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
+              >
+                <Ionicons name={cmd.icon} size={16} color={TEXT_DIM} />
+                <Text style={styles.quickActionText} numberOfLines={1}>{cmd.label}</Text>
+              </Pressable>
+            ))}
+          </View>
 
           {/* ── Divider ─────────────────────────────────── */}
           <View style={styles.divider} />
@@ -372,6 +403,32 @@ const styles = StyleSheet.create({
     color: TEXT,
     fontSize: 14,
     fontFamily: "Inter_500Medium",
+  },
+
+  // Quick Actions
+  quickActionsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    paddingHorizontal: 12,
+    marginBottom: 4,
+  },
+  quickActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: SURFACE2,
+    borderWidth: 1,
+    borderColor: "#1a1a1a",
+  },
+  quickActionBtnPressed: { backgroundColor: SURFACE3 },
+  quickActionText: {
+    color: TEXT_DIM,
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
   },
 
   // Divider

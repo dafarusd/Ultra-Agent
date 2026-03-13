@@ -21,7 +21,7 @@ import { DebugLog } from "@/src/utils/DebugLog";
 import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
 
 // ── Palette ────────────────────────────────────────────
-const ACCENT = "#4ade80";
+const ACCENT = "#34d399";
 const BG = "#000000";
 const SURFACE = "#0e0e0e";
 const SURFACE2 = "#161616";
@@ -81,6 +81,8 @@ export default function SettingsScreen() {
   const [debugLogs, setDebugLogs] = useState<string>("");
   const [debugLogsLoaded, setDebugLogsLoaded] = useState(false);
 
+  const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
+
   // ── Draft persistence (survives app switches) ──────
   const saveDraft = useCallback(async (draft: SavedApi | null, isNew: boolean) => {
     try {
@@ -112,7 +114,10 @@ export default function SettingsScreen() {
     loadSettings();
     loadDraft();
     loadCostData();
-    if (initialTab === "logs") loadLogs();
+    if (initialTab === "logs") {
+      loadLogs();
+      loadDebugLogs();
+    }
   }, []);
 
   const loadSettings = useCallback(async () => {
@@ -268,7 +273,8 @@ export default function SettingsScreen() {
     try {
       const vault = await SecureVault.initialize();
       await vault.set("api_defaults", JSON.stringify(defaults));
-      Alert.alert("Saved", "API defaults updated.");
+      setSavedFeedback("defaults");
+      setTimeout(() => setSavedFeedback(null), 2000);
     } catch (err: any) {
       Alert.alert("Error", err.message);
     }
@@ -348,7 +354,7 @@ export default function SettingsScreen() {
             key={t}
             onPress={() => {
               setTab(t);
-              if (t === "logs" && !logsLoaded) loadLogs();
+              if (t === "logs") { loadLogs(); loadDebugLogs(); }
               if (t === "costs") loadCostData();
             }}
             style={[styles.tab, tab === t && styles.tabActive]}
@@ -487,7 +493,7 @@ export default function SettingsScreen() {
                     {(["chat", "image", "code", "reasoning", "video"] as DefaultRole[]).map((role) => {
                       const core = getAgentCoreInstance();
                       const allModels = core ? core.getAvailableModels() : [];
-                      const roleModels = allModels.filter((m: any) => {
+                      const isRecommended = (m: any): boolean => {
                         const t = (m.type || "text").toLowerCase();
                         const id = (m.id || "").toLowerCase();
                         const caps = m.capabilities || {};
@@ -497,8 +503,10 @@ export default function SettingsScreen() {
                         if (role === "reasoning") return t === "text" && (caps.supportsReasoning || id.includes("reason") || id.includes("qwq") || id.includes("deepseek-r1"));
                         if (role === "video") return t === "video";
                         return false;
-                      });
-                      const displayModels = roleModels.length > 0 ? roleModels : allModels.filter((m: any) => (m.type || "text") === "text").slice(0, 10);
+                      };
+                      const recommended = allModels.filter(isRecommended);
+                      const others = allModels.filter((m: any) => !isRecommended(m));
+                      const sortedModels = [...recommended, ...others];
                       return (
                         <View key={role} style={styles.defaultRow}>
                           <Text style={styles.defaultLabel}>{role.charAt(0).toUpperCase() + role.slice(1)}</Text>
@@ -510,26 +518,33 @@ export default function SettingsScreen() {
                               >
                                 <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>Auto</Text>
                               </Pressable>
-                              {displayModels.map((m: any) => (
-                                <Pressable
-                                  key={m.id}
-                                  onPress={() => setDefaults({ ...defaults, [role]: m.id })}
-                                  style={[styles.defaultOption, defaults[role] === m.id && styles.defaultOptionActive]}
-                                >
-                                  <Text style={[styles.defaultOptionText, defaults[role] === m.id && styles.defaultOptionTextActive]} numberOfLines={1}>
-                                    {(m.name || m.id).replace(/^(Venice|v1)\s*/i, "").slice(0, 20)}
-                                  </Text>
-                                </Pressable>
-                              ))}
+                              {sortedModels.map((m: any) => {
+                                const isRec = isRecommended(m);
+                                const isActive = defaults[role] === m.id;
+                                return (
+                                  <Pressable
+                                    key={m.id}
+                                    onPress={() => setDefaults({ ...defaults, [role]: m.id })}
+                                    style={[styles.defaultOption, isActive && styles.defaultOptionActive, isRec && !isActive && styles.recommendedOption]}
+                                  >
+                                    {isRec && <Ionicons name="star" size={10} color={isActive ? BG : "#f59e0b"} style={{ marginRight: 2 }} />}
+                                    <Text style={[styles.defaultOptionText, isActive && styles.defaultOptionTextActive]} numberOfLines={1}>
+                                      {(m.name || m.id).replace(/^(Venice|v1)\s*/i, "").slice(0, 20)}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })}
                             </ScrollView>
                           </View>
                         </View>
                       );
                     })}
 
-                    <Pressable onPress={saveDefaults} style={[styles.btn, styles.primaryBtn, { marginTop: 12 }]}>
-                      <Ionicons name="save-outline" size={16} color={BG} />
-                      <Text style={styles.primaryBtnText}>Save Defaults</Text>
+                    <Pressable onPress={saveDefaults} style={[styles.btn, savedFeedback === "defaults" ? styles.savedBtn : styles.primaryBtn, { marginTop: 12 }]}>
+                      <Ionicons name={savedFeedback === "defaults" ? "checkmark-circle" : "save-outline"} size={16} color={savedFeedback === "defaults" ? "#fff" : BG} />
+                      <Text style={savedFeedback === "defaults" ? styles.savedBtnText : styles.primaryBtnText}>
+                        {savedFeedback === "defaults" ? "Saved!" : "Save Defaults"}
+                      </Text>
                     </Pressable>
                   </View>
                 )}
@@ -712,6 +727,8 @@ const styles = StyleSheet.create({
   },
   primaryBtn: { backgroundColor: ACCENT },
   primaryBtnText: { color: BG, fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  savedBtn: { backgroundColor: "#22804a" },
+  savedBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
   secondaryBtn: { backgroundColor: SURFACE3 },
   secondaryBtnText: { color: TEXT, fontSize: 13, fontFamily: "Inter_500Medium" },
 
@@ -737,10 +754,12 @@ const styles = StyleSheet.create({
   defaultLabel: { color: TEXT, fontSize: 13, fontFamily: "Inter_500Medium", marginBottom: 6, textTransform: "capitalize" },
   defaultPicker: { flexDirection: "row" },
   defaultOption: {
+    flexDirection: "row" as const, alignItems: "center" as const,
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
     backgroundColor: SURFACE, borderWidth: 1, borderColor: "#222",
   },
-  defaultOptionActive: { borderColor: ACCENT, backgroundColor: `rgba(74, 222, 128, 0.1)` },
+  defaultOptionActive: { borderColor: ACCENT, backgroundColor: "rgba(52, 211, 153, 0.1)" },
+  recommendedOption: { borderColor: "#44371a" },
   defaultOptionText: { color: DIM, fontSize: 12, fontFamily: "Inter_400Regular" },
   defaultOptionTextActive: { color: ACCENT, fontFamily: "Inter_500Medium" },
 

@@ -4,6 +4,29 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.5] — 2026-03-13 — UX Polish + Quick Actions + Model Defaults Overhaul
+
+### Fixed
+- **Save Defaults visual confirmation** — Button now shows green "Saved!" with checkmark icon for 2 seconds instead of unreliable Alert dialog.
+- **Debug log auto-loading** — Both Application Logs and Debug Log now auto-load when switching to the Logs tab (no more "Tap refresh to load").
+- **Long-press message behavior** — Removed expand/shrink animation from long-press. Messages now have an inline copy icon button. Text is also `selectable` for partial copy.
+- **Stop button styling** — Removed red background (`#ef4444`), now uses neutral dark (`#333`) matching the UI.
+- **Default model picker shows ALL models** — No longer filters to only "matching" models per mode. All available models are shown, with recommended ones sorted first and marked with a star icon. Users own their API and choose freely.
+- **AI pill reflects saved defaults** — Selecting a mode from Plus menu now auto-applies the saved default model for that mode (if set), without requiring the model picker.
+- **Green accent toned down** — All bright greens (`#4ade80`, `#00ff88`) replaced with softer `#34d399` across all components.
+
+### Added
+- **Quick Action commands** — Side drawer now has a "Quick Actions" section with 6 command buttons: System Status (`/status`), Show Capabilities (`/capabilities`), Usage & Costs (`/cost`), List Models (`/models`), Help (`/help`), Clear Context (`/clear`).
+- Inline copy button on every message bubble (replaces long-press-to-copy).
+- `savedFeedback` state in Settings for visual save confirmation.
+- `onQuickCommand` prop on ConversationList.
+- `savedDefaults` loaded in chat screen via SecureVault on focus.
+
+### Changed
+- `ultra-full-source.txt` regenerated (15,185 lines).
+
+---
+
 ## [v3.4] — 2026-03-13 — Bug Fixes + Stop Button + Model Defaults
 
 ### Fixed

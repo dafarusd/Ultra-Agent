@@ -164,11 +164,11 @@ const lockStyles = StyleSheet.create({
     paddingTop: Platform.OS === "web" ? 67 : 0,
   },
   text: {
-    color: "#00ff88",
+    color: "#34d399",
     fontSize: 18,
   },
   retry: {
-    color: "#00ff88",
+    color: "#34d399",
     fontSize: 16,
     marginTop: 20,
     textDecorationLine: "underline",

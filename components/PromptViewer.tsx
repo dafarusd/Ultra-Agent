@@ -13,7 +13,7 @@ interface PromptViewerProps {
 
 const ROLE_COLORS: Record<MessageRole, string> = {
   system: '#ff6b6b',
-  user: '#00ff88',
+  user: '#34d399',
   assistant: '#6bc5ff',
   tool: '#ffd166',
 };
@@ -36,7 +36,7 @@ function StepIndicator({ success }: { success: boolean }) {
     <Ionicons
       name={success ? 'checkmark-circle' : 'close-circle'}
       size={14}
-      color={success ? '#00ff88' : '#ff4444'}
+      color={success ? '#34d399' : '#ff4444'}
     />
   );
 }
@@ -393,7 +393,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#333',
   },
   title: {
-    color: '#00ff88',
+    color: '#34d399',
     fontSize: 18,
     fontWeight: '700' as const,
   },
@@ -440,7 +440,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   label: {
-    color: '#00ff88',
+    color: '#34d399',
     fontSize: 13,
     fontWeight: '600' as const,
     textTransform: 'uppercase' as const,
@@ -476,7 +476,7 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
   },
   stepName: {
-    color: '#00ff88',
+    color: '#34d399',
     fontSize: 12,
     fontWeight: '700' as const,
     flex: 1,
@@ -528,8 +528,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden' as const,
   },
   riskSafe: {
-    backgroundColor: '#00ff8822',
-    color: '#00ff88',
+    backgroundColor: '#34d39922',
+    color: '#34d399',
   },
   riskModerate: {
     backgroundColor: '#ffaa0022',
@@ -614,7 +614,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#00ff88',
+    backgroundColor: '#34d399',
     borderRadius: 10,
     paddingVertical: 12,
     marginTop: 12,

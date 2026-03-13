@@ -30,7 +30,7 @@ import PlusMenu, { ActionType } from "@/components/PlusMenu";
 import QuickReplies from "@/components/QuickReplies";
 
 // ── Color Palette (softened green accent) ──────────────
-const ACCENT = "#4ade80";       // softer mint green (was #00ff88)
+const ACCENT = "#34d399";       // softer mint green (was #00ff88)
 const BG = "#000000";
 const SURFACE = "#111111";
 const SURFACE2 = "#1a1a1a";
@@ -103,6 +103,7 @@ export default function ChatScreen() {
 
   // Current mode & replay
   const [currentMode, setCurrentMode] = useState<ActionType>("chat");
+  const [savedDefaults, setSavedDefaults] = useState<Record<string, string>>({});
   const [pendingReplay, setPendingReplay] = useState<{
     userInput: string;
     type: "approval" | "model_switch";
@@ -188,6 +189,12 @@ export default function ChatScreen() {
           if (agentCore.hasApiKey()) setStatus("Ready");
         });
       }
+      SecureVault.initialize().then(async (v) => {
+        try {
+          const raw = await v.get("api_defaults");
+          if (raw) setSavedDefaults(JSON.parse(raw));
+        } catch {}
+      });
     }, [agentCore])
   );
 
@@ -473,9 +480,7 @@ export default function ChatScreen() {
       const showQuickReplies = !isUser && isLatestMessage && !isProcessing && !pendingReplay && item.role !== "system";
 
       return (
-        <Pressable
-          onLongPress={() => handleCopyMessage(item)}
-          delayLongPress={400}
+        <View
           style={[
             styles.messageBubble,
             msgStyle === "user" ? styles.userBubble :
@@ -522,7 +527,7 @@ export default function ChatScreen() {
           )}
 
           {/* Message content */}
-          <Text style={[
+          <Text selectable style={[
             styles.messageText,
             isUser && styles.userText,
             msgStyle === "buildLog" && styles.buildLogText,
@@ -530,16 +535,19 @@ export default function ChatScreen() {
             {item.content}
           </Text>
 
-          {/* Prompt trace link (dev tool) */}
-          {trace && !isUser && (
-            <Pressable onPress={() => openPromptViewer(trace)} style={styles.viewPromptBtn} hitSlop={8}>
-              <Ionicons name="eye-outline" size={12} color={DIM} />
-              <Text style={styles.viewPromptText}>View Prompt</Text>
+          {/* Message action row: copy + prompt trace */}
+          <View style={styles.msgActions}>
+            <Pressable onPress={() => handleCopyMessage(item)} hitSlop={8} style={styles.copyBtn}>
+              <Ionicons name={isCopied ? "checkmark" : "copy-outline"} size={14} color={isCopied ? ACCENT : DIM} />
+              {isCopied && <Text style={styles.copiedInline}>Copied</Text>}
             </Pressable>
-          )}
-
-          {/* Copied feedback */}
-          {isCopied && <Text style={styles.copiedLabel}>Copied</Text>}
+            {trace && !isUser && (
+              <Pressable onPress={() => openPromptViewer(trace)} style={styles.viewPromptBtn} hitSlop={8}>
+                <Ionicons name="eye-outline" size={12} color={DIM} />
+                <Text style={styles.viewPromptText}>View Prompt</Text>
+              </Pressable>
+            )}
+          </View>
 
           {/* Approval/deny buttons */}
           {showPendingButtons && (
@@ -559,7 +567,7 @@ export default function ChatScreen() {
           {showQuickReplies && (
             <QuickReplies message={item} onSelect={handleQuickReply} />
           )}
-        </Pressable>
+        </View>
       );
     },
     [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, handleQuickReply]
@@ -714,6 +722,7 @@ export default function ChatScreen() {
         onOpenLogs={() => {
           router.push("/settings?tab=logs");
         }}
+        onQuickCommand={(cmd) => handleSend(cmd)}
       />
 
       <PromptViewer
@@ -743,16 +752,23 @@ export default function ChatScreen() {
       <PlusMenu
         visible={plusMenuVisible}
         currentType={currentMode}
-        onSelect={(type) => {
+        onSelect={async (type) => {
           setCurrentMode(type);
-          const filterMap: Record<string, typeof modelPickerInitialFilter> = {
-            chat: "text", image: "image", code: "code",
-            reasoning: "reasoning", video: "video",
-          };
-          const mappedFilter = filterMap[type] || "all";
-          setModelPickerInitialFilter(mappedFilter);
-          setPlusMenuVisible(false);
-          setModelPickerVisible(true);
+          const defaultModelId = savedDefaults[type];
+          if (defaultModelId && agentCore) {
+            await agentCore.setDefaultModel(defaultModelId);
+            setStatus(`Switched to ${type}`);
+            setPlusMenuVisible(false);
+          } else {
+            const filterMap: Record<string, typeof modelPickerInitialFilter> = {
+              chat: "text", image: "image", code: "code",
+              reasoning: "reasoning", video: "video",
+            };
+            const mappedFilter = filterMap[type] || "all";
+            setModelPickerInitialFilter(mappedFilter);
+            setPlusMenuVisible(false);
+            setModelPickerVisible(true);
+          }
         }}
         onClose={() => setPlusMenuVisible(false)}
       />
@@ -841,7 +857,10 @@ const styles = StyleSheet.create({
   capBadge: { fontSize: 9, color: DIM, fontFamily: "Inter_400Regular", backgroundColor: "#1a1a1a", paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, overflow: "hidden", marginLeft: 4 },
   messageText: { color: "#cccccc", fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
   userText: { color: BG },
-  viewPromptBtn: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6, alignSelf: "flex-start" },
+  msgActions: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 6 },
+  copyBtn: { flexDirection: "row", alignItems: "center", gap: 3, padding: 2 },
+  copiedInline: { color: ACCENT, fontSize: 10, fontFamily: "Inter_500Medium" },
+  viewPromptBtn: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" },
   viewPromptText: { color: DIM, fontSize: 11, fontFamily: "Inter_400Regular" },
   approvalRow: { flexDirection: "row", gap: 8, marginTop: 10 },
   approvalBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
@@ -876,7 +895,7 @@ const styles = StyleSheet.create({
   },
   sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, justifyContent: "center", alignItems: "center" },
   sendBtnDisabled: { backgroundColor: SURFACE },
-  stopBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#ef4444", justifyContent: "center", alignItems: "center" },
+  stopBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#333", justifyContent: "center", alignItems: "center" },
 });
 
 const renameStyles = StyleSheet.create({

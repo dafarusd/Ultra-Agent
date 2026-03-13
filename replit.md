@@ -23,7 +23,11 @@ The agent should persist conversations and allow switching between them.
 **Capability Management:** `CapabilityRegistry` defines 22 capabilities (e.g., file operations, camera, location, app build, self-modify) with risk levels, executed by `TaskExecutor`.
 **Error Handling and Debugging:** An `ErrorBoundary` handles UI errors, and a `DebugEngine` provides AI-driven self-healing for build errors.
 **Persistence and Monitoring:** `ConversationManager` for chat storage, `ExecutionLedger` for event logging and idempotency/autonomy budgets, and `CostTracker` for API usage.
-**Debug Logging:** Two-tier log system: `Logger` (user-facing, in-memory, visible in Settings > Logs) and `DebugLog` (dev-facing, file-based JSONL in `debug_logs/`, captures full prompts, AI responses, agent steps, API call timing, costs, errors with stacks). Debug log is viewable/exportable from Settings > Logs > Debug Log section.
+**Debug Logging:** Two-tier log system: `Logger` (user-facing, in-memory, visible in Settings > Logs) and `DebugLog` (dev-facing, file-based JSONL in `debug_logs/`, captures full prompts, AI responses, agent steps, API call timing, costs, errors with stacks). Debug log is viewable/exportable from Settings > Logs > Debug Log section. Both logs auto-load when navigating to the Logs tab.
+**Quick Actions:** The side drawer (ConversationList) includes quick command buttons: `/status`, `/capabilities`, `/cost`, `/models`, `/help`, `/clear`. These send the command directly as a message.
+**UI Color:** The accent green is `#34d399` (softer mint) used consistently across all components. Messages show inline copy buttons instead of long-press behavior, with selectable text for partial copying.
+**Default Models by Mode:** Settings shows ALL available AI models for each mode (chat/image/code/reasoning/video) with recommended models marked with a star icon. No hardcoded presets — users can pick any model. The Plus menu applies saved defaults automatically when switching modes.
+**Stop Button:** Neutral dark styling (`#333` background), no red.
 **Native Module Integration:** A custom `AgentNativeModule` (Java classes via Expo config plugin) provides direct access to native functions like file writing, Java compilation, APK packaging, signing, and installation. `AppController` uses accessibility services for UI automation and E2E testing of generated apps.
 
 ## External Dependencies

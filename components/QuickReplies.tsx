@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ChatMessage } from "@/src/types/ultra";
 
-const ACCENT = "#4ade80";
+const ACCENT = "#34d399";
 const SURFACE2 = "#1a1a1a";
 const SURFACE3 = "#222222";
 const DIM = "#666666";
