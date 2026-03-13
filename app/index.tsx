@@ -163,7 +163,25 @@ export default function ChatScreen() {
         await core.initialize();
         setAgentCore(core);
         setAgentCoreInstance(core);
-        setActiveModelId(core.getDefaultModel());
+
+        const savedRaw = await vault.get("api_defaults");
+        if (savedRaw) {
+          try {
+            const parsed = JSON.parse(savedRaw);
+            setSavedDefaults(parsed);
+            const chatDefault = parsed["chat"];
+            if (chatDefault) {
+              await core.setDefaultModel(chatDefault);
+              setActiveModelId(chatDefault);
+            } else {
+              setActiveModelId(core.getDefaultModel());
+            }
+          } catch {
+            setActiveModelId(core.getDefaultModel());
+          }
+        } else {
+          setActiveModelId(core.getDefaultModel());
+        }
         setStatus("Ready");
 
         const cm = core.getConversationManager();
