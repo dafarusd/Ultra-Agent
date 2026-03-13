@@ -4,6 +4,30 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.2] — 2026-03-13 — New UI Components & Multi-API Settings
+
+### Added
+- **ActionMenu** (`components/ActionMenu.tsx`) — Contextual 3-dot dropdown menu with icon support, destructive items, and disabled state. Used for conversation actions (rename, delete, star, new chat).
+- **ModelPickerSheet** (`components/ModelPickerSheet.tsx`) — Bottom sheet for browsing and selecting AI models with type filter tabs (All/Chat/Image/Code/Reasoning/Video), cost indicators, and radio selection.
+- **PlusMenu** (`components/PlusMenu.tsx`) — Mode selector bottom sheet for switching between Chat, Image, Code, Reasoning, and Video action types.
+- **QuickReplies** (`components/QuickReplies.tsx`) — Context-aware quick-reply chips that appear below assistant messages. Dynamically generates suggestions based on capability type, error state, code presence, and message length.
+- **UsageIndicator** (`components/UsageIndicator.tsx`) — Cost usage pill with expandable detail sheet showing per-model breakdown, daily limit progress bar, and call counts.
+- **Multi-API management** (settings.tsx) — Full CRUD for saved API endpoints with name, base URL, API key, and auth token. Includes per-mode default API assignment (Chat/Image/Code/Reasoning/Video) and backwards-compatible migration from legacy single Venice key.
+- **Settings tabs** — Settings screen reorganized into three tabs: API Setup, Cost Limits, and Logs.
+- **ConversationList folders** — UI-ready folder system with system "Logs" folder and user-created folders (persistence TODO).
+- **Rename modal for Android** — Custom TextInput modal replaces iOS-only `Alert.prompt` for renaming conversations on Android.
+
+### Fixed
+- **`Alert.prompt` Android crash** — `Alert.prompt()` is iOS-only and would crash on Android. Replaced with a custom modal dialog with TextInput for native platforms.
+- **`callsByModel` undefined** — Settings referenced `CostSummary.callsByModel` which doesn't exist. Fixed to proportionally distribute `totalCalls` across models based on cost share.
+
+### Changed
+- **index.tsx** — Integrated ActionMenu, ModelPickerSheet, PlusMenu, QuickReplies. Added model indicator pill, processing activity icons, and long-press copy on messages.
+- **ConversationList** — Added `onOpenSettings` and `onOpenLogs` props, settings gear moved into drawer, folder section added.
+- **ultra-full-source.txt** regenerated (14,615 lines).
+
+---
+
 ## [v3.1] — 2026-03-12 — Bug Fixes & Audit Response
 
 ### Fixed

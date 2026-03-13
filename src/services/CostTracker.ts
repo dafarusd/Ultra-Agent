@@ -17,6 +17,7 @@ interface CostSummary {
   totalOutputTokens: number;
   totalCalls: number;
   costByModel: Record<string, number>;
+  callsByModel: Record<string, number>;
   costByDay: Record<string, number>;
 }
 
@@ -108,6 +109,7 @@ export class CostTracker {
 
   getSummary(): CostSummary {
     const costByModel: Record<string, number> = {};
+    const callsByModel: Record<string, number> = {};
     const costByDay: Record<string, number> = {};
     let totalInput = 0;
     let totalOutput = 0;
@@ -117,10 +119,11 @@ export class CostTracker {
       totalInput += entry.inputTokens;
       totalOutput += entry.outputTokens;
       costByModel[entry.model] = (costByModel[entry.model] || 0) + entry.cost;
+      callsByModel[entry.model] = (callsByModel[entry.model] || 0) + 1;
       const day = new Date(entry.timestamp).toDateString();
       costByDay[day] = (costByDay[day] || 0) + entry.cost;
     }
-    return { totalCost, totalInputTokens: totalInput, totalOutputTokens: totalOutput, totalCalls: this.entries.length, costByModel, costByDay };
+    return { totalCost, totalInputTokens: totalInput, totalOutputTokens: totalOutput, totalCalls: this.entries.length, costByModel, callsByModel, costByDay };
   }
 
   async setDailyLimit(limit: number): Promise<void> {

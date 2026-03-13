@@ -10,6 +10,8 @@ import {
   Animated,
   Platform,
   Alert,
+  Modal,
+  TouchableWithoutFeedback,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -22,8 +24,13 @@ import type { ExecuteArgs } from "@/src/core/AgentCore";
 import type { ChatMessage, UltraExecutionResult, ConversationMeta, PromptTrace } from "@/src/types/ultra";
 import ConversationList from "@/components/ConversationList";
 import PromptViewer from "@/components/PromptViewer";
+import ActionMenu, { ActionMenuItem } from "@/components/ActionMenu";
+import ModelPickerSheet, { PickerModel } from "@/components/ModelPickerSheet";
+import PlusMenu, { ActionType } from "@/components/PlusMenu";
+import QuickReplies from "@/components/QuickReplies";
 
-const ACCENT = "#00ff88";
+// ── Color Palette (softened green accent) ──────────────
+const ACCENT = "#4ade80";       // softer mint green (was #00ff88)
 const BG = "#000000";
 const SURFACE = "#111111";
 const SURFACE2 = "#1a1a1a";
@@ -33,9 +40,46 @@ const ULTRA_COLOR = ACCENT;
 const WARN_COLOR = "#ff6600";
 const BLOCKED_COLOR = "#ff4444";
 
+// ── 3-dot menu items ───────────────────────────────────
+const HEADER_MENU_ITEMS: ActionMenuItem[] = [
+  { id: "rename", label: "Rename", icon: "create-outline" },
+  { id: "star", label: "Star", icon: "star-outline", disabled: false },
+  { id: "add_home", label: "Add to home", icon: "home-outline", disabled: true },
+  { id: "delete", label: "Delete", icon: "trash-outline", destructive: true },
+  { id: "new_chat", label: "New chat", icon: "add-circle-outline" },
+];
+
+// ── Activity icon helper ───────────────────────────────
+function getActivityIcon(status: string, buildPhase: string | null, genomePhase: string | null): {
+  name: string; family: "ionicons" | "material"; color: string;
+} {
+  if (buildPhase || (status.toLowerCase().includes("build"))) {
+    return { name: "hammer-wrench", family: "material", color: "#ffaa00" };
+  }
+  if (genomePhase) {
+    if (genomePhase.includes("testing") || genomePhase.includes("task")) return { name: "test-tube", family: "material", color: "#ff9900" };
+    if (genomePhase.includes("fitness") || genomePhase.includes("Computing")) return { name: "chart-line", family: "material", color: "#00ccff" };
+    return { name: "dna", family: "material", color: "#bb66ff" };
+  }
+  if (status.toLowerCase().includes("image") || status.toLowerCase().includes("generat")) {
+    return { name: "palette", family: "material", color: "#f472b6" };
+  }
+  if (status.toLowerCase().includes("code") || status.toLowerCase().includes("compil")) {
+    return { name: "code-braces", family: "material", color: "#60a5fa" };
+  }
+  if (status.toLowerCase().includes("video")) {
+    return { name: "video", family: "material", color: "#fb923c" };
+  }
+  // Default: thinking/brain
+  return { name: "brain", family: "material", color: "#c084fc" };
+}
+
+// ── Main Screen ────────────────────────────────────────
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+
+  // Core state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -43,75 +87,71 @@ export default function ChatScreen() {
   const [agentCore, setAgentCore] = useState<AgentCore | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("Agent Ultra");
-  const [convListVisible, setConvListVisible] = useState(false);
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
+
+  // UI panel state
+  const [convListVisible, setConvListVisible] = useState(false);
   const [promptViewerVisible, setPromptViewerVisible] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<PromptTrace | null>(null);
+  const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
+  const [modelPickerVisible, setModelPickerVisible] = useState(false);
+  const [plusMenuVisible, setPlusMenuVisible] = useState(false);
+
+  // Current mode & replay
+  const [currentMode, setCurrentMode] = useState<ActionType>("chat");
   const [pendingReplay, setPendingReplay] = useState<{
     userInput: string;
     type: "approval" | "model_switch";
     recommendedModel?: string;
   } | null>(null);
+
+  // Build/genome progress
   const [buildPhase, setBuildPhase] = useState<string | null>(null);
   const [genomePhase, setGenomePhase] = useState<string | null>(null);
+
+  // Copy feedback
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
+  // ── Pulse animation for status dot ─────────────────
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 0.3,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.3, duration: 1000, useNativeDriver: true }),
       ])
     ).start();
   }, [pulseAnim]);
 
-  const reloadMessages = useCallback(
-    async (core: AgentCore, convId: string) => {
-      const cm = core.getConversationManager();
-      const conv = await cm.loadConversation(convId);
-      if (conv) {
-        // Drop any optimistic (locally-injected) bubbles before replacing with real data
-        setMessages([...conv.messages].reverse());
-        setConversationTitle(conv.title);
-      } else {
-        // Conversation gone — clear optimistic messages too
-        setMessages((prev) => prev.filter((m) => !m.id.startsWith('optimistic_')));
-      }
-    },
-    []
-  );
+  // ── Data loaders ───────────────────────────────────
+  const reloadMessages = useCallback(async (core: AgentCore, convId: string) => {
+    const cm = core.getConversationManager();
+    const conv = await cm.loadConversation(convId);
+    if (conv) {
+      setMessages([...conv.messages].reverse());
+      setConversationTitle(conv.title);
+    } else {
+      setMessages((prev) => prev.filter((m) => !m.id.startsWith("optimistic_")));
+    }
+  }, []);
 
-  const refreshConversations = useCallback(
-    async (core: AgentCore) => {
-      const cm = core.getConversationManager();
-      const list = await cm.listConversations();
-      setConversations(list);
-    },
-    []
-  );
+  const refreshConversations = useCallback(async (core: AgentCore) => {
+    const cm = core.getConversationManager();
+    const list = await cm.listConversations();
+    setConversations(list);
+  }, []);
 
+  // ── Init ───────────────────────────────────────────
   useEffect(() => {
     async function init() {
       try {
         const vault = await SecureVault.initialize();
         const core = new AgentCore(vault, (msg: string, type: string) => {
           setStatus(msg);
-          if (type === 'build_progress') {
-            setBuildPhase(msg);
-          }
-          if (type === 'genome_progress') {
-            setGenomePhase(msg);
-          }
+          if (type === "build_progress") setBuildPhase(msg);
+          if (type === "genome_progress") setGenomePhase(msg);
         });
         await core.initialize();
         setAgentCore(core);
@@ -128,10 +168,8 @@ export default function ChatScreen() {
         await reloadMessages(core, activeId);
         await refreshConversations(core);
 
-        if (!core.hasApiKey()) {
-          setStatus("No API key");
-        }
-      } catch (err: any) {
+        if (!core.hasApiKey()) setStatus("No API key");
+      } catch {
         setStatus("Init failed");
       }
     }
@@ -142,31 +180,21 @@ export default function ChatScreen() {
     useCallback(() => {
       if (agentCore) {
         agentCore.refreshApiKey().then(() => {
-          if (agentCore.hasApiKey()) {
-            setStatus("Ready");
-          }
+          if (agentCore.hasApiKey()) setStatus("Ready");
         });
       }
     }, [agentCore])
   );
 
+  // ── Result handler ─────────────────────────────────
   const handleResult = useCallback(
     async (result: UltraExecutionResult, core: AgentCore, convId: string) => {
       switch (result.type) {
         case "model_switch_request":
-          setPendingReplay({
-            userInput: result.data?.replayUserInput || "",
-            type: "model_switch",
-            recommendedModel: result.data?.recommendedModel,
-          });
+          setPendingReplay({ userInput: result.data?.replayUserInput || "", type: "model_switch", recommendedModel: result.data?.recommendedModel });
           break;
         case "approval_required":
-          setPendingReplay({
-            userInput: result.data?.replayUserInput || "",
-            type: "approval",
-          });
-          break;
-        default:
+          setPendingReplay({ userInput: result.data?.replayUserInput || "", type: "approval" });
           break;
       }
       await reloadMessages(core, convId);
@@ -175,32 +203,24 @@ export default function ChatScreen() {
     [reloadMessages, refreshConversations]
   );
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  // ── Send message ───────────────────────────────────
+  const handleSend = useCallback(async (overrideText?: string) => {
+    const text = (overrideText || input).trim();
     if (!text || isProcessing || !agentCore || !conversationId) return;
-    setInput("");
+    if (!overrideText) setInput("");
     setIsProcessing(true);
     setStatus("Processing...");
 
-    // Optimistic: show user message immediately
     const optimisticId = `optimistic_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     setMessages((prev) => [
-      {
-        id: optimisticId,
-        role: "user" as const,
-        content: text,
-        createdAt: Date.now(),
-      } as import("@/src/types/ultra").ChatMessage,
+      { id: optimisticId, role: "user" as const, content: text, createdAt: Date.now() } as ChatMessage,
       ...prev,
     ]);
 
     try {
-      const result = await agentCore.execute({
-        conversationId,
-        userInput: text,
-      });
+      const result = await agentCore.execute({ conversationId, userInput: text });
       await handleResult(result, agentCore, conversationId);
-    } catch (err: any) {
+    } catch {
       await reloadMessages(agentCore, conversationId);
     }
     setIsProcessing(false);
@@ -209,27 +229,29 @@ export default function ChatScreen() {
     setGenomePhase(null);
   }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages]);
 
+  // ── Quick reply handler ────────────────────────────
+  const handleQuickReply = useCallback((prompt: string, messageContent: string) => {
+    if (prompt === "__COPY_ERROR__") {
+      Clipboard.setStringAsync(messageContent);
+      return;
+    }
+    handleSend(prompt);
+  }, [handleSend]);
+
+  // ── Approval handlers ──────────────────────────────
   const handleApprove = useCallback(async () => {
     if (!agentCore || !conversationId || !pendingReplay) return;
     const replay = pendingReplay;
     setPendingReplay(null);
     setIsProcessing(true);
     setStatus("Executing approved action...");
-
     try {
-      const args: ExecuteArgs = {
-        conversationId,
-        userInput: replay.userInput,
-        replay: true,
-      };
-      if (replay.type === "approval") {
-        args.approvedAction = true;
-      } else if (replay.type === "model_switch") {
-        args.approvedModel = replay.recommendedModel;
-      }
+      const args: ExecuteArgs = { conversationId, userInput: replay.userInput, replay: true };
+      if (replay.type === "approval") args.approvedAction = true;
+      else if (replay.type === "model_switch") args.approvedModel = replay.recommendedModel;
       const result = await agentCore.execute(args);
       await handleResult(result, agentCore, conversationId);
-    } catch (err: any) {
+    } catch {
       await reloadMessages(agentCore, conversationId);
     }
     setIsProcessing(false);
@@ -240,36 +262,25 @@ export default function ChatScreen() {
     if (!agentCore || !conversationId || !pendingReplay) return;
     const replay = pendingReplay;
     setPendingReplay(null);
-
     if (replay.type === "model_switch") {
       setIsProcessing(true);
       setStatus("Continuing with current model...");
       try {
-        const result = await agentCore.execute({
-          conversationId,
-          userInput: replay.userInput,
-          replay: true,
-          skipModelSwitchPrompt: true,
-        });
+        const result = await agentCore.execute({ conversationId, userInput: replay.userInput, replay: true, skipModelSwitchPrompt: true });
         await handleResult(result, agentCore, conversationId);
-      } catch (err: any) {
+      } catch {
         await reloadMessages(agentCore, conversationId);
       }
       setIsProcessing(false);
       setStatus("Ready");
     } else {
       const cm = agentCore.getConversationManager();
-      await cm.addMessage(conversationId, {
-        id: `msg_${Math.random().toString(36).slice(2)}_${Date.now()}`,
-        role: "assistant",
-        content: "Cancelled.",
-        createdAt: Date.now(),
-        source: "ultra",
-      });
+      await cm.addMessage(conversationId, { id: `msg_${Math.random().toString(36).slice(2)}_${Date.now()}`, role: "assistant", content: "Cancelled.", createdAt: Date.now(), source: "ultra" });
       await reloadMessages(agentCore, conversationId);
     }
   }, [agentCore, conversationId, pendingReplay, handleResult, reloadMessages]);
 
+  // ── Conversation management ────────────────────────
   const handleNewChat = useCallback(async () => {
     if (!agentCore) return;
     const cm = agentCore.getConversationManager();
@@ -282,75 +293,101 @@ export default function ChatScreen() {
     await refreshConversations(agentCore);
   }, [agentCore, refreshConversations]);
 
-  const handleSelectConversation = useCallback(
-    async (id: string) => {
-      if (!agentCore) return;
-      setConversationId(id);
-      setPendingReplay(null);
-      await reloadMessages(agentCore, id);
-      setConvListVisible(false);
-    },
-    [agentCore, reloadMessages]
-  );
+  const handleSelectConversation = useCallback(async (id: string) => {
+    if (!agentCore) return;
+    setConversationId(id);
+    setPendingReplay(null);
+    await reloadMessages(agentCore, id);
+    setConvListVisible(false);
+  }, [agentCore, reloadMessages]);
 
-  const handleDeleteConversation = useCallback(
-    async (id: string) => {
-      if (!agentCore) return;
-      const cm = agentCore.getConversationManager();
-      await cm.deleteConversation(id);
-      if (id === conversationId) {
-        const remaining = await cm.listConversations();
-        if (remaining.length > 0) {
-          setConversationId(remaining[0].id);
-          await reloadMessages(agentCore, remaining[0].id);
-        } else {
-          const conv = await cm.createConversation();
-          setConversationId(conv.id);
-          setMessages([]);
-          setConversationTitle("New Chat");
-        }
-      }
-      await refreshConversations(agentCore);
-    },
-    [agentCore, conversationId, reloadMessages, refreshConversations]
-  );
-
-  const handleRenameConversation = useCallback(async () => {
-    if (!agentCore || !conversationId) return;
-    const promptRename = () => {
-      if (Platform.OS === "web") {
-        const name = window.prompt("Rename conversation:", conversationTitle);
-        if (name && name.trim()) {
-          agentCore.getConversationManager()
-            .updateTitle(conversationId, name.trim())
-            .then(() => {
-              setConversationTitle(name.trim());
-              refreshConversations(agentCore);
-            })
-            .catch(() => {});
-        }
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    if (!agentCore) return;
+    const cm = agentCore.getConversationManager();
+    await cm.deleteConversation(id);
+    if (id === conversationId) {
+      const remaining = await cm.listConversations();
+      if (remaining.length > 0) {
+        setConversationId(remaining[0].id);
+        await reloadMessages(agentCore, remaining[0].id);
       } else {
-        Alert.prompt(
-          "Rename",
-          "New conversation name:",
-          (name?: string) => {
-            if (!name || !name.trim()) return;
-            agentCore.getConversationManager()
-              .updateTitle(conversationId, name.trim())
-              .then(() => {
-                setConversationTitle(name.trim());
-                refreshConversations(agentCore);
-              })
-              .catch(() => {});
-          },
-          "plain-text",
-          conversationTitle
-        );
+        const conv = await cm.createConversation();
+        setConversationId(conv.id);
+        setMessages([]);
+        setConversationTitle("New Chat");
       }
-    };
-    promptRename();
+    }
+    await refreshConversations(agentCore);
+  }, [agentCore, conversationId, reloadMessages, refreshConversations]);
+
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [renameText, setRenameText] = useState("");
+
+  const handleRenameConversation = useCallback(() => {
+    if (!agentCore || !conversationId) return;
+    if (Platform.OS === "web") {
+      const name = window.prompt("Rename conversation:", conversationTitle);
+      if (name?.trim()) {
+        agentCore.getConversationManager().updateTitle(conversationId, name.trim()).then(() => {
+          setConversationTitle(name.trim());
+          refreshConversations(agentCore);
+        });
+      }
+    } else {
+      setRenameText(conversationTitle);
+      setRenameModalVisible(true);
+    }
   }, [agentCore, conversationId, conversationTitle, refreshConversations]);
 
+  const confirmRename = useCallback(() => {
+    if (!agentCore || !conversationId || !renameText.trim()) return;
+    agentCore.getConversationManager().updateTitle(conversationId, renameText.trim()).then(() => {
+      setConversationTitle(renameText.trim());
+      refreshConversations(agentCore);
+    });
+    setRenameModalVisible(false);
+  }, [agentCore, conversationId, renameText, refreshConversations]);
+
+  // ── 3-dot menu handler ─────────────────────────────
+  const handleMenuAction = useCallback((id: string) => {
+    switch (id) {
+      case "rename": handleRenameConversation(); break;
+      case "delete":
+        if (conversationId) {
+          Alert.alert("Delete", "Delete this conversation?", [
+            { text: "Cancel", style: "cancel" },
+            { text: "Delete", style: "destructive", onPress: () => handleDeleteConversation(conversationId) },
+          ]);
+        }
+        break;
+      case "new_chat": handleNewChat(); break;
+      // star, add_home: placeholder — no-op for now
+    }
+  }, [handleRenameConversation, handleDeleteConversation, handleNewChat, conversationId]);
+
+  // ── Model picker data ──────────────────────────────
+  const getPickerModels = useCallback((): PickerModel[] => {
+    if (!agentCore) return [];
+    const models = agentCore.getAvailableModels();
+    const currentModel = agentCore.getDefaultModel();
+    // TODO: When multi-API is implemented, models will come from all saved APIs.
+    // For now they come from the single Venice API connection.
+    return models.map((m: any) => ({
+      id: m.id,
+      name: m.name || m.id,
+      type: m.type || "text",
+      apiName: "Venice", // TODO: pull from saved API label
+      costIndicator: m.costPer1kInput > 0 ? `$${m.costPer1kInput.toFixed(4)}/1K` : "Free",
+      isSelected: m.id === currentModel,
+    }));
+  }, [agentCore]);
+
+  const handleModelSelect = useCallback(async (modelId: string) => {
+    if (!agentCore) return;
+    await agentCore.setDefaultModel(modelId);
+  }, [agentCore]);
+
+  // ── Misc handlers ──────────────────────────────────
   const openConvList = useCallback(async () => {
     if (agentCore) await refreshConversations(agentCore);
     setConvListVisible(true);
@@ -369,6 +406,7 @@ export default function ChatScreen() {
     } catch {}
   }, []);
 
+  // ── Message style classifier ───────────────────────
   const getMessageStyle = (msg: ChatMessage) => {
     if (msg.role === "user") return "user" as const;
     if (msg.role === "system") return "system" as const;
@@ -381,18 +419,19 @@ export default function ChatScreen() {
     return "ai" as const;
   };
 
+  // ── Message renderer ───────────────────────────────
   const renderMessage = useCallback(
     ({ item }: { item: ChatMessage }) => {
       const msgStyle = getMessageStyle(item);
       const isUser = msgStyle === "user";
       const trace = item.meta?.promptTrace;
-      const isApprovalOrSwitch =
-        item.content.startsWith("Approval required") ||
-        item.content.startsWith("I recommend switching");
+      const isApprovalOrSwitch = item.content.startsWith("Approval required") || item.content.startsWith("I recommend switching");
       const isLatestMessage = messages.length > 0 && item.id === messages[0].id;
       const showPendingButtons = !!pendingReplay && isApprovalOrSwitch && isLatestMessage;
-
       const isCopied = copiedId === item.id;
+
+      // Show quick replies only on the most recent assistant message
+      const showQuickReplies = !isUser && isLatestMessage && !isProcessing && !pendingReplay && item.role !== "system";
 
       return (
         <Pressable
@@ -409,6 +448,7 @@ export default function ChatScreen() {
             isCopied && styles.copiedBubble,
           ]}
         >
+          {/* Header with icon */}
           {!isUser && (
             <View style={styles.messageHeader}>
               {msgStyle === "ultra" ? (
@@ -422,16 +462,14 @@ export default function ChatScreen() {
               ) : (
                 <Ionicons name="information-circle" size={14} color={DIM} />
               )}
-              <Text
-                style={[
-                  styles.roleLabel,
-                  msgStyle === "ultra" ? { color: ULTRA_COLOR } :
-                  msgStyle === "ai" ? { color: AI_COLOR } :
-                  msgStyle === "blocked" ? { color: BLOCKED_COLOR } :
-                  msgStyle === "buildLog" ? { color: '#ff9900' } :
-                  { color: DIM },
-                ]}
-              >
+              <Text style={[
+                styles.roleLabel,
+                msgStyle === "ultra" ? { color: ULTRA_COLOR } :
+                msgStyle === "ai" ? { color: AI_COLOR } :
+                msgStyle === "blocked" ? { color: BLOCKED_COLOR } :
+                msgStyle === "buildLog" ? { color: "#ff9900" } :
+                { color: DIM },
+              ]}>
                 {msgStyle === "ultra" ? "ULTRA" :
                  msgStyle === "ai" ? "AI" :
                  msgStyle === "blocked" ? "BLOCKED" :
@@ -443,6 +481,8 @@ export default function ChatScreen() {
               )}
             </View>
           )}
+
+          {/* Message content */}
           <Text style={[
             styles.messageText,
             isUser && styles.userText,
@@ -450,56 +490,59 @@ export default function ChatScreen() {
           ]}>
             {item.content}
           </Text>
+
+          {/* Prompt trace link (dev tool) */}
           {trace && !isUser && (
-            <Pressable
-              onPress={() => openPromptViewer(trace)}
-              style={styles.viewPromptBtn}
-              hitSlop={8}
-            >
+            <Pressable onPress={() => openPromptViewer(trace)} style={styles.viewPromptBtn} hitSlop={8}>
               <Ionicons name="eye-outline" size={12} color={DIM} />
               <Text style={styles.viewPromptText}>View Prompt</Text>
             </Pressable>
           )}
-          {isCopied && (
-            <Text style={styles.copiedLabel}>Copied</Text>
-          )}
+
+          {/* Copied feedback */}
+          {isCopied && <Text style={styles.copiedLabel}>Copied</Text>}
+
+          {/* Approval/deny buttons */}
           {showPendingButtons && (
             <View style={styles.approvalRow}>
-              <Pressable
-                onPress={handleApprove}
-                style={[styles.approvalBtn, styles.approveBtn]}
-                disabled={isProcessing}
-              >
+              <Pressable onPress={handleApprove} style={[styles.approvalBtn, styles.approveBtn]} disabled={isProcessing}>
                 <Ionicons name="checkmark" size={16} color="#000" />
                 <Text style={styles.approveBtnText}>Approve</Text>
               </Pressable>
-              <Pressable
-                onPress={handleDeny}
-                style={[styles.approvalBtn, styles.denyBtn]}
-                disabled={isProcessing}
-              >
+              <Pressable onPress={handleDeny} style={[styles.approvalBtn, styles.denyBtn]} disabled={isProcessing}>
                 <Ionicons name="close" size={16} color="#fff" />
                 <Text style={styles.denyBtnText}>Deny</Text>
               </Pressable>
             </View>
           )}
+
+          {/* Contextual quick-reply chips */}
+          {showQuickReplies && (
+            <QuickReplies message={item} onSelect={handleQuickReply} />
+          )}
         </Pressable>
       );
     },
-    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId]
+    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, handleQuickReply]
   );
 
+  // ── Layout values ──────────────────────────────────
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
+  const currentModelName = agentCore?.getDefaultModel() || "No model";
+  const shortModelName = currentModelName.length > 18 ? currentModelName.slice(0, 18) + "…" : currentModelName;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+
+      {/* ══════════════════════════════════════════════
+          HEADER BAR
+          ══════════════════════════════════════════════ */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Pressable onPress={openConvList} style={styles.convListBtn} testID="open-conversations">
+          <Pressable onPress={openConvList} style={styles.menuBtn}>
             <Ionicons name="menu" size={22} color="#ffffff" />
           </Pressable>
-          <Animated.View style={[styles.statusDot, { opacity: pulseAnim }]} />
           <Pressable onLongPress={handleRenameConversation} delayLongPress={500} style={{ flex: 1 }}>
             <Text style={styles.headerTitle} numberOfLines={1}>
               {conversationTitle}
@@ -507,22 +550,18 @@ export default function ChatScreen() {
           </Pressable>
         </View>
         <View style={styles.headerRight}>
+          {isProcessing && <Animated.View style={[styles.statusDot, { opacity: pulseAnim }]} />}
           <Text style={styles.statusText}>{status}</Text>
-          <Pressable
-            onPress={() => router.push("/settings")}
-            style={styles.settingsBtn}
-            testID="settings-button"
-          >
-            <Ionicons name="settings-outline" size={22} color={ACCENT} />
+          <Pressable onPress={() => setHeaderMenuVisible(true)} style={styles.dotsBtn}>
+            <Ionicons name="ellipsis-vertical" size={20} color="#aaa" />
           </Pressable>
         </View>
       </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior="padding"
-        keyboardVerticalOffset={0}
-      >
+      {/* ══════════════════════════════════════════════
+          MESSAGE LIST
+          ══════════════════════════════════════════════ */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
         <FlatList
           data={messages}
           renderItem={renderMessage}
@@ -534,107 +573,85 @@ export default function ChatScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
-            <View style={[
-              styles.emptyState,
-              Platform.OS !== "web" && { transform: [{ scaleY: -1 }] },
-            ]}>
-              <MaterialCommunityIcons
-                name="robot-outline"
-                size={48}
-                color={SURFACE2}
-              />
+            <View style={[styles.emptyState, Platform.OS !== "web" && { transform: [{ scaleY: -1 }] }]}>
+              <MaterialCommunityIcons name="robot-outline" size={48} color={SURFACE2} />
               <Text style={styles.emptyText}>
-                Ask me anything. I can manage files, contacts, build apps, and
-                more.
+                Ask me anything. I can manage files, contacts, build apps, and more.
               </Text>
             </View>
           }
-          testID="message-list"
         />
 
-        <View
-          style={[
-            styles.inputBar,
-            {
-              paddingBottom: Math.max(insets.bottom, webBottomInset) + 8,
-            },
-          ]}
-        >
+        {/* ══════════════════════════════════════════════
+            INPUT BAR
+            ══════════════════════════════════════════════ */}
+        <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, webBottomInset) + 8 }]}>
+
+          {/* Processing indicator with activity-aware icon */}
           {isProcessing && (
             <View style={styles.processingBar}>
-              <ActivityIndicator size="small" color={ACCENT} />
-              <Text style={styles.processingText}>{status}</Text>
+              {(() => {
+                const ai = getActivityIcon(status, buildPhase, genomePhase);
+                return ai.family === "material" ? (
+                  <MaterialCommunityIcons name={ai.name as any} size={16} color={ai.color} />
+                ) : (
+                  <Ionicons name={ai.name as any} size={16} color={ai.color} />
+                );
+              })()}
+              <Text style={styles.processingText}>{buildPhase || genomePhase || status}</Text>
             </View>
           )}
-          {buildPhase && isProcessing && (
-            <View style={styles.buildProgressBar}>
-              <MaterialCommunityIcons name="hammer-wrench" size={14} color="#ffaa00" />
-              <Text style={styles.buildProgressText}>{buildPhase}</Text>
-            </View>
-          )}
-          {genomePhase && isProcessing && (
-            <View style={styles.buildProgressBar}>
-              <MaterialCommunityIcons
-                name={
-                  genomePhase.includes('Installing') ? 'package-down' :
-                  genomePhase.includes('Launch') || genomePhase.includes('launching') ? 'rocket-launch' :
-                  genomePhase.includes('Challenge') || genomePhase.includes('testing') || genomePhase.includes('task') ? 'test-tube' :
-                  genomePhase.includes('fitness') || genomePhase.includes('evaluating') || genomePhase.includes('Computing') ? 'chart-line' :
-                  'dna'
-                }
-                size={14}
-                color={
-                  genomePhase.includes('Challenge') || genomePhase.includes('testing') || genomePhase.includes('task') ? '#ff9900' :
-                  genomePhase.includes('fitness') || genomePhase.includes('Computing') ? '#00ccff' :
-                  '#bb66ff'
-                }
-              />
-              <Text style={[styles.buildProgressText, {
-                color:
-                  genomePhase.includes('Challenge') || genomePhase.includes('testing') || genomePhase.includes('task') ? '#ff9900' :
-                  genomePhase.includes('fitness') || genomePhase.includes('Computing') ? '#00ccff' :
-                  '#bb66ff'
-              }]}>{genomePhase}</Text>
-            </View>
-          )}
+
+          {/* Model indicator pill */}
+          <View style={styles.modelIndicatorRow}>
+            <Pressable
+              onPress={() => setModelPickerVisible(true)}
+              style={({ pressed }) => [styles.modelPill, pressed && styles.modelPillPressed]}
+            >
+              <MaterialCommunityIcons name="robot" size={12} color={DIM} />
+              <Text style={styles.modelPillText} numberOfLines={1}>{shortModelName}</Text>
+              <Ionicons name="chevron-up" size={12} color="#444" />
+            </Pressable>
+          </View>
+
+          {/* Input row: + button | text input | send button */}
           <View style={styles.inputRow}>
+            <Pressable
+              onPress={() => setPlusMenuVisible(true)}
+              style={({ pressed }) => [styles.plusBtn, pressed && styles.plusBtnPressed]}
+            >
+              <Ionicons name="add" size={22} color={DIM} />
+            </Pressable>
+
             <TextInput
               ref={inputRef}
               value={input}
               onChangeText={setInput}
               placeholder="Ask Agent Ultra..."
-              placeholderTextColor={DIM}
+              placeholderTextColor="#444"
               style={styles.input}
               multiline
               maxLength={4000}
               returnKeyType="send"
-              onSubmitEditing={handleSend}
+              onSubmitEditing={() => handleSend()}
               blurOnSubmit={false}
               editable={!isProcessing}
-              testID="chat-input"
             />
+
             <Pressable
-              onPress={() => {
-                handleSend();
-                inputRef.current?.focus();
-              }}
+              onPress={() => { handleSend(); inputRef.current?.focus(); }}
               disabled={isProcessing || !input.trim()}
-              style={[
-                styles.sendBtn,
-                (!input.trim() || isProcessing) && styles.sendBtnDisabled,
-              ]}
-              testID="send-button"
+              style={[styles.sendBtn, (!input.trim() || isProcessing) && styles.sendBtnDisabled]}
             >
-              <Ionicons
-                name="send"
-                size={20}
-                color={!input.trim() || isProcessing ? DIM : BG}
-              />
+              <Ionicons name="send" size={18} color={!input.trim() || isProcessing ? DIM : BG} />
             </Pressable>
           </View>
         </View>
       </KeyboardAvoidingView>
 
+      {/* ══════════════════════════════════════════════
+          OVERLAY PANELS
+          ══════════════════════════════════════════════ */}
       <ConversationList
         visible={convListVisible}
         conversations={conversations}
@@ -643,6 +660,10 @@ export default function ChatScreen() {
         onDelete={handleDeleteConversation}
         onNewChat={handleNewChat}
         onClose={() => setConvListVisible(false)}
+        onOpenSettings={() => router.push("/settings")}
+        onOpenLogs={() => {
+          router.push("/settings?tab=logs");
+        }}
       />
 
       <PromptViewer
@@ -650,15 +671,77 @@ export default function ChatScreen() {
         trace={selectedTrace}
         onClose={() => setPromptViewerVisible(false)}
       />
+
+      <ActionMenu
+        visible={headerMenuVisible}
+        items={HEADER_MENU_ITEMS}
+        onSelect={handleMenuAction}
+        onClose={() => setHeaderMenuVisible(false)}
+        anchorRight={12}
+        anchorTop={insets.top + webTopInset + 50}
+      />
+
+      <ModelPickerSheet
+        visible={modelPickerVisible}
+        models={getPickerModels()}
+        currentModelId={agentCore?.getDefaultModel() || ""}
+        onSelect={handleModelSelect}
+        onClose={() => setModelPickerVisible(false)}
+      />
+
+      <PlusMenu
+        visible={plusMenuVisible}
+        currentType={currentMode}
+        onSelect={(type) => {
+          setCurrentMode(type);
+          // TODO: When multi-API is wired, switch the active API+model
+          // to the user's saved default for this mode type.
+          // For now this only tracks the visual mode selection.
+        }}
+        onClose={() => setPlusMenuVisible(false)}
+      />
+
+      {Platform.OS !== "web" && (
+        <Modal visible={renameModalVisible} transparent animationType="fade" onRequestClose={() => setRenameModalVisible(false)} statusBarTranslucent>
+          <TouchableWithoutFeedback onPress={() => setRenameModalVisible(false)}>
+            <View style={renameStyles.backdrop}>
+              <TouchableWithoutFeedback>
+                <View style={renameStyles.dialog}>
+                  <Text style={renameStyles.title}>Rename Conversation</Text>
+                  <TextInput
+                    value={renameText}
+                    onChangeText={setRenameText}
+                    style={renameStyles.input}
+                    autoFocus
+                    placeholder="Conversation name"
+                    placeholderTextColor="#444"
+                    onSubmitEditing={confirmRename}
+                    returnKeyType="done"
+                    selectTextOnFocus
+                  />
+                  <View style={renameStyles.btnRow}>
+                    <Pressable onPress={() => setRenameModalVisible(false)} style={renameStyles.cancelBtn}>
+                      <Text style={renameStyles.cancelText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable onPress={confirmRename} style={renameStyles.saveBtn}>
+                      <Text style={renameStyles.saveText}>Rename</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+      )}
     </View>
   );
 }
 
+// ── Styles ─────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: BG,
-  },
+  container: { flex: 1, backgroundColor: BG },
+
+  // Header
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -668,251 +751,93 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: SURFACE,
   },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flex: 1,
-  },
-  convListBtn: {
-    padding: 4,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: ACCENT,
-  },
+  headerLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  menuBtn: { padding: 4 },
   headerTitle: {
     color: "#ffffff",
     fontSize: 16,
     fontFamily: "Inter_700Bold",
     flex: 1,
   },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  statusText: {
-    color: DIM,
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-  },
-  settingsBtn: {
-    padding: 4,
-  },
-  messageList: {
-    flex: 1,
-  },
-  messageListContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    flexGrow: 1,
-  },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: ACCENT },
+  statusText: { color: DIM, fontSize: 11, fontFamily: "Inter_400Regular", maxWidth: 100 },
+  dotsBtn: { padding: 4 },
+
+  // Messages
+  messageList: { flex: 1 },
+  messageListContent: { paddingHorizontal: 16, paddingVertical: 8, flexGrow: 1 },
   emptyState: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 80,
+    flex: 1, justifyContent: "center", alignItems: "center", paddingVertical: 80,
     ...(Platform.OS === "web" ? { transform: [{ scaleY: -1 }] } : {}),
   },
-  emptyText: {
-    color: DIM,
-    fontSize: 14,
-    textAlign: "center",
-    marginTop: 12,
-    fontFamily: "Inter_400Regular",
-    maxWidth: 280,
+  emptyText: { color: DIM, fontSize: 14, textAlign: "center", marginTop: 12, fontFamily: "Inter_400Regular", maxWidth: 280 },
+  messageBubble: { borderRadius: 12, padding: 12, marginBottom: 8, maxWidth: "85%" },
+  userBubble: { backgroundColor: ACCENT, alignSelf: "flex-end" },
+  ultraBubble: { backgroundColor: SURFACE, alignSelf: "flex-start", borderWidth: 1, borderColor: "#1a3a2a" },
+  aiBubble: { backgroundColor: SURFACE, alignSelf: "flex-start", borderWidth: 1, borderColor: "#1a2a3a" },
+  blockedBubble: { backgroundColor: "#1a0a0a", alignSelf: "flex-start", borderWidth: 1, borderColor: "#3a1a1a" },
+  buildLogBubble: { backgroundColor: "#1a1400", alignSelf: "flex-start", borderWidth: 1, borderColor: "#3a2a00", maxWidth: "95%" },
+  buildLogText: { fontFamily: Platform.OS === "web" ? "monospace" : "Courier", fontSize: 11, color: "#ccaa44", lineHeight: 16 },
+  systemBubble: { backgroundColor: SURFACE2, alignSelf: "flex-start", borderWidth: 1, borderColor: "#222222" },
+  messageHeader: { flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 4 },
+  roleLabel: { fontSize: 10, fontFamily: "Inter_700Bold", textTransform: "uppercase", letterSpacing: 0.5 },
+  capBadge: { fontSize: 9, color: DIM, fontFamily: "Inter_400Regular", backgroundColor: "#1a1a1a", paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, overflow: "hidden", marginLeft: 4 },
+  messageText: { color: "#cccccc", fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
+  userText: { color: BG },
+  viewPromptBtn: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6, alignSelf: "flex-start" },
+  viewPromptText: { color: DIM, fontSize: 11, fontFamily: "Inter_400Regular" },
+  approvalRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+  approvalBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+  approveBtn: { backgroundColor: ACCENT },
+  denyBtn: { backgroundColor: "#333" },
+  approveBtnText: { color: "#000", fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  denyBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  copiedBubble: { borderColor: ACCENT, borderWidth: 1 },
+  copiedLabel: { color: ACCENT, fontSize: 10, fontFamily: "Inter_500Medium", marginTop: 4, alignSelf: "flex-end" },
+
+  // Input bar
+  inputBar: { borderTopWidth: 1, borderTopColor: SURFACE, paddingHorizontal: 14, paddingTop: 6, backgroundColor: BG },
+  processingBar: { flexDirection: "row", alignItems: "center", gap: 8, paddingBottom: 6, paddingHorizontal: 2 },
+  processingText: { color: "#c084fc", fontSize: 12, fontFamily: "Inter_500Medium", flex: 1 },
+  modelIndicatorRow: { paddingBottom: 6 },
+  modelPill: {
+    flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start",
+    backgroundColor: SURFACE2, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12,
+    borderWidth: 1, borderColor: "#222",
   },
-  messageBubble: {
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    maxWidth: "85%",
+  modelPillPressed: { backgroundColor: "#222" },
+  modelPillText: { color: DIM, fontSize: 11, fontFamily: "Inter_400Regular", maxWidth: 160 },
+  inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 6 },
+  plusBtn: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: SURFACE2, justifyContent: "center", alignItems: "center",
+    borderWidth: 1, borderColor: "#222",
   },
-  userBubble: {
-    backgroundColor: ACCENT,
-    alignSelf: "flex-end",
-  },
-  ultraBubble: {
-    backgroundColor: SURFACE,
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderColor: "#1a3a2a",
-  },
-  aiBubble: {
-    backgroundColor: SURFACE,
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderColor: "#1a2a3a",
-  },
-  blockedBubble: {
-    backgroundColor: "#1a0a0a",
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderColor: "#3a1a1a",
-  },
-  buildLogBubble: {
-    backgroundColor: "#1a1400",
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderColor: "#3a2a00",
-    maxWidth: "95%",
-  },
-  buildLogText: {
-    fontFamily: Platform.OS === "web" ? "monospace" : "Courier",
-    fontSize: 11,
-    color: "#ccaa44",
-    lineHeight: 16,
-  },
-  systemBubble: {
-    backgroundColor: SURFACE2,
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderColor: "#222222",
-  },
-  messageHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginBottom: 4,
-  },
-  roleLabel: {
-    fontSize: 10,
-    fontFamily: "Inter_700Bold",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  capBadge: {
-    fontSize: 9,
-    color: DIM,
-    fontFamily: "Inter_400Regular",
-    backgroundColor: "#1a1a1a",
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-    overflow: "hidden",
-    marginLeft: 4,
-  },
-  messageText: {
-    color: "#cccccc",
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    lineHeight: 20,
-  },
-  userText: {
-    color: BG,
-  },
-  viewPromptBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 6,
-    alignSelf: "flex-start",
-  },
-  viewPromptText: {
-    color: DIM,
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-  },
-  approvalRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 10,
-  },
-  approvalBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  approveBtn: {
-    backgroundColor: ACCENT,
-  },
-  denyBtn: {
-    backgroundColor: "#333",
-  },
-  approveBtnText: {
-    color: "#000",
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-  },
-  denyBtnText: {
-    color: "#fff",
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-  },
-  inputBar: {
-    borderTopWidth: 1,
-    borderTopColor: SURFACE,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    backgroundColor: BG,
-  },
-  processingBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingBottom: 8,
-  },
-  processingText: {
-    color: ACCENT,
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-  },
-  buildProgressBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingBottom: 6,
-    paddingHorizontal: 4,
-  },
-  buildProgressText: {
-    color: "#ffaa00",
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
-  },
+  plusBtnPressed: { backgroundColor: "#222" },
   input: {
-    flex: 1,
-    backgroundColor: SURFACE,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    color: "#ffffff",
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    maxHeight: 120,
-    borderWidth: 1,
-    borderColor: SURFACE2,
+    flex: 1, backgroundColor: SURFACE, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10,
+    color: "#ffffff", fontSize: 14, fontFamily: "Inter_400Regular", maxHeight: 120, borderWidth: 1, borderColor: SURFACE2,
   },
-  sendBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: ACCENT,
-    justifyContent: "center",
-    alignItems: "center",
+  sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, justifyContent: "center", alignItems: "center" },
+  sendBtnDisabled: { backgroundColor: SURFACE },
+});
+
+const renameStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.6)",
   },
-  sendBtnDisabled: {
-    backgroundColor: SURFACE,
+  dialog: {
+    width: "85%", backgroundColor: "#1a1a1a", borderRadius: 16, padding: 20,
+    borderWidth: 1, borderColor: "#2a2a2a",
   },
-  copiedBubble: {
-    borderColor: ACCENT,
-    borderWidth: 1,
+  title: { color: "#e0e0e0", fontSize: 17, fontFamily: "Inter_700Bold", marginBottom: 14 },
+  input: {
+    backgroundColor: "#111", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10,
+    color: "#fff", fontSize: 14, fontFamily: "Inter_400Regular", borderWidth: 1, borderColor: "#333",
   },
-  copiedLabel: {
-    color: ACCENT,
-    fontSize: 10,
-    fontFamily: "Inter_500Medium",
-    marginTop: 4,
-    alignSelf: "flex-end",
-  },
+  btnRow: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 16 },
+  cancelBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: "#222" },
+  cancelText: { color: "#888", fontSize: 14, fontFamily: "Inter_500Medium" },
+  saveBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: ACCENT },
+  saveText: { color: "#000", fontSize: 14, fontFamily: "Inter_600SemiBold" },
 });
