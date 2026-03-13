@@ -17,6 +17,7 @@ import * as Clipboard from "expo-clipboard";
 import { SecureVault } from "@/src/security/SecureVault";
 import { getAgentCoreInstance } from "@/src/core/AgentCore";
 import { Logger } from "@/src/utils/Logger";
+import { DebugLog } from "@/src/utils/DebugLog";
 import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
 
 // ── Palette ────────────────────────────────────────────
@@ -77,6 +78,8 @@ export default function SettingsScreen() {
   // ── Log state ──────────────────────────────────────
   const [logs, setLogs] = useState<string[]>([]);
   const [logsLoaded, setLogsLoaded] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<string>("");
+  const [debugLogsLoaded, setDebugLogsLoaded] = useState(false);
 
   // ── Draft persistence (survives app switches) ──────
   const saveDraft = useCallback(async (draft: SavedApi | null, isNew: boolean) => {
@@ -298,6 +301,28 @@ export default function SettingsScreen() {
       Alert.alert("Copied", "Log entries copied to clipboard.");
     } catch {}
   }, [logs]);
+
+  const loadDebugLogs = useCallback(async () => {
+    const formatted = DebugLog.getMemoryEntriesFormatted(500);
+    setDebugLogs(formatted);
+    setDebugLogsLoaded(true);
+  }, []);
+
+  const copyDebugLogs = useCallback(async () => {
+    if (!debugLogs) return;
+    try {
+      await Clipboard.setStringAsync(debugLogs);
+      Alert.alert("Copied", "Debug log copied to clipboard.");
+    } catch {}
+  }, [debugLogs]);
+
+  const exportFullDebugLog = useCallback(async () => {
+    try {
+      const full = await DebugLog.exportAll();
+      await Clipboard.setStringAsync(full);
+      Alert.alert("Exported", "Full debug log (JSONL) copied to clipboard.");
+    } catch {}
+  }, []);
 
   // ── Render ─────────────────────────────────────────
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -577,6 +602,33 @@ export default function SettingsScreen() {
               </ScrollView>
             )}
           </View>
+
+          <View style={[styles.card, { marginTop: 12 }]}>
+            <View style={styles.logHeader}>
+              <Text style={styles.cardTitle}>Debug Log</Text>
+              <View style={styles.logActions}>
+                <Pressable onPress={loadDebugLogs} style={styles.logActionBtn}>
+                  <Ionicons name="refresh" size={16} color={DIM} />
+                </Pressable>
+                <Pressable onPress={copyDebugLogs} style={styles.logActionBtn}>
+                  <Ionicons name="copy-outline" size={16} color={DIM} />
+                </Pressable>
+                <Pressable onPress={exportFullDebugLog} style={styles.logActionBtn}>
+                  <Ionicons name="download-outline" size={16} color={DIM} />
+                </Pressable>
+              </View>
+            </View>
+            <Text style={styles.debugHint}>Full dev log with prompts, AI responses, agent steps, costs, and errors. Copy and share with your dev team or AI assistant.</Text>
+            {!debugLogsLoaded ? (
+              <Text style={styles.emptyText}>Tap refresh to load debug log</Text>
+            ) : !debugLogs ? (
+              <Text style={styles.emptyText}>No debug entries yet</Text>
+            ) : (
+              <ScrollView style={styles.logScroll} nestedScrollEnabled>
+                <Text style={styles.logLine} selectable>{debugLogs}</Text>
+              </ScrollView>
+            )}
+          </View>
         )}
       </ScrollView>
     </View>
@@ -681,5 +733,9 @@ const styles = StyleSheet.create({
     color: "#888", fontSize: 10,
     fontFamily: Platform.OS === "web" ? "monospace" : "Courier",
     lineHeight: 14, marginBottom: 1,
+  },
+  debugHint: {
+    color: DIM, fontSize: 11, fontFamily: "Inter_400Regular",
+    marginBottom: 8, lineHeight: 15,
   },
 });

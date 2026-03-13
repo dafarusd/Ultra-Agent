@@ -23,6 +23,7 @@ The agent should persist conversations and allow switching between them.
 **Capability Management:** `CapabilityRegistry` defines 22 capabilities (e.g., file operations, camera, location, app build, self-modify) with risk levels, executed by `TaskExecutor`.
 **Error Handling and Debugging:** An `ErrorBoundary` handles UI errors, and a `DebugEngine` provides AI-driven self-healing for build errors.
 **Persistence and Monitoring:** `ConversationManager` for chat storage, `ExecutionLedger` for event logging and idempotency/autonomy budgets, and `CostTracker` for API usage.
+**Debug Logging:** Two-tier log system: `Logger` (user-facing, in-memory, visible in Settings > Logs) and `DebugLog` (dev-facing, file-based JSONL in `debug_logs/`, captures full prompts, AI responses, agent steps, API call timing, costs, errors with stacks). Debug log is viewable/exportable from Settings > Logs > Debug Log section.
 **Native Module Integration:** A custom `AgentNativeModule` (Java classes via Expo config plugin) provides direct access to native functions like file writing, Java compilation, APK packaging, signing, and installation. `AppController` uses accessibility services for UI automation and E2E testing of generated apps.
 
 ## External Dependencies

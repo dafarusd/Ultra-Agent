@@ -4,6 +4,17 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.3] — 2026-03-13 — Debug Log System
+
+### Added
+- **DebugLog** (`src/utils/DebugLog.ts`) — Comprehensive file-based debug log for development. Captures full user prompts, AI responses (with model, cost, tokens), all 9 agent loop phases with timing, API call durations, safety checks, execution results, verification outcomes, cost records, model discovery events, and errors with stack traces. Writes JSONL to device filesystem (`debug_logs/` directory), auto-flushes every 3 seconds, and supports 7-day auto-cleanup.
+- **Debug Log UI** (settings.tsx Logs tab) — New "Debug Log" section below Application Logs with refresh, copy, and export buttons. Human-readable formatted view for quick scanning; export button copies full JSONL for machine parsing by AI assistants or dev tools.
+- **Instrumented AgentCore** — Every step of the 9-step agent loop (INTAKE, ROUTE, PLAN, VERIFY, APPROVE, EXECUTE, VERIFY_RESULT, WRITE_MEMORY, ADAPT) now emits debug log entries with full context.
+- **Instrumented ModelRouter** — API calls log model, prompt/completion tokens, cost, and duration in milliseconds. Model discovery and initialization events logged.
+- **Instrumented CostTracker** — Every cost record emits a debug entry with model, cost, and task ID.
+
+---
+
 ## [v3.2] — 2026-03-13 — New UI Components & Multi-API Settings
 
 ### Added

@@ -15,6 +15,7 @@ import { SafetyChecker } from './SafetyChecker';
 import { CommandParser } from './CommandParser';
 import { validatePlan } from './CapabilitySchemas';
 import { Logger } from '../utils/Logger';
+import { DebugLog } from '../utils/DebugLog';
 import type {
   ChatMessage,
   UltraExecutionResult,
@@ -132,7 +133,9 @@ export class AgentCore extends SimpleEmitter {
     await safeInit('TaskExecutor', () => this.executor.initialize());
     await safeInit('StorageBudget', () => this.storage.enforceBudget());
     await safeInit('LogCleanup', async () => { await Logger.cleanOldLogs(7); });
+    await safeInit('DebugLogCleanup', async () => { await DebugLog.cleanOldLogs(7); });
     await safeInit('CostCleanup', () => this.costTracker.cleanup(30));
+    DebugLog.systemEvent('AgentCore', 'Initialization complete');
 
     this.ready = true;
     this.emit('log', 'All systems online', 'agent');
@@ -277,6 +280,8 @@ export class AgentCore extends SimpleEmitter {
     };
 
     // === STEP 1: INGEST ===
+    DebugLog.userMessage(conversationId, userInput);
+    DebugLog.agentStep(taskId, 'INTAKE', `User input (${userInput.length} chars): "${userInput}"`, true);
     step('INTAKE', `Received user input: "${userInput.slice(0, 200)}"${args.replay ? ' (replay)' : ''}`, true);
     await this.ledger.logEvent({
       phase: 'INTAKE',
@@ -300,6 +305,7 @@ export class AgentCore extends SimpleEmitter {
 
     // === STEP 2: ROUTE ===
     const mode = this.detectMode(userInput);
+    DebugLog.modeDetected(taskId, mode, userInput);
     step('ROUTE', `Detected mode: ${mode}`, true);
 
     // === STEP 3: PLAN ===
@@ -371,8 +377,10 @@ export class AgentCore extends SimpleEmitter {
           step('PLAN', `AI routing threw error: ${stack}`, false);
           return { type: 'error', message: 'Failed to analyze command: ' + err.message };
         }
+        DebugLog.planResult(taskId, plan.capability, plan.params, false);
         step('PLAN', `AI routed to capability: ${plan.capability} — params: ${JSON.stringify(plan.params).slice(0, 300)}`, true);
       } else {
+        DebugLog.planResult(taskId, plan.capability, plan.params, true);
         step('PLAN', `Deterministic parse matched capability: ${plan.capability} — params: ${JSON.stringify(plan.params).slice(0, 300)}`, true);
       }
 
@@ -403,6 +411,7 @@ export class AgentCore extends SimpleEmitter {
       }
 
       const safetyResult = this.safety.check(userInput, plan);
+      DebugLog.safetyCheck(taskId, safetyResult.risk, safetyResult.allowed, safetyResult.reasons);
       step('VERIFY', `Safety check: risk=${safetyResult.risk}, allowed=${safetyResult.allowed}, reasons=[${safetyResult.reasons.join('; ')}]`, safetyResult.allowed);
 
       await this.ledger.logEvent({
@@ -540,11 +549,13 @@ export class AgentCore extends SimpleEmitter {
           execResult = await this.executor.runWithPlan(plan, taskId);
         }
         const rawStr = JSON.stringify(execResult).slice(0, 1000);
+        DebugLog.execResult(taskId, plan.capability, execResult?.success !== false, rawStr);
         step('EXECUTE', `${plan.capability} completed. Result: ${rawStr}${progressLog.length > 0 ? '\nProgress (' + progressLog.length + ' entries):\n' + progressLog.join('\n') : ''}`, execResult?.success !== false);
       } catch (err: any) {
         const stack = err.stack || err.message;
         execResult = { success: false, error: err.message, stack };
         execError = stack;
+        DebugLog.error('EXECUTE', err.message, stack);
         step('EXECUTE', `${plan.capability} threw exception:\n${stack}`, false);
         this.executor.setGenomeProgressCallback(null);
       }
@@ -575,6 +586,7 @@ export class AgentCore extends SimpleEmitter {
 
       // === STEP 7: VERIFY RESULT ===
       const verification = this.safety.verifyResult(plan, execResult);
+      DebugLog.verification(taskId, verification.verified, verification.issues);
       step('VERIFY_RESULT', `verified=${verification.verified}${verification.issues.length > 0 ? ', issues: ' + verification.issues.join('; ') : ', no issues'}`, verification.verified);
 
       await this.ledger.logEvent({
@@ -743,6 +755,7 @@ export class AgentCore extends SimpleEmitter {
         maxTokens: 4000,
       });
 
+      DebugLog.aiResponse(conversationId, aiResult.model, aiResult.content, aiResult.cost);
       step('EXECUTE', `AI response received (${aiResult.content.length} chars, model=${aiResult.model}, cost=${aiResult.cost ?? 0})`, true);
       step('VERIFY_RESULT', 'N/A — no capability result to verify in conversation mode', true);
       step('WRITE_MEMORY', 'AI response written to conversation history', true);
@@ -785,6 +798,7 @@ export class AgentCore extends SimpleEmitter {
       };
     } catch (err: any) {
       const stack = err.stack || err.message;
+      DebugLog.error('AI_REQUEST', err.message, stack);
       step('EXECUTE', `AI request failed: ${stack}`, false);
       return { type: 'error', message: 'AI request failed: ' + err.message };
     }

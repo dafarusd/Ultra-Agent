@@ -1,5 +1,6 @@
 import { SecureVault } from '../security/SecureVault';
 import { Logger } from '../utils/Logger';
+import { DebugLog } from '../utils/DebugLog';
 
 interface CostEntry {
   timestamp: number;
@@ -77,6 +78,7 @@ export class CostTracker {
     }
     await this.persist();
     this.logger.debug(`Recorded: $${cost.toFixed(6)} for ${model} (task: ${taskId})`);
+    DebugLog.costRecord(model, cost, taskId);
     return cost;
   }
 

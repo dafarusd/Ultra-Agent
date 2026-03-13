@@ -1,6 +1,7 @@
 import { SecureVault } from '../security/SecureVault';
 import { CostTracker } from '../services/CostTracker';
 import { Logger } from '../utils/Logger';
+import { DebugLog } from '../utils/DebugLog';
 import type { UltraModelDef } from '../types/ultra';
 
 export interface ModelDef {
@@ -98,6 +99,7 @@ export class ModelRouter {
       this.logger.warn('No Venice API key configured');
     } else {
       this.logger.info('ModelRouter initialized with API key');
+      DebugLog.systemEvent('ModelRouter', 'Initialized with API key');
       await this.discoverModels();
     }
     const savedModel = await this.vault.get('preferred_model');
@@ -195,6 +197,7 @@ export class ModelRouter {
         this.models.set(m.id, def);
       }
       this.logger.info(`Discovered ${list.length} models`);
+      DebugLog.systemEvent('ModelRouter', `Discovered ${list.length} models`);
     } catch (error: any) {
       this.logger.warn('Model discovery failed: ' + error.message);
     }
@@ -308,6 +311,7 @@ export class ModelRouter {
     const taskId = options.taskId || 'default';
     const agentId = options.agentId || 'main';
     if (!this.costTracker.isWithinDailyLimit()) throw new Error('Daily cost limit reached.');
+    const callStart = Date.now();
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
@@ -331,8 +335,10 @@ export class ModelRouter {
       const content = data.choices[0].message.content;
       const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
       const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
+      DebugLog.apiCall(taskId, model, usage.prompt_tokens, usage.completion_tokens, cost, Date.now() - callStart);
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
+      DebugLog.error('API_CALL', error.message, error.stack);
       if (error.name === 'AbortError') throw new Error('Request timed out after 60s. Check your connection and try again.');
       throw new Error('AI conversation failed: ' + error.message);
     }
