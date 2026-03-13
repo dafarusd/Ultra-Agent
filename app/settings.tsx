@@ -577,58 +577,60 @@ export default function SettingsScreen() {
             TAB: LOGS
             ══════════════════════════════════════════ */}
         {tab === "logs" && (
-          <View style={styles.card}>
-            <View style={styles.logHeader}>
-              <Text style={styles.cardTitle}>Application Logs</Text>
-              <View style={styles.logActions}>
-                <Pressable onPress={loadLogs} style={styles.logActionBtn}>
-                  <Ionicons name="refresh" size={16} color={DIM} />
-                </Pressable>
-                <Pressable onPress={copyLogs} style={styles.logActionBtn}>
-                  <Ionicons name="copy-outline" size={16} color={DIM} />
-                </Pressable>
+          <>
+            <View style={styles.card}>
+              <View style={styles.logHeader}>
+                <Text style={styles.cardTitle}>Application Logs</Text>
+                <View style={styles.logActions}>
+                  <Pressable onPress={loadLogs} style={styles.logActionBtn}>
+                    <Ionicons name="refresh" size={16} color={DIM} />
+                  </Pressable>
+                  <Pressable onPress={copyLogs} style={styles.logActionBtn}>
+                    <Ionicons name="copy-outline" size={16} color={DIM} />
+                  </Pressable>
+                </View>
               </View>
+
+              {logs.length === 0 ? (
+                <Text style={styles.emptyText}>
+                  {logsLoaded ? "No log entries" : "Tap refresh to load logs"}
+                </Text>
+              ) : (
+                <ScrollView style={styles.logScroll} nestedScrollEnabled>
+                  {logs.map((line, i) => (
+                    <Text key={i} style={styles.logLine}>{line}</Text>
+                  ))}
+                </ScrollView>
+              )}
             </View>
 
-            {logs.length === 0 ? (
-              <Text style={styles.emptyText}>
-                {logsLoaded ? "No log entries" : "Tap refresh to load logs"}
-              </Text>
-            ) : (
-              <ScrollView style={styles.logScroll} nestedScrollEnabled>
-                {logs.map((line, i) => (
-                  <Text key={i} style={styles.logLine}>{line}</Text>
-                ))}
-              </ScrollView>
-            )}
-          </View>
-
-          <View style={[styles.card, { marginTop: 12 }]}>
-            <View style={styles.logHeader}>
-              <Text style={styles.cardTitle}>Debug Log</Text>
-              <View style={styles.logActions}>
-                <Pressable onPress={loadDebugLogs} style={styles.logActionBtn}>
-                  <Ionicons name="refresh" size={16} color={DIM} />
-                </Pressable>
-                <Pressable onPress={copyDebugLogs} style={styles.logActionBtn}>
-                  <Ionicons name="copy-outline" size={16} color={DIM} />
-                </Pressable>
-                <Pressable onPress={exportFullDebugLog} style={styles.logActionBtn}>
-                  <Ionicons name="download-outline" size={16} color={DIM} />
-                </Pressable>
+            <View style={[styles.card, { marginTop: 12 }]}>
+              <View style={styles.logHeader}>
+                <Text style={styles.cardTitle}>Debug Log</Text>
+                <View style={styles.logActions}>
+                  <Pressable onPress={loadDebugLogs} style={styles.logActionBtn}>
+                    <Ionicons name="refresh" size={16} color={DIM} />
+                  </Pressable>
+                  <Pressable onPress={copyDebugLogs} style={styles.logActionBtn}>
+                    <Ionicons name="copy-outline" size={16} color={DIM} />
+                  </Pressable>
+                  <Pressable onPress={exportFullDebugLog} style={styles.logActionBtn}>
+                    <Ionicons name="download-outline" size={16} color={DIM} />
+                  </Pressable>
+                </View>
               </View>
+              <Text style={styles.debugHint}>Full dev log with prompts, AI responses, agent steps, costs, and errors. Copy and share with your dev team or AI assistant.</Text>
+              {!debugLogsLoaded ? (
+                <Text style={styles.emptyText}>Tap refresh to load debug log</Text>
+              ) : !debugLogs ? (
+                <Text style={styles.emptyText}>No debug entries yet</Text>
+              ) : (
+                <ScrollView style={styles.logScroll} nestedScrollEnabled>
+                  <Text style={styles.logLine} selectable>{debugLogs}</Text>
+                </ScrollView>
+              )}
             </View>
-            <Text style={styles.debugHint}>Full dev log with prompts, AI responses, agent steps, costs, and errors. Copy and share with your dev team or AI assistant.</Text>
-            {!debugLogsLoaded ? (
-              <Text style={styles.emptyText}>Tap refresh to load debug log</Text>
-            ) : !debugLogs ? (
-              <Text style={styles.emptyText}>No debug entries yet</Text>
-            ) : (
-              <ScrollView style={styles.logScroll} nestedScrollEnabled>
-                <Text style={styles.logLine} selectable>{debugLogs}</Text>
-              </ScrollView>
-            )}
-          </View>
+          </>
         )}
       </ScrollView>
     </View>
