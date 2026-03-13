@@ -132,7 +132,7 @@ export default function PlusMenu({
               return (
                 <Pressable
                   key={opt.type}
-                  onPress={() => { onSelect(opt.type); onClose(); }}
+                  onPress={() => onSelect(opt.type)}
                   style={({ pressed }) => [
                     styles.optionCard,
                     isActive && { borderColor: opt.color, backgroundColor: `${opt.color}10` },

@@ -204,32 +204,20 @@ export default function ChatScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (agentCore) {
-        agentCore.refreshApiKey().then(() => {
-          if (agentCore.hasApiKey()) setStatus("Ready");
-        });
-      }
+      if (!agentCore) return;
+      agentCore.refreshApiKey().then(() => {
+        if (agentCore.hasApiKey()) setStatus("Ready");
+      });
       SecureVault.initialize().then(async (v) => {
         try {
           const raw = await v.get("api_defaults");
           if (raw) {
             const parsed = JSON.parse(raw);
             setSavedDefaults(parsed);
-            const modeDefault = parsed[currentMode];
-            if (modeDefault && agentCore) {
-              await agentCore.setDefaultModel(modeDefault);
-              setActiveModelId(modeDefault);
-            } else if (agentCore) {
-              setActiveModelId(agentCore.getDefaultModel());
-            }
-          } else if (agentCore) {
-            setActiveModelId(agentCore.getDefaultModel());
           }
-        } catch {
-          if (agentCore) setActiveModelId(agentCore.getDefaultModel());
-        }
+        } catch {}
       });
-    }, [agentCore, currentMode])
+    }, [agentCore])
   );
 
   // ── Result handler ─────────────────────────────────
@@ -795,30 +783,17 @@ export default function ChatScreen() {
         currentType={currentMode}
         onSelect={async (type) => {
           setCurrentMode(type);
-          let defaults = { ...savedDefaults };
-          try {
-            const v = await SecureVault.initialize();
-            const raw = await v.get("api_defaults");
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              defaults = parsed;
-              setSavedDefaults(parsed);
-            }
-          } catch {}
-          const defaultModelId = defaults[type];
+          setPlusMenuVisible(false);
+          const defaultModelId = savedDefaults[type];
           if (defaultModelId && agentCore) {
             await agentCore.setDefaultModel(defaultModelId);
             setActiveModelId(defaultModelId);
-            setStatus(`${type}: ${defaultModelId}`);
-            setPlusMenuVisible(false);
-          } else {
+          } else if (agentCore) {
             const filterMap: Record<string, typeof modelPickerInitialFilter> = {
               chat: "text", image: "image", code: "code",
               reasoning: "reasoning", video: "video",
             };
-            const mappedFilter = filterMap[type] || "all";
-            setModelPickerInitialFilter(mappedFilter);
-            setPlusMenuVisible(false);
+            setModelPickerInitialFilter(filterMap[type] || "all");
             setModelPickerVisible(true);
           }
         }}

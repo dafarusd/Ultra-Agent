@@ -88,9 +88,14 @@ export default function ModelPickerSheet({
     }
   }, [visible]);
 
-  const filtered = filter === "all"
+  const filteredRaw = filter === "all"
     ? models
     : models.filter((m) => m.type === filter);
+  const filtered = [...filteredRaw].sort((a, b) => {
+    const aActive = a.id === currentModelId ? 1 : 0;
+    const bActive = b.id === currentModelId ? 1 : 0;
+    return bActive - aActive;
+  });
 
   const renderModel = useCallback(
     ({ item }: { item: PickerModel }) => {
