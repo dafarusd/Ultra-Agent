@@ -267,3 +267,23 @@ All notable changes to this project are documented here, organized by feature ve
 - **Native module plugin**: `plugins/withAgentNative.js` Expo config plugin — injects Java classes for compilation, packaging, signing, installation, and `AppController` accessibility service.
 - **New Architecture**: `newArchEnabled: true` (required for react-native-reanimated v4).
 - **`ultra-full-source.txt`**: 55-file full-source snapshot regenerated after every session.
+
+## v3.7.1 – Defaults sync fix (Focus effect)
+**2026-03-13**
+
+Fixed stale-closure bug in `useFocusEffect` where updating mode defaults in Settings would not immediately sync to `activeModelId` on the chat screen.
+
+**Changes:**
+- Focus effect now reads updated defaults from vault AND applies the current mode's default to `activeModelId` if it has changed
+- Added `uiModelApply` log when sync occurs: `focusEffect_default_sync` source
+- Fixed dependency array to include `currentMode` and `activeModelId` (was previously only `[agentCore]`)
+
+**Before:** Save new chat default to llama-3.3-70b → return to chat → activeModelId still "venice-uncensored" (stale) → eventually updates on next render
+**After:** Save new defaults → return to chat → activeModelId immediately updates to llama-3.3-70b in focus effect
+
+**Log pattern:**
+- `UI_DEFAULTS_LOADED` from focusEffect reads new defaults from vault
+- If `parsed[currentMode]` differs from `activeModelId`, immediately call `setActiveModelId(parsed[currentMode])`
+- Log source: `focusEffect_default_sync`
+
+This fix was exposed by the v3.7.0 state snapshot logging — the snapshot showed `activeModelId` stale while `savedDefaults` had new values, making the desync visible in logs.

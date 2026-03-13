@@ -264,11 +264,17 @@ export default function ChatScreen() {
           if (raw) {
             const parsed = JSON.parse(raw);
             setSavedDefaults(parsed);
+            // Apply the default model for current mode to activeModelId
+            const modeDefault = parsed[currentMode];
+            if (modeDefault && modeDefault !== activeModelId) {
+              setActiveModelId(modeDefault);
+              DebugLog.uiModelApply(modeDefault, currentMode, "focusEffect_default_sync", true);
+            }
             DebugLog.uiDefaultsLoaded("focusEffect", parsed);
           }
         } catch {}
       });
-    }, [agentCore])
+    }, [agentCore, currentMode, activeModelId])
   );
 
   // ── Result handler ─────────────────────────────────
