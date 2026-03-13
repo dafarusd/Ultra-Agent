@@ -4,6 +4,17 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.6.1] — 2026-03-13 — Debug Log Display Expansion
+
+### Fixed
+- **Debug log display limit increased** — Changed from 500 entries to 2000 entries displayed when tapping Refresh in Settings > Logs > Debug Log. Full buffer remains 5000 entries in memory with JSONL file export via "Download" button for complete history.
+- **Log scroll area increased** — Debug log ScrollView `maxHeight` increased from 400px to 600px for better visibility on all screen sizes.
+
+### Changed
+- `ultra-full-source.txt` regenerated (15,724 lines)
+
+---
+
 ## [v3.6.0] — 2026-03-13 — All-Encompassing Debug Logging System
 
 ### Added — Production-grade DebugLog with 40+ categories instrumented across every subsystem

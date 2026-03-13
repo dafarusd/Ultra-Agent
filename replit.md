@@ -28,6 +28,7 @@ The agent should persist conversations and allow switching between them.
 **UI Color:** The accent green is `#34d399` (softer mint) used consistently across all components. Messages show inline copy buttons instead of long-press behavior, with selectable text for partial copying.
 **Default Models by Mode:** Settings shows ALL available AI models for each mode (chat/image/code/reasoning/video) with recommended models marked with a star icon. No hardcoded presets — users can pick any model. The Plus menu applies saved defaults automatically when switching modes.
 **Stop Button:** Neutral dark styling (`#333` background), no red.
+**Debug Log Display:** Displays up to 2000 formatted entries (from 5000-entry memory buffer). Tap Refresh to reload. Download button exports full JSONL history of all 5000 entries with complete structured data (prompts, responses, costs, timings, errors).
 **Native Module Integration:** A custom `AgentNativeModule` (Java classes via Expo config plugin) provides direct access to native functions like file writing, Java compilation, APK packaging, signing, and installation. `AppController` uses accessibility services for UI automation and E2E testing of generated apps.
 
 ## External Dependencies

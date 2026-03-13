@@ -318,7 +318,7 @@ export default function SettingsScreen() {
   }, [logs]);
 
   const loadDebugLogs = useCallback(async () => {
-    const formatted = DebugLog.getMemoryEntriesFormatted(500);
+    const formatted = DebugLog.getMemoryEntriesFormatted(2000);
     setDebugLogs(formatted);
     setDebugLogsLoaded(true);
   }, []);
@@ -807,7 +807,7 @@ const styles = StyleSheet.create({
   logHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   logActions: { flexDirection: "row", gap: 8 },
   logActionBtn: { padding: 4 },
-  logScroll: { maxHeight: 400, backgroundColor: SURFACE, borderRadius: 8, padding: 10 },
+  logScroll: { maxHeight: 600, backgroundColor: SURFACE, borderRadius: 8, padding: 10 },
   logLine: {
     color: "#888", fontSize: 10,
     fontFamily: Platform.OS === "web" ? "monospace" : "Courier",
