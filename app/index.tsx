@@ -225,7 +225,11 @@ export default function ChatScreen() {
     try {
       const result = await agentCore.execute({ conversationId, userInput: text });
       await handleResult(result, agentCore, conversationId);
-    } catch {
+    } catch (err: any) {
+      const isAbort = err?.message?.includes("aborted") || err?.message?.includes("timed out");
+      if (isAbort) {
+        setStatus("Stopped");
+      }
       await reloadMessages(agentCore, conversationId);
     }
     setIsProcessing(false);
@@ -668,18 +672,29 @@ export default function ChatScreen() {
               multiline
               maxLength={4000}
               returnKeyType="send"
-              onSubmitEditing={() => handleSend()}
+              onSubmitEditing={() => { if (!isProcessing) handleSend(); }}
               blurOnSubmit={false}
               editable
             />
 
-            <Pressable
-              onPress={() => { handleSend(); inputRef.current?.focus(); }}
-              disabled={isProcessing || !input.trim()}
-              style={[styles.sendBtn, (!input.trim() || isProcessing) && styles.sendBtnDisabled]}
-            >
-              <Ionicons name="send" size={18} color={!input.trim() || isProcessing ? DIM : BG} />
-            </Pressable>
+            {isProcessing ? (
+              <Pressable
+                onPress={() => {
+                  if (agentCore) agentCore.abortCurrentRequest();
+                }}
+                style={styles.stopBtn}
+              >
+                <Ionicons name="stop" size={18} color="#fff" />
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => { handleSend(); inputRef.current?.focus(); }}
+                disabled={!input.trim()}
+                style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
+              >
+                <Ionicons name="send" size={18} color={!input.trim() ? DIM : BG} />
+              </Pressable>
+            )}
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -861,6 +876,7 @@ const styles = StyleSheet.create({
   },
   sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, justifyContent: "center", alignItems: "center" },
   sendBtnDisabled: { backgroundColor: SURFACE },
+  stopBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#ef4444", justifyContent: "center", alignItems: "center" },
 });
 
 const renameStyles = StyleSheet.create({

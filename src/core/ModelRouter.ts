@@ -44,6 +44,7 @@ export class ModelRouter {
   private models: Map<string, ModelDef>;
   private defaultModel: string;
   private baseUrl: string;
+  private activeController: AbortController | null = null;
 
   constructor(vault: SecureVault, costTracker: CostTracker) {
     this.vault = vault;
@@ -259,6 +260,7 @@ export class ModelRouter {
       const startTime = Date.now();
       this.logger.info(`Sending request to ${model}...`);
       const controller = new AbortController();
+      this.activeController = controller;
       const timeout = setTimeout(() => controller.abort(), options.timeout || REQUEST_TIMEOUT);
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -278,6 +280,7 @@ export class ModelRouter {
         signal: controller.signal,
       });
       clearTimeout(timeout);
+      this.activeController = null;
       if (!resp.ok) {
         if (resp.status === 401) throw new Error('Invalid Venice API key.');
         if (resp.status === 429) throw new Error('Rate limited. Wait before retrying.');
@@ -341,6 +344,14 @@ export class ModelRouter {
       DebugLog.error('API_CALL', error.message, error.stack);
       if (error.name === 'AbortError') throw new Error('Request timed out after 60s. Check your connection and try again.');
       throw new Error('AI conversation failed: ' + error.message);
+    }
+  }
+
+  abortCurrentRequest(): void {
+    if (this.activeController) {
+      this.activeController.abort();
+      this.activeController = null;
+      this.logger.info('Request aborted by user');
     }
   }
 

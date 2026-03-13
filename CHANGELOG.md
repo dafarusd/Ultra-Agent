@@ -4,24 +4,30 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
-## [v3.4] — 2026-03-13 — 9-Bug Fix Batch
+## [v3.4] — 2026-03-13 — Bug Fixes + Stop Button + Model Defaults
 
 ### Fixed
 - **Input editable during AI response** — Text input is no longer disabled while the agent is processing. Users can type their next message while waiting; send button still gated.
 - **Model picker tabs empty** — Venice models (all typed as "text") are now auto-classified into Code and Reasoning tabs based on model ID patterns and capabilities (e.g., `deepseek-r1` → Reasoning, `codestral` → Code).
-- **Star conversation** — Fully implemented: persists starred state via `ConversationManager.updateMeta()`, shows filled star icon in 3-dot menu and conversation list, supports toggle (Star/Unstar).
+- **Star conversation** — Fully implemented: persists starred state via `ConversationManager.updateMeta()`, shows filled star icon in 3-dot menu and conversation list, supports toggle (Star/Unstar). Starred state resets on new chat and delete→create.
 - **Model picker syncs category from Plus menu** — Selecting a mode (Image, Code, Reasoning, Video) in the Plus menu now opens the model picker pre-filtered to that tab via `initialFilter` prop.
 - **Save Defaults button** — Added `keyboardShouldPersistTaps="handled"` to ScrollViews in Settings to ensure all buttons register taps reliably.
-- **API settings persistence** — Primary API key and base URL are now always synced back to `venice_api_key`/`api_base_url` vault keys on every save (not just first-API edge case), ensuring ModelRouter picks them up on relaunch.
-- **Cost display clarification** — Added "Estimated costs — may be included in your API plan" note below the usage pill in Settings to address confusion about free Venice plan showing costs.
+- **API settings persistence** — Primary API key and base URL are always synced to `venice_api_key`/`api_base_url` vault keys on every save (including clears), ensuring ModelRouter picks them up on relaunch.
+- **Cost display clarification** — Added "Estimated costs — may be included in your API plan" note below the usage pill.
+- **Delete from 3-dot menu on web** — Now uses `window.confirm` on web platform instead of `Alert.alert` which is unreliable on web.
+- **Can't send while processing** — `onSubmitEditing` now checks `isProcessing` flag before calling handleSend.
 
 ### Added
-- `ConversationManager.updateMeta()` — Generic metadata setter for conversations (used for starred state).
-- `Conversation.meta` field (`Record<string, unknown>`) and `ConversationMeta.starred` flag in types.
-- `ModelPickerSheet.initialFilter` prop — Sets the active filter tab when the sheet opens.
+- **Stop button** — Red square stop button replaces send button during AI processing. Aborts the active API request via `ModelRouter.abortCurrentRequest()` and shows "Stopped" status.
+- **Default Models by Mode** — Settings "Default APIs by Mode" replaced with "Default Models by Mode" — now shows actual AI models filtered by relevance to each mode (Chat/Image/Code/Reasoning/Video) instead of just API names.
+- `ModelRouter.abortCurrentRequest()` — Aborts the active fetch request using the shared AbortController.
+- `AgentCore.abortCurrentRequest()` — Exposed abort method for UI stop button.
+- `ConversationManager.updateMeta()` — Generic metadata setter for conversations.
+- `Conversation.meta` field and `ConversationMeta.starred` flag in types.
+- `ModelPickerSheet.initialFilter` prop.
 
 ### Changed
-- `ultra-full-source.txt` regenerated (15,037 lines).
+- `ultra-full-source.txt` regenerated (15,090 lines).
 
 ---
 

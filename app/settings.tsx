@@ -42,7 +42,7 @@ interface SavedApi {
 type DefaultRole = "chat" | "image" | "code" | "reasoning" | "video";
 
 interface ApiDefaults {
-  chat: string;       // API id
+  chat: string;       // model id
   image: string;
   code: string;
   reasoning: string;
@@ -476,41 +476,56 @@ export default function SettingsScreen() {
                   ))
                 )}
 
-                {/* API Defaults */}
+                {/* Model Defaults by Mode */}
                 {apis.length > 0 && (
                   <View style={styles.card}>
-                    <Text style={styles.cardTitle}>Default APIs by Mode</Text>
+                    <Text style={styles.cardTitle}>Default Models by Mode</Text>
                     <Text style={styles.cardSubtitle}>
-                      Select which API to use for each mode. These are used when you tap the "+" button in chat.
+                      Pick a preferred model for each mode. Used when you tap "+" in chat.
                     </Text>
 
-                    {(["chat", "image", "code", "reasoning", "video"] as DefaultRole[]).map((role) => (
-                      <View key={role} style={styles.defaultRow}>
-                        <Text style={styles.defaultLabel}>{role.charAt(0).toUpperCase() + role.slice(1)}</Text>
-                        <View style={styles.defaultPicker}>
-                          {/* Simple button-group style picker */}
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
-                            <Pressable
-                              onPress={() => setDefaults({ ...defaults, [role]: "" })}
-                              style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}
-                            >
-                              <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>None</Text>
-                            </Pressable>
-                            {apis.map((api) => (
+                    {(["chat", "image", "code", "reasoning", "video"] as DefaultRole[]).map((role) => {
+                      const core = getAgentCoreInstance();
+                      const allModels = core ? core.getAvailableModels() : [];
+                      const roleModels = allModels.filter((m: any) => {
+                        const t = (m.type || "text").toLowerCase();
+                        const id = (m.id || "").toLowerCase();
+                        const caps = m.capabilities || {};
+                        if (role === "chat") return t === "text" && !caps.supportsReasoning && !id.includes("code");
+                        if (role === "image") return t === "image";
+                        if (role === "code") return t === "text" && (id.includes("code") || id.includes("codestral") || id.includes("deepseek-coder"));
+                        if (role === "reasoning") return t === "text" && (caps.supportsReasoning || id.includes("reason") || id.includes("qwq") || id.includes("deepseek-r1"));
+                        if (role === "video") return t === "video";
+                        return false;
+                      });
+                      const displayModels = roleModels.length > 0 ? roleModels : allModels.filter((m: any) => (m.type || "text") === "text").slice(0, 10);
+                      return (
+                        <View key={role} style={styles.defaultRow}>
+                          <Text style={styles.defaultLabel}>{role.charAt(0).toUpperCase() + role.slice(1)}</Text>
+                          <View style={styles.defaultPicker}>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
                               <Pressable
-                                key={api.id}
-                                onPress={() => setDefaults({ ...defaults, [role]: api.id })}
-                                style={[styles.defaultOption, defaults[role] === api.id && styles.defaultOptionActive]}
+                                onPress={() => setDefaults({ ...defaults, [role]: "" })}
+                                style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}
                               >
-                                <Text style={[styles.defaultOptionText, defaults[role] === api.id && styles.defaultOptionTextActive]}>
-                                  {api.name}
-                                </Text>
+                                <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>Auto</Text>
                               </Pressable>
-                            ))}
-                          </ScrollView>
+                              {displayModels.map((m: any) => (
+                                <Pressable
+                                  key={m.id}
+                                  onPress={() => setDefaults({ ...defaults, [role]: m.id })}
+                                  style={[styles.defaultOption, defaults[role] === m.id && styles.defaultOptionActive]}
+                                >
+                                  <Text style={[styles.defaultOptionText, defaults[role] === m.id && styles.defaultOptionTextActive]} numberOfLines={1}>
+                                    {(m.name || m.id).replace(/^(Venice|v1)\s*/i, "").slice(0, 20)}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </ScrollView>
+                          </View>
                         </View>
-                      </View>
-                    ))}
+                      );
+                    })}
 
                     <Pressable onPress={saveDefaults} style={[styles.btn, styles.primaryBtn, { marginTop: 12 }]}>
                       <Ionicons name="save-outline" size={16} color={BG} />

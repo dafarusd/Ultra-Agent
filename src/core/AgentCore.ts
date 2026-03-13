@@ -928,6 +928,7 @@ export class AgentCore extends SimpleEmitter {
     }
   }
 
+  abortCurrentRequest(): void { this.ai.abortCurrentRequest(); }
   hasApiKey(): boolean { return this.ai.hasApiKey(); }
   async refreshApiKey(): Promise<void> { await this.ai.refreshApiKey(); }
   getAvailableModels() { return this.ai.getAvailableModels(); }
