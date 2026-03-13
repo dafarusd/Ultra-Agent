@@ -4,10 +4,22 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.5.2] — 2026-03-13 — Defaults Sync for ALL Modes
+
+### Fixed
+- **Plus menu reads defaults directly from vault** — When tapping "+" and selecting any mode (Image, Code, Reasoning, Video), the handler now reads saved defaults directly from SecureVault as a fallback if the React state hasn't loaded yet. This fixes the issue where only Chat mode defaults were being applied while other modes fell through to the model picker.
+- **Removed model existence check on apply** — Previously, applying a saved default required the model to be found in `getAvailableModels()`. If the model list wasn't loaded yet (race condition), the default would be silently skipped. Now defaults are applied directly.
+- **Status bar shows mode + model** — When a saved default is applied via Plus menu, the status text now shows e.g. "code: grok-3-code" to confirm the switch visually.
+
+### Changed
+- `ultra-full-source.txt` regenerated (15,246 lines).
+
+---
+
 ## [v3.5.1] — 2026-03-13 — Defaults Sync Fix + Collapsible Settings
 
 ### Fixed
-- **Defaults sync to AI pill (root cause fix)** — `useFocusEffect` now looks up the current mode's saved default and calls `setDefaultModel()` + `setActiveModelId()` when returning from Settings. Previously it only read the engine's last-used model, ignoring saved per-mode defaults. Added `currentMode` as a dependency so mode switches also trigger the correct default lookup. Model existence is validated against available models before applying.
+- **Defaults sync to AI pill (root cause fix)** — `useFocusEffect` now looks up the current mode's saved default and calls `setDefaultModel()` + `setActiveModelId()` when returning from Settings. Previously it only read the engine's last-used model, ignoring saved per-mode defaults. Added `currentMode` as a dependency so mode switches also trigger the correct default lookup.
 
 ### Added
 - **Collapsible "Default Models by Mode"** — The settings card is now collapsed by default with a "Tap to configure" hint and chevron toggle. Reduces visual clutter in the API Setup tab.

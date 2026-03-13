@@ -199,14 +199,8 @@ export default function ChatScreen() {
             setSavedDefaults(parsed);
             const modeDefault = parsed[currentMode];
             if (modeDefault && agentCore) {
-              const available = agentCore.getAvailableModels();
-              const exists = available.some((m: any) => m.id === modeDefault);
-              if (exists) {
-                await agentCore.setDefaultModel(modeDefault);
-                setActiveModelId(modeDefault);
-              } else {
-                setActiveModelId(agentCore.getDefaultModel());
-              }
+              await agentCore.setDefaultModel(modeDefault);
+              setActiveModelId(modeDefault);
             } else if (agentCore) {
               setActiveModelId(agentCore.getDefaultModel());
             }
@@ -777,11 +771,22 @@ export default function ChatScreen() {
         currentType={currentMode}
         onSelect={async (type) => {
           setCurrentMode(type);
-          const defaultModelId = savedDefaults[type];
+          let defaults = savedDefaults;
+          if (!defaults || Object.keys(defaults).length === 0) {
+            try {
+              const v = await SecureVault.initialize();
+              const raw = await v.get("api_defaults");
+              if (raw) {
+                defaults = JSON.parse(raw);
+                setSavedDefaults(defaults);
+              }
+            } catch {}
+          }
+          const defaultModelId = defaults[type];
           if (defaultModelId && agentCore) {
             await agentCore.setDefaultModel(defaultModelId);
             setActiveModelId(defaultModelId);
-            setStatus(`Switched to ${type}`);
+            setStatus(`${type}: ${defaultModelId}`);
             setPlusMenuVisible(false);
           } else {
             const filterMap: Record<string, typeof modelPickerInitialFilter> = {
