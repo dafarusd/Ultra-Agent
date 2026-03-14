@@ -188,6 +188,7 @@ export default function ChatScreen() {
 
   // ── Init ───────────────────────────────────────────
   useEffect(() => {
+    let coreRef: AgentCore | null = null;
     async function init() {
       if (agentCoreInitialized.current) return;
       agentCoreInitialized.current = true;
@@ -201,6 +202,7 @@ export default function ChatScreen() {
           if (type === "genome_progress") setGenomePhase(msg);
         });
         await core.initialize();
+        coreRef = core;
         setAgentCore(core);
         setAgentCoreInstance(core);
         const modelsAvailable = core.getAvailableModels()?.length ?? 0;
@@ -259,6 +261,9 @@ export default function ChatScreen() {
       }
     }
     init();
+    return () => {
+      if (coreRef) coreRef.destroy('component_unmount');
+    };
   }, []);
 
   const lastFocusTime = useRef(0);
@@ -329,7 +334,7 @@ export default function ChatScreen() {
     const _sendStart = Date.now();
     try {
       const result = await agentCore.execute({ conversationId, userInput: text });
-      UltraDevLog.sendComplete('(check taskId in AGENT_EXEC_START)', result?.success !== false, Date.now() - _sendStart, true, false);
+      UltraDevLog.sendComplete(result?.taskId ?? '(unknown)', result?.success !== false, Date.now() - _sendStart, true, false);
       await handleResult(result, agentCore, conversationId);
     } catch (err: any) {
       UltraDevLog.error('handleSend', err?.message || 'unknown', err?.stack);
@@ -793,7 +798,6 @@ export default function ChatScreen() {
                 };
                 const filter = modeToFilter[currentMode] || "all";
                 DebugLog.uiPickerOpen(filter, currentMode, activeModelId);
-                UltraDevLog.pickerOpen(getPickerModels().length, activeModelId || '', 0, filter);
                 UltraDevLog.modalEvent('modelPicker', 'open', { modelCount: getPickerModels().length });
                 snapUI("picker_open");
                 setModelPickerInitialFilter(filter);

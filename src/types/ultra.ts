@@ -105,6 +105,7 @@ export type ExecutionResultType =
 export interface UltraExecutionResult {
   type: ExecutionResultType;
   message: string;
+  taskId?: string;
   data?: any;
 }
 

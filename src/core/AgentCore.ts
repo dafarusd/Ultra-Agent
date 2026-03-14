@@ -283,7 +283,7 @@ export class AgentCore extends SimpleEmitter {
   }
 
   async execute(args: ExecuteArgs): Promise<UltraExecutionResult> {
-    if (!this.ready) return { type: 'error', message: 'Agent not initialized' };
+    if (!this.ready) return { type: 'error', message: 'Agent not initialized', taskId: '' };
 
     const { conversationId, userInput } = args;
     const taskId = Date.now().toString(36);
@@ -347,7 +347,7 @@ export class AgentCore extends SimpleEmitter {
             meta: {},
           };
           await this.conversations.addMessage(conversationId, errMsg);
-          return { type: 'error', message: errMsg.content };
+          return { type: 'error', message: errMsg.content, taskId };
         }
         this.emit('log', 'Analyzing command...', 'system');
         const systemPrompt = this.buildDynamicPrompt({
@@ -388,12 +388,12 @@ export class AgentCore extends SimpleEmitter {
               meta: { mode: 'command', promptTrace },
             };
             await this.conversations.addMessage(conversationId, errMsg);
-            return { type: 'clarify', message: errMsg.content, data: { promptTrace } };
+            return { type: 'clarify', message: errMsg.content, taskId, data: { promptTrace } };
           }
         } catch (err: any) {
           const stack = err.stack || err.message;
           step('PLAN', `AI routing threw error: ${stack}`, false);
-          return { type: 'error', message: 'Failed to analyze command: ' + err.message };
+          return { type: 'error', message: 'Failed to analyze command: ' + err.message, taskId };
         }
         DebugLog.planResult(taskId, plan.capability, plan.params, false);
         step('PLAN', `AI routed to capability: ${plan.capability} — params: ${JSON.stringify(plan.params).slice(0, 300)}`, true);
@@ -425,7 +425,7 @@ export class AgentCore extends SimpleEmitter {
           meta: { mode: 'command', capability: plan.capability },
         };
         await this.conversations.addMessage(conversationId, errMsg);
-        return { type: 'error', message: msg };
+        return { type: 'error', message: msg, taskId };
       }
 
       const safetyResult = this.safety.check(userInput, plan);
@@ -452,7 +452,7 @@ export class AgentCore extends SimpleEmitter {
           meta: { mode: 'command', capability: plan.capability, risk: 'blocked' },
         };
         await this.conversations.addMessage(conversationId, blockedMsg);
-        return { type: 'blocked', message: msg, data: { safety: safetyResult, plan } };
+        return { type: 'blocked', message: msg, taskId, data: { safety: safetyResult, plan } };
       }
 
       // === STEP 5: APPROVE ===
@@ -469,7 +469,7 @@ export class AgentCore extends SimpleEmitter {
           meta: { mode: 'command', capability: plan.capability },
         };
         await this.conversations.addMessage(conversationId, budgetMsg);
-        return { type: 'blocked', message: msg };
+        return { type: 'blocked', message: msg, taskId };
       }
 
       if (safetyResult.risk === 'dangerous' && !args.approvedAction) {
@@ -497,6 +497,7 @@ export class AgentCore extends SimpleEmitter {
         return {
           type: 'approval_required',
           message: approvalMsg,
+          taskId,
           data: { plan, safety: safetyResult, replayUserInput: userInput },
         };
       }
@@ -525,6 +526,7 @@ export class AgentCore extends SimpleEmitter {
           return {
             type: 'model_switch_request',
             message: switchMsg,
+            taskId,
             data: {
               recommendedModel: recommendation.recommended,
               reason: recommendation.reason,
@@ -541,7 +543,7 @@ export class AgentCore extends SimpleEmitter {
       if (!REPEATABLE_CAPABILITIES.has(plan.capability)) {
         const isDuplicate = await this.ledger.checkIdempotency(idempotencyKey);
         if (isDuplicate) {
-          return { type: 'action_result', message: 'This action was already executed (duplicate prevented).' };
+          return { type: 'action_result', message: 'This action was already executed (duplicate prevented).', taskId };
         }
       }
 
@@ -699,6 +701,7 @@ export class AgentCore extends SimpleEmitter {
       return {
         type: 'action_result',
         message: resultSummary.slice(0, 4000),
+        taskId,
         data: { result: execResult, promptTrace },
       };
     }
@@ -717,7 +720,7 @@ export class AgentCore extends SimpleEmitter {
         meta: {},
       };
       await this.conversations.addMessage(conversationId, errMsg);
-      return { type: 'error', message: 'Venice API key not configured. Open Settings.' };
+      return { type: 'error', message: 'Venice API key not configured. Open Settings.', taskId };
     }
     this.emit('log', 'Thinking...', 'system');
 
@@ -757,6 +760,7 @@ export class AgentCore extends SimpleEmitter {
         return {
           type: 'model_switch_request',
           message: switchMsg,
+          taskId,
           data: {
             recommendedModel: recommendation.recommended,
             reason: recommendation.reason,
@@ -820,13 +824,14 @@ export class AgentCore extends SimpleEmitter {
       return {
         type: 'text',
         message: aiResult.content,
+        taskId,
         data: { promptTrace, cost: aiResult.cost },
       };
     } catch (err: any) {
       const stack = err.stack || err.message;
       DebugLog.error('AI_REQUEST', err.message, stack);
       step('EXECUTE', `AI request failed: ${stack}`, false);
-      return { type: 'error', message: 'AI request failed: ' + err.message };
+      return { type: 'error', message: 'AI request failed: ' + err.message, taskId };
     }
   }
 

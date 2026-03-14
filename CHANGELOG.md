@@ -4,6 +4,26 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.11.0] — 2026-03-14 — Three-Fix Instrumentation Completion
+
+### Fixed — Issue 1: taskId propagation
+- Added `taskId?: string` field to `UltraExecutionResult` interface (src/types/ultra.ts).
+- All 14 return statements in `AgentCore.execute()` now include `taskId` in the returned object.
+- `sendComplete()` in app/index.tsx now uses `result.taskId` instead of placeholder string.
+
+### Fixed — Issue 2: pickerOpen slideAnim value
+- Moved `UltraDevLog.pickerOpen()` call from ChatScreen (where slideAnim was inaccessible, always 0) into `ModelPickerSheet.useEffect([visible])` where `slideAnim._value` is directly readable.
+- Removed duplicate `pickerOpen` call from ChatScreen; `modalEvent` and `snapUI` remain.
+
+### Fixed — Issue 3: AgentCore cleanup on unmount
+- Init useEffect now captures `coreRef` locally and returns cleanup that calls `coreRef.destroy('component_unmount')`.
+- Ensures `coreDestroyed` sensor fires on component teardown.
+
+### Changed
+- `ultra-full-source.txt` regenerated (18,476 lines).
+
+---
+
 ## [v3.10.0] — 2026-03-14 — UltraDevLog v2 Sensor Integration
 
 ### Added — 6 New Diagnostic Sensors
