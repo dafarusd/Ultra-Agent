@@ -326,6 +326,230 @@ export class UltraDevLog {
     UltraDevLog.push('PICKER_SELECT', { modelId, modelName, previousModelId });
   }
 
+  // ─── Legacy DebugLog compatibility stubs ─────────────────────────────────
+
+  static agentExecuteStart(taskId: string, conversationId: string, inputLength: number, isReplay: boolean): void {
+    UltraDevLog.push('AGENT_STEP', { event: 'execute_start', taskId, conversationId, inputLength, isReplay });
+  }
+
+  static agentInitStart(): void {
+    UltraDevLog.push('SYSTEM', { event: 'agent_init_start' });
+  }
+
+  static agentInitComplete(durationMs?: number): void {
+    UltraDevLog.push('SYSTEM', { event: 'agent_init_complete', durationMs });
+  }
+
+  static agentInitSubsystem(subsystem: string, status: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'agent_init_subsystem', subsystem, status });
+  }
+
+  static buildStart(taskId: string, description: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'build_start', taskId, description: description.slice(0, 200) });
+  }
+
+  static buildPhase(taskId: string, phase: string, message: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'build_phase', taskId, phase, message });
+  }
+
+  static buildComplete(taskId: string, success: boolean, details?: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'build_complete', taskId, success, details });
+  }
+
+  static cleanOldLogs(): void {}
+
+  static conversationError(conversationId: string, error: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'conversation_error', conversationId, error });
+  }
+
+  static conversationList(count: number, activeId: string | null): void {
+    UltraDevLog.push('SYSTEM', { event: 'conversation_list', count, activeId });
+  }
+
+  static conversationLoaded(conversationId: string, messageCount: number): void {
+    UltraDevLog.push('SYSTEM', { event: 'conversation_loaded', conversationId, messageCount });
+  }
+
+  static conversationMessage(conversationId: string, role: string, contentPreview: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'conversation_message', conversationId, role, contentPreview: contentPreview.slice(0, 200) });
+  }
+
+  static conversationSaved(conversationId: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'conversation_saved', conversationId });
+  }
+
+  static costLimitCheck(model: string, withinLimit: boolean, spent?: number, limit?: number): void {
+    UltraDevLog.push('SYSTEM', { event: 'cost_limit_check', model, withinLimit, spent, limit });
+  }
+
+  static exportAll(): string {
+    return UltraDevLog.getFormattedLog();
+  }
+
+  static flushToFile(): void {
+    UltraDevLog.flushSync();
+  }
+
+  static getDir(): string {
+    return '';
+  }
+
+  static getFilePath(): string {
+    return '';
+  }
+
+  static getMemoryEntriesFormatted(limit?: number): string {
+    return UltraDevLog.getFormattedLog(limit);
+  }
+
+  static modelAbort(taskId: string, reason: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_abort', taskId, reason });
+  }
+
+  static modelApiError(model: string, taskId: string, error: string, durationMs: number): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_api_error', model, taskId, error, durationMs });
+  }
+
+  static modelApiRequest(model: string, taskId: string, promptTokens: number, maxTokens: number): void {
+    UltraDevLog.push('API_CALL', { event: 'request', model, taskId, promptTokens, maxTokens });
+  }
+
+  static modelApiResponse(model: string, taskId: string, contentLength: number, durationMs: number, cost?: number): void {
+    UltraDevLog.push('API_CALL', { event: 'response', model, taskId, contentLength, durationMs, cost });
+  }
+
+  static modelDiscoveryStart(): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_discovery_start' });
+  }
+
+  static modelDiscoveryResult(modelCount: number): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_discovery_result', modelCount });
+  }
+
+  static modelDiscoveryError(error: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_discovery_error', error });
+  }
+
+  static modelImageRequest(taskId: string, prompt: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_image_request', taskId, promptPreview: prompt.slice(0, 200) });
+  }
+
+  static modelImageResponse(taskId: string, imageCount: number, durationMs: number): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_image_response', taskId, imageCount, durationMs });
+  }
+
+  static modelImageError(taskId: string, error: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_image_error', taskId, error });
+  }
+
+  static modelSetDefault(modelId: string, source: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_set_default', modelId, source });
+  }
+
+  static modelSetDefaultError(modelId: string, error: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_set_default_error', modelId, error });
+  }
+
+  static modelState(key: string, value: unknown): void {
+    UltraDevLog.push('SYSTEM', { event: 'model_state', key, value });
+  }
+
+  static permissionCheck(permission: string, status: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'permission_check', permission, status });
+  }
+
+  static settingsApiSave(key: string, success: boolean): void {
+    UltraDevLog.push('SYSTEM', { event: 'settings_api_save', key, success });
+  }
+
+  static settingsApiDelete(key: string, success: boolean): void {
+    UltraDevLog.push('SYSTEM', { event: 'settings_api_delete', key, success });
+  }
+
+  static settingsCostLimitSave(limit: number, success: boolean): void {
+    UltraDevLog.push('SYSTEM', { event: 'settings_cost_limit_save', limit, success });
+  }
+
+  static settingsDefaultPick(mode: string, modelId: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'settings_default_pick', mode, modelId });
+  }
+
+  static settingsDefaultsSave(defaults: Record<string, unknown>): void {
+    UltraDevLog.push('SYSTEM', { event: 'settings_defaults_save', defaults });
+  }
+
+  static settingsState(key: string, value: unknown): void {
+    UltraDevLog.push('SYSTEM', { event: 'settings_state', key, value });
+  }
+
+  static uiInit(stage: string, message: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_init', stage, message });
+  }
+
+  static uiState(label: string, state: Record<string, unknown>): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_state', label, state });
+  }
+
+  static uiError(context: string, message: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_error', context, message });
+  }
+
+  static uiConvSwitch(fromId: string, toId: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_conv_switch', fromId, toId });
+  }
+
+  static uiDefaultsLoaded(source: string, defaults: Record<string, unknown>): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_defaults_loaded', source, defaults });
+  }
+
+  static uiModelApply(modelId: string, mode: string, source: string, success: boolean, error?: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_model_apply', modelId, mode, source, success, error });
+  }
+
+  static uiModeSwitch(from: string, to: string, source: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_mode_switch', from, to, source });
+  }
+
+  static uiPickerOpen(filter: string, mode: string, activeModelId: string | null): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_picker_open', filter, mode, activeModelId });
+  }
+
+  static uiPickerSelect(modelId: string, previousModelId: string | null): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_picker_select', modelId, previousModelId });
+  }
+
+  static uiPlusMenuSelect(type: string, hasDefault: boolean, defaultModel: string | null): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_plus_menu_select', type, hasDefault, defaultModel });
+  }
+
+  static uiSendMessage(inputLength: number, mode: string, modelId: string | null, isProcessing: boolean): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_send_message', inputLength, mode, modelId, isProcessing });
+  }
+
+  static uiStopRequest(hasCore: boolean): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_stop_request', hasCore });
+  }
+
+  static uiFocusEffect(trigger: string, mode: string, savedKeys: string[], activeModelId: string | null): void {
+    UltraDevLog.push('SYSTEM', { event: 'ui_focus_effect', trigger, mode, savedKeys, activeModelId });
+  }
+
+  static vaultGet(key: string, found: boolean): void {
+    UltraDevLog.push('VAULT_READ', { key, found });
+  }
+
+  static vaultSet(key: string, success: boolean): void {
+    UltraDevLog.push('VAULT_WRITE', { key, success });
+  }
+
+  static vaultDelete(key: string, success: boolean): void {
+    UltraDevLog.push('SYSTEM', { event: 'vault_delete', key, success });
+  }
+
+  static vaultError(operation: string, key: string, error: string): void {
+    UltraDevLog.push('SYSTEM', { event: 'vault_error', operation, key, error });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // v2 NEW SENSORS
   // ─────────────────────────────────────────────────────────────────────────

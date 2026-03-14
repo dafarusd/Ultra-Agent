@@ -4,6 +4,29 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.10.0] — 2026-03-14 — UltraDevLog v2 Sensor Integration
+
+### Added — 6 New Diagnostic Sensors
+- **CORE_INSTANCE sensor**: `coreCreated()` in AgentCore constructor stamps a unique `instanceId` on every entry. `coreDestroyed()` logs teardown with reason. `taskCoreStamp()` at execute() start correlates tasks to core instances. Detects mid-task re-initialization.
+- **EXECUTOR_BRANCH sensor**: `executorEnter/Branch/Exit` added to `app_launch` (rich intent + simple launch paths), `sms_send`, `self_modify` (with per-cycle branch logging), `self_replicate` (compile/build phases). Traces which code path each capability executor took.
+- **CONV_CONTEXT_SENT sensor**: `convContextSent()` fires before both `complete()` and `completeWithConversation()` API calls in ModelRouter with full token breakdown (system prompt chars, history message count, history chars, user message chars, estimated total tokens).
+- **UI_MESSAGE_RENDERED sensor**: `messageRendered()` fires on FlatList renderItem onLayout with pixel height, scroll offset, viewport height, and tall-warning flag. `listScrolled()` fires on FlatList onScroll (throttled >50px changes).
+- **TASK_WATCHDOG sensor**: `watchdogArm(taskId, 'APPROVE', 10000)` and `watchdogArm(taskId, 'EXECUTE', 90000)` guard critical phases. Auto-fires TASK_WATCHDOG alert if phase exceeds timeout without disarm. `watchdogDisarmAll` in catch blocks.
+- **APP_STATE_CHANGE sensor**: `installAppStateListener()` in root component useEffect captures every foreground/background transition with timing and active watchdog count.
+
+### Added — Legacy DebugLog Compatibility Layer
+- Added 54 missing method stubs to UltraDevLog (uiInit, uiState, uiError, uiConvSwitch, uiDefaultsLoaded, uiModelApply, uiModeSwitch, uiPickerOpen, uiPickerSelect, uiPlusMenuSelect, uiSendMessage, uiStopRequest, uiFocusEffect, agentExecuteStart, agentInitStart/Complete/Subsystem, buildStart/Phase/Complete, modelAbort/ApiError/ApiRequest/ApiResponse, modelDiscoveryStart/Result/Error, modelImageRequest/Response/Error, modelSetDefault/Error, modelState, conversationError/List/Loaded/Message/Saved, costLimitCheck, settingsApiSave/Delete, settingsCostLimitSave, settingsDefaultPick/Save, settingsState, permissionCheck, vaultGet/Set/Delete/Error, cleanOldLogs, exportAll, flushToFile, getDir, getFilePath, getMemoryEntriesFormatted). All route through UltraDevLog.push() for unified JSONL output.
+
+### Added — Genome Instrumentation
+- `GenomeCompiler.compile()` now logs ENTER/EXIT with source count, asset count, dependency count.
+- `SelfImprover.improveCycle()` now logs ENTER with genome generation and user goal, proposals_generated with count, and EXIT with fitness score, improvement delta, and rollback status.
+
+### Changed
+- `AgentCore` now has `instanceId` field, `getInstanceId()` accessor, and `destroy(reason)` method.
+- `ultra-full-source.txt` regenerated (17,893 lines) with complete file inventory including all src/, components/, app/, and server/ files.
+
+---
+
 ## [v3.9.0] — 2026-03-14 — 6-Bug Fix Pass (Log-Driven Diagnostics)
 
 ### Fixed — Abort error message (Bug 1)

@@ -2,6 +2,7 @@ import type { Genome, SourceEntry, GenomeBuildOutput, BehaviorSpec } from './typ
 import { AGENT_TEMPLATES } from './templates/AgentTemplates';
 import { GENOME_TEMPLATES } from './templates/GenomeTemplates';
 import { createHash } from '../utils/crypto';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 interface AiClient {
   chat: (args: { model: string; messages: Array<{ role: string; content: string }>; max_tokens: number }) => Promise<string>;
@@ -14,6 +15,8 @@ export class GenomeCompiler {
   ) {}
 
   async compile(genome: Genome): Promise<GenomeBuildOutput> {
+    const compileId = Date.now().toString(36);
+    DebugLog.executorBranch(compileId, 'genome_compile', 'ENTER', { genomeId: genome.id, generation: genome.generation });
     const sources: SourceEntry[] = [];
     const assets: Array<{ path: string; content: string }> = [];
     const pkg = genome.identity.packageName;
@@ -76,6 +79,7 @@ export class GenomeCompiler {
       }
     }
 
+    DebugLog.executorBranch(compileId, 'genome_compile', 'EXIT', { sourceCount: sources.length, assetCount: assets.length, depCount: dependencies.length });
     return {
       sourceFiles: sources,
       manifestConfig,

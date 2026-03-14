@@ -281,6 +281,14 @@ export class ModelRouter {
 
     const promptTokens = Math.ceil((prompt.length + systemPrompt.length) / 4);
     DebugLog.modelApiRequest(model, taskId, promptTokens, options.maxTokens ?? 4000);
+    DebugLog.convContextSent(taskId, model, {
+      system_prompt_chars: systemPrompt.length,
+      history_message_count: 0,
+      history_chars: 0,
+      capability_context_chars: 0,
+      user_message_chars: prompt.length,
+      estimated_total_tokens: promptTokens,
+    });
     const startTime = Date.now();
     try {
       this.logger.info(`Sending request to ${model}...`);
@@ -350,7 +358,19 @@ export class ModelRouter {
     if (!this.costTracker.isWithinDailyLimit()) throw new Error('Daily cost limit reached.');
 
     const totalChars = messages.reduce((s, m) => s + (m.content?.length ?? 0), 0);
+    const systemMsgs = messages.filter(m => m.role === 'system');
+    const historyMsgs = messages.filter(m => m.role !== 'system');
+    const systemChars = systemMsgs.reduce((s, m) => s + (m.content?.length ?? 0), 0);
+    const historyChars = historyMsgs.reduce((s, m) => s + (m.content?.length ?? 0), 0);
     DebugLog.modelApiRequest(model, taskId, Math.ceil(totalChars / 4), options.maxTokens ?? 4000);
+    DebugLog.convContextSent(taskId, model, {
+      system_prompt_chars: systemChars,
+      history_message_count: historyMsgs.length,
+      history_chars: historyChars,
+      capability_context_chars: 0,
+      user_message_chars: historyMsgs.length > 0 ? (historyMsgs[historyMsgs.length - 1].content?.length ?? 0) : 0,
+      estimated_total_tokens: Math.ceil(totalChars / 4),
+    });
     const callStart = Date.now();
     try {
       const controller = new AbortController();

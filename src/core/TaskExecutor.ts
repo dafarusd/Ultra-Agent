@@ -287,9 +287,10 @@ export class TaskExecutor {
         return { success: true, contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
       }
       case 'sms_send': {
+        DebugLog.executorEnter(taskId, 'sms_send');
         let to = params.to;
         const message = params.message || '';
-        if (!to) return { error: 'No recipient specified' };
+        if (!to) { DebugLog.executorExit(taskId, 'sms_send', false, 'no_recipient'); return { error: 'No recipient specified' }; }
         const avail = await SMS.isAvailableAsync();
         if (!avail) return { error: 'SMS unavailable' };
         try {
@@ -320,6 +321,7 @@ export class TaskExecutor {
         DebugLog.smsFire(taskId, to, message);
         const { result } = await SMS.sendSMSAsync([to], message);
         DebugLog.smsResult(taskId, result, result === 'sent');
+        DebugLog.executorExit(taskId, 'sms_send', result === 'sent', result === 'sent' ? 'sms_sent' : 'sms_not_sent');
         return { success: result === 'sent', sent: result === 'sent', to };
       }
       case 'camera_capture': {
@@ -351,11 +353,13 @@ export class TaskExecutor {
         return { success: true, count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
       }
       case 'app_launch': {
+        DebugLog.executorEnter(taskId, 'app_launch');
         const target = params.target;
-        if (!target) return { error: 'No app or action specified' };
+        if (!target) { DebugLog.executorExit(taskId, 'app_launch', false, 'no_target'); return { error: 'No app or action specified' }; }
 
         // ── PATH A: Rich intent (action/data/extras provided by parser) ──
         if (params.action) {
+          DebugLog.executorBranch(taskId, 'app_launch', 'rich_intent', { action: params.action });
           this.logger.info(`Rich intent: action=${params.action} data=${params.data || 'none'} pkg=${params.packageName || 'none'}`);
 
           // Special case: contact name resolution for phone calls
@@ -423,6 +427,7 @@ export class TaskExecutor {
             this.logger.info(`startActivityAsync: ${params.action} → ${JSON.stringify(intentParams)}`);
             const result = await IntentLauncher.startActivityAsync(params.action, intentParams);
 
+            DebugLog.executorExit(taskId, 'app_launch', true, 'rich_intent_success');
             return {
               success: true,
               launched: target,
@@ -432,6 +437,7 @@ export class TaskExecutor {
               resultCode: result.resultCode,
             };
           } catch (err: any) {
+            DebugLog.executorBranch(taskId, 'app_launch', 'rich_intent_failed', { error: err.message });
             this.logger.warn(`Rich intent failed: ${err.message}, falling back to openApplication`);
 
             // Fallback: try simple app launch if we have a package
@@ -449,6 +455,7 @@ export class TaskExecutor {
         }
 
         // ── PATH B: Simple app launch (no action — just open the app) ──
+        DebugLog.executorBranch(taskId, 'app_launch', 'simple_launch');
         const targetLower = target.toLowerCase().trim()
           .replace(/^(the|a|an|my)\s+/i, '')
           .replace(/\s+app$/i, '');
@@ -513,8 +520,10 @@ export class TaskExecutor {
           IntentLauncher.openApplication(pkg);
         } catch (err: any) {
           DebugLog.appLaunchFail(taskId, target, pkg, err.message, 'intent_launch');
+          DebugLog.executorExit(taskId, 'app_launch', false, 'intent_launch_error');
           return { success: false, error: `Failed to launch ${target} (${pkg}): ${err.message}` };
         }
+        DebugLog.executorExit(taskId, 'app_launch', true, 'simple_launch_success');
         return launchResult;
       }
       case 'app_share': {
@@ -602,16 +611,20 @@ export class TaskExecutor {
         return { success: result.passed, summary: result.summary, steps: result.steps };
       }
       case 'self_modify': {
+        DebugLog.executorEnter(taskId, 'self_modify');
         const genome = await this.loadOrCreateGenome();
+        DebugLog.executorBranch(taskId, 'self_modify', 'genome_loaded', { generation: genome.generation, id: genome.id });
         const improver = this.createSelfImprover();
         const goal = params.goal;
         const maxCycles = params.maxCycles || 3;
         const customChallenges = params.challenges;
         const result = await improver.evolve(genome, maxCycles, goal, (phase, msg) => {
+          DebugLog.executorBranch(taskId, 'self_modify', `evolve_${phase}`, { message: msg });
           this.onGenomeProgress?.(phase, msg);
         }, customChallenges);
         this.currentGenome = result.genome;
         await this.persistGenome(result.genome);
+        DebugLog.executorBranch(taskId, 'self_modify', 'genome_persisted', { generation: result.genome.generation, improved: result.totalImprovements > 0 });
 
         const taskPerf = result.genome.fitness?.taskPerformance;
         const taskSummary = taskPerf
@@ -622,6 +635,7 @@ export class TaskExecutor {
         const best = lineage.getBestGeneration();
         const failures = lineage.getFailurePatterns();
 
+        DebugLog.executorExit(taskId, 'self_modify', result.totalImprovements > 0, `cycles=${result.totalCycles}_improvements=${result.totalImprovements}`);
         return {
           success: true,
           type: 'evolution',
@@ -636,21 +650,29 @@ export class TaskExecutor {
         };
       }
       case 'self_replicate': {
+        DebugLog.executorEnter(taskId, 'self_replicate');
         const genome = await this.loadOrCreateGenome();
+        DebugLog.executorBranch(taskId, 'self_replicate', 'genome_loaded', { generation: genome.generation, id: genome.id, packageName: genome.identity.packageName });
         const aiClient = this.createAiClient(180000);
         const getModel = async () => this.ai.getDefaultModel();
         const compiler = new GenomeCompiler(aiClient, getModel);
         const improver = this.createSelfImprover();
+        DebugLog.executorBranch(taskId, 'self_replicate', 'compiling_genome');
         this.onGenomeProgress?.('compiling', 'Compiling genome for offspring...');
         const buildOutput = await compiler.compile(genome);
+        DebugLog.executorBranch(taskId, 'self_replicate', 'genome_compiled', { sourceFiles: buildOutput.sourceFiles.length, dependencies: buildOutput.dependencies.length });
         this.onGenomeProgress?.('building', 'Building offspring APK...');
+        DebugLog.executorBranch(taskId, 'self_replicate', 'building_apk');
         const spec = improver.genomeBuildToAppSpec(genome, buildOutput);
         const buildResult = await this.build.buildFromSpec(spec, (progress) => {
+          DebugLog.executorBranch(taskId, 'self_replicate', `build_${progress.phase}`, { message: progress.message });
           this.onGenomeProgress?.(progress.phase, progress.message);
         });
         if (!buildResult.success) {
+          DebugLog.executorExit(taskId, 'self_replicate', false, `build_failed: ${buildResult.error}`);
           return { error: `Offspring build failed: ${buildResult.error}` };
         }
+        DebugLog.executorExit(taskId, 'self_replicate', true, `offspring_gen${genome.generation + 1}_built`);
         return {
           success: true,
           type: 'replication',

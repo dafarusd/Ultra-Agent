@@ -122,6 +122,8 @@ export default function ChatScreen() {
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
   const agentCoreInitialized = useRef(false);
+  const scrollOffsetRef = useRef(0);
+  const listHeightRef = useRef(0);
 
   // ── Pulse animation for status dot ─────────────────
   useEffect(() => {
@@ -176,6 +178,12 @@ export default function ChatScreen() {
 
   const snapUI = useCallback((label: string, extras?: Record<string, unknown>) => {
     DebugLog.uiState(label, { ...uiStateRef.current, ...extras });
+  }, []);
+
+  // ── AppState Lifecycle Sensor ─────────────────────
+  useEffect(() => {
+    UltraDevLog.installAppStateListener();
+    return () => UltraDevLog.removeAppStateListener();
   }, []);
 
   // ── Init ───────────────────────────────────────────
@@ -587,8 +595,18 @@ export default function ChatScreen() {
       // Show quick replies only on the most recent assistant message
       const showQuickReplies = !isUser && isLatestMessage && !isProcessing && !pendingReplay && item.role !== "system";
 
+      const msgIndex = messages.indexOf(item);
+
       return (
         <View
+          onLayout={(e) => {
+            UltraDevLog.messageRendered(
+              item.id, item.role as 'user' | 'assistant' | 'system', item.content.length,
+              e.nativeEvent.layout.height,
+              msgIndex >= 0 ? msgIndex : 0,
+              scrollOffsetRef.current, listHeightRef.current,
+            );
+          }}
           style={[
             styles.messageBubble,
             msgStyle === "user" ? styles.userBubble :
@@ -727,6 +745,15 @@ export default function ChatScreen() {
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          onScroll={(e) => {
+            scrollOffsetRef.current = UltraDevLog.listScrolled(
+              e.nativeEvent.contentOffset.y,
+              e.nativeEvent.layoutMeasurement.height,
+              e.nativeEvent.contentSize.height,
+            );
+            listHeightRef.current = e.nativeEvent.layoutMeasurement.height;
+          }}
+          scrollEventThrottle={100}
           ListEmptyComponent={
             <View style={[styles.emptyState, Platform.OS !== "web" && { transform: [{ scaleY: -1 }] }]}>
               <MaterialCommunityIcons name="robot-outline" size={48} color={SURFACE2} />

@@ -9,6 +9,7 @@ import { GenomeLineage } from './GenomeLineage';
 import { TaskEvaluator } from './TaskEvaluator';
 import { getDefaultChallenges, generateChallengesForGoal } from './TaskChallenges';
 import { BuildOrchestrator } from '../core/BuildOrchestrator';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 interface SafetyGate {
   requestApproval: (action: string, details: string) => Promise<boolean>;
@@ -59,11 +60,14 @@ export class SelfImprover {
     onProgress?: ProgressCallback,
     customChallenges?: TaskChallenge[]
   ): Promise<{ genome: Genome; improved: boolean; report: string }> {
+    const cycleId = `cycle_${Date.now().toString(36)}`;
+    DebugLog.executorBranch(cycleId, 'improve_cycle', 'ENTER', { generation: currentGenome.generation, userGoal: userGoal?.slice(0, 100) });
     this.lineage.record(currentGenome);
     const report: string[] = [];
 
     onProgress?.('analyzing', 'Analyzing genome for improvements...');
     const proposals = await this.mutator.proposeMutations(currentGenome, userGoal);
+    DebugLog.executorBranch(cycleId, 'improve_cycle', 'proposals_generated', { count: proposals.length });
 
     if (proposals.length === 0) {
       return {
@@ -217,9 +221,11 @@ export class SelfImprover {
     if (improvement >= 0) {
       this.lineage.record(mutatedGenome);
       report.push(`Improvement: +${improvement} points. Keeping mutated genome.`);
+      DebugLog.executorBranch(cycleId, 'improve_cycle', 'EXIT', { improved: improvement > 0, fitnessScore: newFitness.overallScore, improvement });
       return { genome: mutatedGenome, improved: improvement > 0, report: report.join('\n') };
     } else {
       report.push(`Degradation: ${improvement} points. Rolling back.`);
+      DebugLog.executorBranch(cycleId, 'improve_cycle', 'EXIT', { improved: false, fitnessScore: newFitness.overallScore, improvement, rolledBack: true });
       return { genome: currentGenome, improved: false, report: report.join('\n') };
     }
   }

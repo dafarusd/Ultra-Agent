@@ -83,9 +83,11 @@ export class AgentCore extends SimpleEmitter {
   private parser: CommandParser;
   private logger: Logger;
   private ready: boolean;
+  private instanceId: string;
 
   constructor(vault: SecureVault, cb: (msg: string, type: string) => void) {
     super();
+    this.instanceId = DebugLog.coreCreated('initial_mount');
     this.vault = vault;
     this.logger = new Logger('AgentCore');
     this.costTracker = new CostTracker(vault);
@@ -104,6 +106,15 @@ export class AgentCore extends SimpleEmitter {
     this.parser = new CommandParser();
     this.ready = false;
     this.on('log', cb);
+  }
+
+  getInstanceId(): string {
+    return this.instanceId;
+  }
+
+  destroy(reason: string = 'cleanup'): void {
+    DebugLog.coreDestroyed(this.instanceId, reason);
+    this.removeAllListeners();
   }
 
   async initialize(): Promise<void> {
@@ -279,6 +290,7 @@ export class AgentCore extends SimpleEmitter {
     const startTime = Date.now();
     const steps: ExecutionStep[] = [];
     let execError: string | null = null;
+    DebugLog.taskCoreStamp(taskId, this.instanceId);
     DebugLog.agentExecuteStart(taskId, conversationId, userInput.length, !!args.replay);
 
     const step = (name: string, detail: string, success: boolean) => {
@@ -461,6 +473,7 @@ export class AgentCore extends SimpleEmitter {
       }
 
       if (safetyResult.risk === 'dangerous' && !args.approvedAction) {
+        DebugLog.watchdogArm(taskId, 'APPROVE', 10000);
         step('APPROVE', `Dangerous action requires user approval: ${safetyResult.reasons.join('; ')}`, false);
         await this.ledger.logEvent({
           phase: 'APPROVE',
@@ -470,6 +483,7 @@ export class AgentCore extends SimpleEmitter {
           success: false,
           conversationId,
         });
+        DebugLog.watchdogDisarm(taskId, 'APPROVE');
         const approvalMsg = `Approval required for ${plan.capability}: ${plan.reason || safetyResult.reasons.join(' | ')}`;
         const approvalChatMsg: ChatMessage = {
           id: uid('msg'),
@@ -532,6 +546,7 @@ export class AgentCore extends SimpleEmitter {
       }
 
       this.emit('log', `Executing ${plan.capability}...`, 'system');
+      DebugLog.watchdogArm(taskId, 'EXECUTE', 90000);
 
       let execResult: any;
       const progressLog: string[] = [];
@@ -557,10 +572,12 @@ export class AgentCore extends SimpleEmitter {
         } else {
           execResult = await this.executor.runWithPlan(plan, taskId);
         }
+        DebugLog.watchdogDisarm(taskId, 'EXECUTE');
         const rawStr = JSON.stringify(execResult).slice(0, 1000);
         DebugLog.execResult(taskId, plan.capability, execResult?.success !== false, rawStr);
         step('EXECUTE', `${plan.capability} completed. Result: ${rawStr}${progressLog.length > 0 ? '\nProgress (' + progressLog.length + ' entries):\n' + progressLog.join('\n') : ''}`, execResult?.success !== false);
       } catch (err: any) {
+        DebugLog.watchdogDisarmAll(taskId);
         const stack = err.stack || err.message;
         execResult = { success: false, error: err.message, stack };
         execError = stack;
