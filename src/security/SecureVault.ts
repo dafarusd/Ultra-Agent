@@ -79,13 +79,13 @@ export class SecureVault {
     if (!this.initialized) throw new Error('Vault not initialized');
     if (this.cache.has(key)) {
       const cached = this.cache.get(key)!;
-      DebugLog.vaultGet(key, cached, 'cache');
+      DebugLog.vaultGet(key, true, cached.slice(0, 80));
       return cached;
     }
     try {
       const value = await storeGet(`vu_${key}`);
       if (value) this.cache.set(key, value);
-      DebugLog.vaultGet(key, value, 'store');
+      DebugLog.vaultGet(key, !!value, value ? value.slice(0, 80) : undefined);
       return value;
     } catch (error: any) {
       DebugLog.vaultError('GET', key, error.message);

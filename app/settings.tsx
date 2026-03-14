@@ -260,6 +260,7 @@ export default function SettingsScreen() {
     setIsNewApi(false);
     saveDraft(null, false);
 
+    UltraDevLog.settingsSaveTap('api', { count: updated.length, primaryId: updated[0]?.id });
     try {
       const vault = await SecureVault.initialize();
       await vault.set("saved_apis", JSON.stringify(updated));
@@ -268,7 +269,7 @@ export default function SettingsScreen() {
       if (primary) {
         await vault.set("venice_api_key", primary.apiKey || "");
         await vault.set("api_base_url", primary.baseUrl);
-        DebugLog.settingsApiSave(primary.id, primary.baseUrl);
+        DebugLog.settingsApiSave(primary.id, true);
         const core = getAgentCoreInstance();
         if (core) {
           await core.refreshApiKey();
@@ -278,14 +279,16 @@ export default function SettingsScreen() {
         await vault.set("venice_api_key", "");
         await vault.set("api_base_url", "");
       }
+      UltraDevLog.settingsSaveResult('api', true, ['saved_apis', 'venice_api_key', 'api_base_url']);
     } catch (err: any) {
+      UltraDevLog.settingsSaveResult('api', false, [], err.message);
       DebugLog.uiError("settings_saveApi", err.message);
       Alert.alert("Error", err.message);
     }
   }, [editingApi, isNewApi, apis]);
 
   const deleteApi = useCallback(async (id: string) => {
-    DebugLog.settingsApiDelete(id);
+    DebugLog.settingsApiDelete(id, true);
     const updated = apis.filter((a) => a.id !== id);
     setApis(updated);
     const cleanDefaults = { ...defaults };
@@ -302,6 +305,7 @@ export default function SettingsScreen() {
   }, [apis, defaults]);
 
   const saveDefaults = useCallback(async () => {
+    UltraDevLog.settingsSaveTap('defaults', { defaults });
     try {
       const vault = await SecureVault.initialize();
       await vault.set("api_defaults", JSON.stringify(defaults));
@@ -315,7 +319,9 @@ export default function SettingsScreen() {
       });
       setSavedFeedback("defaults");
       setTimeout(() => setSavedFeedback(null), 2000);
+      UltraDevLog.settingsSaveResult('defaults', true, ['api_defaults']);
     } catch (err: any) {
+      UltraDevLog.settingsSaveResult('defaults', false, [], err.message);
       DebugLog.uiError("settings_saveDefaults", err.message);
       Alert.alert("Error", err.message);
     }
@@ -323,13 +329,16 @@ export default function SettingsScreen() {
 
   // ── Cost limit save ────────────────────────────────
   const saveLimits = useCallback(async () => {
+    UltraDevLog.settingsSaveTap('limits', { dailyLimit, taskLimit });
     try {
       const vault = await SecureVault.initialize();
       await vault.set("daily_cost_limit", dailyLimit);
       await vault.set("task_cost_limit", taskLimit);
       DebugLog.settingsCostLimitSave(dailyLimit, taskLimit);
       Alert.alert("Saved", "Cost limits updated.");
+      UltraDevLog.settingsSaveResult('limits', true, ['daily_cost_limit', 'task_cost_limit']);
     } catch (err: any) {
+      UltraDevLog.settingsSaveResult('limits', false, [], err.message);
       Alert.alert("Error", err.message);
     }
   }, [dailyLimit, taskLimit]);
@@ -620,7 +629,7 @@ export default function SettingsScreen() {
                                         key={m.id}
                                         onPress={async () => {
                                           const updated = { ...defaults, [role]: m.id };
-                                          DebugLog.settingsDefaultPick(role, m.id, m.name || m.id);
+                                          DebugLog.settingsDefaultPick(role, m.id);
                                           DebugLog.settingsState("default_pick", {
                                             defaults: updated,
                                             availableModelsCount: availableModels.length,

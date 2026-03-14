@@ -299,6 +299,7 @@ export class AgentCore extends SimpleEmitter {
     };
 
     // === STEP 1: INGEST ===
+    DebugLog.executePhase(taskId, 'INGEST');
     DebugLog.userMessage(conversationId, userInput);
     step('INTAKE', `Received user input: "${userInput.slice(0, 200)}"${args.replay ? ' (replay)' : ''}`, true);
     await this.ledger.logEvent({
@@ -322,11 +323,13 @@ export class AgentCore extends SimpleEmitter {
     }
 
     // === STEP 2: ROUTE ===
+    DebugLog.executePhase(taskId, 'ROUTE');
     const mode = this.detectMode(userInput);
     DebugLog.modeDetected(taskId, mode, userInput);
     step('ROUTE', `Detected mode: ${mode}`, true);
 
     // === STEP 3: PLAN ===
+    DebugLog.executePhase(taskId, 'PLAN');
     const capList = this.caps.getAll().map(c => c.id);
     let plan: ActionPlan | null = null;
 
@@ -412,6 +415,7 @@ export class AgentCore extends SimpleEmitter {
       });
 
       // === STEP 4: VERIFY ===
+      DebugLog.executePhase(taskId, 'VERIFY');
       const schemaResult = validatePlan(plan);
       if (!schemaResult.valid) {
         step('VERIFY', `Schema validation failed: ${schemaResult.errors.join(', ')}`, false);
@@ -456,6 +460,7 @@ export class AgentCore extends SimpleEmitter {
       }
 
       // === STEP 5: APPROVE ===
+      DebugLog.executePhase(taskId, 'APPROVE');
       const budgetCheck = await this.ledger.checkBudget();
       if (!budgetCheck.allowed) {
         step('APPROVE', `Budget exceeded: ${budgetCheck.reason}`, false);
@@ -538,6 +543,7 @@ export class AgentCore extends SimpleEmitter {
       }
 
       // === STEP 6: EXECUTE ===
+      DebugLog.executePhase(taskId, 'EXECUTE');
       const REPEATABLE_CAPABILITIES = new Set(['app_launch', 'camera_capture', 'media_access', 'device_location', 'contacts_read']);
       const idempotencyKey = `${conversationId}:${plan.capability}:${JSON.stringify(plan.params)}`;
       if (!REPEATABLE_CAPABILITIES.has(plan.capability)) {
@@ -613,6 +619,7 @@ export class AgentCore extends SimpleEmitter {
       });
 
       // === STEP 7: VERIFY RESULT ===
+      DebugLog.executePhase(taskId, 'VERIFY_RESULT');
       const verification = this.safety.verifyResult(plan, execResult);
       DebugLog.verification(taskId, verification.verified, verification.issues);
       step('VERIFY_RESULT', `verified=${verification.verified}${verification.issues.length > 0 ? ', issues: ' + verification.issues.join('; ') : ', no issues'}`, verification.verified);
@@ -629,6 +636,7 @@ export class AgentCore extends SimpleEmitter {
       const resultSummary = await this.summarizeResult(plan.capability, execResult, userInput, verification);
 
       // === STEP 8: WRITE MEMORY ===
+      DebugLog.executePhase(taskId, 'WRITE_MEMORY');
       step('WRITE_MEMORY', `Summary generated (${resultSummary.length} chars). Writing to conversation history.`, true);
 
       const systemPromptForTrace = this.buildDynamicPrompt({
@@ -681,6 +689,7 @@ export class AgentCore extends SimpleEmitter {
       await this.conversations.addMessage(conversationId, resultMsg);
 
       // === STEP 9: ADAPT ===
+      DebugLog.executePhase(taskId, 'ADAPT');
       await this.learner.learnFromExecution(
         userInput,
         [plan.capability],

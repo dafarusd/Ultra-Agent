@@ -182,6 +182,13 @@ export default function ChatScreen() {
     DebugLog.uiState(label, { ...uiStateRef.current, ...extras });
   }, []);
 
+  // ── N1: Component Lifecycle Sensor ────────────────
+  const compIdRef = useRef('');
+  useEffect(() => {
+    compIdRef.current = UltraDevLog.componentMount('ChatScreen');
+    return () => UltraDevLog.componentUnmount('ChatScreen', compIdRef.current);
+  }, []);
+
   // ── AppState Lifecycle Sensor ─────────────────────
   useEffect(() => {
     UltraDevLog.installAppStateListener();
@@ -193,6 +200,7 @@ export default function ChatScreen() {
     async function init() {
       if (_agentCoreInitialized) return;
       _agentCoreInitialized = true;
+      UltraDevLog.checkProcessRestart();
       DebugLog.uiInit("start", "Beginning app initialization");
       try {
         const vault = await SecureVault.initialize();
@@ -264,11 +272,18 @@ export default function ChatScreen() {
   }, []);
 
   const lastFocusTime = useRef(0);
+  const prevFocusDepsRef = useRef<Record<string, unknown> | null>(null);
   useFocusEffect(
     useCallback(() => {
       if (!agentCore) return;
+      const deps = { agentCore: !!agentCore, currentMode, activeModelId };
+      UltraDevLog.focusEffectTriggered(deps, prevFocusDepsRef.current);
+      prevFocusDepsRef.current = deps;
       const now = Date.now();
-      if (now - lastFocusTime.current < 2000) return;
+      if (now - lastFocusTime.current < 2000) {
+        UltraDevLog.focusEffectSuppressed(now - lastFocusTime.current);
+        return;
+      }
       lastFocusTime.current = now;
       DebugLog.uiFocusEffect("triggered", currentMode, Object.keys(savedDefaults), activeModelId);
       snapUI("focus_effect");

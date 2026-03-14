@@ -4,6 +4,28 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.13.0] — 2026-03-14 — UltraDevLog v3: Full Sensor Instrumentation
+
+### Added — UltraDevLog v3 new sensors instrumented
+- **N1 (COMPONENT_LIFECYCLE)**: `componentMount/Unmount` in ChatScreen useEffect tracks mount IDs.
+- **N2 (SETTINGS_SAVE)**: `settingsSaveTap/settingsSaveResult` wrapping api, defaults, and limits save handlers in settings.tsx.
+- **N3 (EXECUTE_PHASE)**: `executePhase()` at all 9 steps in AgentCore.execute() (INGEST→ROUTE→PLAN→VERIFY→APPROVE→EXECUTE→VERIFY_RESULT→WRITE_MEMORY→ADAPT).
+- **N4 (NAV_CHANGE)**: Navigation state listener in RootLayout using `useNavigationContainerRef`.
+- **N5 (FOCUS_EFFECT_DEPS)**: `focusEffectTriggered/Suppressed` in useFocusEffect with prevFocusDepsRef dependency diff tracking.
+- **N6 (PROCESS_RESTART)**: `checkProcessRestart()` called before AgentCore init to detect Android process kills.
+- **N7 (PICKER_CONTENT)**: `pickerContentRender()` on first FlatList renderItem in ModelPickerSheet.
+
+### Fixed — v3 caller signature updates
+- `SecureVault.ts` vaultGet: Changed from `vaultGet(key, cached, 'cache')` to `vaultGet(key, true, cached.slice(0,80))` and `vaultGet(key, !!value, value?.slice(0,80))`.
+- `settings.tsx` settingsApiSave: Changed from `settingsApiSave(primary.id, primary.baseUrl)` to `settingsApiSave(primary.id, true)`.
+- `settings.tsx` settingsApiDelete: Changed from `settingsApiDelete(id)` to `settingsApiDelete(id, true)`.
+- `settings.tsx` settingsDefaultPick: Changed from `settingsDefaultPick(role, m.id, m.name || m.id)` to `settingsDefaultPick(role, m.id)`.
+
+### Changed — ModelPickerSheet mount noise fix
+- Replaced `hasBeenVisible` ref with `mountedAtRef` timestamp. Close animation suppression now uses `pickerAnimate`'s built-in `mountedAt < 500ms` guard instead of a separate boolean.
+
+---
+
 ## [v3.12.0] — 2026-03-14 — Critical: Fix Re-Init Bug, conversationMessage Crash & Defaults Persistence
 
 ### Fixed — Re-init on background return (CRITICAL)
