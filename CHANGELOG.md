@@ -4,6 +4,24 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.15.0] — 2026-03-14 — Fix: Oversized Bubble, Render Loop, and Log Download
+
+### Fixed — Oversized message bubbles
+- Messages over 4000 characters are now truncated with a "Show more" / "Show less" toggle.
+- Prevents 5800px-tall bubbles that caused layout thrashing and poor scrolling performance.
+
+### Fixed — Render loop spam in debug logs
+- `messageRendered()` now deduplicates by message ID — only logs when the measured height changes by ≥2px.
+- Eliminates the 150ms render-loop that was filling the 3000-entry log buffer with identical RENDERED entries.
+
+### Changed — Log export uses file download instead of clipboard
+- "Bug Report", "Full Log", and "JSONL" exports now write to a temp file and open the system share sheet.
+- Users can save to Files, email, or any share target — no more clipboard size limits.
+- Falls back to clipboard on web where file sharing isn't available.
+- Error alerts now shown instead of silently swallowing failures.
+
+---
+
 ## [v3.14.0] — 2026-03-14 — Fix: Remove Hardcoded Biometric Gate (Root Cause of UI State Loss)
 
 ### Removed — Biometric gate from `_layout.tsx`

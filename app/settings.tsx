@@ -14,6 +14,8 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import { SecureVault } from "@/src/security/SecureVault";
 import { getAgentCoreInstance } from "@/src/core/AgentCore";
 import { Logger } from "@/src/utils/Logger";
@@ -376,35 +378,54 @@ export default function SettingsScreen() {
     } catch {}
   }, [debugLogs]);
 
+  const shareFileContent = useCallback(async (content: string, filename: string, mimeType: string) => {
+    if (Platform.OS === 'web') {
+      await Clipboard.setStringAsync(content);
+      Alert.alert("Copied", `${content.length} chars copied to clipboard (file download not available on web).`);
+      return;
+    }
+    const filePath = `${FileSystem.cacheDirectory}${filename}`;
+    await FileSystem.writeAsStringAsync(filePath, content, { encoding: FileSystem.EncodingType.UTF8 });
+    const canShare = await Sharing.isAvailableAsync();
+    if (canShare) {
+      await Sharing.shareAsync(filePath, { mimeType, dialogTitle: filename });
+    } else {
+      await Clipboard.setStringAsync(content);
+      Alert.alert("Copied", "Sharing not available — copied to clipboard instead.");
+    }
+  }, []);
+
   const exportFullDebugLog = useCallback(async () => {
     try {
       const full = await DebugLog.exportAll();
-      await Clipboard.setStringAsync(full);
-      Alert.alert("Exported", "Full debug log (JSONL) copied to clipboard.");
-    } catch {}
-  }, []);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      await shareFileContent(full, `agent-ultra-log-${ts}.jsonl`, 'application/jsonl');
+    } catch (err: any) {
+      Alert.alert("Export Error", err?.message || "Failed to export log.");
+    }
+  }, [shareFileContent]);
 
   const copyBugReport = useCallback(async () => {
     try {
       await UltraDevLog.forceFlush();
       const report = UltraDevLog.generateBugReport();
-      await Clipboard.setStringAsync(report);
-      Alert.alert("Bug Report Copied", `${report.length} chars ready to paste into Replit.`);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      await shareFileContent(report, `agent-ultra-bugreport-${ts}.txt`, 'text/plain');
     } catch (err: any) {
-      Alert.alert("Error", err.message);
+      Alert.alert("Error", err?.message || "Failed to generate bug report.");
     }
-  }, []);
+  }, [shareFileContent]);
 
   const copyFormattedLog = useCallback(async () => {
     try {
       await UltraDevLog.forceFlush();
       const log = UltraDevLog.getFormattedLog(500);
-      await Clipboard.setStringAsync(log);
-      Alert.alert("Log Copied", `${log.split('\n').length} lines`);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      await shareFileContent(log, `agent-ultra-formatted-${ts}.txt`, 'text/plain');
     } catch (err: any) {
-      Alert.alert("Error", err.message);
+      Alert.alert("Error", err?.message || "Failed to export formatted log.");
     }
-  }, []);
+  }, [shareFileContent]);
 
   // ── Render ─────────────────────────────────────────
   const webTopInset = Platform.OS === "web" ? 67 : 0;
@@ -772,14 +793,16 @@ export default function SettingsScreen() {
                 </View>
               </View>
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-                <Pressable onPress={copyBugReport} style={[styles.logActionBtn, { borderWidth: 1, borderColor: '#ff6b00', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }]}>
+                <Pressable onPress={copyBugReport} style={[styles.logActionBtn, { borderWidth: 1, borderColor: '#ff6b00', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                  <Ionicons name="download-outline" size={14} color="#ff6b00" />
                   <Text style={{ color: '#ff6b00', fontSize: 12, fontFamily: "Inter_600SemiBold" }}>Bug Report</Text>
                 </Pressable>
-                <Pressable onPress={copyFormattedLog} style={[styles.logActionBtn, { borderWidth: 1, borderColor: ACCENT, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }]}>
+                <Pressable onPress={copyFormattedLog} style={[styles.logActionBtn, { borderWidth: 1, borderColor: ACCENT, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                  <Ionicons name="download-outline" size={14} color={ACCENT} />
                   <Text style={{ color: ACCENT, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>Full Log</Text>
                 </Pressable>
               </View>
-              <Text style={styles.debugHint}>Full dev log with prompts, AI responses, agent steps, costs, and errors. Copy and share with your dev team or AI assistant.</Text>
+              <Text style={styles.debugHint}>Tap to download as file. Share with your dev team or AI assistant for debugging.</Text>
               {!debugLogsLoaded ? (
                 <Text style={styles.emptyText}>Tap refresh to load debug log</Text>
               ) : !debugLogs ? (

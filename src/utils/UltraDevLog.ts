@@ -338,7 +338,16 @@ export class UltraDevLog {
     });
   }
 
+  private static lastRenderedHeights: Map<string, number> = new Map();
+
   static messageRendered(messageId: string, role: 'user' | 'assistant' | 'system', contentLength: number, measuredHeightPx: number, indexInList: number, listScrollOffsetPx: number, listHeightPx: number): void {
+    const lastH = UltraDevLog.lastRenderedHeights.get(messageId);
+    if (lastH !== undefined && Math.abs(lastH - measuredHeightPx) < 2) return;
+    UltraDevLog.lastRenderedHeights.set(messageId, measuredHeightPx);
+    if (UltraDevLog.lastRenderedHeights.size > 100) {
+      const first = UltraDevLog.lastRenderedHeights.keys().next().value;
+      if (first) UltraDevLog.lastRenderedHeights.delete(first);
+    }
     const viewportBottom = listScrollOffsetPx + listHeightPx;
     const msgTop = indexInList * measuredHeightPx;
     const isVisible = listHeightPx > 0 ? (msgTop >= listScrollOffsetPx && msgTop <= viewportBottom) : indexInList === 0;
@@ -849,6 +858,7 @@ export class UltraDevLog {
     UltraDevLog.lastConvLoadedCounts.clear();
     UltraDevLog.lastVaultReadTs.clear();
     UltraDevLog.processingStartedAt = 0;
+    UltraDevLog.lastRenderedHeights.clear();
     for (const e of UltraDevLog.watchdogs.values()) clearTimeout(e.timeoutHandle);
     UltraDevLog.watchdogs.clear();
   }

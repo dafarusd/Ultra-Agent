@@ -121,6 +121,9 @@ export default function ChatScreen() {
   // Copy feedback
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Expanded long messages
+  const [expandedMsgs, setExpandedMsgs] = useState<Set<string>>(new Set());
+
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
   
@@ -670,13 +673,37 @@ export default function ChatScreen() {
           )}
 
           {/* Message content */}
-          <Text selectable style={[
-            styles.messageText,
-            isUser && styles.userText,
-            msgStyle === "buildLog" && styles.buildLogText,
-          ]}>
-            {item.content}
-          </Text>
+          {(() => {
+            const MAX_CHARS = 4000;
+            const isLong = item.content.length > MAX_CHARS;
+            const isExpanded = expandedMsgs.has(item.id);
+            const displayText = isLong && !isExpanded ? item.content.slice(0, MAX_CHARS) + "…" : item.content;
+            return (
+              <>
+                <Text selectable style={[
+                  styles.messageText,
+                  isUser && styles.userText,
+                  msgStyle === "buildLog" && styles.buildLogText,
+                ]}>
+                  {displayText}
+                </Text>
+                {isLong && (
+                  <Pressable
+                    onPress={() => setExpandedMsgs(prev => {
+                      const next = new Set(prev);
+                      if (isExpanded) next.delete(item.id); else next.add(item.id);
+                      return next;
+                    })}
+                    style={styles.showMoreBtn}
+                  >
+                    <Text style={styles.showMoreText}>
+                      {isExpanded ? "Show less" : `Show more (${Math.round(item.content.length / 1000)}k chars)`}
+                    </Text>
+                  </Pressable>
+                )}
+              </>
+            );
+          })()}
 
           {/* Message action row: copy + prompt trace */}
           <View style={styles.msgActions}>
@@ -713,7 +740,7 @@ export default function ChatScreen() {
         </View>
       );
     },
-    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, handleQuickReply]
+    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, handleQuickReply, expandedMsgs]
   );
 
   // ── Layout values ──────────────────────────────────
@@ -1046,6 +1073,8 @@ const styles = StyleSheet.create({
   denyBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
   copiedBubble: { borderColor: ACCENT, borderWidth: 1 },
   copiedLabel: { color: ACCENT, fontSize: 10, fontFamily: "Inter_500Medium", marginTop: 4, alignSelf: "flex-end" },
+  showMoreBtn: { marginTop: 6, paddingVertical: 4 },
+  showMoreText: { color: AI_COLOR, fontSize: 12, fontFamily: "Inter_600SemiBold" },
 
   // Input bar
   inputBar: { borderTopWidth: 1, borderTopColor: SURFACE, paddingHorizontal: 14, paddingTop: 6, backgroundColor: BG },
