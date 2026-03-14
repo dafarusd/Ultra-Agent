@@ -1,5 +1,7 @@
 import { ActionPlan } from '../types/ultra';
 import { validatePlan } from './CapabilitySchemas';
+import { resolveIntent } from './IntentResolver';
+import { lookupPackage } from './AppDirectory';
 
 interface ParseRule {
   pattern: RegExp;
@@ -8,6 +10,291 @@ interface ParseRule {
 }
 
 const rules: ParseRule[] = [
+  // ════════════════════════════════════════════════════
+  // RICH INTENT PATTERNS (must come before simple app_launch)
+  // These generate app_launch plans with action/data/extras
+  // so TaskExecutor uses startActivityAsync instead of openApplication
+  // ════════════════════════════════════════════════════
+
+  // ── MUSIC PLAYBACK ─────────────────────────────────
+
+  // "play Bad to the Bone on Spotify"
+  {
+    pattern: /^play\s+(.+?)\s+(?:on|in|with|using)\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      const query = m[1].trim();
+      const appName = m[2].trim();
+      const pkg = lookupPackage(appName);
+      return {
+        target: appName,
+        action: 'android.media.action.MEDIA_PLAY_FROM_SEARCH',
+        extras: {
+          'android.intent.extra.focus': 'vnd.android.cursor.item/audio',
+          'query': query,
+        },
+        packageName: pkg || undefined,
+      };
+    },
+  },
+  // "play music by George Thorogood"
+  {
+    pattern: /^play\s+(?:some\s+)?(?:music\s+)?by\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      const artist = m[1].trim();
+      return {
+        target: artist,
+        action: 'android.media.action.MEDIA_PLAY_FROM_SEARCH',
+        extras: {
+          'android.intent.extra.focus': 'vnd.android.cursor.item/artist',
+          'android.intent.extra.artist': artist,
+          'query': artist,
+        },
+      };
+    },
+  },
+  // "play the album Appetite for Destruction"
+  {
+    pattern: /^play\s+(?:the\s+)?album\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      const album = m[1].trim();
+      return {
+        target: album,
+        action: 'android.media.action.MEDIA_PLAY_FROM_SEARCH',
+        extras: {
+          'android.intent.extra.focus': 'vnd.android.cursor.item/album',
+          'android.intent.extra.album': album,
+          'query': album,
+        },
+      };
+    },
+  },
+  // "play some jazz" / "play Bad to the Bone" (generic music)
+  {
+    pattern: /^play\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      const query = m[1].trim();
+      // Don't match Google Play Store / Play Games etc — let those fall through to simple launch
+      if (/^(store|games?|services|protect|console|books|movies|newsstand)$/i.test(query)) {
+        return { target: `play ${query}` };
+      }
+      return {
+        target: query,
+        action: 'android.media.action.MEDIA_PLAY_FROM_SEARCH',
+        extras: {
+          'android.intent.extra.focus': 'vnd.android.cursor.item/*',
+          'query': query,
+        },
+      };
+    },
+  },
+
+  // ── PHONE CALLS ────────────────────────────────────
+
+  // "call 555-123-4567" (direct phone number)
+  {
+    pattern: /^call\s+([\d\s\-\+\(\)]{7,})$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'phone',
+      action: 'android.intent.action.DIAL',
+      data: `tel:${m[1].replace(/\s/g, '')}`,
+    }),
+  },
+  // "call Mom" / "call John Smith" (contact name — executor resolves to tel: URI)
+  {
+    pattern: /^call\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      const contact = m[1].trim();
+      // If it looks like a known app name, don't treat as a phone call
+      if (lookupPackage(contact)) return null;
+      return {
+        target: 'phone',
+        action: 'android.intent.action.DIAL',
+        extras: { _contactName: contact },
+      };
+    },
+  },
+  // "dial 555-1234"
+  {
+    pattern: /^dial\s+([\d\s\-\+\(\)]+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'phone',
+      action: 'android.intent.action.DIAL',
+      data: `tel:${m[1].replace(/\s/g, '')}`,
+    }),
+  },
+
+  // ── NAVIGATION ─────────────────────────────────────
+
+  // "navigate to Times Square" / "directions to 123 Main St" / "take me to the airport"
+  {
+    pattern: /^(?:navigate|directions?|take\s+me|drive)\s+to\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'maps',
+      action: 'android.intent.action.VIEW',
+      data: `google.navigation:q=${encodeURIComponent(m[1].trim())}`,
+    }),
+  },
+  // "show Times Square on the map" / "find coffee shops on map"
+  {
+    pattern: /^(?:show|find|locate)\s+(.+?)\s+(?:on\s+)?(?:the\s+)?map(?:s)?$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'maps',
+      action: 'android.intent.action.VIEW',
+      data: `geo:0,0?q=${encodeURIComponent(m[1].trim())}`,
+    }),
+  },
+  // "map of downtown Chicago"
+  {
+    pattern: /^map\s+(?:of\s+)?(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'maps',
+      action: 'android.intent.action.VIEW',
+      data: `geo:0,0?q=${encodeURIComponent(m[1].trim())}`,
+    }),
+  },
+
+  // ── WEB SEARCH ─────────────────────────────────────
+
+  // "search for best restaurants near me" / "google quantum computing"
+  {
+    pattern: /^(?:search|google|look\s+up)\s+(?:for\s+)?(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'browser',
+      action: 'android.intent.action.WEB_SEARCH',
+      extras: { query: m[1].trim() },
+    }),
+  },
+
+  // ── ALARMS ─────────────────────────────────────────
+
+  // "set alarm for 7:30 am" / "set an alarm for 2 pm" / "set alarm for 14:00"
+  {
+    pattern: /^set\s+(?:an?\s+)?alarm\s+(?:for\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      let hour = parseInt(m[1], 10);
+      const minutes = m[2] ? parseInt(m[2], 10) : 0;
+      const ampm = m[3]?.toLowerCase();
+      if (ampm === 'pm' && hour < 12) hour += 12;
+      if (ampm === 'am' && hour === 12) hour = 0;
+      return {
+        target: 'clock',
+        action: 'android.intent.action.SET_ALARM',
+        extras: {
+          'android.intent.extra.alarm.HOUR': hour,
+          'android.intent.extra.alarm.MINUTES': minutes,
+        },
+      };
+    },
+  },
+
+  // ── TIMERS ─────────────────────────────────────────
+
+  // "set timer for 5 minutes" / "set a timer 30 seconds" / "timer for 2 hours"
+  {
+    pattern: /^(?:set\s+(?:a\s+)?)?timer\s+(?:for\s+)?(\d+)\s*(seconds?|minutes?|hours?|mins?|hrs?|secs?)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      const value = parseInt(m[1], 10);
+      const unit = m[2].toLowerCase();
+      let seconds = value;
+      if (unit.startsWith('min')) seconds = value * 60;
+      else if (unit.startsWith('hr') || unit.startsWith('hour')) seconds = value * 3600;
+      return {
+        target: 'clock',
+        action: 'android.intent.action.SET_TIMER',
+        extras: {
+          'android.intent.extra.alarm.LENGTH': seconds,
+        },
+      };
+    },
+  },
+
+  // ── EMAIL ──────────────────────────────────────────
+
+  // "email john@example.com about the meeting"
+  {
+    pattern: /^(?:email|mail)\s+(\S+@\S+)\s+(?:about|regarding|re)\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'email',
+      action: 'android.intent.action.SENDTO',
+      data: `mailto:${m[1].trim()}`,
+      extras: { 'android.intent.extra.SUBJECT': m[2].trim() },
+    }),
+  },
+  // "email john@example.com"
+  {
+    pattern: /^(?:email|mail)\s+(\S+@\S+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'email',
+      action: 'android.intent.action.SENDTO',
+      data: `mailto:${m[1].trim()}`,
+    }),
+  },
+
+  // ── URL WITH BROWSER TARGET ────────────────────────
+
+  // "open https://google.com in chrome"
+  {
+    pattern: /^(?:open|go\s+to|visit|browse)\s+(https?:\/\/\S+)\s+(?:in|with|using)\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      const pkg = lookupPackage(m[2].trim());
+      return {
+        target: m[2].trim(),
+        action: 'android.intent.action.VIEW',
+        data: m[1].trim(),
+        packageName: pkg || undefined,
+      };
+    },
+  },
+  // "open https://google.com" (URL without browser specified)
+  {
+    pattern: /^(?:open|go\s+to|visit|browse)\s+(https?:\/\/\S+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'browser',
+      action: 'android.intent.action.VIEW',
+      data: m[1].trim(),
+    }),
+  },
+  // "open google.com" (domain without scheme — add https)
+  {
+    pattern: /^(?:open|go\s+to|visit|browse)\s+(\w[\w-]*\.\w{2,}(?:\.\w{2,})?(?:\/\S*)?)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => {
+      const domain = m[1].trim();
+      // Verify it looks like a domain (has a dot, no spaces)
+      if (!domain.includes('.') || domain.includes(' ')) return null;
+      // Don't match things like "open file.txt" — those go to file_read
+      if (/\.(txt|json|md|csv|log|xml|html|js|ts|java|py)$/i.test(domain)) return null;
+      return {
+        target: 'browser',
+        action: 'android.intent.action.VIEW',
+        data: `https://${domain}`,
+      };
+    },
+  },
+
+  // ════════════════════════════════════════════════════
+  // SIMPLE APP LAUNCH (existing patterns, preserved)
+  // These generate app_launch plans with only `target` —
+  // TaskExecutor uses openApplication() for these
+  // ════════════════════════════════════════════════════
+
   {
     pattern: /^open\s+(.+)/i,
     capability: 'app_launch',

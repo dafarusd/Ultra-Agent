@@ -16,7 +16,12 @@ const DANGEROUS_PATTERNS: RegExp[] = [
 ];
 
 const SCOPE_MAP: Record<string, string[]> = {
-  app_launch: ['open', 'launch', 'start', 'run', 'camera'],
+  app_launch: [
+    'open', 'launch', 'start', 'run', 'camera',
+    'play', 'call', 'dial', 'navigate', 'directions', 'drive',
+    'search', 'google', 'look up', 'map', 'browse', 'visit',
+    'set alarm', 'set timer', 'email', 'mail',
+  ],
   sms_send: ['send text', 'sms', 'message', 'text to', 'text', 'call'],
   file_read: ['read', 'show', 'open file', 'list files', 'show files'],
   file_delete: ['delete', 'remove'],

@@ -3,11 +3,17 @@ import { CapabilitySchema, ActionPlan, ParamDef } from '../types/ultra';
 const schemas: CapabilitySchema[] = [
   {
     capabilityId: 'app_launch',
-    version: 1,
+    version: 2,
     requiredParams: {
-      target: { type: 'string', description: 'App name or package to launch' },
+      target: { type: 'string', description: 'App name, package name, URL, or action description' },
     },
-    optionalParams: {},
+    optionalParams: {
+      action: { type: 'string', description: 'Android intent action (e.g., android.intent.action.VIEW, android.media.action.MEDIA_PLAY_FROM_SEARCH)' },
+      data: { type: 'string', description: 'URI data for the intent (e.g., tel:, geo:, https:, spotify:)' },
+      extras: { type: 'object', description: 'Key-value extras to pass with the Android intent' },
+      packageName: { type: 'string', description: 'Explicit Android package name to target' },
+      mimeType: { type: 'string', description: 'MIME type for the intent data' },
+    },
   },
   {
     capabilityId: 'sms_send',
