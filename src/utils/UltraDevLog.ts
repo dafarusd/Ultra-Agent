@@ -370,8 +370,9 @@ export class UltraDevLog {
     UltraDevLog.push('SYSTEM', { event: 'conversation_loaded', conversationId, messageCount });
   }
 
-  static conversationMessage(conversationId: string, role: string, contentPreview: string): void {
-    UltraDevLog.push('SYSTEM', { event: 'conversation_message', conversationId, role, contentPreview: contentPreview.slice(0, 200) });
+  static conversationMessage(conversationId: string, role: string, contentLenOrPreview: number | string, source?: string): void {
+    const preview = typeof contentLenOrPreview === 'number' ? `[${contentLenOrPreview} chars]` : (contentLenOrPreview ?? '').slice(0, 200);
+    UltraDevLog.push('SYSTEM', { event: 'conversation_message', conversationId, role, contentPreview: preview, source });
   }
 
   static conversationSaved(conversationId: string): void {

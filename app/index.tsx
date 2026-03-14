@@ -41,6 +41,8 @@ const ULTRA_COLOR = ACCENT;
 const WARN_COLOR = "#ff6600";
 const BLOCKED_COLOR = "#ff4444";
 
+let _agentCoreInitialized = false;
+
 // ── 3-dot menu items ───────────────────────────────────
 function getHeaderMenuItems(starred: boolean): ActionMenuItem[] {
   return [
@@ -121,7 +123,7 @@ export default function ChatScreen() {
 
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
-  const agentCoreInitialized = useRef(false);
+  
   const scrollOffsetRef = useRef(0);
   const listHeightRef = useRef(0);
 
@@ -188,10 +190,9 @@ export default function ChatScreen() {
 
   // ── Init ───────────────────────────────────────────
   useEffect(() => {
-    let coreRef: AgentCore | null = null;
     async function init() {
-      if (agentCoreInitialized.current) return;
-      agentCoreInitialized.current = true;
+      if (_agentCoreInitialized) return;
+      _agentCoreInitialized = true;
       DebugLog.uiInit("start", "Beginning app initialization");
       try {
         const vault = await SecureVault.initialize();
@@ -202,7 +203,6 @@ export default function ChatScreen() {
           if (type === "genome_progress") setGenomePhase(msg);
         });
         await core.initialize();
-        coreRef = core;
         setAgentCore(core);
         setAgentCoreInstance(core);
         const modelsAvailable = core.getAvailableModels()?.length ?? 0;
@@ -261,9 +261,6 @@ export default function ChatScreen() {
       }
     }
     init();
-    return () => {
-      if (coreRef) coreRef.destroy('component_unmount');
-    };
   }, []);
 
   const lastFocusTime = useRef(0);

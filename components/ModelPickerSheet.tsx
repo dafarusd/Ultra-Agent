@@ -74,8 +74,10 @@ export default function ModelPickerSheet({
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const slideAnim = React.useRef(new Animated.Value(SHEET_MAX_HEIGHT)).current;
 
+  const hasBeenVisible = React.useRef(false);
   React.useEffect(() => {
     if (visible) {
+      hasBeenVisible.current = true;
       if (initialFilter) setFilter(initialFilter);
       UltraDevLog.pickerOpen(models.length, currentModelId, (slideAnim as any)._value ?? SHEET_MAX_HEIGHT, initialFilter ?? 'all');
       slideAnim.setValue(SHEET_MAX_HEIGHT);
@@ -90,7 +92,7 @@ export default function ModelPickerSheet({
           UltraDevLog.error('ModelPickerSheet', 'Open animation did not finish', `started=${currentSlide} visible=${visible}`);
         }
       });
-    } else {
+    } else if (hasBeenVisible.current) {
       const currentSlide = (slideAnim as any)._value ?? -1;
       UltraDevLog.pickerAnimate('close', currentSlide, SHEET_MAX_HEIGHT, 'timing');
       Animated.parallel([

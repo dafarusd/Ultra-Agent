@@ -4,6 +4,25 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.12.0] — 2026-03-14 — Critical: Fix Re-Init Bug & conversationMessage Crash
+
+### Fixed — Re-init on background return (CRITICAL)
+- Root cause: `agentCoreInitialized` was a `useRef(false)` inside the component. When Android unmounts/remounts the component on background return, the ref resets to `false`, causing a new AgentCore to be created every time.
+- Fix: Replaced with module-level `let _agentCoreInitialized = false` that survives component remount cycles.
+- Removed `coreRef.destroy('component_unmount')` cleanup that was actively tearing down the core on every background transition.
+
+### Fixed — "undefined is not a function" crash on every message send (CRITICAL)
+- Root cause: `ConversationManager.addMessage()` calls `DebugLog.conversationMessage(conversationId, role, msg.content?.length ?? 0, source)` — passing a **number** as the 3rd arg. `UltraDevLog.conversationMessage` expected a **string** and called `.slice(0, 200)` on it. Numbers don't have `.slice()`, causing the crash.
+- Fix: Updated `UltraDevLog.conversationMessage` to accept `number | string` for the 3rd parameter, with type-safe handling.
+
+### Fixed — Spurious PICKER_ANIMATE close on every mount
+- ModelPickerSheet's `useEffect([visible])` fired the close animation on initial mount when `visible=false`. Added `hasBeenVisible` ref guard to skip the close branch until the picker has been opened at least once.
+
+### Changed
+- `ultra-full-source.txt` regenerated (18,476 lines).
+
+---
+
 ## [v3.11.0] — 2026-03-14 — Three-Fix Instrumentation Completion
 
 ### Fixed — Issue 1: taskId propagation
