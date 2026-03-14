@@ -599,7 +599,15 @@ export default function SettingsScreen() {
                               <View style={styles.defaultPicker}>
                                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
                                   <Pressable
-                                    onPress={() => setDefaults({ ...defaults, [role]: "" })}
+                                    onPress={async () => {
+                                      const updated = { ...defaults, [role]: "" };
+                                      setDefaults(updated);
+                                      try {
+                                        const vault = await SecureVault.initialize();
+                                        await vault.set("api_defaults", JSON.stringify(updated));
+                                        DebugLog.settingsDefaultsSave(updated);
+                                      } catch {}
+                                    }}
                                     style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}
                                   >
                                     <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>Auto</Text>
@@ -610,14 +618,20 @@ export default function SettingsScreen() {
                                     return (
                                       <Pressable
                                         key={m.id}
-                                        onPress={() => {
+                                        onPress={async () => {
+                                          const updated = { ...defaults, [role]: m.id };
                                           DebugLog.settingsDefaultPick(role, m.id, m.name || m.id);
                                           DebugLog.settingsState("default_pick", {
-                                            defaults: { ...defaults, [role]: m.id },
+                                            defaults: updated,
                                             availableModelsCount: availableModels.length,
                                             defaultsExpanded,
                                           });
-                                          setDefaults({ ...defaults, [role]: m.id });
+                                          setDefaults(updated);
+                                          try {
+                                            const vault = await SecureVault.initialize();
+                                            await vault.set("api_defaults", JSON.stringify(updated));
+                                            DebugLog.settingsDefaultsSave(updated);
+                                          } catch {}
                                         }}
                                         style={[styles.defaultOption, isActive && styles.defaultOptionActive, isRec && !isActive && styles.recommendedOption]}
                                       >

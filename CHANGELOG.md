@@ -4,7 +4,7 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
-## [v3.12.0] — 2026-03-14 — Critical: Fix Re-Init Bug & conversationMessage Crash
+## [v3.12.0] — 2026-03-14 — Critical: Fix Re-Init Bug, conversationMessage Crash & Defaults Persistence
 
 ### Fixed — Re-init on background return (CRITICAL)
 - Root cause: `agentCoreInitialized` was a `useRef(false)` inside the component. When Android unmounts/remounts the component on background return, the ref resets to `false`, causing a new AgentCore to be created every time.
@@ -18,8 +18,13 @@ All notable changes to this project are documented here, organized by feature ve
 ### Fixed — Spurious PICKER_ANIMATE close on every mount
 - ModelPickerSheet's `useEffect([visible])` fired the close animation on initial mount when `visible=false`. Added `hasBeenVisible` ref guard to skip the close branch until the picker has been opened at least once.
 
+### Fixed — Default model picks not persisting (Bug 3)
+- Root cause: Picking a default model in settings only updated local state (`setDefaults`). The user had to separately press "Save Defaults" — a step they were missing, so `VAULT_WRITE api_defaults` never fired.
+- Fix: Each model pick and "Auto" selection now auto-saves to vault immediately via `vault.set("api_defaults", ...)`.
+- Also fixed `SecureVault.set()` calling `DebugLog.vaultSet(key, value.length)` — was passing a number where boolean was expected. Now correctly passes `true`.
+
 ### Changed
-- `ultra-full-source.txt` regenerated (18,476 lines).
+- `ultra-full-source.txt` regenerated (18,490 lines).
 
 ---
 

@@ -67,7 +67,7 @@ export class SecureVault {
     try {
       await storeSet(`vu_${key}`, value);
       this.cache.set(key, value);
-      DebugLog.vaultSet(key, value.length);
+      DebugLog.vaultSet(key, true);
     } catch (error: any) {
       this.cache.set(key, value);
       DebugLog.vaultError('SET', key, error.message);
