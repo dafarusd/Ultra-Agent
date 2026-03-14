@@ -1,8 +1,8 @@
 const { getDefaultConfig } = require("expo/metro-config");
 
-const config = getDefaultConfig(__dirname);
+const config = getDefaultConfig(process.cwd());
 
-config.watchFolders = [__dirname];
+config.watchFolders = [process.cwd()];
 
 config.resolver.blockList = [
   /attached_assets\/.*/,
