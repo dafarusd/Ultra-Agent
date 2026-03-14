@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SecureVault } from "@/src/security/SecureVault";
-import { DebugLog } from "@/src/utils/DebugLog";
+import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
 import { AgentCore, setAgentCoreInstance } from "@/src/core/AgentCore";
 import type { ExecuteArgs } from "@/src/core/AgentCore";
 import type { ChatMessage, UltraExecutionResult, ConversationMeta, PromptTrace } from "@/src/types/ultra";
@@ -298,10 +298,12 @@ export default function ChatScreen() {
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = (overrideText || input).trim();
     if (!text || isProcessing || !agentCore || !conversationId) return;
+    UltraDevLog.sendAttempt(text, currentMode, activeModelId || '', conversationId, messages.length, isProcessing);
     DebugLog.uiSendMessage(text.length, currentMode, activeModelId, isProcessing);
     snapUI("before_send");
     if (!overrideText) setInput("");
     setIsProcessing(true);
+    UltraDevLog.processingState(true, 'handleSend_start');
     setStatus("Processing...");
 
     const optimisticId = `optimistic_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -310,21 +312,26 @@ export default function ChatScreen() {
       ...prev,
     ]);
 
+    const _sendStart = Date.now();
     try {
       const result = await agentCore.execute({ conversationId, userInput: text });
+      UltraDevLog.sendComplete('(check taskId in AGENT_EXEC_START)', result?.success !== false, Date.now() - _sendStart, true, false);
       await handleResult(result, agentCore, conversationId);
     } catch (err: any) {
+      UltraDevLog.error('handleSend', err?.message || 'unknown', err?.stack);
       const isAbort = err?.message?.includes("aborted") || err?.message?.includes("timed out");
       if (isAbort) {
         setStatus("Stopped");
       }
       await reloadMessages(agentCore, conversationId);
+    } finally {
+      setIsProcessing(false);
+      UltraDevLog.processingState(false, 'handleSend_finally');
+      setStatus("Ready");
+      setBuildPhase(null);
+      setGenomePhase(null);
     }
-    setIsProcessing(false);
-    setStatus("Ready");
-    setBuildPhase(null);
-    setGenomePhase(null);
-  }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages]);
+  }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages, messages.length, currentMode, activeModelId]);
 
   // ── Quick reply handler ────────────────────────────
   const handleQuickReply = useCallback((prompt: string, messageContent: string) => {
@@ -341,6 +348,7 @@ export default function ChatScreen() {
     const replay = pendingReplay;
     setPendingReplay(null);
     setIsProcessing(true);
+    UltraDevLog.processingState(true, 'handleApprove');
     setStatus("Executing approved action...");
     try {
       const args: ExecuteArgs = { conversationId, userInput: replay.userInput, replay: true };
@@ -352,6 +360,7 @@ export default function ChatScreen() {
       await reloadMessages(agentCore, conversationId);
     }
     setIsProcessing(false);
+    UltraDevLog.processingState(false, 'handleApprove_done');
     setStatus("Ready");
   }, [agentCore, conversationId, pendingReplay, handleResult, reloadMessages]);
 
@@ -361,6 +370,7 @@ export default function ChatScreen() {
     setPendingReplay(null);
     if (replay.type === "model_switch") {
       setIsProcessing(true);
+      UltraDevLog.processingState(true, 'handleDeny_modelSwitch');
       setStatus("Continuing with current model...");
       try {
         const result = await agentCore.execute({ conversationId, userInput: replay.userInput, replay: true, skipModelSwitchPrompt: true });
@@ -369,6 +379,7 @@ export default function ChatScreen() {
         await reloadMessages(agentCore, conversationId);
       }
       setIsProcessing(false);
+      UltraDevLog.processingState(false, 'handleDeny_modelSwitch_done');
       setStatus("Ready");
     } else {
       const cm = agentCore.getConversationManager();
@@ -513,6 +524,8 @@ export default function ChatScreen() {
 
   const handleModelSelect = useCallback(async (modelId: string) => {
     if (!agentCore) return;
+    UltraDevLog.pickerSelect(modelId, modelId, activeModelId || '');
+    UltraDevLog.pickerClose('model_select');
     const prev = activeModelId;
     DebugLog.uiPickerSelect(modelId, prev);
     snapUI("model_select");
@@ -523,10 +536,12 @@ export default function ChatScreen() {
   // ── Misc handlers ──────────────────────────────────
   const openConvList = useCallback(async () => {
     if (agentCore) await refreshConversations(agentCore);
+    UltraDevLog.modalEvent('convList', 'open');
     setConvListVisible(true);
   }, [agentCore, refreshConversations]);
 
   const openPromptViewer = useCallback((trace: PromptTrace) => {
+    UltraDevLog.modalEvent('promptViewer', 'open');
     setSelectedTrace(trace);
     setPromptViewerVisible(true);
   }, []);
@@ -745,6 +760,8 @@ export default function ChatScreen() {
                 };
                 const filter = modeToFilter[currentMode] || "all";
                 DebugLog.uiPickerOpen(filter, currentMode, activeModelId);
+                UltraDevLog.pickerOpen(getPickerModels().length, activeModelId || '', 0, filter);
+                UltraDevLog.modalEvent('modelPicker', 'open', { modelCount: getPickerModels().length });
                 snapUI("picker_open");
                 setModelPickerInitialFilter(filter);
                 setModelPickerVisible(true);
@@ -815,7 +832,7 @@ export default function ChatScreen() {
         onSelect={handleSelectConversation}
         onDelete={handleDeleteConversation}
         onNewChat={handleNewChat}
-        onClose={() => setConvListVisible(false)}
+        onClose={() => { UltraDevLog.modalEvent('convList', 'close'); setConvListVisible(false); }}
         onOpenSettings={() => router.push("/settings")}
         onOpenLogs={() => {
           router.push("/settings?tab=logs");
@@ -843,7 +860,12 @@ export default function ChatScreen() {
         models={getPickerModels()}
         currentModelId={activeModelId || agentCore?.getDefaultModel() || ""}
         onSelect={handleModelSelect}
-        onClose={() => { setModelPickerVisible(false); setModelPickerInitialFilter("all"); }}
+        onClose={() => {
+          UltraDevLog.pickerClose('close_button');
+          UltraDevLog.modalEvent('modelPicker', 'close', { how: 'close_button' });
+          setModelPickerVisible(false);
+          setModelPickerInitialFilter("all");
+        }}
         initialFilter={modelPickerInitialFilter}
       />
 
@@ -875,7 +897,7 @@ export default function ChatScreen() {
             setModelPickerVisible(true);
           }
         }}
-        onClose={() => setPlusMenuVisible(false)}
+        onClose={() => { UltraDevLog.modalEvent('plusMenu', 'close'); setPlusMenuVisible(false); }}
       />
 
       {Platform.OS !== "web" && (

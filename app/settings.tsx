@@ -17,7 +17,7 @@ import * as Clipboard from "expo-clipboard";
 import { SecureVault } from "@/src/security/SecureVault";
 import { getAgentCoreInstance } from "@/src/core/AgentCore";
 import { Logger } from "@/src/utils/Logger";
-import { DebugLog } from "@/src/utils/DebugLog";
+import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
 import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
 
 // ── Palette ────────────────────────────────────────────
@@ -375,6 +375,28 @@ export default function SettingsScreen() {
     } catch {}
   }, []);
 
+  const copyBugReport = useCallback(async () => {
+    try {
+      await UltraDevLog.forceFlush();
+      const report = UltraDevLog.generateBugReport();
+      await Clipboard.setStringAsync(report);
+      Alert.alert("Bug Report Copied", `${report.length} chars ready to paste into Replit.`);
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  }, []);
+
+  const copyFormattedLog = useCallback(async () => {
+    try {
+      await UltraDevLog.forceFlush();
+      const log = UltraDevLog.getFormattedLog(500);
+      await Clipboard.setStringAsync(log);
+      Alert.alert("Log Copied", `${log.split('\n').length} lines`);
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  }, []);
+
   // ── Render ─────────────────────────────────────────
   const webTopInset = Platform.OS === "web" ? 67 : 0;
 
@@ -725,6 +747,14 @@ export default function SettingsScreen() {
                     <Ionicons name="download-outline" size={16} color={DIM} />
                   </Pressable>
                 </View>
+              </View>
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+                <Pressable onPress={copyBugReport} style={[styles.logActionBtn, { borderWidth: 1, borderColor: '#ff6b00', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }]}>
+                  <Text style={{ color: '#ff6b00', fontSize: 12, fontFamily: "Inter_600SemiBold" }}>Bug Report</Text>
+                </Pressable>
+                <Pressable onPress={copyFormattedLog} style={[styles.logActionBtn, { borderWidth: 1, borderColor: ACCENT, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }]}>
+                  <Text style={{ color: ACCENT, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>Full Log</Text>
+                </Pressable>
               </View>
               <Text style={styles.debugHint}>Full dev log with prompts, AI responses, agent steps, costs, and errors. Copy and share with your dev team or AI assistant.</Text>
               {!debugLogsLoaded ? (

@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { UltraDevLog } from "@/src/utils/UltraDevLog";
 
 const ACCENT = "#34d399";
 const BG = "#000000";
@@ -76,11 +77,19 @@ export default function ModelPickerSheet({
   React.useEffect(() => {
     if (visible) {
       if (initialFilter) setFilter(initialFilter);
+      const currentSlide = (slideAnim as any)._value ?? -1;
+      UltraDevLog.pickerAnimate('open', currentSlide, 0, 'spring');
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
         Animated.spring(slideAnim, { toValue: 0, tension: 65, friction: 11, useNativeDriver: true }),
-      ]).start();
+      ]).start((result) => {
+        if (!result.finished) {
+          UltraDevLog.error('ModelPickerSheet', 'Open animation did not finish', `started=${currentSlide} visible=${visible}`);
+        }
+      });
     } else {
+      const currentSlide = (slideAnim as any)._value ?? -1;
+      UltraDevLog.pickerAnimate('close', currentSlide, SHEET_MAX_HEIGHT, 'timing');
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
         Animated.timing(slideAnim, { toValue: SHEET_MAX_HEIGHT, duration: 150, useNativeDriver: true }),

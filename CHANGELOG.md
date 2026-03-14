@@ -4,6 +4,41 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.8.0] — 2026-03-14 — UltraDevLog Integration & Full Instrumentation
+
+### Added — UltraDevLog replaces DebugLog as the unified diagnostic system
+- **`src/utils/UltraDevLog.ts`** — Complete superset of DebugLog with 70+ methods covering every subsystem. All existing DebugLog methods preserved with identical signatures. New diagnostic categories: APP_LAUNCH_*, SMS_*, PICKER_*, UI_PROCESSING, UI_SEND_ATTEMPT, UI_SEND_COMPLETE, UI_MODAL, UI_RENDER_MSG, VAULT_READ/WRITE, PARSE_INPUT/PARSE_COMPOUND, SESSION_SUMMARY.
+- **`generateBugReport()`** — Structured diagnostic report with failures, last task chain, isProcessing transitions, app launch trace, picker trace, SMS trace, errors, and compound command warnings. One-tap copy from Settings.
+- **`getFormattedLog()`** — Human-readable formatted log optimized for pasting to Replit.
+- **`flushSync()`** — setImmediate-based flush before IntentLauncher suspends JS thread.
+- **Bug Report button** (orange) in Settings > Logs — copies structured bug report to clipboard.
+- **Full Log button** (green) in Settings > Logs — copies formatted log to clipboard.
+
+### Changed — All 10 files migrated from DebugLog to UltraDevLog
+- Import alias pattern: `import { UltraDevLog as DebugLog } from '@/src/utils/UltraDevLog'` — zero call-site changes required for existing DebugLog.* calls.
+- Files migrated: AgentCore, ModelRouter, SafetyChecker, BuildSystem, SecureVault, CostTracker, ConversationManager, TaskExecutor, app/index.tsx, app/settings.tsx, ModelPickerSheet.tsx.
+
+### Instrumented — TaskExecutor app_launch PATH B
+- `appLaunchBegin` → `appLaunchDeviceQuery` → `appLaunchMatch` → `appLaunchAiFallback` → `appLaunchFire` → result pre-computed before IntentLauncher.openApplication() fires (fixes JS suspend bug).
+
+### Instrumented — TaskExecutor sms_send
+- `smsResolve` → `smsFire` → `smsResult` with contact search count, phone validation, and masked number logging.
+
+### Instrumented — app/index.tsx
+- `sendAttempt` / `sendComplete` / `processingState(true/false)` on handleSend with try/finally for reliable cleanup.
+- `processingState` transitions on handleApprove, handleDeny.
+- `modalEvent` open/close tracking on modelPicker, convList, plusMenu, promptViewer.
+- `pickerOpen` / `pickerClose` / `pickerSelect` on model picker interactions.
+
+### Instrumented — ModelPickerSheet.tsx
+- `pickerAnimate` logging on open/close animation with current slideAnim value and animation type.
+- Error callback on open animation not finishing.
+
+### Technical
+- `ultra-full-source.txt` regenerated (12,018 lines)
+
+---
+
 ## [v3.7.0] — 2026-03-13 — State Snapshot Logging System
 
 ### Changed — Fundamental shift from event-only logging to state-enriched logging

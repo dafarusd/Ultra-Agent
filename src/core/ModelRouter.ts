@@ -1,7 +1,7 @@
 import { SecureVault } from '../security/SecureVault';
 import { CostTracker } from '../services/CostTracker';
 import { Logger } from '../utils/Logger';
-import { DebugLog } from '../utils/DebugLog';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import type { UltraModelDef } from '../types/ultra';
 
 export interface ModelDef {

@@ -1,6 +1,6 @@
 import { SecureVault } from '../security/SecureVault';
 import { Logger } from '../utils/Logger';
-import { DebugLog } from '../utils/DebugLog';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 interface CostEntry {
   timestamp: number;

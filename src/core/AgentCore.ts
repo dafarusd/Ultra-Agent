@@ -15,7 +15,7 @@ import { SafetyChecker } from './SafetyChecker';
 import { CommandParser } from './CommandParser';
 import { validatePlan } from './CapabilitySchemas';
 import { Logger } from '../utils/Logger';
-import { DebugLog } from '../utils/DebugLog';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import type {
   ChatMessage,
   UltraExecutionResult,

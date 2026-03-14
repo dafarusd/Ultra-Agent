@@ -1,4 +1,4 @@
-import { DebugLog } from '../utils/DebugLog';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import type { ActionPlan, SafetyCheckResult } from '../types/ultra';
 
 const DANGEROUS_PATTERNS: RegExp[] = [

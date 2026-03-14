@@ -15,6 +15,7 @@ import { ModelRouter } from './ModelRouter';
 import { MavenResolver } from './MavenResolver';
 import { TestRunner } from './TestRunner';
 import { Logger } from '../utils/Logger';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import AppController from '../native/AppController';
 import type { ActionPlan } from '../types/ultra';
 import type { Genome } from '../genome/types';
@@ -295,11 +296,21 @@ export class TaskExecutor {
               (p) => p.number && p.number.replace(/\D/g, '').length >= 7
             );
             if (realNumber && realNumber.number) {
-              to = realNumber.number;
+              const resolved = realNumber.number;
+              DebugLog.smsResolve(taskId, to, resolved, data.length);
+              to = resolved;
+            } else {
+              DebugLog.smsResolve(taskId, to, null, data.length);
             }
+          } else {
+            DebugLog.smsResolve(taskId, to, null, data.length);
           }
-        } catch {}
+        } catch (e: any) {
+          DebugLog.smsResolve(taskId, to, null, 0, e.message);
+        }
+        DebugLog.smsFire(taskId, to, message);
         const { result } = await SMS.sendSMSAsync([to], message);
+        DebugLog.smsResult(taskId, result, result === 'sent');
         return { success: result === 'sent', sent: result === 'sent', to };
       }
       case 'camera_capture': {
@@ -433,6 +444,8 @@ export class TaskExecutor {
           .replace(/^(the|a|an|my)\s+/i, '')
           .replace(/\s+app$/i, '');
 
+        DebugLog.appLaunchBegin(taskId, target, targetLower);
+
         let pkg: string | undefined;
 
         // Step 1: Check static directory (instant, no network, no AI credits)
@@ -441,45 +454,59 @@ export class TaskExecutor {
         // Step 2: Query installed apps with fuzzy matching
         if (!pkg) {
           try {
+            const _qStart = Date.now();
             const AgentNativeModule = (await import('../native/AgentNative')).default;
             const installed = await AgentNativeModule.getInstalledApps();
+            DebugLog.appLaunchDeviceQuery(taskId, installed?.length ?? 0, Date.now() - _qStart);
             if (installed && installed.length > 0) {
               const match = findBestMatch(targetLower, installed);
               if (match) {
                 pkg = match.packageName;
+                DebugLog.appLaunchMatch(taskId, targetLower, match.matchType === 'exact' ? 'exact' : 'partial', match.appName, pkg);
                 this.logger.info(`Fuzzy match: "${targetLower}" → "${match.appName}" (${match.packageName}) score=${match.score} type=${match.matchType}`);
+              } else {
+                DebugLog.appLaunchMatch(taskId, targetLower, 'none');
               }
             }
           } catch (e: any) {
             this.logger.warn('getInstalledApps failed, using AI fallback', { error: e.message });
+            DebugLog.appLaunchDeviceQuery(taskId, 0, 0, e.message);
           }
         }
 
         // Step 3: AI fallback only if both directory and device query found nothing
         if (!pkg) {
           if (!this.ai.hasApiKey()) {
+            DebugLog.appLaunchFail(taskId, target, undefined, 'No API key configured', 'ai_fallback');
             return { success: false, error: `Could not find "${target}" on this device. Configure an API key to enable AI-assisted app lookup.` };
           }
+          const _aiPrompt = `What is the exact Android package name for the app "${target}"? Reply with ONLY the package name, nothing else. If you're not sure, reply "unknown".`;
+          const _aiStart = Date.now();
           const r = await this.ai.complete(
-            `What is the exact Android package name for the app "${target}"? Reply with ONLY the package name, nothing else. If you're not sure, reply "unknown".`,
+            _aiPrompt,
             { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 }
           );
           const aiPkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
           if (aiPkg && aiPkg.includes('.') && aiPkg !== 'unknown') {
             pkg = aiPkg;
           }
+          DebugLog.appLaunchAiFallback(taskId, target, _aiPrompt, pkg || 'NONE', Date.now() - _aiStart);
         }
 
         if (!pkg || !pkg.includes('.')) {
+          DebugLog.appLaunchFail(taskId, target, pkg, 'No valid package found', 'no_package');
           return { success: false, error: `Could not find "${target}" on this device` };
         }
 
+        const launchResult = { success: true, launched: target, packageName: pkg };
+        DebugLog.appLaunchFire(taskId, pkg, target);
         try {
           IntentLauncher.openApplication(pkg);
-          return { success: true, launched: target, packageName: pkg };
         } catch (err: any) {
+          DebugLog.appLaunchFail(taskId, target, pkg, err.message, 'intent_launch');
           return { success: false, error: `Failed to launch ${target} (${pkg}): ${err.message}` };
         }
+        return launchResult;
       }
       case 'app_share': {
         const shareContent = params.content || params.message || params.url;

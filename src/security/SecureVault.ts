@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { Logger } from '../utils/Logger';
-import { DebugLog } from '../utils/DebugLog';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 const webStorage: Record<string, string> = {};
 

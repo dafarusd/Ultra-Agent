@@ -1,6 +1,6 @@
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
-import { DebugLog } from '../utils/DebugLog';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import type { ChatMessage, Conversation, ConversationMeta } from '../types/ultra';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
