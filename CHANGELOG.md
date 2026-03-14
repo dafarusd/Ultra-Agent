@@ -4,6 +4,38 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.9.0] — 2026-03-14 — 6-Bug Fix Pass (Log-Driven Diagnostics)
+
+### Fixed — Abort error message (Bug 1)
+- ModelRouter `complete()` and `completeWithConversation()` now distinguish user-initiated abort (Stop button) from timeout. User abort shows "Request stopped by user." instead of "Request timed out after 60s."
+- Detection: `abortCurrentRequest()` sets `activeController = null` before the AbortError catch fires.
+
+### Fixed — Second app launch silent fail (Bug 2 — idempotency + re-init)
+- **Idempotency bypass for repeatable capabilities:** `app_launch`, `camera_capture`, `media_access`, `device_location`, `contacts_read` are now exempt from the duplicate-prevention check in ExecutionLedger. These are valid repeat actions.
+- **Re-init guard:** Added `agentCoreInitialized` ref to `app/index.tsx` — prevents full AgentCore re-initialization on every AppState foreground return. Init runs exactly once.
+
+### Fixed — Model picker animation (Bug 3)
+- `ModelPickerSheet.tsx`: On open, `slideAnim.setValue(SHEET_MAX_HEIGHT)` and `fadeAnim.setValue(0)` are called synchronously before animation starts. This ensures the sheet always starts from the correct off-screen position, even after a prior close cycle left slideAnim at SHEET_MAX_HEIGHT.
+
+### Fixed — Duplicate focus effects / 4x model discovery (Bug 4)
+- `useFocusEffect` in `app/index.tsx` now debounces with a 2-second `lastFocusTime` ref guard — prevents rapid-fire duplicate triggers on screen focus.
+- `ModelRouter.refreshApiKey()` now skips `discoverModels()` after the first successful discovery (`hasDiscoveredModels` flag). Discovery runs once on init, not on every focus/return.
+
+### Fixed — Missing command verbs (Bug 5 — CommandParser)
+- **Email:** `email john@example.com hello` now routes to `app_launch` with `SENDTO` intent. Supports `about`, `saying`, and bare-text patterns. Also added `e-mail` alias.
+- **Calendar/Schedule:** `schedule a dentist appointment` routes to `app_launch` with `INSERT` intent on calendar content URI. Supports `add event`, `create event`, `add to calendar` patterns.
+- **Mode detection updated:** `detectMode()` and `ultraCommand` regex now include `play`, `schedule`, `email`, `mail`, `dial`, `navigate`, `directions`, `timer`, `map` as imperative verbs.
+
+### Fixed — Contacts permission (Bug 6)
+- `contacts_read` capability now calls `Contacts.requestPermissionsAsync()` before reading.
+- `sms_send` capability now requests contacts permission before contact name resolution.
+
+### Fixed — Weather app AI hallucination
+- Added `weather`, `google weather`, `accuweather`, `weather channel` to AppDirectory static map.
+- AI fallback prompt now explicitly blocks `com.android.weather` (doesn't exist) and suggests valid alternatives.
+
+---
+
 ## [v3.8.0] — 2026-03-14 — UltraDevLog Integration & Full Instrumentation
 
 ### Added — UltraDevLog replaces DebugLog as the unified diagnostic system

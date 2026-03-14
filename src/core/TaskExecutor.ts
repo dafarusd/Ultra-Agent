@@ -279,6 +279,10 @@ export class TaskExecutor {
         return { success: true, organized: done.length, actions: done };
       }
       case 'contacts_read': {
+        const { status: contactsStatus } = await Contacts.requestPermissionsAsync();
+        if (contactsStatus !== 'granted') {
+          return { success: false, error: 'Contacts permission denied. Grant in device settings.' };
+        }
         const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
         return { success: true, contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
       }
@@ -289,6 +293,11 @@ export class TaskExecutor {
         const avail = await SMS.isAvailableAsync();
         if (!avail) return { error: 'SMS unavailable' };
         try {
+          const { status: smsContactStatus } = await Contacts.requestPermissionsAsync();
+          if (smsContactStatus !== 'granted') {
+            DebugLog.smsResolve(taskId, to, null, 0, 'Contacts permission denied');
+            return { error: 'Contacts permission denied. Grant in device settings to resolve contact names.' };
+          }
           const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
           const match = data.find((c) => c.name?.toLowerCase().includes(to.toLowerCase()));
           if (match && match.phoneNumbers && match.phoneNumbers.length > 0) {
@@ -480,7 +489,7 @@ export class TaskExecutor {
             DebugLog.appLaunchFail(taskId, target, undefined, 'No API key configured', 'ai_fallback');
             return { success: false, error: `Could not find "${target}" on this device. Configure an API key to enable AI-assisted app lookup.` };
           }
-          const _aiPrompt = `What is the exact Android package name for the app "${target}"? Reply with ONLY the package name, nothing else. If you're not sure, reply "unknown".`;
+          const _aiPrompt = `What is the exact Android package name for the app "${target}"? Reply with ONLY the package name, nothing else. If you're not sure, reply "unknown". IMPORTANT: Never suggest com.android.weather — it does not exist. For weather apps use com.google.android.apps.weather, com.accuweather.android, or com.weather.Weather.`;
           const _aiStart = Date.now();
           const r = await this.ai.complete(
             _aiPrompt,

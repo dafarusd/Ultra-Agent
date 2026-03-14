@@ -77,6 +77,8 @@ export default function ModelPickerSheet({
   React.useEffect(() => {
     if (visible) {
       if (initialFilter) setFilter(initialFilter);
+      slideAnim.setValue(SHEET_MAX_HEIGHT);
+      fadeAnim.setValue(0);
       const currentSlide = (slideAnim as any)._value ?? -1;
       UltraDevLog.pickerAnimate('open', currentSlide, 0, 'spring');
       Animated.parallel([

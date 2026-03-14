@@ -223,9 +223,9 @@ const rules: ParseRule[] = [
 
   // ── EMAIL ──────────────────────────────────────────
 
-  // "email john@example.com about the meeting"
+  // "email john@example.com about the meeting" / "email john@example.com hi"
   {
-    pattern: /^(?:email|mail)\s+(\S+@\S+)\s+(?:about|regarding|re)\s+(.+)$/i,
+    pattern: /^(?:email|mail|e-mail)\s+(\S+@\S+)\s+(?:about|regarding|re)\s+(.+)$/i,
     capability: 'app_launch',
     extractParams: (m) => ({
       target: 'email',
@@ -234,14 +234,39 @@ const rules: ParseRule[] = [
       extras: { 'android.intent.extra.SUBJECT': m[2].trim() },
     }),
   },
-  // "email john@example.com"
+  // "email john@example.com saying hello" / "email john@example.com hello"
   {
-    pattern: /^(?:email|mail)\s+(\S+@\S+)$/i,
+    pattern: /^(?:email|mail|e-mail)\s+(\S+@\S+)\s+(?:saying\s+)?(.+)$/i,
     capability: 'app_launch',
     extractParams: (m) => ({
       target: 'email',
       action: 'android.intent.action.SENDTO',
       data: `mailto:${m[1].trim()}`,
+      extras: { 'android.intent.extra.TEXT': m[2].trim() },
+    }),
+  },
+  // "email john@example.com"
+  {
+    pattern: /^(?:email|mail|e-mail)\s+(\S+@\S+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'email',
+      action: 'android.intent.action.SENDTO',
+      data: `mailto:${m[1].trim()}`,
+    }),
+  },
+
+  // ── CALENDAR / SCHEDULING ─────────────────────────
+
+  // "schedule a dentist appointment for tomorrow at 3pm"
+  {
+    pattern: /^(?:schedule|add\s+(?:a\s+)?(?:calendar\s+)?event|create\s+(?:a\s+)?(?:calendar\s+)?event|add\s+to\s+calendar)\s+(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({
+      target: 'calendar',
+      action: 'android.intent.action.INSERT',
+      data: 'content://com.android.calendar/events',
+      extras: { 'title': m[1].trim() },
     }),
   },
 

@@ -153,10 +153,10 @@ export class AgentCore extends SimpleEmitter {
     }
     const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
     if (genomePatterns.test(t)) return 'command';
-    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate)\b/i.test(t);
+    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map)\b/i.test(t);
     if (imperative) return 'command';
     if (/^(gps|my\s+(?:location|coordinates|gps))\b/i.test(t)) return 'command';
-    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate)\b/i;
+    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map)\b/i;
     if (ultraCommand.test(t)) return 'command';
     return 'conversation';
   }
@@ -522,10 +522,13 @@ export class AgentCore extends SimpleEmitter {
       }
 
       // === STEP 6: EXECUTE ===
+      const REPEATABLE_CAPABILITIES = new Set(['app_launch', 'camera_capture', 'media_access', 'device_location', 'contacts_read']);
       const idempotencyKey = `${conversationId}:${plan.capability}:${JSON.stringify(plan.params)}`;
-      const isDuplicate = await this.ledger.checkIdempotency(idempotencyKey);
-      if (isDuplicate) {
-        return { type: 'action_result', message: 'This action was already executed (duplicate prevented).' };
+      if (!REPEATABLE_CAPABILITIES.has(plan.capability)) {
+        const isDuplicate = await this.ledger.checkIdempotency(idempotencyKey);
+        if (isDuplicate) {
+          return { type: 'action_result', message: 'This action was already executed (duplicate prevented).' };
+        }
       }
 
       this.emit('log', `Executing ${plan.capability}...`, 'system');

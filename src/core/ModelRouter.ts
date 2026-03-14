@@ -45,6 +45,7 @@ export class ModelRouter {
   private defaultModel: string;
   private baseUrl: string;
   private activeController: AbortController | null = null;
+  private hasDiscoveredModels = false;
 
   constructor(vault: SecureVault, costTracker: CostTracker) {
     this.vault = vault;
@@ -100,7 +101,10 @@ export class ModelRouter {
     } else {
       this.logger.info('ModelRouter initialized with API key');
       DebugLog.systemEvent('ModelRouter', 'Initialized with API key');
-      await this.discoverModels();
+      if (!this.hasDiscoveredModels) {
+        await this.discoverModels();
+        this.hasDiscoveredModels = true;
+      }
     }
     const savedModel = await this.vault.get('preferred_model');
     if (savedModel) {
@@ -318,7 +322,12 @@ export class ModelRouter {
     } catch (error: any) {
       const durationMs = Date.now() - startTime;
       DebugLog.modelApiError(model, taskId, error.message, durationMs);
-      if (error.name === 'AbortError') throw new Error('Request timed out after 60s. Check your connection and try again.');
+      if (error.name === 'AbortError') {
+        if (this.activeController === null) {
+          throw new Error('Request stopped by user.');
+        }
+        throw new Error('Request timed out after 60s. Check your connection and try again.');
+      }
       if (error.message.includes('Venice API') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
       throw new Error('AI request failed: ' + error.message);
     }
@@ -374,7 +383,12 @@ export class ModelRouter {
     } catch (error: any) {
       const durationMs = Date.now() - callStart;
       DebugLog.modelApiError(model, taskId, error.message, durationMs);
-      if (error.name === 'AbortError') throw new Error('Request timed out after 60s. Check your connection and try again.');
+      if (error.name === 'AbortError') {
+        if (this.activeController === null) {
+          throw new Error('Request stopped by user.');
+        }
+        throw new Error('Request timed out after 60s. Check your connection and try again.');
+      }
       throw new Error('AI conversation failed: ' + error.message);
     }
   }

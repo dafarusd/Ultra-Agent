@@ -121,6 +121,7 @@ export default function ChatScreen() {
 
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
+  const agentCoreInitialized = useRef(false);
 
   // ── Pulse animation for status dot ─────────────────
   useEffect(() => {
@@ -180,6 +181,8 @@ export default function ChatScreen() {
   // ── Init ───────────────────────────────────────────
   useEffect(() => {
     async function init() {
+      if (agentCoreInitialized.current) return;
+      agentCoreInitialized.current = true;
       DebugLog.uiInit("start", "Beginning app initialization");
       try {
         const vault = await SecureVault.initialize();
@@ -250,9 +253,13 @@ export default function ChatScreen() {
     init();
   }, []);
 
+  const lastFocusTime = useRef(0);
   useFocusEffect(
     useCallback(() => {
       if (!agentCore) return;
+      const now = Date.now();
+      if (now - lastFocusTime.current < 2000) return;
+      lastFocusTime.current = now;
       DebugLog.uiFocusEffect("triggered", currentMode, Object.keys(savedDefaults), activeModelId);
       snapUI("focus_effect");
       agentCore.refreshApiKey().then(() => {
@@ -264,7 +271,6 @@ export default function ChatScreen() {
           if (raw) {
             const parsed = JSON.parse(raw);
             setSavedDefaults(parsed);
-            // Apply the default model for current mode to activeModelId
             const modeDefault = parsed[currentMode];
             if (modeDefault && modeDefault !== activeModelId) {
               setActiveModelId(modeDefault);

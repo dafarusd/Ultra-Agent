@@ -172,6 +172,13 @@ const KNOWN_APPS: Record<string, string> = {
   'pokemon go': 'com.nianticlabs.pokemongo',
   'among us': 'com.innersloth.spacemafia',
 
+  // Weather
+  'weather': 'com.google.android.apps.weather',
+  'google weather': 'com.google.android.apps.weather',
+  'accuweather': 'com.accuweather.android',
+  'weather channel': 'com.weather.Weather',
+  'the weather channel': 'com.weather.Weather',
+
   // AI
   'chatgpt': 'com.openai.chatgpt',
   'claude': 'com.anthropic.claude',
