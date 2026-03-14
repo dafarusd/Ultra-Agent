@@ -6,7 +6,7 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Stack, useNavigationContainerRef } from "expo-router";
+import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState, useRef } from "react";
 import { StatusBar, View, Text, StyleSheet, Platform, AppState, AppStateStatus } from "react-native";
@@ -16,7 +16,6 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import { BiometricGate } from "@/src/security/BiometricGate";
-import UltraDevLog from "@/src/utils/UltraDevLog";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -42,7 +41,6 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
-  const navigationRef = useNavigationContainerRef();
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -53,17 +51,6 @@ export default function RootLayout() {
   const [authChecked, setAuthChecked] = useState(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const biometricAvailableRef = useRef(false);
-
-  useEffect(() => {
-    if (!navigationRef.current) return;
-    const unsub = navigationRef.current.addListener('state', () => {
-      const state = navigationRef.current?.getRootState();
-      if (!state) return;
-      const route = state.routes[state.index ?? 0];
-      UltraDevLog.navChange(route?.name ?? 'unknown', 'navigate', state.routes.length, route?.params as Record<string, unknown>);
-    });
-    return unsub;
-  }, [navigationRef.current]);
 
   useEffect(() => {
     async function checkAuth() {

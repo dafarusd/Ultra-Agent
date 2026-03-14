@@ -10,7 +10,7 @@ All notable changes to this project are documented here, organized by feature ve
 - **N1 (COMPONENT_LIFECYCLE)**: `componentMount/Unmount` in ChatScreen useEffect tracks mount IDs.
 - **N2 (SETTINGS_SAVE)**: `settingsSaveTap/settingsSaveResult` wrapping api, defaults, and limits save handlers in settings.tsx.
 - **N3 (EXECUTE_PHASE)**: `executePhase()` at all 9 steps in AgentCore.execute() (INGEST→ROUTE→PLAN→VERIFY→APPROVE→EXECUTE→VERIFY_RESULT→WRITE_MEMORY→ADAPT).
-- **N4 (NAV_CHANGE)**: Navigation state listener in RootLayout using `useNavigationContainerRef`.
+- **N4 (NAV_CHANGE)**: Sensor defined in UltraDevLog but NOT wired — `useNavigationContainerRef` crashes expo-router's internal NavigationContainer. Deferred until safe hook available.
 - **N5 (FOCUS_EFFECT_DEPS)**: `focusEffectTriggered/Suppressed` in useFocusEffect with prevFocusDepsRef dependency diff tracking.
 - **N6 (PROCESS_RESTART)**: `checkProcessRestart()` called before AgentCore init to detect Android process kills.
 - **N7 (PICKER_CONTENT)**: `pickerContentRender()` on first FlatList renderItem in ModelPickerSheet.
