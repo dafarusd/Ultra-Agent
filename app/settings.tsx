@@ -384,8 +384,9 @@ export default function SettingsScreen() {
       Alert.alert("Copied", `${content.length} chars copied to clipboard (file download not available on web).`);
       return;
     }
-    const filePath = `${FileSystem.cacheDirectory}${filename}`;
-    await FileSystem.writeAsStringAsync(filePath, content, { encoding: FileSystem.EncodingType.UTF8 });
+    const cacheDir = FileSystem.cacheDirectory || '';
+    const filePath = `${cacheDir}${filename}`;
+    await FileSystem.writeAsStringAsync(filePath, content);
     const canShare = await Sharing.isAvailableAsync();
     if (canShare) {
       await Sharing.shareAsync(filePath, { mimeType, dialogTitle: filename });
