@@ -287,3 +287,63 @@ Fixed stale-closure bug in `useFocusEffect` where updating mode defaults in Sett
 - Log source: `focusEffect_default_sync`
 
 This fix was exposed by the v3.7.0 state snapshot logging — the snapshot showed `activeModelId` stale while `savedDefaults` had new values, making the desync visible in logs.
+
+## v3.8.0 – Rich Android Intents & AppDirectory (App Launch v2)
+**2026-03-13**
+
+### New Files
+- `src/core/AppDirectory.ts` — Static ~150-app directory + fuzzy scoring matcher (no AI credits)
+- `src/core/IntentResolver.ts` — Natural language → Android intent resolver (play/call/navigate/email/alarm/timer/search)
+
+### Modified Files
+- **CapabilitySchemas.ts** — app_launch v1→v2: added `action`, `data`, `extras`, `packageName`, `mimeType` optionalParams
+- **CommandParser.ts** — 16 new rich intent patterns (music, calls, navigation, web, alarms, timers, email)
+- **SafetyChecker.ts** — app_launch scope expanded with play/call/dial/navigate/search/alarm/timer/email
+- **TaskExecutor.ts** — Complete rewrite of app_launch:
+  - PATH A: Rich intents via `startActivityAsync` (plays music, dials numbers, navigates, etc.)
+  - PATH B: Simple app launch via `openApplication` (with static dir + fuzzy matching + AI fallback)
+  - Contact resolution for "call Mom" → resolves contact name to phone number via expo-contacts
+  - Removed duplicate app_launch in exec()
+
+### What This Enables
+
+| User Says | Action | Result |
+|---|---|---|
+| "play Bad to the Bone on Spotify" | MEDIA_PLAY_FROM_SEARCH + query | Spotify opens and plays song |
+| "play music by Adele" | MEDIA_PLAY_FROM_SEARCH + artist | Spotify plays Adele |
+| "call 555-1234" | DIAL intent + tel: URI | Phone dials |
+| "call Mom" | DIAL intent + contact resolution | Resolves Mom's number, then dials |
+| "navigate to Times Square" | VIEW intent + google.navigation: URI | Google Maps opens navigation |
+| "search for coffee shops" | WEB_SEARCH intent | Browser opens search |
+| "set alarm for 7 am" | SET_ALARM intent + extras | Clock app sets alarm |
+| "set timer for 5 minutes" | SET_TIMER intent + length=300 | Timer starts |
+| "email john@x.com about meeting" | SENDTO intent + subject | Email compose with recipient and subject |
+| "open spotify" | openApplication (static dir) | Instant lookup, no AI credits |
+| "pandora" | openApplication (fuzzy match) | Scoring finds "Pandora - Music & Podcasts" |
+
+### Architecture
+
+**AppDirectory** (`lookupPackage` + `findBestMatch`):
+- Instant lookup: 150+ app names → package names (chat, spotify, maps, etc.)
+- Fuzzy scorer: Handles partial matches (youtube music vs youtube), capitalization, word overlap
+- Threshold: 35 points (exact=100, starts_with=80, contains=60, word_overlap=30)
+
+**IntentResolver** (`resolveIntent` + `looksLikeRichIntent`):
+- 15 pattern sets: music (play X, play by artist, play album), calls (call number, call contact, dial), navigation (navigate to, map of), search, alarms, timers, email, URLs
+- Returns: `ResolvedIntent` with action, data URI, extras, packageName
+- Returns null for ambiguous commands → falls back to simple app launch
+
+**CommandParser** (16 new rules):
+- Rules execute BEFORE simple open/launch/run patterns
+- Each rule extracts target, action, data, extras, packageName
+- Validation: All plans validated against v2 schema
+
+**TaskExecutor** (Path A + B):
+- **Rich intent path**: params.action is set → `startActivityAsync(action, {data, packageName, extra, type})`
+- **Simple app launch path**: params.action not set → static dir → fuzzy match → AI fallback → `openApplication(pkg)`
+
+### Backward Compatibility
+
+- All existing simple app launches still work ("open spotify", "launch chrome")
+- v1 schema still accepted (action/data/extras optional)
+- No breaking changes to other capabilities

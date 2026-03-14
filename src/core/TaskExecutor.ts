@@ -23,6 +23,8 @@ import { GenomeCompiler } from '../genome/GenomeCompiler';
 import { GenomeMutator } from '../genome/GenomeMutator';
 import { SelfImprover } from '../genome/SelfImprover';
 import { TaskEvaluator } from '../genome/TaskEvaluator';
+import { resolveIntent, looksLikeRichIntent } from './IntentResolver';
+import { lookupPackage, findBestMatch } from './AppDirectory';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
@@ -330,43 +332,142 @@ export class TaskExecutor {
       }
       case 'app_launch': {
         const target = params.target;
-        if (!target) return { error: 'No app specified' };
+        if (!target) return { error: 'No app or action specified' };
 
+        // ── PATH A: Rich intent (action/data/extras provided by parser) ──
+        if (params.action) {
+          this.logger.info(`Rich intent: action=${params.action} data=${params.data || 'none'} pkg=${params.packageName || 'none'}`);
+
+          // Special case: contact name resolution for phone calls
+          if (params.extras?._contactName && params.action === 'android.intent.action.DIAL') {
+            const contactName = params.extras._contactName as string;
+            try {
+              const { status } = await Contacts.requestPermissionsAsync();
+              if (status === 'granted') {
+                const { data: contacts } = await Contacts.getContactsAsync({
+                  fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
+                  name: contactName,
+                });
+                if (contacts.length > 0) {
+                  const match = contacts[0];
+                  const realNumber = match.phoneNumbers?.find(
+                    (p: any) => p.number && p.number.replace(/\D/g, '').length >= 7
+                  );
+                  if (realNumber?.number) {
+                    params.data = `tel:${realNumber.number}`;
+                    this.logger.info(`Resolved contact "${contactName}" → ${realNumber.number}`);
+                  } else {
+                    return { success: false, error: `Found contact "${contactName}" but no valid phone number` };
+                  }
+                } else {
+                  return { success: false, error: `Contact "${contactName}" not found` };
+                }
+              } else {
+                return { success: false, error: 'Contacts permission denied — cannot resolve contact name' };
+              }
+            } catch (e: any) {
+              return { success: false, error: `Contact lookup failed: ${e.message}` };
+            }
+            // Clean up the internal-only extra
+            delete params.extras._contactName;
+          }
+
+          // Resolve package name if not provided
+          let pkg = params.packageName;
+          if (!pkg && target && target !== 'phone' && target !== 'clock' && target !== 'email' && target !== 'maps' && target !== 'browser') {
+            pkg = lookupPackage(target);
+            if (!pkg) {
+              try {
+                const AgentNativeModule = (await import('../native/AgentNative')).default;
+                const installed = await AgentNativeModule.getInstalledApps();
+                const match = findBestMatch(target, installed);
+                if (match) pkg = match.packageName;
+              } catch {}
+            }
+          }
+
+          try {
+            const intentParams: any = {};
+            if (params.data) intentParams.data = params.data;
+            if (pkg) intentParams.packageName = pkg;
+            if (params.mimeType) intentParams.type = params.mimeType;
+            if (params.extras) {
+              // Filter out internal-only extras (prefixed with _)
+              const cleanExtras: Record<string, any> = {};
+              for (const [k, v] of Object.entries(params.extras)) {
+                if (!k.startsWith('_')) cleanExtras[k] = v;
+              }
+              if (Object.keys(cleanExtras).length > 0) intentParams.extra = cleanExtras;
+            }
+
+            this.logger.info(`startActivityAsync: ${params.action} → ${JSON.stringify(intentParams)}`);
+            const result = await IntentLauncher.startActivityAsync(params.action, intentParams);
+
+            return {
+              success: true,
+              launched: target,
+              action: params.action,
+              data: params.data,
+              packageName: pkg,
+              resultCode: result.resultCode,
+            };
+          } catch (err: any) {
+            this.logger.warn(`Rich intent failed: ${err.message}, falling back to openApplication`);
+
+            // Fallback: try simple app launch if we have a package
+            if (pkg) {
+              try {
+                IntentLauncher.openApplication(pkg);
+                return { success: true, launched: target, packageName: pkg, fallback: true };
+              } catch (err2: any) {
+                return { success: false, error: `Failed to launch ${target}: ${err.message} (fallback also failed: ${err2.message})` };
+              }
+            }
+
+            return { success: false, error: `Intent failed for ${target}: ${err.message}` };
+          }
+        }
+
+        // ── PATH B: Simple app launch (no action — just open the app) ──
         const targetLower = target.toLowerCase().trim()
           .replace(/^(the|a|an|my)\s+/i, '')
           .replace(/\s+app$/i, '');
 
         let pkg: string | undefined;
 
-        // Step 1: Query device for installed apps
-        try {
-          const AgentNativeModule = (await import('../native/AgentNative')).default;
-          const installed = await AgentNativeModule.getInstalledApps();
-          if (installed && installed.length > 0) {
-            const exact = installed.find(
-              (a: any) => a.appName.toLowerCase() === targetLower
-            );
-            if (exact) {
-              pkg = exact.packageName;
-            } else {
-              const partial = installed.find(
-                (a: any) => a.appName.toLowerCase().includes(targetLower) ||
-                            targetLower.includes(a.appName.toLowerCase())
-              );
-              if (partial) pkg = partial.packageName;
+        // Step 1: Check static directory (instant, no network, no AI credits)
+        pkg = lookupPackage(targetLower);
+
+        // Step 2: Query installed apps with fuzzy matching
+        if (!pkg) {
+          try {
+            const AgentNativeModule = (await import('../native/AgentNative')).default;
+            const installed = await AgentNativeModule.getInstalledApps();
+            if (installed && installed.length > 0) {
+              const match = findBestMatch(targetLower, installed);
+              if (match) {
+                pkg = match.packageName;
+                this.logger.info(`Fuzzy match: "${targetLower}" → "${match.appName}" (${match.packageName}) score=${match.score} type=${match.matchType}`);
+              }
             }
+          } catch (e: any) {
+            this.logger.warn('getInstalledApps failed, using AI fallback', { error: e.message });
           }
-        } catch (e: any) {
-          this.logger.warn('getInstalledApps failed, using AI fallback', { error: e.message });
         }
 
-        // Step 2: AI fallback only if device query found nothing
+        // Step 3: AI fallback only if both directory and device query found nothing
         if (!pkg) {
+          if (!this.ai.hasApiKey()) {
+            return { success: false, error: `Could not find "${target}" on this device. Configure an API key to enable AI-assisted app lookup.` };
+          }
           const r = await this.ai.complete(
-            `What is the exact Android package name for the app "${target}"? Reply with ONLY the package name, nothing else.`,
+            `What is the exact Android package name for the app "${target}"? Reply with ONLY the package name, nothing else. If you're not sure, reply "unknown".`,
             { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 }
           );
-          pkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
+          const aiPkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
+          if (aiPkg && aiPkg.includes('.') && aiPkg !== 'unknown') {
+            pkg = aiPkg;
+          }
         }
 
         if (!pkg || !pkg.includes('.')) {
@@ -375,7 +476,7 @@ export class TaskExecutor {
 
         try {
           IntentLauncher.openApplication(pkg);
-          return { success: true, launched: pkg };
+          return { success: true, launched: target, packageName: pkg };
         } catch (err: any) {
           return { success: false, error: `Failed to launch ${target} (${pkg}): ${err.message}` };
         }
@@ -644,36 +745,10 @@ export class TaskExecutor {
         const { assets } = await MediaLibrary.getAssetsAsync({ first: 20, sortBy: [MediaLibrary.SortBy.creationTime] });
         return { count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
       }
-      case 'app_launch': {
-        let pkg2: string | undefined;
-        try {
-          const AgentNativeModule2 = (await import('../native/AgentNative')).default;
-          const apps = await AgentNativeModule2.getInstalledApps();
-          const t = request.toLowerCase();
-          const match = apps?.find((a: any) =>
-            t.includes(a.appName.toLowerCase()) || a.appName.toLowerCase().includes(t)
-          );
-          if (match) pkg2 = match.packageName;
-        } catch (e: any) {
-          this.logger.warn('getInstalledApps failed in exec, using AI fallback', { error: e.message });
-        }
-        if (!pkg2) {
-          const r = await this.ai.complete(
-            `What is the exact Android package name for "${request}"? Reply ONLY the package name.`,
-            { taskId, agentId: 'launch', maxTokens: 100 }
-          );
-          pkg2 = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
-        }
-        if (!pkg2 || !pkg2.includes('.')) {
-          return { error: `Could not find app for "${request}"` };
-        }
-        try {
-          IntentLauncher.openApplication(pkg2);
-          return { success: true, launched: pkg2 };
-        } catch (err: any) {
-          return { error: `Failed to launch ${pkg2}: ${err.message}` };
-        }
-      }
+      case 'app_launch':
+        // All app_launch commands are handled by runWithPlan().
+        // This fallback should never be reached.
+        return { error: 'app_launch should be routed through runWithPlan' };
       case 'app_share': {
         const avail = await Sharing.isAvailableAsync();
         return { available: avail };
