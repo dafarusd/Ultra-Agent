@@ -4,6 +4,23 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.14.0] — 2026-03-14 — Fix: Remove Hardcoded Biometric Gate (Root Cause of UI State Loss)
+
+### Removed — Biometric gate from `_layout.tsx`
+- Removed hardcoded biometric authentication that ran on every app launch and background return.
+- Removed `AppState` listener that set `authenticated=false` on foreground return, which unmounted the entire component tree (ChatScreen, Stack, all providers).
+- Removed `authenticated`, `authChecked`, `appStateRef`, `biometricAvailableRef` state/refs.
+- Removed conditional render blocks ("Authenticating...", "Authentication required", "Tap to retry").
+- Removed `lockStyles` stylesheet and `BiometricGate` import.
+- `RootLayout` now always renders the full app tree — ChatScreen stays mounted across background/foreground transitions.
+
+### Why
+- **Root cause of UI state loss bug:** Every background→foreground cycle triggered biometric re-auth, which set `authenticated=false`, causing React to unmount `RootLayoutNav` and everything beneath it. ChatScreen remounted with all `useState` defaults (`agentCore=null`, `messages=[]`, `status="Initializing..."`, `activeModelId=""`). The module-level `_agentCoreInitialized` guard blocked re-initialization, so no recovery was possible.
+- **Confirmed by dev logs:** LOG 1 (v3.12) showed duplicate CORE_INSTANCE creation on every background cycle. LOG 2 (v3.13) showed no CORE_INSTANCE but state deadlock — `activeModelId=""`, `modelsLoaded=0`, `hasApiKey=false` permanently after first background return.
+- **BiometricGate.ts retained** in `src/security/` for future opt-in biometric+PIN feature in Settings.
+
+---
+
 ## [v3.13.0] — 2026-03-14 — UltraDevLog v3: Full Sensor Instrumentation
 
 ### Added — UltraDevLog v3 new sensors instrumented
