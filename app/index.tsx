@@ -14,6 +14,8 @@ import {
   TouchableWithoutFeedback,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import * as Device from 'expo-device';
+import NetInfo from '@react-native-community/netinfo';
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
@@ -205,6 +207,22 @@ export default function ChatScreen() {
       _agentCoreInitialized = true;
       UltraDevLog.checkProcessRestart();
       DebugLog.uiInit("start", "Beginning app initialization");
+      // Device info sensor
+      UltraDevLog.deviceInfo({
+        os: Platform.OS,
+        osVersion: String(Platform.Version),
+        model: Device.modelName ?? 'unknown',
+        screenWidth: Math.round(require('react-native').Dimensions.get('window').width),
+        screenHeight: Math.round(require('react-native').Dimensions.get('window').height),
+        totalMemory: Device.totalMemory ?? undefined,
+      });
+      // Network status sensor
+      NetInfo.fetch().then(state => {
+        UltraDevLog.networkStatus(!!state.isConnected, state.type);
+      }).catch(() => {});
+      NetInfo.addEventListener(state => {
+        UltraDevLog.networkStatus(!!state.isConnected, state.type, state.isConnected ? undefined : 'WARN: went offline');
+      });
       try {
         const vault = await SecureVault.initialize();
         DebugLog.uiInit("vault", "SecureVault initialized");

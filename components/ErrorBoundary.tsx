@@ -33,6 +33,10 @@ export class ErrorBoundary extends Component<
     if (typeof this.props.onError === "function") {
       this.props.onError(error, info.componentStack);
     }
+    try {
+      const { UltraDevLog } = require('@/src/utils/UltraDevLog');
+      UltraDevLog.errorBoundary(error.message + (error.stack ? '\n' + error.stack.slice(0, 500) : ''), info.componentStack);
+    } catch {}
   }
 
   resetError = (): void => {

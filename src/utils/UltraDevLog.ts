@@ -57,7 +57,11 @@ export type UltraLogCat =
   | 'PROCESS_RESTART'
   | 'PICKER_CONTENT'
   | 'CONTEXT_PROVIDER'
-  | 'SESSION_SUMMARY';
+  | 'SESSION_SUMMARY'
+  | 'DEVICE_INFO'
+  | 'NETWORK_STATUS'
+  | 'PERMISSION_STATUS'
+  | 'ERROR_BOUNDARY';
 
 interface UltraLogEntry {
   ts: string;
@@ -422,6 +426,7 @@ export class UltraDevLog {
       if (nextState === 'background' || nextState === 'inactive') {
         UltraDevLog.lastActiveAt = now;
         try { AsyncStorage.setItem(PROCESS_RESTART_KEY, String(now)); } catch {}
+        UltraDevLog.sessionSummary();
         UltraDevLog.flushSyncInternal();
       }
       UltraDevLog.lastAppStateChangeAt = now;
@@ -523,6 +528,40 @@ export class UltraDevLog {
       note: renderCount > 1 && coreInstanceId === UltraDevLog.activeCoreId
         ? `ok -- same core on render #${renderCount}. Fix working.`
         : renderCount === 1 ? 'First render.' : `WARN: coreId changed on render #${renderCount}.`,
+    });
+  }
+
+  static deviceInfo(info: { os: string; osVersion: string; model: string; screenWidth: number; screenHeight: number; totalMemory?: number }): void {
+    UltraDevLog.push('DEVICE_INFO', info);
+  }
+
+  static networkStatus(isConnected: boolean, type: string, note?: string): void {
+    UltraDevLog.push('NETWORK_STATUS', { isConnected, type, note: note ?? (isConnected ? 'ok' : 'WARN: offline -- Venice API unreachable') });
+  }
+
+  static permissionStatus(permission: string, status: string): void {
+    UltraDevLog.push('PERMISSION_STATUS', { permission, status, note: status === 'granted' ? 'ok' : `WARN: ${permission} is ${status}` });
+  }
+
+  static errorBoundary(error: string, componentStack: string): void {
+    UltraDevLog.push('ERROR_BOUNDARY', { error: error.slice(0, 500), componentStack: componentStack.slice(0, 1000) });
+  }
+
+  static sessionSummary(): void {
+    const entries = UltraDevLog.entries;
+    const errors = entries.filter(e => e.cat === 'ERROR' || e.cat === 'ERROR_BOUNDARY').length;
+    const apiCalls = entries.filter(e => e.cat === 'API_CALL').length;
+    const appLaunches = entries.filter(e => e.cat === 'APP_LAUNCH_BEGIN').length;
+    const appLaunchFails = entries.filter(e => e.cat === 'APP_LAUNCH_FAIL').length;
+    const uptime = entries.length > 0 ? Date.now() - entries[0].t : 0;
+    UltraDevLog.push('SESSION_SUMMARY', {
+      totalEntries: entries.length,
+      errors,
+      apiCalls,
+      appLaunches,
+      appLaunchFails,
+      uptimeMs: uptime,
+      note: errors > 0 ? `WARN: ${errors} error(s) this session` : 'ok',
     });
   }
 
@@ -702,6 +741,10 @@ export class UltraDevLog {
       case 'PICKER_CONTENT': return `${t} [PICK_CT ] filter=${d.activeFilter} ${d.filteredCount}/${d.totalCount}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
       case 'CONTEXT_PROVIDER': return `${t} [CTX_PRV ] ${d.providerName} render#${d.renderCount} core=${(d.coreInstanceId as string)?.slice(-6)} ${d.note}`;
       case 'SESSION_SUMMARY': return `${t} [SUMMARY ] ${JSON.stringify(d)}`;
+      case 'DEVICE_INFO': return `${t} [DEVICE  ] os=${d.os} ver=${d.osVersion} model=${d.model} screen=${d.screenWidth}x${d.screenHeight} ram=${d.totalMemory ?? 'unknown'}`;
+      case 'NETWORK_STATUS': return `${t} [NETWORK ] ${d.isConnected ? 'online' : 'OFFLINE'} type=${d.type}${d.note ? ' ' + d.note : ''}`;
+      case 'PERMISSION_STATUS': return `${t} [PERM    ] ${d.permission} status=${d.status}`;
+      case 'ERROR_BOUNDARY': return `${t} [REACT_ERR]${c} ${d.error} | stack=${String(d.componentStack).slice(0, 300)}`;
       default: return `${t} [${e.cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }
