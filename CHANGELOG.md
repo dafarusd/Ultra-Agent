@@ -4,19 +4,44 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.19.0] -- 2026-03-15 -- Fix: Logs Tab Crash + Comprehensive Bug Report
+
+### Fixed -- Logs tab crash (3 bugs)
+- **Bug 1:** `loadDebugLogs()` called on mount and tab switch but never defined in settings.tsx. Replaced with `loadLogs()`.
+- **Bug 2:** `setImmediate` in `UltraDevLog.flushSyncInternal()` doesn't exist in React Native (Hermes/web). Replaced with `setTimeout(..., 0)`.
+- **Bug 3:** Dead state variables `debugLogs`/`debugLogsLoaded` removed from settings.tsx (remnants of incomplete refactor).
+
+### Identified -- Remaining latent bugs (documented, not yet fixed)
+- **Bug 4:** `LogFolder.getLogsDir()` line 27 tries `DocumentDirectoryPath` (react-native-fs property, doesn't exist in expo-file-system). Harmless -- fallback to `documentDirectory` works.
+- **Bug 5:** Double-slash in path (`documentDirectory` ends with `/`, then `/agent-ultra-logs` adds another).
+- **Bug 6:** Three separate log directories (`ultra_dev_logs/`, `debug_logs/`, `agent-ultra-logs/`) -- Logs tab only reads `agent-ultra-logs/`. DebugLog auto-flush writes only to `debug_logs/`, invisible in Settings.
+- **Bug 7:** `settingsCostLimitSave(dailyLimit, taskLimit)` passes (string, string) where UltraDevLog expects (number, boolean).
+
+### Removed -- metro.config.js
+- Metro config with `path.resolve` blockList broke EAS builds on Windows CI (ESM loader can't handle `c:` protocol in regex).
+- Both `.js` and `.cjs` extensions failed identically. File removed -- Metro ENOENT in Replit is transient.
+
+### Added -- Comprehensive bug report
+- `AGENT-ULTRA-BUG-REPORT.md` contains full cross-linkage analysis, data flow diagrams, all file contents, and quick-fix patches for external resolution.
+
+### Changed
+- `ultra-full-source.txt` regenerated (19,085 lines).
+
+---
+
 ## [v3.18.0] -- 2026-03-15 -- Feature: Log Folder Download System
 
 ### Added -- Downloadable log folder in Settings > Logs
-- Created LogFolder service (`src/services/LogFolder.ts`) that manages log storage in `DocumentDirectoryPath/agent-ultra-logs/`.
+- Created LogFolder service (`src/services/LogFolder.ts`) that manages log storage in `documentDirectory/agent-ultra-logs/`.
 - All logs (from UltraDevLog and DebugLog) automatically written to disk whenever they're flushed or exported.
 - New "Log Files" tab in Settings shows all saved logs with file sizes, sorted newest first.
 - Click any log file to trigger native "Save file" dialog (Android File Picker) -- no more clipboard size limits.
-- LogFolder.listLogs() and LogFolder.downloadAsync() handle all file operations.
+- LogFolder.listLogs() handles file listing; Sharing.shareAsync() handles download.
 
 ### Implementation details:
 - UltraDevLog.doFlush() writes JSONL logs to LogFolder with timestamped filenames.
 - DebugLog.exportAll() also writes to LogFolder so all logs sync to disk.
-- Settings UI: Pull-to-refresh, file size display, one-tap download to device storage.
+- Settings UI: Refresh button, file size display, one-tap download to device storage.
 - Logs persisted on disk, accessible via Android File Manager and email attachments.
 
 ---
