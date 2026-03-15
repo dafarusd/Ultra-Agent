@@ -118,9 +118,6 @@ export default function SettingsScreen() {
     loadSettings();
     loadDraft();
     loadCostData();
-    if (initialTab === "logs") {
-      loadLogs();
-    }
   }, []);
 
   // ── Load models when defaults section expands ─────
