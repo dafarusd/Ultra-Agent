@@ -400,7 +400,7 @@ export default function SettingsScreen() {
     try {
       const full = await DebugLog.exportAll();
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      await shareFileContent(full, `agent-ultra-log-${ts}.jsonl`, 'application/jsonl');
+      await shareFileContent(full, `agent-ultra-log-${ts}.txt`, 'text/plain');
     } catch (err: any) {
       Alert.alert("Export Error", err?.message || "Failed to export log.");
     }
