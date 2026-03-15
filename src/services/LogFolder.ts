@@ -71,20 +71,8 @@ export class LogFolder {
     }
   }
 
-  static async downloadLog(filePath: string): Promise<boolean> {
-    if (!FS) return false;
-    try {
-      const filename = filePath.split('/').pop() || 'log.txt';
-      await FS.downloadAsync(
-        filePath,
-        `${FS.DocumentDirectoryPath}/${filename}`,
-        { md5: false }
-      );
-      return true;
-    } catch (err) {
-      console.error('[LogFolder] Download error:', err);
-      return false;
-    }
+  static getFullPath(filePath: string): string {
+    return filePath;
   }
 
   static getLogsDir(): string {

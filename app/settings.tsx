@@ -434,10 +434,14 @@ export default function SettingsScreen() {
 
   const downloadLog = useCallback(async (filePath: string, filename: string) => {
     try {
-      await LogFolder.downloadLog(filePath);
-      Alert.alert("Success", `Downloaded: ${filename}`);
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(filePath, { mimeType: "text/plain", dialogTitle: filename });
+      } else {
+        Alert.alert("Sharing unavailable", "Your device doesn't support file sharing.");
+      }
     } catch (err: any) {
-      Alert.alert("Error", "Failed to download log.");
+      Alert.alert("Error", err?.message || "Failed to share log file.");
     }
   }, []);
 
