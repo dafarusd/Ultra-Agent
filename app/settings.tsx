@@ -335,7 +335,7 @@ export default function SettingsScreen() {
       const vault = await SecureVault.initialize();
       await vault.set("daily_cost_limit", dailyLimit);
       await vault.set("task_cost_limit", taskLimit);
-      DebugLog.settingsCostLimitSave(dailyLimit, taskLimit);
+      UltraDevLog.settingsCostLimitSave(parseFloat(dailyLimit) || 0, true);
       Alert.alert("Saved", "Cost limits updated.");
       UltraDevLog.settingsSaveResult('limits', true, ['daily_cost_limit', 'task_cost_limit']);
     } catch (err: any) {

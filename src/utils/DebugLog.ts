@@ -392,6 +392,8 @@ export class DebugLog {
       const filePath = DebugLog.getFilePath();
       const lines = DebugLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
       await FileSystem.writeAsStringAsync(filePath, lines);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      await LogFolder.writeLog(`agent-ultra-debuglog-${ts}.jsonl`, lines);
     } catch (err) {
       console.error('[DebugLog] flush failed:', err);
     } finally {

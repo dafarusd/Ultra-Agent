@@ -24,9 +24,9 @@ export class LogFolder {
     if (this.LOGS_DIR_CACHE) return this.LOGS_DIR_CACHE;
     const fs = this.getFS();
     if (!fs) return '';
-    const docDir = (fs as any)?.DocumentDirectoryPath || (fs as any)?.documentDirectory;
+    const docDir = fs?.documentDirectory;
     if (!docDir) return '';
-    this.LOGS_DIR_CACHE = `${docDir}/agent-ultra-logs`;
+    this.LOGS_DIR_CACHE = `${docDir}agent-ultra-logs`;
     return this.LOGS_DIR_CACHE;
   }
 
