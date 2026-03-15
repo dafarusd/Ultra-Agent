@@ -837,6 +837,8 @@ export class UltraDevLog {
       if (!info.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
       const content = UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
       await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), content);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      await LogFolder.writeLog(`agent-ultra-debug-${ts}.jsonl`, content);
     } catch {} finally { UltraDevLog.writing = false; }
   }
 
