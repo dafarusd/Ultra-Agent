@@ -31,6 +31,7 @@
 import { Platform, AppState, AppStateStatus } from 'react-native';
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LogFolder } from '@/src/services/LogFolder';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 const PROCESS_RESTART_KEY = 'ultra_last_background_ts';
@@ -834,7 +835,10 @@ export class UltraDevLog {
       if (!dir) return;
       const info = await FileSystem.getInfoAsync(dir);
       if (!info.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-      await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n');
+      const content = UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
+      await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), content);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      await LogFolder.writeLog(`agent-ultra-debug-${ts}.jsonl`, content);
     } catch {} finally { UltraDevLog.writing = false; }
   }
 

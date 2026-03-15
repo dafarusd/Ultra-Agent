@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import * as ExpoFileSystem from 'expo-file-system/legacy';
+import { LogFolder } from '@/src/services/LogFolder';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
@@ -411,10 +412,16 @@ export class DebugLog {
       if (!filePath) return DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
       const info = await FileSystem.getInfoAsync(filePath);
       if (info.exists) {
-        return await FileSystem.readAsStringAsync(filePath);
+        const content = await FileSystem.readAsStringAsync(filePath);
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        await LogFolder.writeLog(`agent-ultra-raw-${ts}.jsonl`, content);
+        return content;
       }
     } catch {}
-    return DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
+    const content = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    await LogFolder.writeLog(`agent-ultra-raw-${ts}.jsonl`, content);
+    return content;
   }
 
   static async listLogFiles(): Promise<string[]> {

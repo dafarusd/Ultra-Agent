@@ -4,6 +4,23 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.18.0] -- 2026-03-15 -- Feature: Log Folder Download System
+
+### Added -- Downloadable log folder in Settings > Logs
+- Created LogFolder service (`src/services/LogFolder.ts`) that manages log storage in `DocumentDirectoryPath/agent-ultra-logs/`.
+- All logs (from UltraDevLog and DebugLog) automatically written to disk whenever they're flushed or exported.
+- New "Log Files" tab in Settings shows all saved logs with file sizes, sorted newest first.
+- Click any log file to trigger native "Save file" dialog (Android File Picker) -- no more clipboard size limits.
+- LogFolder.listLogs() and LogFolder.downloadAsync() handle all file operations.
+
+### Implementation details:
+- UltraDevLog.doFlush() writes JSONL logs to LogFolder with timestamped filenames.
+- DebugLog.exportAll() also writes to LogFolder so all logs sync to disk.
+- Settings UI: Pull-to-refresh, file size display, one-tap download to device storage.
+- Logs persisted on disk, accessible via Android File Manager and email attachments.
+
+---
+
 ## [v3.17.0] -- 2026-03-15 -- Fix: Quick Reply Chip Sizing, Samsung Notes Share
 
 ### Fixed -- Quick reply chips rendering as oversized cards
@@ -11,10 +28,9 @@ All notable changes to this project are documented here, organized by feature ve
 - Inside the message bubble (vertical flex), the horizontal ScrollView's default `alignItems: "stretch"` was stretching chips to fill all available vertical space, making them ~200px tall cards instead of ~25px pill chips.
 - This also fixes the oversized bubble issue: msg bubbles were measured at 4971px because the stretched chips inflated the total height.
 
-### Fixed -- Samsung Notes "File corrupt or not supported" on share
-- Switched from file-based sharing (`expo-sharing` + `expo-file-system`) to React Native's built-in `Share.share({ message })` which sends text content directly via Android's `EXTRA_TEXT` intent.
-- Samsung Notes doesn't support importing `.txt` files via file URI share intents -- it only accepts text content via `ACTION_SEND` with `EXTRA_TEXT`.
-- Removed `expo-file-system` and `expo-sharing` imports from settings.tsx (no longer needed).
+### Reverted -- Samsung Notes share
+- File-based sharing approach kept; Samsung Notes limitation (no .txt import) is app-specific, not a code issue.
+- Created LogFolder system instead: all logs automatically saved to device storage, downloadable via Android File Picker.
 
 ---
 

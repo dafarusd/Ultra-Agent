@@ -17,6 +17,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { LogFolder, type LogFile } from "@/src/services/LogFolder";
 import { SecureVault } from "@/src/security/SecureVault";
 import { getAgentCoreInstance } from "@/src/core/AgentCore";
 import { Logger } from "@/src/utils/Logger";
@@ -78,8 +79,8 @@ export default function SettingsScreen() {
   const [totalCalls, setTotalCalls] = useState(0);
   const [modelUsages, setModelUsages] = useState<ModelUsage[]>([]);
 
-  // ── Log state ──────────────────────────────────────
-  const [logs, setLogs] = useState<string[]>([]);
+  // ── Logs state ─────────────────────────────────────
+  const [logFiles, setLogFiles] = useState<LogFile[]>([]);
   const [logsLoaded, setLogsLoaded] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string>("");
   const [debugLogsLoaded, setDebugLogsLoaded] = useState(false);
@@ -425,6 +426,25 @@ export default function SettingsScreen() {
     }
   }, [shareFileContent]);
 
+  const loadLogs = useCallback(async () => {
+    const files = await LogFolder.listLogs();
+    setLogFiles(files);
+    setLogsLoaded(true);
+  }, []);
+
+  const downloadLog = useCallback(async (filePath: string, filename: string) => {
+    try {
+      await LogFolder.downloadLog(filePath);
+      Alert.alert("Success", `Downloaded: ${filename}`);
+    } catch (err: any) {
+      Alert.alert("Error", "Failed to download log.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "logs" && !logsLoaded) loadLogs();
+  }, [tab, logsLoaded, loadLogs]);
+
   // ── Render ─────────────────────────────────────────
   const webTopInset = Platform.OS === "web" ? 67 : 0;
 
@@ -748,70 +768,35 @@ export default function SettingsScreen() {
             TAB: LOGS
             ══════════════════════════════════════════ */}
         {tab === "logs" && (
-          <>
-            <View style={styles.card}>
-              <View style={styles.logHeader}>
-                <Text style={styles.cardTitle}>Application Logs</Text>
-                <View style={styles.logActions}>
-                  <Pressable onPress={loadLogs} style={styles.logActionBtn}>
-                    <Ionicons name="refresh" size={16} color={DIM} />
-                  </Pressable>
-                  <Pressable onPress={copyLogs} style={styles.logActionBtn}>
-                    <Ionicons name="copy-outline" size={16} color={DIM} />
-                  </Pressable>
-                </View>
-              </View>
-
-              {logs.length === 0 ? (
-                <Text style={styles.emptyText}>
-                  {logsLoaded ? "No log entries" : "Tap refresh to load logs"}
-                </Text>
-              ) : (
-                <ScrollView style={styles.logScroll} nestedScrollEnabled>
-                  {logs.map((line, i) => (
-                    <Text key={i} style={styles.logLine}>{line}</Text>
-                  ))}
-                </ScrollView>
-              )}
+          <View style={styles.card}>
+            <View style={styles.logHeader}>
+              <Text style={styles.cardTitle}>Log Files</Text>
+              <Pressable onPress={loadLogs} style={styles.logActionBtn}>
+                <Ionicons name="refresh" size={16} color={DIM} />
+              </Pressable>
             </View>
-
-            <View style={[styles.card, { marginTop: 12 }]}>
-              <View style={styles.logHeader}>
-                <Text style={styles.cardTitle}>Debug Log</Text>
-                <View style={styles.logActions}>
-                  <Pressable onPress={loadDebugLogs} style={styles.logActionBtn}>
-                    <Ionicons name="refresh" size={16} color={DIM} />
+            {!logsLoaded ? (
+              <Text style={styles.emptyText}>Loading logs...</Text>
+            ) : logFiles.length === 0 ? (
+              <Text style={styles.emptyText}>No log files yet. Tap refresh to check.</Text>
+            ) : (
+              <ScrollView style={styles.logScroll} nestedScrollEnabled>
+                {logFiles.map((file) => (
+                  <Pressable
+                    key={file.path}
+                    onPress={() => downloadLog(file.path, file.name)}
+                    style={styles.logFileRow}
+                  >
+                    <View style={styles.logFileInfo}>
+                      <Text style={styles.logFileName}>{file.name}</Text>
+                      <Text style={styles.logFileSize}>{(file.size / 1024).toFixed(1)} KB</Text>
+                    </View>
+                    <Ionicons name="download-outline" size={16} color={ACCENT} />
                   </Pressable>
-                  <Pressable onPress={copyDebugLogs} style={styles.logActionBtn}>
-                    <Ionicons name="copy-outline" size={16} color={DIM} />
-                  </Pressable>
-                  <Pressable onPress={exportFullDebugLog} style={styles.logActionBtn}>
-                    <Ionicons name="download-outline" size={16} color={DIM} />
-                  </Pressable>
-                </View>
-              </View>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-                <Pressable onPress={copyBugReport} style={[styles.logActionBtn, { borderWidth: 1, borderColor: '#ff6b00', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
-                  <Ionicons name="download-outline" size={14} color="#ff6b00" />
-                  <Text style={{ color: '#ff6b00', fontSize: 12, fontFamily: "Inter_600SemiBold" }}>Bug Report</Text>
-                </Pressable>
-                <Pressable onPress={copyFormattedLog} style={[styles.logActionBtn, { borderWidth: 1, borderColor: ACCENT, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
-                  <Ionicons name="download-outline" size={14} color={ACCENT} />
-                  <Text style={{ color: ACCENT, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>Full Log</Text>
-                </Pressable>
-              </View>
-              <Text style={styles.debugHint}>Tap to download as file. Share with your dev team or AI assistant for debugging.</Text>
-              {!debugLogsLoaded ? (
-                <Text style={styles.emptyText}>Tap refresh to load debug log</Text>
-              ) : !debugLogs ? (
-                <Text style={styles.emptyText}>No debug entries yet</Text>
-              ) : (
-                <ScrollView style={styles.logScroll} nestedScrollEnabled>
-                  <Text style={styles.logLine} selectable>{debugLogs}</Text>
-                </ScrollView>
-              )}
-            </View>
-          </>
+                ))}
+              </ScrollView>
+            )}
+          </View>
         )}
       </ScrollView>
     </View>
@@ -902,6 +887,12 @@ const styles = StyleSheet.create({
   emptyCard: { alignItems: "center", paddingVertical: 30, backgroundColor: SURFACE2, borderRadius: 14, marginBottom: 14 },
   emptyText: { color: DIM, fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 8 },
   emptySubtext: { color: "#444", fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+
+  // Log files
+  logFileRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: SURFACE3 },
+  logFileInfo: { flex: 1 },
+  logFileName: { color: TEXT, fontSize: 13, fontFamily: "Inter_500Medium" },
+  logFileSize: { color: DIM, fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 
   // Defaults
   defaultRow: { marginBottom: 10 },
