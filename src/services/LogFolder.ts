@@ -39,6 +39,14 @@ export class LogFolder {
       if (!info.exists) {
         await fs.makeDirectoryAsync(dir, { intermediates: true });
       }
+      try {
+        const existingFiles = await fs.readDirectoryAsync(dir);
+        for (const f of existingFiles) {
+          if (/^agent-ultra-(debug|debuglog|raw)-\d{4}-\d{2}-\d{2}T/.test(f)) {
+            try { await fs.deleteAsync(`${dir}/${f}`); } catch {}
+          }
+        }
+      } catch {}
       this.initialized = true;
     } catch (err) {
       console.error('[LogFolder] Init error:', err);

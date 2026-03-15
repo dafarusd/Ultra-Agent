@@ -392,8 +392,7 @@ export class DebugLog {
       const filePath = DebugLog.getFilePath();
       const lines = DebugLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
       await FileSystem.writeAsStringAsync(filePath, lines);
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      await LogFolder.writeLog(`agent-ultra-debuglog-${ts}.jsonl`, lines);
+      await LogFolder.writeLog(`debug-log.jsonl`, lines);
     } catch (err) {
       console.error('[DebugLog] flush failed:', err);
     } finally {
@@ -415,14 +414,12 @@ export class DebugLog {
       const info = await FileSystem.getInfoAsync(filePath);
       if (info.exists) {
         const content = await FileSystem.readAsStringAsync(filePath);
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        await LogFolder.writeLog(`agent-ultra-raw-${ts}.jsonl`, content);
+        await LogFolder.writeLog(`raw-export.jsonl`, content);
         return content;
       }
     } catch {}
     const content = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    await LogFolder.writeLog(`agent-ultra-raw-${ts}.jsonl`, content);
+    await LogFolder.writeLog(`raw-export.jsonl`, content);
     return content;
   }
 

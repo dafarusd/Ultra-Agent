@@ -4,6 +4,25 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.20.0] -- 2026-03-15 -- Fix: Log File Proliferation (Hundreds → 3-4 Files)
+
+### Fixed -- Log file explosion
+- **Root cause:** `agent-ultra-logs/` used timestamped filenames, creating a new file every 2-3 seconds instead of updating existing ones.
+- **Solution:** Changed to fixed filenames (`ultra-devlog.jsonl`, `debug-log.jsonl`, `raw-export.jsonl`). Since `writeAsStringAsync` overwrites (doesn't append), each flush now updates the same file, making it grow naturally over the session.
+- **Cleanup:** Added automatic deletion of old timestamped files on app startup to clean up accumulated files from prior versions.
+- **Result:** 3-4 files max, ~5 MB max total, growing naturally to several MB per session. Files are never truncated mid-session.
+
+### Added -- Comprehensive log proliferation report
+- `LOG-FILE-PROLIFERATION-REPORT.md` contains full analysis, data flow, file cross-linkage, why it happened, and technical explanation.
+
+### Changed
+- `src/utils/UltraDevLog.ts` line 840: Fixed filename `ultra-devlog.jsonl`
+- `src/utils/DebugLog.ts` line 395: Fixed filename `debug-log.jsonl`
+- `src/utils/DebugLog.ts` lines 417, 422: Fixed filename `raw-export.jsonl`
+- `src/services/LogFolder.ts` lines 45-52: Added cleanup block for old timestamped files
+
+---
+
 ## [v3.19.0] -- 2026-03-15 -- Fix: Logs Tab Crash + Comprehensive Bug Report
 
 ### Fixed -- Logs tab crash (3 bugs)
