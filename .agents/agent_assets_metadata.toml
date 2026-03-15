@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "DNW0xVohHT1UCg_7rlG5N"
+uri = "file://AGENT-ULTRA-BUG-REPORT.md"
+type = "text"
+title = "Agent Ultra — Comprehensive Bug Report"
