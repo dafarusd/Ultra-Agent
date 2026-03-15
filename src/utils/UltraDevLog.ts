@@ -814,7 +814,7 @@ export class UltraDevLog {
   }
 
   private static flushSyncInternal(): void {
-    setImmediate(() => UltraDevLog.doFlush());
+    setTimeout(() => UltraDevLog.doFlush(), 0);
   }
 
   private static scheduleFlush(): void {
