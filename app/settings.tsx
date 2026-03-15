@@ -22,6 +22,7 @@ import { SecureVault } from "@/src/security/SecureVault";
 import { getAgentCoreInstance } from "@/src/core/AgentCore";
 import { Logger } from "@/src/utils/Logger";
 import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
+import { classifyModelType } from "@/src/utils/classifyModelType";
 import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
 
 // ── Palette ────────────────────────────────────────────
@@ -551,15 +552,8 @@ export default function SettingsScreen() {
                         {(["chat", "image", "code", "reasoning", "video"] as DefaultRole[]).map((role) => {
                           const allModels = availableModels;
                           const isRecommended = (m: any): boolean => {
-                            const t = (m.type || "text").toLowerCase();
-                            const id = (m.id || "").toLowerCase();
-                            const caps = m.capabilities || {};
-                            if (role === "chat") return t === "text" && !caps.supportsReasoning && !id.includes("code");
-                            if (role === "image") return t === "image";
-                            if (role === "code") return t === "text" && (id.includes("code") || id.includes("codestral") || id.includes("deepseek-coder"));
-                            if (role === "reasoning") return t === "text" && (caps.supportsReasoning || id.includes("reason") || id.includes("qwq") || id.includes("deepseek-r1"));
-                            if (role === "video") return t === "video";
-                            return false;
+                            const classified = classifyModelType(m.id, m.name || m.id, m.type);
+                            return classified === role;
                           };
                           const recommended = allModels.filter(isRecommended);
                           const others = allModels.filter((m: any) => !isRecommended(m));

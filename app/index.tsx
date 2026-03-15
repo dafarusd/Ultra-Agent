@@ -22,6 +22,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SecureVault } from "@/src/security/SecureVault";
 import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
+import { classifyModelType } from "@/src/utils/classifyModelType";
 import { AgentCore, setAgentCoreInstance } from "@/src/core/AgentCore";
 import type { ExecuteArgs } from "@/src/core/AgentCore";
 import type { ChatMessage, UltraExecutionResult, ConversationMeta, PromptTrace } from "@/src/types/ultra";
@@ -552,17 +553,8 @@ export default function ChatScreen() {
     if (!agentCore) return [];
     const models = agentCore.getAvailableModels();
     const currentModel = activeModelId || agentCore.getDefaultModel();
-    return models.map((m: any) => {
-      let pickerType: PickerModel["type"] = m.type || "text";
-      if (pickerType === "text") {
-        const idLower = (m.id || "").toLowerCase();
-        const nameLower = (m.name || "").toLowerCase();
-        if (m.capabilities?.supportsReasoning || idLower.includes("reason") || nameLower.includes("reason") || idLower.includes("qwq") || idLower.includes("deepseek-r1")) {
-          pickerType = "reasoning";
-        } else if (idLower.includes("code") || nameLower.includes("code") || idLower.includes("codestral") || idLower.includes("deepseek-coder")) {
-          pickerType = "code";
-        }
-      }
+    const result = models.map((m: any) => {
+      const pickerType = classifyModelType(m.id, m.name || m.id, m.type);
       return {
         id: m.id,
         name: m.name || m.id,
@@ -572,6 +564,10 @@ export default function ChatScreen() {
         isSelected: m.id === currentModel,
       };
     });
+    const counts: Record<string, number> = {};
+    result.forEach((m) => { counts[m.type] = (counts[m.type] || 0) + 1; });
+    UltraDevLog.modelState("picker_classification", counts);
+    return result;
   }, [agentCore, activeModelId]);
 
   const handleModelSelect = useCallback(async (modelId: string) => {

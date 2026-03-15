@@ -4,6 +4,29 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.22.0] -- 2026-03-15 -- Fix: Model Picker Empty Categories (Image/Video/Reasoning)
+
+### Fixed -- Model picker filter tabs
+- **Image tab**: Was showing 0 models. Venice image models (flux, fluently, stable-diffusion, etc.) were all classified as "text" because Venice API returns `type: "text"` for everything.
+- **Video tab**: Was showing 0 models. Same root cause — no name-based heuristics existed.
+- **Reasoning tab**: Was showing 29/47 models. `supportsReasoning` capability flag from Venice API is set on most models, making the Reasoning tab a dumping ground.
+
+### Added -- Shared model classifier
+- New `src/utils/classifyModelType.ts` — single source of truth for model category classification
+- Uses name/ID pattern matching: image (flux, fluently, sdxl, stable-diffusion, pony-realism), video (wan-, luma, runway, kling), code (code, codestral), reasoning (reason, qwq, deepseek-r1)
+- Removed dependency on Venice `supportsReasoning` capability flag for tab classification
+- Both `app/index.tsx` (picker) and `app/settings.tsx` (defaults) now use the same classifier
+
+### Added -- Classification devlog
+- `MODEL_CLASSIFY` entry logged via `UltraDevLog.modelState('picker_classification', counts)` on each picker build
+- Shows `{text:N, image:N, code:N, reasoning:N, video:N}` for remote debugging
+
+### Fixed -- Model picker sheet height (v3.21.1)
+- Added `height: SHEET_MAX_HEIGHT` to sheet `Animated.View` — FlatList with `flex: 1` previously resolved to 0 height because parent only had `maxHeight`
+- Sheet now fully slides up showing the model list
+
+---
+
 ## [v3.20.0] -- 2026-03-15 -- Fix: Log File Proliferation (Hundreds → 3-4 Files)
 
 ### Fixed -- Log file explosion

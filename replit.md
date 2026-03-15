@@ -55,7 +55,7 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 
 **UI Color:** The accent green is `#34d399` (softer mint) used consistently across all components. Messages show inline copy buttons instead of long-press behavior, with selectable text for partial copying.
 
-**Default Models by Mode:** Settings shows ALL available AI models for each mode (chat/image/code/reasoning/video) with recommended models marked with a star icon. No hardcoded presets — users can pick any model. The Plus menu applies saved defaults automatically when switching modes.
+**Default Models by Mode:** Settings shows ALL available AI models for each mode (chat/image/code/reasoning/video) with recommended models marked with a star icon. No hardcoded presets — users can pick any model. The Plus menu applies saved defaults automatically when switching modes. Model classification uses shared `src/utils/classifyModelType.ts` — name/ID pattern matching for image (flux, fluently, sdxl), video (wan-, luma), code (code, codestral), reasoning (reason, qwq, deepseek-r1). Does NOT use Venice `supportsReasoning` capability flag (too broad — 29/47 models).
 
 **Stop Button:** Neutral dark styling (`#333` background), no red.
 
