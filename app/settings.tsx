@@ -82,8 +82,6 @@ export default function SettingsScreen() {
   // ── Logs state ─────────────────────────────────────
   const [logFiles, setLogFiles] = useState<LogFile[]>([]);
   const [logsLoaded, setLogsLoaded] = useState(false);
-  const [debugLogs, setDebugLogs] = useState<string>("");
-  const [debugLogsLoaded, setDebugLogsLoaded] = useState(false);
 
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
   const [defaultsExpanded, setDefaultsExpanded] = useState(false);
@@ -122,7 +120,6 @@ export default function SettingsScreen() {
     loadCostData();
     if (initialTab === "logs") {
       loadLogs();
-      loadDebugLogs();
     }
   }, []);
 
@@ -398,7 +395,7 @@ export default function SettingsScreen() {
             key={t}
             onPress={() => {
               setTab(t);
-              if (t === "logs") { loadLogs(); loadDebugLogs(); }
+              if (t === "logs") { loadLogs(); }
               if (t === "costs") loadCostData();
             }}
             style={[styles.tab, tab === t && styles.tabActive]}
