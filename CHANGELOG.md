@@ -4,6 +4,20 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.17.0] -- 2026-03-15 -- Fix: Quick Reply Chip Sizing, Samsung Notes Share
+
+### Fixed -- Quick reply chips rendering as oversized cards
+- Replaced horizontal `ScrollView` with a `View` using `flexDirection: "row"` and `flexWrap: "wrap"` in QuickReplies component.
+- Inside the message bubble (vertical flex), the horizontal ScrollView's default `alignItems: "stretch"` was stretching chips to fill all available vertical space, making them ~200px tall cards instead of ~25px pill chips.
+- This also fixes the oversized bubble issue: msg bubbles were measured at 4971px because the stretched chips inflated the total height.
+
+### Fixed -- Samsung Notes "File corrupt or not supported" on share
+- Switched from file-based sharing (`expo-sharing` + `expo-file-system`) to React Native's built-in `Share.share({ message })` which sends text content directly via Android's `EXTRA_TEXT` intent.
+- Samsung Notes doesn't support importing `.txt` files via file URI share intents -- it only accepts text content via `ACTION_SEND` with `EXTRA_TEXT`.
+- Removed `expo-file-system` and `expo-sharing` imports from settings.tsx (no longer needed).
+
+---
+
 ## [v3.16.0] -- 2026-03-15 -- Fix: Quick Replies, Model Picker, Log Corruption
 
 ### Fixed -- Quick reply buttons not showing on AI responses

@@ -9,13 +9,12 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  Share,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
-import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
 import { SecureVault } from "@/src/security/SecureVault";
 import { getAgentCoreInstance } from "@/src/core/AgentCore";
 import { Logger } from "@/src/utils/Logger";
@@ -378,21 +377,17 @@ export default function SettingsScreen() {
     } catch {}
   }, [debugLogs]);
 
-  const shareFileContent = useCallback(async (content: string, filename: string, mimeType: string) => {
+  const shareFileContent = useCallback(async (content: string, filename: string, _mimeType: string) => {
     if (Platform.OS === 'web') {
       await Clipboard.setStringAsync(content);
       Alert.alert("Copied", `${content.length} chars copied to clipboard (file download not available on web).`);
       return;
     }
-    const cacheDir = FileSystem.cacheDirectory || '';
-    const filePath = `${cacheDir}${filename}`;
-    await FileSystem.writeAsStringAsync(filePath, content);
-    const canShare = await Sharing.isAvailableAsync();
-    if (canShare) {
-      await Sharing.shareAsync(filePath, { mimeType, dialogTitle: filename });
-    } else {
+    try {
+      await Share.share({ message: content, title: filename });
+    } catch (err: any) {
       await Clipboard.setStringAsync(content);
-      Alert.alert("Copied", "Sharing not available — copied to clipboard instead.");
+      Alert.alert("Copied", "Copied to clipboard instead.");
     }
   }, []);
 

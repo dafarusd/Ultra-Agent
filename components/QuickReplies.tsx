@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ChatMessage } from "@/src/types/ultra";
 
@@ -128,12 +128,7 @@ export default function QuickReplies({ message, onSelect }: QuickRepliesProps) {
   if (replies.length === 0) return null;
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.container}
-      contentContainerStyle={styles.content}
-    >
+    <View style={styles.container}>
       {replies.map((reply) => (
         <Pressable
           key={reply.id}
@@ -148,18 +143,17 @@ export default function QuickReplies({ message, onSelect }: QuickRepliesProps) {
           <Text style={styles.chipText}>{reply.label}</Text>
         </Pressable>
       ))}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
     marginTop: 8,
     marginBottom: 2,
-  },
-  content: {
-    gap: 6,
-    paddingRight: 8,
   },
   chip: {
     flexDirection: "row",
