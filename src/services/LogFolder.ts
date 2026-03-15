@@ -1,7 +1,5 @@
 import { Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system/legacy';
-
-const FS: any = Platform.OS !== 'web' ? FileSystem : null;
+import * as FileSystemModule from 'expo-file-system/legacy';
 
 export interface LogFile {
   name: string;
@@ -11,15 +9,33 @@ export interface LogFile {
 }
 
 export class LogFolder {
-  private static readonly LOGS_DIR = FS ? `${FS.DocumentDirectoryPath}/agent-ultra-logs` : '';
+  private static FS: any = null;
+  private static LOGS_DIR_CACHE: string | null = null;
   private static initialized = false;
 
+  private static getFS() {
+    if (this.FS) return this.FS;
+    if (Platform.OS === 'web') return null;
+    this.FS = FileSystemModule;
+    return this.FS;
+  }
+
+  private static getLogsDir(): string {
+    if (this.LOGS_DIR_CACHE) return this.LOGS_DIR_CACHE;
+    const fs = this.getFS();
+    if (!fs || !fs.DocumentDirectoryPath) return '';
+    this.LOGS_DIR_CACHE = `${fs.DocumentDirectoryPath}/agent-ultra-logs`;
+    return this.LOGS_DIR_CACHE;
+  }
+
   static async initialize() {
-    if (!FS || this.initialized) return;
+    const fs = this.getFS();
+    const dir = this.getLogsDir();
+    if (!fs || !dir || this.initialized) return;
     try {
-      const info = await FS.getInfoAsync(this.LOGS_DIR);
+      const info = await fs.getInfoAsync(dir);
       if (!info.exists) {
-        await FS.makeDirectoryAsync(this.LOGS_DIR, { intermediates: true });
+        await fs.makeDirectoryAsync(dir, { intermediates: true });
       }
       this.initialized = true;
     } catch (err) {
@@ -28,11 +44,13 @@ export class LogFolder {
   }
 
   static async writeLog(filename: string, content: string): Promise<boolean> {
-    if (!FS) return false;
+    const fs = this.getFS();
+    const dir = this.getLogsDir();
+    if (!fs || !dir) return false;
     await this.initialize();
     try {
-      const filePath = `${this.LOGS_DIR}/${filename}`;
-      await FS.writeAsStringAsync(filePath, content);
+      const filePath = `${dir}/${filename}`;
+      await fs.writeAsStringAsync(filePath, content);
       return true;
     } catch (err) {
       console.error('[LogFolder] Write error:', err);
@@ -41,16 +59,18 @@ export class LogFolder {
   }
 
   static async listLogs(): Promise<LogFile[]> {
-    if (!FS) return [];
+    const fs = this.getFS();
+    const dir = this.getLogsDir();
+    if (!fs || !dir) return [];
     await this.initialize();
     try {
-      const files = await FS.readDirectoryAsync(this.LOGS_DIR);
+      const files = await fs.readDirectoryAsync(dir);
       const logFiles: LogFile[] = [];
 
       for (const name of files) {
         try {
-          const filePath = `${this.LOGS_DIR}/${name}`;
-          const info = await FS.getInfoAsync(filePath, { size: true });
+          const filePath = `${dir}/${name}`;
+          const info = await fs.getInfoAsync(filePath, { size: true });
           if (info.exists && !info.isDirectory) {
             logFiles.push({
               name,
@@ -73,9 +93,5 @@ export class LogFolder {
 
   static getFullPath(filePath: string): string {
     return filePath;
-  }
-
-  static getLogsDir(): string {
-    return this.LOGS_DIR;
   }
 }
