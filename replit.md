@@ -4,6 +4,7 @@
 Agent Ultra is an autonomous AI agent application for Android focused on on-device APK compilation with self-replicating capabilities and a self-healing debug engine. The project's vision is to create an AI that can design, build, test, and continuously improve Android applications, including itself, directly on mobile devices. This includes features like multi-agent swarm orchestration, a self-evolving genome system, and real-world task-based fitness evaluation for generated applications, aiming to revolutionize mobile app development through AI-driven innovation.
 
 ## User Preferences
+- **CRITICAL: Do NOT make any code changes, file edits, package installs, workflow restarts, or any other actions unless the user EXPLICITLY says to do so. "Make a plan" means produce a document only — never implement. When in doubt, ask first.**
 - The agent should prioritize the use of the Venice API.
 - The agent should only make changes to the codebase when explicitly instructed or when it's part of its self-improvement cycle.
 - The agent should ask for user approval for dangerous actions.
