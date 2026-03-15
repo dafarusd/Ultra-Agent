@@ -162,6 +162,7 @@ export default function ModelPickerSheet({
               transform: [{ translateY: slideAnim }],
               paddingBottom: Math.max(insets.bottom, 16),
               maxHeight: SHEET_MAX_HEIGHT,
+              height: SHEET_MAX_HEIGHT,
             },
           ]}
         >
