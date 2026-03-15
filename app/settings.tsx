@@ -349,9 +349,15 @@ export default function SettingsScreen() {
 
   // ── Logs ───────────────────────────────────────────
   const loadLogs = useCallback(async () => {
-    const files = await LogFolder.listLogs();
-    setLogFiles(files);
-    setLogsLoaded(true);
+    try {
+      const files = await LogFolder.listLogs();
+      setLogFiles(files);
+      setLogsLoaded(true);
+    } catch (err: any) {
+      console.error('[Settings] loadLogs error:', err);
+      setLogFiles([]);
+      setLogsLoaded(true);
+    }
   }, []);
 
   const downloadLog = useCallback(async (filePath: string, filename: string) => {

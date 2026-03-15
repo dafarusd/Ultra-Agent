@@ -64,19 +64,22 @@ export class LogFolder {
     if (!fs || !dir) return [];
     await this.initialize();
     try {
+      const info = await fs.getInfoAsync(dir);
+      if (!info.exists) return [];
+      
       const files = await fs.readDirectoryAsync(dir);
       const logFiles: LogFile[] = [];
 
       for (const name of files) {
         try {
           const filePath = `${dir}/${name}`;
-          const info = await fs.getInfoAsync(filePath, { size: true });
-          if (info.exists && !info.isDirectory) {
+          const fileInfo = await fs.getInfoAsync(filePath, { size: true });
+          if (fileInfo.exists && !fileInfo.isDirectory) {
             logFiles.push({
               name,
               path: filePath,
-              size: info.size || 0,
-              createdAt: info.modificationTime ? info.modificationTime * 1000 : 0,
+              size: fileInfo.size || 0,
+              createdAt: fileInfo.modificationTime ? fileInfo.modificationTime * 1000 : 0,
             });
           }
         } catch (e) {
