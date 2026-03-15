@@ -1,10 +1,28 @@
-# Agent Ultra — Changelog
+# Agent Ultra -- Changelog
 
 All notable changes to this project are documented here, organized by feature version. Dates reflect when work was completed.
 
 ---
 
-## [v3.15.0] — 2026-03-14 — Fix: Oversized Bubble, Render Loop, and Log Download
+## [v3.16.0] -- 2026-03-15 -- Fix: Quick Replies, Model Picker, Log Corruption
+
+### Fixed -- Quick reply buttons not showing on AI responses
+- Added `extraData` prop to the message FlatList so it re-renders when `isProcessing`, `pendingReplay`, `copiedId`, and `expandedMsgs` change.
+- Without `extraData`, FlatList didn't know to re-render items when processing finished, so `showQuickReplies` stayed stale.
+- Added fallback in `getQuickReplies()`: messages without a `source` property now also show generic quick reply chips (Go deeper, Summarize, Make actionable).
+
+### Fixed -- Model picker not opening on tap
+- Added `hitSlop` (10px top/bottom, 6px left/right) to the model pill Pressable in the input bar.
+- The pill's 20px touch target was too small on Android -- taps were missing the Pressable hit area.
+
+### Fixed -- Bug report and formatted log "file corrupted" in Samsung Notes
+- Replaced all Unicode symbols (checkmarks, arrows, em dashes, box-drawing) with ASCII equivalents in both UltraDevLog and DebugLog format strings.
+- Samsung Notes rejects files with these characters as "corrupted" when received via Android share sheet.
+- JSONL export now uses `.txt` extension and `text/plain` mime type for broader share target support.
+
+---
+
+## [v3.15.0] -- 2026-03-14 -- Fix: Oversized Bubble, Render Loop, and Log Download
 
 ### Fixed — Oversized message bubbles
 - Messages over 4000 characters are now truncated with a "Show more" / "Show less" toggle.

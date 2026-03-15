@@ -31,9 +31,9 @@ export class DebugLog {
     DebugLog.scheduleFlush();
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // VAULT — every read, write, delete, cache hit/miss
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // VAULT -- every read, write, delete, cache hit/miss
+  // ===========================================================
   static vaultGet(key: string, value: string | null, source: 'cache' | 'store') {
     DebugLog.push('VAULT_GET', { key, hasValue: value !== null, valueLen: value?.length ?? 0, source });
   }
@@ -47,9 +47,9 @@ export class DebugLog {
     DebugLog.push('VAULT_ERR', { op, key, error });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // MODEL ROUTER — discovery, selection, switching, API calls
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // MODEL ROUTER -- discovery, selection, switching, API calls
+  // ===========================================================
   static modelDiscoveryStart(baseUrl: string) {
     DebugLog.push('MODEL_DISC_START', { baseUrl });
   }
@@ -90,9 +90,9 @@ export class DebugLog {
     DebugLog.push('MODEL_IMG_ERR', { model, error });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // AGENT CORE — init, mode detection, 9-step loop, each phase
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // AGENT CORE -- init, mode detection, 9-step loop, each phase
+  // ===========================================================
   static agentInitStart() {
     DebugLog.push('AGENT_INIT_START', {});
   }
@@ -124,9 +124,9 @@ export class DebugLog {
     DebugLog.push('EXEC_RESULT', { taskId, capability, success, resultPreview: resultPreview.slice(0, 1000) });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // COST TRACKER — recording, limits, budget
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // COST TRACKER -- recording, limits, budget
+  // ===========================================================
   static costRecord(model: string, cost: number, taskId: string) {
     DebugLog.push('COST', { model, cost, taskId });
   }
@@ -134,9 +134,9 @@ export class DebugLog {
     DebugLog.push('COST_LIMIT', { type, limit, spent, allowed });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // CONVERSATIONS — create, load, save, delete, messages
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // CONVERSATIONS -- create, load, save, delete, messages
+  // ===========================================================
   static conversationCreated(conversationId: string, title: string) {
     DebugLog.push('CONV_NEW', { conversationId, title });
   }
@@ -159,9 +159,9 @@ export class DebugLog {
     DebugLog.push('CONV_ERR', { op, conversationId, error });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // USER INPUT & AI RESPONSE — the actual chat flow
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // USER INPUT & AI RESPONSE -- the actual chat flow
+  // ===========================================================
   static userMessage(conversationId: string, content: string) {
     DebugLog.push('USER_MSG', { conversationId, content });
   }
@@ -169,16 +169,16 @@ export class DebugLog {
     DebugLog.push('AI_RESPONSE', { conversationId, model, content, cost, tokens });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // API CALL — raw HTTP-level logging
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // API CALL -- raw HTTP-level logging
+  // ===========================================================
   static apiCall(taskId: string, model: string, promptTokens: number, completionTokens: number, cost: number, durationMs: number) {
     DebugLog.push('API_CALL', { taskId, model, promptTokens, completionTokens, cost, durationMs });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // UI STATE — defaults, mode switches, picker, pill, settings
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // UI STATE -- defaults, mode switches, picker, pill, settings
+  // ===========================================================
   static uiInit(phase: string, detail: string) {
     DebugLog.push('UI_INIT', { phase, detail });
   }
@@ -231,9 +231,9 @@ export class DebugLog {
     DebugLog.push('UI_ERROR', { component, error });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // SETTINGS PAGE — API config, defaults config, cost limits
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // SETTINGS PAGE -- API config, defaults config, cost limits
+  // ===========================================================
   static settingsApiSave(apiId: string, baseUrl: string) {
     DebugLog.push('SETTINGS_API_SAVE', { apiId, baseUrl });
   }
@@ -250,9 +250,9 @@ export class DebugLog {
     DebugLog.push('SETTINGS_COST_SAVE', { daily, task });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // BUILD SYSTEM — app build lifecycle
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // BUILD SYSTEM -- app build lifecycle
+  // ===========================================================
   static buildStart(taskId: string, description: string) {
     DebugLog.push('BUILD_START', { taskId, descriptionLen: description.length });
   }
@@ -263,9 +263,9 @@ export class DebugLog {
     DebugLog.push('BUILD_DONE', { taskId, success, durationMs, error });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // GENOME — self-improvement, mutation, replication
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // GENOME -- self-improvement, mutation, replication
+  // ===========================================================
   static genomeStart(type: 'evolve' | 'replicate', taskId: string) {
     DebugLog.push('GENOME_START', { type, taskId });
   }
@@ -279,9 +279,9 @@ export class DebugLog {
     DebugLog.push('GENOME_ERR', { taskId, error });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // SAFETY — checks, blocks, permissions
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // SAFETY -- checks, blocks, permissions
+  // ===========================================================
   static permissionCheck(capability: string, granted: boolean) {
     DebugLog.push('PERM_CHECK', { capability, granted });
   }
@@ -289,9 +289,9 @@ export class DebugLog {
     DebugLog.push('PERM_REQUEST', { capability, result });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // STATE SNAPSHOTS — full state capture at critical moments
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // STATE SNAPSHOTS -- full state capture at critical moments
+  // ===========================================================
   static snapshot(label: string, state: Record<string, unknown>) {
     DebugLog.push('STATE', { label, ...state });
   }
@@ -340,9 +340,9 @@ export class DebugLog {
     DebugLog.push('MODEL_STATE', { label, ...state });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // GENERAL — system events, errors, model switches (legacy compat)
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // GENERAL -- system events, errors, model switches (legacy compat)
+  // ===========================================================
   static systemEvent(context: string, message: string, meta?: Record<string, unknown>) {
     DebugLog.push('SYSTEM', { context, message, ...meta });
   }
@@ -353,9 +353,9 @@ export class DebugLog {
     DebugLog.push('MODEL_SWITCH', { taskId, from, to, reason });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // FILE SYSTEM — flush, export, read, clean
-  // ═══════════════════════════════════════════════════════════
+  // ===========================================================
+  // FILE SYSTEM -- flush, export, read, clean
+  // ===========================================================
   private static getDir(): string {
     if (!FileSystem || !FileSystem.documentDirectory) return '';
     return `${FileSystem.documentDirectory}debug_logs/`;
@@ -477,7 +477,7 @@ export class DebugLog {
       const d = e.data;
       switch (e.cat) {
         case 'VAULT_GET':
-          return `[${e.ts}][VAULT] GET ${d.key} → ${d.hasValue ? `found (${d.valueLen} chars, ${d.source})` : 'null'}`;
+          return `[${e.ts}][VAULT] GET ${d.key} -> ${d.hasValue ? `found (${d.valueLen} chars, ${d.source})` : 'null'}`;
         case 'VAULT_SET':
           return `[${e.ts}][VAULT] SET ${d.key} (${d.valueLen} chars)`;
         case 'VAULT_DEL':
@@ -486,19 +486,19 @@ export class DebugLog {
           return `[${e.ts}][VAULT][ERR] ${d.op} ${d.key}: ${d.error}`;
 
         case 'MODEL_DISC_START':
-          return `[${e.ts}][MODEL] Discovery starting → ${d.baseUrl}`;
+          return `[${e.ts}][MODEL] Discovery starting -> ${d.baseUrl}`;
         case 'MODEL_DISC_DONE':
           return `[${e.ts}][MODEL] Discovered ${d.count} models: [${(d.first10 as string[]).join(', ')}${(d.count as number) > 10 ? '...' : ''}]`;
         case 'MODEL_DISC_ERR':
           return `[${e.ts}][MODEL][ERR] Discovery failed: ${d.error}`;
         case 'MODEL_SET_DEFAULT':
-          return `[${e.ts}][MODEL] Default changed: ${d.previousModel} → ${d.modelId} (via ${d.source})`;
+          return `[${e.ts}][MODEL] Default changed: ${d.previousModel} -> ${d.modelId} (via ${d.source})`;
         case 'MODEL_SET_DEFAULT_ERR':
           return `[${e.ts}][MODEL][ERR] setDefault(${d.modelId}) failed: ${d.error}`;
         case 'MODEL_GET_DEFAULT':
-          return `[${e.ts}][MODEL] getDefault() → ${d.modelId}`;
+          return `[${e.ts}][MODEL] getDefault() -> ${d.modelId}`;
         case 'MODEL_API_REQ':
-          return `[${e.ts}][API] → ${d.model} (task=${d.taskId}, ~${d.promptTokens} prompt tokens, max=${d.maxTokens})`;
+          return `[${e.ts}][API] -> ${d.model} (task=${d.taskId}, ~${d.promptTokens} prompt tokens, max=${d.maxTokens})`;
         case 'MODEL_API_RESP':
           return `[${e.ts}][API] ← ${d.model} (in=${d.inputTokens}, out=${d.outputTokens}, $${d.cost}, ${d.durationMs}ms)`;
         case 'MODEL_API_ERR':
@@ -506,22 +506,22 @@ export class DebugLog {
         case 'MODEL_ABORT':
           return `[${e.ts}][API] ABORT ${d.model}`;
         case 'MODEL_IMG_REQ':
-          return `[${e.ts}][IMG] → ${d.model} (prompt ${d.promptLen} chars)`;
+          return `[${e.ts}][IMG] -> ${d.model} (prompt ${d.promptLen} chars)`;
         case 'MODEL_IMG_RESP':
           return `[${e.ts}][IMG] ← ${d.model} (${d.imageCount} images, $${d.cost}, ${d.durationMs}ms)`;
         case 'MODEL_IMG_ERR':
           return `[${e.ts}][IMG][ERR] ${d.model}: ${d.error}`;
 
         case 'AGENT_INIT_START':
-          return `[${e.ts}][AGENT] ═══ Initialization starting ═══`;
+          return `[${e.ts}][AGENT] === Initialization starting ===`;
         case 'AGENT_INIT_SUB':
-          return `[${e.ts}][AGENT] Init ${d.name}: ${d.success ? '✓' : '✗'} (${d.durationMs}ms)${d.error ? ' — ' + d.error : ''}`;
+          return `[${e.ts}][AGENT] Init ${d.name}: ${d.success ? 'OK' : 'FAIL'} (${d.durationMs}ms)${d.error ? ' -- ' + d.error : ''}`;
         case 'AGENT_INIT_DONE':
-          return `[${e.ts}][AGENT] ═══ Initialization complete (${d.durationMs}ms) ═══`;
+          return `[${e.ts}][AGENT] === Initialization complete (${d.durationMs}ms) ===`;
         case 'AGENT_EXEC_START':
-          return `[${e.ts}][AGENT] ═══ Execute: task=${d.taskId}, conv=${d.conversationId}, input=${d.inputLen} chars, replay=${d.replay} ═══`;
+          return `[${e.ts}][AGENT] === Execute: task=${d.taskId}, conv=${d.conversationId}, input=${d.inputLen} chars, replay=${d.replay} ===`;
         case 'AGENT_STEP':
-          return `[${e.ts}][STEP][${d.phase}] ${d.success ? '✓' : '✗'} ${d.detail}`;
+          return `[${e.ts}][STEP][${d.phase}] ${d.success ? 'OK' : 'FAIL'} ${d.detail}`;
         case 'MODE':
           return `[${e.ts}][MODE] ${d.mode} | ${d.inputPreview}`;
         case 'PLAN':
@@ -529,9 +529,9 @@ export class DebugLog {
         case 'SAFETY':
           return `[${e.ts}][SAFETY] risk=${d.risk} allowed=${d.allowed} reasons=${(d.reasons as string[]).join('; ')}`;
         case 'VERIFY':
-          return `[${e.ts}][VERIFY] ${d.verified ? '✓' : '✗'} issues=${(d.issues as string[]).join('; ') || 'none'}`;
+          return `[${e.ts}][VERIFY] ${d.verified ? 'OK' : 'FAIL'} issues=${(d.issues as string[]).join('; ') || 'none'}`;
         case 'EXEC_RESULT':
-          return `[${e.ts}][EXEC] ${d.capability} ${d.success ? '✓' : '✗'} ${d.resultPreview}`;
+          return `[${e.ts}][EXEC] ${d.capability} ${d.success ? 'OK' : 'FAIL'} ${d.resultPreview}`;
 
         case 'COST':
           return `[${e.ts}][COST] $${d.cost} ${d.model} task=${d.taskId}`;
@@ -561,21 +561,21 @@ export class DebugLog {
           return `[${e.ts}][API] ${d.model} in=${d.promptTokens} out=${d.completionTokens} cost=$${d.cost} ${d.durationMs}ms`;
 
         case 'UI_INIT':
-          return `[${e.ts}][UI] Init: ${d.phase} — ${d.detail}`;
+          return `[${e.ts}][UI] Init: ${d.phase} -- ${d.detail}`;
         case 'UI_DEFAULTS_LOADED':
           return `[${e.ts}][UI] Defaults loaded (${d.source}): ${JSON.stringify(d.defaults)}`;
         case 'UI_DEFAULTS_SAVED':
           return `[${e.ts}][UI] Defaults saved: ${JSON.stringify(d.defaults)}`;
         case 'UI_MODE_SWITCH':
-          return `[${e.ts}][UI] Mode: ${d.from} → ${d.to} (via ${d.source})`;
+          return `[${e.ts}][UI] Mode: ${d.from} -> ${d.to} (via ${d.source})`;
         case 'UI_MODEL_APPLY':
-          return `[${e.ts}][UI] Model apply: ${d.modelId} for ${d.mode} (via ${d.source}) ${d.success ? '✓' : '✗'}${d.error ? ' — ' + d.error : ''}`;
+          return `[${e.ts}][UI] Model apply: ${d.modelId} for ${d.mode} (via ${d.source}) ${d.success ? 'OK' : 'FAIL'}${d.error ? ' -- ' + d.error : ''}`;
         case 'UI_PILL':
-          return `[${e.ts}][UI] Pill: ${d.modelId} → "${d.displayName}"`;
+          return `[${e.ts}][UI] Pill: ${d.modelId} -> "${d.displayName}"`;
         case 'UI_PICKER_OPEN':
           return `[${e.ts}][UI] Picker opened: filter=${d.initialFilter}, mode=${d.currentMode}, active=${d.activeModelId}`;
         case 'UI_PICKER_SELECT':
-          return `[${e.ts}][UI] Picker selected: ${d.previousModelId} → ${d.modelId}`;
+          return `[${e.ts}][UI] Picker selected: ${d.previousModelId} -> ${d.modelId}`;
         case 'UI_PICKER_CLOSE':
           return `[${e.ts}][UI] Picker closed`;
         case 'UI_PLUS_OPEN':
@@ -591,16 +591,16 @@ export class DebugLog {
         case 'UI_STOP':
           return `[${e.ts}][UI] Stop: hadController=${d.hadActiveController}`;
         case 'UI_CONV_SWITCH':
-          return `[${e.ts}][UI] Conv switch: ${d.fromId} → ${d.toId}`;
+          return `[${e.ts}][UI] Conv switch: ${d.fromId} -> ${d.toId}`;
         case 'UI_ERROR':
           return `[${e.ts}][UI][ERR] ${d.component}: ${d.error}`;
 
         case 'SETTINGS_API_SAVE':
-          return `[${e.ts}][SETTINGS] API saved: ${d.apiId} → ${d.baseUrl}`;
+          return `[${e.ts}][SETTINGS] API saved: ${d.apiId} -> ${d.baseUrl}`;
         case 'SETTINGS_API_DEL':
           return `[${e.ts}][SETTINGS] API deleted: ${d.apiId}`;
         case 'SETTINGS_DEFAULT_PICK':
-          return `[${e.ts}][SETTINGS] Default picked: ${d.role} → ${d.modelId} "${d.modelName}"`;
+          return `[${e.ts}][SETTINGS] Default picked: ${d.role} -> ${d.modelId} "${d.modelName}"`;
         case 'SETTINGS_DEFAULTS_SAVE':
           return `[${e.ts}][SETTINGS] Defaults saved: ${JSON.stringify(d.defaults)}`;
         case 'SETTINGS_COST_SAVE':
@@ -611,14 +611,14 @@ export class DebugLog {
         case 'BUILD_PHASE':
           return `[${e.ts}][BUILD][${d.phase}] ${d.message}`;
         case 'BUILD_DONE':
-          return `[${e.ts}][BUILD] ${d.success ? '✓' : '✗'} (${d.durationMs}ms)${d.error ? ' — ' + d.error : ''}`;
+          return `[${e.ts}][BUILD] ${d.success ? 'OK' : 'FAIL'} (${d.durationMs}ms)${d.error ? ' -- ' + d.error : ''}`;
 
         case 'GENOME_START':
           return `[${e.ts}][GENOME] ${d.type} started: task=${d.taskId}`;
         case 'GENOME_PHASE':
           return `[${e.ts}][GENOME][${d.phase}] ${d.message}`;
         case 'GENOME_DONE':
-          return `[${e.ts}][GENOME] ${d.success ? '✓' : '✗'} gen=${d.generation} fitness=${d.fitness}`;
+          return `[${e.ts}][GENOME] ${d.success ? 'OK' : 'FAIL'} gen=${d.generation} fitness=${d.fitness}`;
         case 'GENOME_ERR':
           return `[${e.ts}][GENOME][ERR] ${d.error}`;
 
@@ -649,7 +649,7 @@ export class DebugLog {
         case 'ERROR':
           return `[${e.ts}][ERROR][${d.context}] ${d.message}${d.stack ? '\n' + d.stack : ''}`;
         case 'MODEL_SWITCH':
-          return `[${e.ts}][MODEL_SWITCH] ${d.from} → ${d.to} reason=${d.reason}`;
+          return `[${e.ts}][MODEL_SWITCH] ${d.from} -> ${d.to} reason=${d.reason}`;
 
         default:
           return `[${e.ts}][${e.cat}] ${JSON.stringify(d).slice(0, 300)}`;

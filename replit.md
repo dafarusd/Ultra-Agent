@@ -12,7 +12,7 @@ The agent should allow users to configure the AI model used and API key via in-a
 The agent should persist conversations and allow switching between them.
 
 ## System Architecture
-**Frontend:** Built with Expo (React Native) and `expo-router` for file-based routing with a dark theme. UI is programmatic, avoiding XML layouts. Biometric gate removed from hardcoded startup (v3.14.0) — `BiometricGate.ts` retained for future opt-in biometric+PIN feature in Settings.
+**Frontend:** Built with Expo (React Native) and `expo-router` for file-based routing with a dark theme. UI is programmatic, avoiding XML layouts. Biometric gate removed from hardcoded startup (v3.14.0) -- `BiometricGate.ts` retained for future opt-in biometric+PIN feature in Settings. FlatList uses `extraData` to ensure re-renders on `isProcessing`/`pendingReplay`/`copiedId`/`expandedMsgs` state changes (v3.16.0). Model picker pill has `hitSlop` for reliable Android tap handling.
 **Backend:** A lightweight Express.js server on port 5000 handles API requests.
 **AI Integration:** All AI interactions leverage the Venice API via a `ModelRouter` for context-aware model recommendations.
 **On-Device Build System:** A `BuildSystem` manages the entire APK pipeline, from natural language `AppArchitect` to `BuildOrchestrator` handling dependency resolution, code generation, compilation (ECJ), DEX conversion (D8/R8), packaging, V1 JAR signing, and installation.

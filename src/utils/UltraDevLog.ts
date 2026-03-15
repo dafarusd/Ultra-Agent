@@ -1,25 +1,25 @@
 /**
- * UltraDevLog v3 — Runtime Diagnostic System for Agent Ultra
+ * UltraDevLog v3 -- Runtime Diagnostic System for Agent Ultra
  * ============================================================
  *
  * v3 CHANGES (all from ULTRADEVLOG_CAPABILITY_MAP.txt):
  *
  * NEW SENSORS:
- *   N1. COMPONENT_LIFECYCLE  — proves ChatScreen mount/unmount
- *   N2. SETTINGS_SAVE        — save button tap + vault write result
- *   N3. EXECUTE_PHASE        — named phase entry, narrows crash location
- *   N4. NAV_CHANGE           — navigation events, identifies remount trigger
- *   N5. FOCUS_EFFECT_DEPS    — which dep changed on useFocusEffect trigger
- *   N6. PROCESS_RESTART      — Android process kill vs suspension detection
- *   N7. PICKER_CONTENT       — model list render count inside sheet
- *   N8. CONTEXT_PROVIDER     — AgentCoreProvider verification sensor
+ *   N1. COMPONENT_LIFECYCLE  -- proves ChatScreen mount/unmount
+ *   N2. SETTINGS_SAVE        -- save button tap + vault write result
+ *   N3. EXECUTE_PHASE        -- named phase entry, narrows crash location
+ *   N4. NAV_CHANGE           -- navigation events, identifies remount trigger
+ *   N5. FOCUS_EFFECT_DEPS    -- which dep changed on useFocusEffect trigger
+ *   N6. PROCESS_RESTART      -- Android process kill vs suspension detection
+ *   N7. PICKER_CONTENT       -- model list render count inside sheet
+ *   N8. CONTEXT_PROVIDER     -- AgentCoreProvider verification sensor
  *
  * DATA QUALITY FIXES:
  *   Q1. listHeightPx=0: messageRendered() warns when listHeight unavailable
  *   Q2. VAULT_WRITE success is now boolean, not byte count
  *   Q3. APP_STATE_CHANGE elapsed correct on first entry (init to Date.now())
  *   Q4. PICKER_ANIMATE mount noise suppressed with 500ms mountedAt guard
- *   Q5. uiState() deduplicates — skips identical snapshots
+ *   Q5. uiState() deduplicates -- skips identical snapshots
  *   Q6. pickerOpen() warns correctly; slideAnim should be read before setValue()
  *
  * NOISE REDUCTION:
@@ -267,7 +267,7 @@ export class UltraDevLog {
     UltraDevLog.push('PICKER_OPEN', {
       modelCount, currentModelId, slideAnimCurrentValue: slideAnimValue, filter,
       note: slideAnimValue > 0 && slideAnimValue < 100
-        ? 'WARN: slideAnim partially open before reset — sheet may be mid-animation'
+        ? 'WARN: slideAnim partially open before reset -- sheet may be mid-animation'
         : 'ok',
     });
   }
@@ -356,8 +356,8 @@ export class UltraDevLog {
       messageId, role, contentLength, measuredHeightPx, indexInList,
       listScrollOffsetPx, listHeightPx, isVisible, tallWarning,
       listHeightKnown: listHeightPx > 0,
-      note: tallWarning ? `WARN: ${measuredHeightPx}px tall — possible oversized bubble bug`
-        : listHeightPx === 0 ? 'WARN: listHeightPx=0 — add FlatList onLayout to populate listHeightRef'
+      note: tallWarning ? `WARN: ${measuredHeightPx}px tall -- possible oversized bubble bug`
+        : listHeightPx === 0 ? 'WARN: listHeightPx=0 -- add FlatList onLayout to populate listHeightRef'
         : 'ok',
     });
   }
@@ -478,7 +478,7 @@ export class UltraDevLog {
     UltraDevLog.push('FOCUS_EFFECT_DEPS', {
       changedDeps: Object.keys(changed), changes: changed, isFirstTrigger: previousDeps === null,
       note: Object.keys(changed).includes('currentMode')
-        ? 'WARN: currentMode in changed deps — + menu triggers unnecessary focusEffect vault reads.'
+        ? 'WARN: currentMode in changed deps -- + menu triggers unnecessary focusEffect vault reads.'
         : Object.keys(changed).length > 0 ? `Changed: ${Object.keys(changed).join(', ')}` : 'No deps changed.',
     });
   }
@@ -511,8 +511,8 @@ export class UltraDevLog {
     UltraDevLog.push('PICKER_CONTENT', {
       filteredCount, totalCount, activeFilter, currentModelId,
       note: filteredCount === 0
-        ? `WARN: 0 models for filter "${activeFilter}" — sheet open but list empty.`
-        : `ok — ${filteredCount}/${totalCount} for "${activeFilter}"`,
+        ? `WARN: 0 models for filter "${activeFilter}" -- sheet open but list empty.`
+        : `ok -- ${filteredCount}/${totalCount} for "${activeFilter}"`,
     });
   }
 
@@ -520,7 +520,7 @@ export class UltraDevLog {
     UltraDevLog.push('CONTEXT_PROVIDER', {
       providerName, coreInstanceId, renderCount, activeCoreId: UltraDevLog.activeCoreId,
       note: renderCount > 1 && coreInstanceId === UltraDevLog.activeCoreId
-        ? `ok — same core on render #${renderCount}. Fix working.`
+        ? `ok -- same core on render #${renderCount}. Fix working.`
         : renderCount === 1 ? 'First render.' : `WARN: coreId changed on render #${renderCount}.`,
     });
   }
@@ -631,12 +631,12 @@ export class UltraDevLog {
       case 'AI_RESPONSE': return `${t} [AI      ]${c} model=${d.model} cost=$${d.cost} | ${(d.content as string).slice(0, 200)}`;
       case 'AGENT_STEP':
         if (d.event === 'execute_start') return `${t} [EXEC_ST ]${c} task=${d.taskId} len=${d.inputLength} replay=${d.isReplay}`;
-        return `${t} [STEP    ]${c} [${d.phase}] ${d.success ? '✓' : '✗'} ${d.detail}`;
+        return `${t} [STEP    ]${c} [${d.phase}] ${d.success ? 'OK' : 'FAIL'} ${d.detail}`;
       case 'MODE': return `${t} [MODE    ]${c} ${d.mode} | "${d.inputPreview}"`;
       case 'PLAN': return `${t} [PLAN    ]${c} cap=${d.capability} det=${d.deterministic} params=${JSON.stringify(d.params)}`;
       case 'SAFETY': return `${t} [SAFETY  ]${c} risk=${d.risk} allowed=${d.allowed}`;
-      case 'EXEC_RESULT': return `${t} [EXEC    ]${c} ${d.capability} ${d.success ? '✓' : '✗'} ${(d.resultPreview as string).slice(0, 200)}`;
-      case 'VERIFY': return `${t} [VERIFY  ]${c} ${d.verified ? '✓' : '✗'} issues=[${(d.issues as string[]).join('; ') || 'none'}]`;
+      case 'EXEC_RESULT': return `${t} [EXEC    ]${c} ${d.capability} ${d.success ? 'OK' : 'FAIL'} ${(d.resultPreview as string).slice(0, 200)}`;
+      case 'VERIFY': return `${t} [VERIFY  ]${c} ${d.verified ? 'OK' : 'FAIL'} issues=[${(d.issues as string[]).join('; ') || 'none'}]`;
       case 'ERROR': return `${t} [ERROR   ]${c} [${d.context}] ${d.message}${d.stack ? ' | ' + (d.stack as string).slice(0, 250) : ''}`;
       case 'SYSTEM': return `${t} [SYSTEM  ]${c} ${d.event ?? d.context ?? ''} ${d.message ?? d.stage ?? JSON.stringify(d).slice(0, 180)}`;
       case 'COST': return `${t} [COST    ] $${d.cost} ${d.model}`;
@@ -651,7 +651,7 @@ export class UltraDevLog {
       case 'UI_PROCESSING': return `${t} [PROC    ]${c} processing=${d.isProcessing} src=${d.source}${d.durationMs ? ` dur=${d.durationMs}ms` : ''}`;
       case 'UI_RENDER_MSG': return `${t} [MSGS    ]${c} ${d.prevCount}->${d.nextCount} src=${d.source}`;
       case 'UI_SEND_ATTEMPT': return `${t} [SEND?   ]${c} mode=${d.mode} model=${d.modelId} msgs=${d.messageCount} locked=${d.isProcessing} "${d.inputPreview}"`;
-      case 'UI_SEND_COMPLETE': return `${t} [SENT    ]${c} task=${d.taskId} ${d.success ? '✓' : '✗'} ${d.durationMs}ms`;
+      case 'UI_SEND_COMPLETE': return `${t} [SENT    ]${c} task=${d.taskId} ${d.success ? 'OK' : 'FAIL'} ${d.durationMs}ms`;
       case 'APP_LAUNCH_BEGIN': return `${t} [LAUNCH> ]${c} "${d.target}"`;
       case 'APP_LAUNCH_DEVICE': return `${t} [LAUNCH? ]${c} ${d.appCount} apps ${d.queryDurationMs}ms${d.error ? ' ERR:' + d.error : ''}`;
       case 'APP_LAUNCH_MATCH': return `${t} [LAUNCH= ]${c} "${d.target}" ${d.matchType} pkg=${d.resolvedPkg || 'NONE'}`;
@@ -689,7 +689,7 @@ export class UltraDevLog {
         return `${t} [COMP_LC ]${warn}${d.event} ${d.componentName} id=${(d.componentId as string)?.slice(-6)}${d.reason ? ` reason=${d.reason}` : ''} ${d.note ?? ''}`;
       }
       case 'SETTINGS_SAVE': {
-        const icon = d.event === 'tap' ? '>' : (d.success ? '✓' : '✗');
+        const icon = d.event === 'tap' ? '>' : (d.success ? 'OK' : 'FAIL');
         return `${t} [SETSAVE ] ${icon} ${d.section} ${d.event}${d.savedKeys ? ` keys=${(d.savedKeys as string[]).join(',')}` : ''}${d.error ? ` ERR=${d.error}` : ''}`;
       }
       case 'EXECUTE_PHASE': return `${t} [EX_PHASE]${c} ${d.phase} task=${d.taskId}`;
@@ -757,19 +757,19 @@ export class UltraDevLog {
 
     const compEv = entries.filter(e => e.cat === 'COMPONENT_LIFECYCLE').slice(-8);
     lines.push(''); lines.push(`-- COMPONENT LIFECYCLE (last ${compEv.length}) ---------------`);
-    compEv.length === 0 ? lines.push('  None — componentMount() not instrumented.') : compEv.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+    compEv.length === 0 ? lines.push('  None -- componentMount() not instrumented.') : compEv.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
 
     const restarts = entries.filter(e => e.cat === 'PROCESS_RESTART');
     if (restarts.length > 0) { lines.push(''); lines.push('-- PROCESS RESTART -----------------------------------'); restarts.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e))); }
 
     const saves = entries.filter(e => e.cat === 'SETTINGS_SAVE').slice(-6);
     lines.push(''); lines.push(`-- SETTINGS SAVE TRACE (last ${saves.length}) ----------------`);
-    saves.length === 0 ? lines.push('  None — settingsSaveTap() not instrumented.') : saves.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+    saves.length === 0 ? lines.push('  None -- settingsSaveTap() not instrumented.') : saves.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
 
     const proc = entries.filter(e => e.cat === 'UI_PROCESSING').slice(-10);
     lines.push(''); lines.push('-- isProcessing TRANSITIONS (last 10) ---------------');
     proc.length === 0 ? lines.push('  None.') : proc.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
-    if (proc[proc.length-1]?.data.isProcessing === true) lines.push('  *** isProcessing=true at end — UI locked.');
+    if (proc[proc.length-1]?.data.isProcessing === true) lines.push('  *** isProcessing=true at end -- UI locked.');
 
     const cores = entries.filter(e => e.cat === 'CORE_INSTANCE').slice(-10);
     lines.push(''); lines.push(`-- CORE INSTANCE TRACE (last ${cores.length}) ------------------`);

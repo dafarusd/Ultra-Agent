@@ -783,6 +783,7 @@ export default function ChatScreen() {
           data={messages}
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
+          extraData={`${isProcessing}_${pendingReplay?.type ?? 'none'}_${copiedId}_${expandedMsgs.size}`}
           inverted
           style={styles.messageList}
           contentContainerStyle={styles.messageListContent}
@@ -842,6 +843,7 @@ export default function ChatScreen() {
                 setModelPickerInitialFilter(filter);
                 setModelPickerVisible(true);
               }}
+              hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
               style={({ pressed }) => [styles.modelPill, pressed && styles.modelPillPressed]}
             >
               <MaterialCommunityIcons name="robot" size={12} color={DIM} />
