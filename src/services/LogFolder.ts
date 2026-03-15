@@ -23,8 +23,10 @@ export class LogFolder {
   private static getLogsDir(): string {
     if (this.LOGS_DIR_CACHE) return this.LOGS_DIR_CACHE;
     const fs = this.getFS();
-    if (!fs || !fs.DocumentDirectoryPath) return '';
-    this.LOGS_DIR_CACHE = `${fs.DocumentDirectoryPath}/agent-ultra-logs`;
+    if (!fs) return '';
+    const docDir = (fs as any)?.DocumentDirectoryPath || (fs as any)?.documentDirectory;
+    if (!docDir) return '';
+    this.LOGS_DIR_CACHE = `${docDir}/agent-ultra-logs`;
     return this.LOGS_DIR_CACHE;
   }
 
@@ -59,37 +61,60 @@ export class LogFolder {
   }
 
   static async listLogs(): Promise<LogFile[]> {
-    const fs = this.getFS();
-    const dir = this.getLogsDir();
-    if (!fs || !dir) return [];
-    await this.initialize();
     try {
-      const info = await fs.getInfoAsync(dir);
-      if (!info.exists) return [];
-      
-      const files = await fs.readDirectoryAsync(dir);
-      const logFiles: LogFile[] = [];
-
-      for (const name of files) {
-        try {
-          const filePath = `${dir}/${name}`;
-          const fileInfo = await fs.getInfoAsync(filePath, { size: true });
-          if (fileInfo.exists && !fileInfo.isDirectory) {
-            logFiles.push({
-              name,
-              path: filePath,
-              size: fileInfo.size || 0,
-              createdAt: fileInfo.modificationTime ? fileInfo.modificationTime * 1000 : 0,
-            });
-          }
-        } catch (e) {
-          // Skip files that error
-        }
+      const fs = this.getFS();
+      const dir = this.getLogsDir();
+      if (!fs || !dir) {
+        console.warn('[LogFolder] No FileSystem or directory path');
+        return [];
       }
 
-      return logFiles.sort((a, b) => b.createdAt - a.createdAt);
+      try {
+        await this.initialize();
+      } catch (initErr) {
+        console.error('[LogFolder] Initialize error:', initErr);
+        return [];
+      }
+
+      try {
+        const info = await fs.getInfoAsync(dir);
+        if (!info || !info.exists) {
+          return [];
+        }
+      } catch (infoErr) {
+        console.error('[LogFolder] getInfoAsync error:', infoErr);
+        return [];
+      }
+
+      try {
+        const files = await fs.readDirectoryAsync(dir);
+        if (!Array.isArray(files)) return [];
+        const logFiles: LogFile[] = [];
+
+        for (const name of files) {
+          try {
+            const filePath = `${dir}/${name}`;
+            const fileInfo = await fs.getInfoAsync(filePath, { size: true });
+            if (fileInfo && fileInfo.exists && !fileInfo.isDirectory) {
+              logFiles.push({
+                name,
+                path: filePath,
+                size: (fileInfo.size as number) || 0,
+                createdAt: fileInfo.modificationTime ? (fileInfo.modificationTime as number) * 1000 : 0,
+              });
+            }
+          } catch (fileErr) {
+            // Skip this file
+          }
+        }
+
+        return logFiles.sort((a, b) => b.createdAt - a.createdAt);
+      } catch (readErr) {
+        console.error('[LogFolder] readDirectory error:', readErr);
+        return [];
+      }
     } catch (err) {
-      console.error('[LogFolder] List error:', err);
+      console.error('[LogFolder] Unexpected error:', err);
       return [];
     }
   }
