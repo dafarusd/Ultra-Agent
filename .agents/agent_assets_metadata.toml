@@ -12,3 +12,9 @@ id = "nqmYpsrzWipWTu4pIfmDR"
 uri = "file://.local/DETAILED_CHANGES_REPORT.md"
 type = "text"
 title = "Detailed Report: All Code Changes Made"
+
+[[outputs]]
+id = "wzNfZEf843SlVCt44Ap28"
+uri = "file://.local/RAW_SOURCE_EXPORTS.md"
+type = "text"
+title = "Raw Source Code Exports — All Code in One File"
