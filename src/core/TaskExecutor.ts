@@ -459,7 +459,40 @@ export class TaskExecutor {
         // ── PATH B: Simple app launch (no action — just open the app) ──
         DebugLog.executorBranch(taskId, 'app_launch', 'simple_launch');
 
-        // ── Layer 4: System actions (before package lookup) ──
+        // ── Layer 2: Settings intents (direct lookup before package resolution) ──
+        const { resolveSettingsIntent } = await import('./SettingsDirectory');
+        const settingsMatch = resolveSettingsIntent(target);
+        DebugLog.settingsIntent(target, !!settingsMatch, settingsMatch?.action, settingsMatch?.label);
+        if (settingsMatch) {
+          try {
+            await IntentLauncher.startActivityAsync(settingsMatch.action, {});
+            DebugLog.executorExit(taskId, 'app_launch', true, 'settings_intent');
+            return { success: true, launched: settingsMatch.label, action: settingsMatch.action };
+          } catch (err: any) {
+            DebugLog.executorExit(taskId, 'app_launch', false, 'settings_intent_failed');
+            return { success: false, error: `Could not open ${settingsMatch.label}: ${err.message}` };
+          }
+        }
+
+        // ── Layer 3: Deep links (before package resolution) ──
+        const { resolveDeepLink } = await import('./DeepLinkDirectory');
+        const deepLinkMatch = resolveDeepLink(target);
+        DebugLog.deepLink(target, !!deepLinkMatch, deepLinkMatch?.uri, deepLinkMatch?.label);
+        if (deepLinkMatch) {
+          try {
+            await IntentLauncher.startActivityAsync(
+              IntentLauncher.ActivityAction.VIEW,
+              { data: deepLinkMatch.uri, packageName: deepLinkMatch.packageHint }
+            );
+            DebugLog.executorExit(taskId, 'app_launch', true, 'deep_link');
+            return { success: true, launched: deepLinkMatch.label, uri: deepLinkMatch.uri };
+          } catch (err: any) {
+            DebugLog.executorExit(taskId, 'app_launch', false, 'deep_link_failed');
+            return { success: false, error: `Could not open ${deepLinkMatch.label}: ${err.message}` };
+          }
+        }
+
+        // ── Layer 4: System actions (toggle/direct device actions) ──
         const { resolveSystemAction } = await import('./SystemActions');
         const systemAction = resolveSystemAction(target);
         if (systemAction) {
