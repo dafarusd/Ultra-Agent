@@ -4,6 +4,100 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.24.0] -- 2026-03-16 -- Feature: 26 New Capabilities + Bug Fixes
+
+### Added -- 26 New Capabilities
+All registered in CapabilityRegistry (49 total), schemed in CapabilitySchemas, parsed in CommandParser, and executed in TaskExecutor.
+
+1. **flashlight_toggle** — Toggle device flashlight on/off via CameraManager native bridge. Tracks `_flashlightOn` instance state. Supports explicit `on`, `off`, or `toggle` param.
+2. **alarm_set** — Set alarm via `android.intent.action.SET_ALARM` intent with HOUR/MINUTES/MESSAGE extras. Parses natural time strings ("7:30 am", "14:00").
+3. **timer_set** — Set countdown timer via `android.intent.action.SET_TIMER` intent. Parses duration strings ("5 minutes", "1 hour 30 minutes") to seconds.
+4. **volume_set** — Opens Sound Settings (`android.settings.SOUND_SETTINGS`). Accepts level, direction (up/down), or state (mute/unmute) params.
+5. **brightness_set** — Opens Display Settings (`android.settings.DISPLAY_SETTINGS`). Accepts level or direction (dim/brighten) params.
+6. **wifi_toggle** — Opens WiFi Settings (`android.settings.WIFI_SETTINGS`). Android 10+ restricts direct toggle.
+7. **bluetooth_toggle** — Opens Bluetooth Settings (`android.settings.BLUETOOTH_SETTINGS`).
+8. **airplane_mode** — Opens Airplane Mode Settings (`android.settings.AIRPLANE_MODE_SETTINGS`).
+9. **do_not_disturb** — Opens DND/Zen Mode Settings (`android.settings.ZEN_MODE_SETTINGS`).
+10. **battery_status** — Reads battery level and charging state via `expo-battery`. Returns percentage and state string (Unknown/Unplugged/Charging/Full).
+11. **clipboard_read** — Reads clipboard text via React Native's built-in `Clipboard` (dynamic import).
+12. **clipboard_write** — Writes text to clipboard via React Native's built-in `Clipboard` (dynamic import).
+13. **media_play** — Sends play/pause media button event via intent. Key event 126=play, 127=pause.
+14. **media_next** — Sends next-track media button event via intent. Key event 87.
+15. **screenshot** — Captures screen content via AccessibilityService (`AppController.getScreenContent()`). Returns JSON screen tree.
+16. **screen_record_start** — Launches SystemUI screen record dialog (`com.android.systemui.screenrecord.ScreenRecordDialog`). Falls back to general Settings if SystemUI target fails.
+17. **open_url** — Opens URL via `android.intent.action.VIEW` intent.
+18. **web_search** — Opens Google search in browser via `android.intent.action.VIEW` with encoded query URL.
+19. **calendar_create** — Creates calendar event via `android.intent.action.INSERT` with `content://com.android.calendar/events` data URI. Supports title, details, startMs, endMs.
+20. **reminder_create** — Creates reminder via calendar insert intent. Falls back to Google Keep deep link.
+21. **note_create** — Creates note in Samsung Notes (`com.samsung.android.app.notes`) via insert intent. Falls back to Google Keep deep link.
+22. **file_open** — Opens file by path and MIME type via `android.intent.action.VIEW` intent.
+23. **share_content** — Opens Android share sheet via `android.intent.action.SEND` with text/plain MIME type.
+24. **app_info** — Opens app info settings page (`android.settings.APPLICATION_DETAILS_SETTINGS`) with `package:` URI. Resolves app name to package via AppDirectory + installed apps scan.
+25. **notification_read** — Reads notifications via AccessibilityService screen content. Requires accessibility service enabled.
+26. **device_info** — Returns full device stats: battery %, charging state, OS version, model, total RAM, free disk. Uses `expo-battery` + `react-native-device-info`. Supports focus param (battery/memory/storage/network/all).
+
+### Fixed -- Bug Fixes
+- **Flashlight toggle tracking:** `_flashlightOn` instance variable properly tracks on/off state across toggle calls.
+- **runWithPlan result propagation:** Now checks `result.success === false` as `explicitFail` — catches disambiguation responses and other structured failures that previously appeared as successes.
+- **Contact disambiguation:** Both SMS (`sms_send`) and phone call (`app_launch` with DIAL action) handlers return `{ success: false, requiresDisambiguation: true, matches, summary }` when multiple contacts match, instead of silently picking the first one.
+- **screen_record_start fallback:** Targets `com.android.systemui.screenrecord.ScreenRecordDialog` first, catches failure and falls back to `IntentLauncher.ActivityAction.SETTINGS`.
+
+### Added -- CommandParser Patterns
+- 26 new regex pattern groups for all new capabilities
+- Verb typo correction: 30+ common misspellings auto-corrected (opin→open, lauch→launch, tect→text, sned→send, clal→call, turno→turn, shwo→show, plya→play, fnd→find, sett→set, chekc→check, reaed→read)
+- Device info patterns: "battery", "ram", "storage", "wifi", "device status", "system info"
+- Legacy `system_info` patterns preserved for backward compatibility
+- Notification patterns: "read/show/list my notifications/alerts"
+- Note patterns: "create/new/add/write a note/memo"
+- App info patterns: "app info for X", "info for X"
+- Screenshot patterns: "take a screenshot", "capture/grab the screen"
+- Media control patterns: "play/pause/resume music", "next/skip track"
+- Clipboard patterns: "copy X", "read/show/get clipboard"
+- Toggle patterns: flashlight, volume, brightness, wifi, bluetooth, airplane mode, DND
+
+### Added -- CapabilitySchemas
+- 26 new schema definitions with required/optional params and type validation
+- All schemas wire into `validatePlan()` for VERIFY phase
+
+### Added -- CapabilityRegistry
+- 49 total capabilities registered (23 original + 26 new)
+- Risk levels: safe (flashlight, clipboard_write, media controls, open_url, web_search, note_create, share_content, app_info, device_info, alarm_set, timer_set, battery_status), moderate (volume, brightness, wifi, bluetooth, airplane, do_not_disturb, screenshot, screen_record, calendar_create, reminder_create), sensitive (clipboard_read, notification_read)
+
+### Changed -- SettingsDirectory Expansion
+- 50+ new settings entries added covering:
+  - Display: screen timeout, font size, dark mode, resolution, always-on display, refresh rate, edge panel
+  - Sound: ringtone, vibration, audio settings
+  - Battery: battery saver, battery optimization
+  - Security: lock screen, fingerprint, biometrics, Samsung Pass
+  - Privacy: permissions, location history
+  - Network: mobile data, hotspot, VPN, NFC, connected devices, airplane mode
+  - Samsung-specific: Bixby, Samsung Health, Game Booster
+  - Developer: USB debugging, system trace
+  - About: software update, build number, OS version
+  - Accessibility: TalkBack, magnification
+
+### Changed -- Android Manifest Permissions
+32 permissions auto-injected via `withAgentNative.js`:
+QUERY_ALL_PACKAGES, CAMERA, FLASHLIGHT, READ_CONTACTS, WRITE_CONTACTS, READ_CALL_LOG, SEND_SMS, READ_SMS, RECEIVE_SMS, READ_CALENDAR, WRITE_CALENDAR, SET_ALARM, VIBRATE, MODIFY_AUDIO_SETTINGS, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE, CHANGE_WIFI_STATE, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, RECORD_AUDIO, FOREGROUND_SERVICE, RECEIVE_BOOT_COMPLETED, USE_BIOMETRIC, USE_FINGERPRINT, CHANGE_NETWORK_STATE, NFC, BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_CONNECT, BLUETOOTH_SCAN
+
+### Changed -- System Prompt
+AgentCore now uses a new Ultra persona — direct, action-oriented, first-person, no hedging. Includes explicit capability list in persona description. Conversation mode explicitly warns that it cannot perform actions or access device data.
+
+### Changed -- Flashlight Native Bridge
+`setFlashlight(boolean)` Java method in AgentNativeModule.java uses CameraManager to find flash-capable camera and call `setTorchMode()`. TypeScript wrapper in AgentNative.ts delegates to native module with noop fallback on web.
+
+### File Changes
+- **TaskExecutor.ts**: 1347 lines — 26 new `execWithParams` cases + `exec` cases, `_flashlightOn` toggle, `parseTimeString()`, `parseDurationToSeconds()`, `gatherSystemInfo()` refactored with DeviceInfo
+- **CommandParser.ts**: 759 lines — 26 new pattern groups, verb correction map, device_info/system_info patterns, notification/note/app_info/screenshot/media/clipboard/toggle patterns
+- **CapabilityRegistry.ts**: 107 lines — 49 capability registrations with risk levels and permissions
+- **CapabilitySchemas.ts**: 466 lines — 49 schema definitions with param types and descriptions
+- **AgentCore.ts**: 1008 lines — Ultra persona prompt, `detectMode()` with genome pattern check
+- **SettingsDirectory.ts**: 194 lines — 50+ settings entries with trigger arrays and intent actions
+- **AgentNative.ts**: 110 lines — TypeScript bridge with `setFlashlight()` method
+- **withAgentNative.js**: 1652 lines — Java source constants, config plugin, 32 manifest permissions
+
+---
+
 ## [v3.23.0] -- 2026-03-16 -- Feature: Total Access + System Information + Comprehensive Logging
 
 ### Added -- Total Access Settings & Deep Link Resolution Layer
@@ -133,5 +227,3 @@ All notable changes to this project are documented here, organized by feature ve
 - `src/utils/DebugLog.ts` line 395: Fixed filename `debug-log.jsonl`
 - `src/utils/DebugLog.ts` lines 417, 422: Fixed filename `raw-export.jsonl`
 - `src/services/LogFolder.ts` lines 45-52: Added cleanup block for old timestamped files
-
----

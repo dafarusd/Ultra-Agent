@@ -30,7 +30,15 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 
 **Core Agent Loop:** A 9-step autonomous loop (INGEST, ROUTE, PLAN, VERIFY, APPROVE, EXECUTE, VERIFY_RESULT, WRITE_MEMORY, ADAPT) governs agent decision-making.
 
-**Capability Management:** `CapabilityRegistry` defines 49 capabilities (23 original + 26 new: flashlight_toggle, alarm_set, timer_set, volume_set, brightness_set, wifi_toggle, bluetooth_toggle, airplane_mode, do_not_disturb, battery_status, clipboard_read, clipboard_write, media_play, media_next, screenshot, screen_record_start, open_url, web_search, calendar_create, reminder_create, note_create, file_open, share_content, app_info, notification_read, device_info) with risk levels, executed by `TaskExecutor`.
+**Capability Management (v3.24.0):** `CapabilityRegistry` defines 49 capabilities (23 original + 26 new) with risk levels, executed by `TaskExecutor`. The 26 new capabilities added in v3.24.0 are:
+- flashlight_toggle, alarm_set, timer_set, volume_set, brightness_set
+- wifi_toggle, bluetooth_toggle, airplane_mode, do_not_disturb
+- battery_status, clipboard_read, clipboard_write
+- media_play, media_next, screenshot, screen_record_start
+- open_url, web_search, calendar_create, reminder_create, note_create
+- file_open, share_content, app_info, notification_read, device_info
+
+Risk levels: safe (flashlight, clipboard_write, media controls, open_url, web_search, note_create, share_content, app_info, device_info, alarm_set, timer_set, battery_status), moderate (volume, brightness, wifi, bluetooth, airplane, DND, screenshot, screen_record, calendar_create, reminder_create), sensitive (clipboard_read, notification_read).
 
 **Total Access Features (v3.23.0):**
 - **Settings Intent Resolution:** 37 Android settings entries with deep linking (WiFi, Bluetooth, Display, Sound, Developer Options, Accessibility, etc.)
@@ -72,6 +80,21 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 
 **Native Module Integration:** A custom `AgentNativeModule` (Java classes via Expo config plugin) provides direct access to native functions like file writing, Java compilation, APK packaging, signing, and installation. `AppController` uses accessibility services for UI automation and E2E testing of generated apps.
 
+## Core Source Files (v3.24.0)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/core/TaskExecutor.ts` | 1347 | 49 capability executors, flashlight toggle, parseTimeString, parseDurationToSeconds, gatherSystemInfo, contact disambiguation |
+| `src/core/CommandParser.ts` | 759 | Natural language → capability routing, 26 new pattern groups, verb typo correction, findBestMatch (threshold=35) |
+| `src/core/CapabilityRegistry.ts` | 107 | 49 capability registrations with risk levels and permissions |
+| `src/core/CapabilitySchemas.ts` | 466 | 49 schema definitions with required/optional params and type validation |
+| `src/core/AgentCore.ts` | 1008 | 9-step agent loop, Ultra persona system prompt, detectMode, runWithPlan |
+| `src/core/SettingsDirectory.ts` | 194 | 50+ Android settings entries with trigger arrays and intent actions |
+| `src/native/AgentNative.ts` | 110 | TypeScript bridge to native module (setFlashlight, getInstalledApps, exec) |
+| `plugins/withAgentNative.js` | 1652 | Java source constants (AgentNativeModule, BinaryManifestWriter, ApkPackager, ApkSignerV1, AgentAccessibilityService, AccessibilityBridgeModule), config plugin, 32 manifest permissions |
+
+**Total: 5,635 lines across 8 core files**
+
 ## External Dependencies
 *   **Venice API:** For all AI functionalities.
 *   **Expo (React Native):** Frontend framework.
@@ -92,8 +115,11 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 *   **`react-native-device-info`:** Device system information (v3.23.0).
 *   **`expo-intent-launcher`:** Native intent launching for settings and deep links (v3.23.0).
 
-## Known Issues (v3.23.0)
-- **None critical.** All Total Access features integrated with comprehensive logging.
+## Android Manifest Permissions (32 total)
+QUERY_ALL_PACKAGES, CAMERA, FLASHLIGHT, READ_CONTACTS, WRITE_CONTACTS, READ_CALL_LOG, SEND_SMS, READ_SMS, RECEIVE_SMS, READ_CALENDAR, WRITE_CALENDAR, SET_ALARM, VIBRATE, MODIFY_AUDIO_SETTINGS, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE, CHANGE_WIFI_STATE, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, RECORD_AUDIO, FOREGROUND_SERVICE, RECEIVE_BOOT_COMPLETED, USE_BIOMETRIC, USE_FINGERPRINT, CHANGE_NETWORK_STATE, NFC, BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_CONNECT, BLUETOOTH_SCAN
+
+## Known Issues (v3.24.0)
+- **None critical.** All 49 capabilities registered, schemed, parsed, and executed across 8 core files.
 
 ## Recent Changes (v3.24.0 — Capability Expansion)
 - **26 New Capabilities:** Flashlight, alarms, timers, volume, brightness, wifi/bluetooth/airplane/DND toggles, battery status, clipboard, media controls, screenshot, screen record, URL/search, calendar/reminder/note creation, file open, share, app info, notifications, device info.
@@ -113,6 +139,16 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 - **Comprehensive Sensor Integration:** All Total Access operations logged to UltraDevLog with 6 new categories and dedicated formatting.
 - **Deduplication:** Fixed networkStatus() and modelState() to suppress identical repeated logs.
 
+## Technical Notes
+- **newArchEnabled** MUST be true — react-native-reanimated v4 requires New Architecture.
+- DO NOT add metro.config.js — breaks EAS builds on Windows.
+- Venice API: `https://api.venice.ai/api/v1`. Default model: `llama-3.3-70b`. 60s timeouts.
+- Flashlight toggle: tracks `this._flashlightOn` instance variable.
+- Contact disambiguation returns `{ success: false, requiresDisambiguation: true, matches, summary }`.
+- `runWithPlan` detects explicit failures via `result.success === false`.
+- 32 permissions auto-injected via `withAgentNative.js`.
+- findBestMatch threshold = 35. KNOWN_APPS is Samsung-ified.
+
 ## File Structure
 ```
 agent-ultra/
@@ -128,33 +164,43 @@ agent-ultra/
 │   └── [other components]
 ├── src/
 │   ├── core/                # Agent loop & execution
-│   │   ├── AgentCore.ts     # 9-step loop
-│   │   ├── TaskExecutor.ts  # 23 capabilities
+│   │   ├── AgentCore.ts     # 9-step loop (1008 lines)
+│   │   ├── TaskExecutor.ts  # 49 capabilities (1347 lines)
+│   │   ├── CommandParser.ts # NL parsing (759 lines)
+│   │   ├── CapabilityRegistry.ts # 49 registrations (107 lines)
+│   │   ├── CapabilitySchemas.ts  # 49 schemas (466 lines)
 │   │   ├── ModelRouter.ts   # Venice API interface
-│   │   ├── SettingsDirectory.ts       # 37 Android settings [NEW v3.23.0]
-│   │   ├── DeepLinkDirectory.ts       # 19 app deep links [NEW v3.23.0]
-│   │   ├── SystemActions.ts           # WiFi/BT/Airplane/Brightness [NEW v3.23.0]
+│   │   ├── SettingsDirectory.ts  # 50+ settings entries (194 lines)
+│   │   ├── DeepLinkDirectory.ts  # 19 app deep links
+│   │   ├── SystemActions.ts      # WiFi/BT/Airplane/Brightness
 │   │   └── [others]
 │   ├── services/            # Persistence & logging
 │   │   ├── LogFolder.ts     # Log file management
 │   │   ├── ConversationManager.ts
 │   │   ├── CostTracker.ts
-│   │   ├── PreferenceBackup.ts       # Export/import preferences [NEW v3.23.0]
+│   │   ├── PreferenceBackup.ts  # Export/import preferences
 │   │   └── [others]
 │   ├── genome/              # Self-evolution
 │   │   ├── GenomeFactory.ts
 │   │   ├── SelfImprover.ts
 │   │   └── [others]
 │   ├── utils/
-│   │   ├── UltraDevLog.ts   # Main diagnostic logger (6 new categories v3.23.0)
-│   │   ├── PreferenceLearner.ts # App package learning [UPDATED v3.23.0]
+│   │   ├── UltraDevLog.ts   # Main diagnostic logger
+│   │   ├── PreferenceLearner.ts # App package learning
+│   │   ├── classifyModelType.ts # Model category classifier
 │   │   └── [others]
 │   ├── security/
 │   │   └── SecureVault.ts   # Encrypted storage
 │   └── native/              # Native bridge
+│       └── AgentNative.ts   # TypeScript bridge (110 lines)
+├── plugins/
+│   └── withAgentNative.js   # Config plugin + Java sources (1652 lines)
 ├── server/
 │   ├── index.ts             # Express server
 │   └── [routes]
+├── ultra-full-source.txt    # All 8 core files concatenated (5678 lines)
+├── CHANGELOG.md             # Full version history
+├── gitlog.md                # Git commit history (50 commits)
 └── [config files]
 ```
 
@@ -163,3 +209,7 @@ agent-ultra/
 - **EAS Build:** `eas build --platform android --profile preview` (from Windows local machine)
 - **Logs for Claude:** CHANGELOG.md, gitlog.md, replit.md, ultra-full-source.txt
 - **Update at end of session:** CHANGELOG.md, gitlog.md, replit.md, ultra-full-source.txt
+- **Git HEAD:** e186c58 (v3.24.0)
+- **Total capabilities:** 49 (23 original + 26 new)
+- **Total core source lines:** 5,635 across 8 files
+- **Total manifest permissions:** 32
