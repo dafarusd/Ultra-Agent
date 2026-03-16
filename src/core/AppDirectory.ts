@@ -157,13 +157,15 @@ const KNOWN_APPS: Record<string, string> = {
 
   // Utilities
   'settings': 'com.android.settings',
-  'camera': 'com.android.camera',
+  'camera': 'com.sec.android.app.camera',
+  'camera2': 'com.sec.android.app.camera',
   'gallery': 'com.sec.android.gallery3d',
   'samsung gallery': 'com.sec.android.gallery3d',
   'samsung camera': 'com.sec.android.app.camera',
   'samsung notes': 'com.samsung.android.app.notes',
   'samsung internet': 'com.sec.android.app.sbrowser',
   'samsung health': 'com.sec.android.app.shealth',
+  'kraken': 'com.krakenpro.app',
 
   // Games
   'candy crush': 'com.king.candycrushsaga',

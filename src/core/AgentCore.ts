@@ -217,6 +217,13 @@ export class AgentCore extends SimpleEmitter {
     const budget = Math.max(1000, contextWindow - responseMaxTokens - estimateTokens(systemPrompt) - 300);
 
     const msgs = conv.messages.map(m => ({ role: m.role, content: m.content }));
+
+    // Cap history to prevent context bloat — keep system message + last 20 exchanges
+    const MAX_HISTORY_MESSAGES = 20;
+    if (msgs.length > MAX_HISTORY_MESSAGES) {
+      msgs.splice(0, msgs.length - MAX_HISTORY_MESSAGES);
+    }
+
     const recent: Array<{ role: string; content: string }> = [];
     let used = 0;
 
