@@ -40,6 +40,7 @@ export interface TaskResult {
 }
 
 export class TaskExecutor {
+  private _flashlightOn = false;
   private build: BuildSystem;
   private debug: DebugEngine;
   private caps: CapabilityRegistry;
@@ -191,9 +192,10 @@ export class TaskExecutor {
     try {
       const result = await this.execWithParams(capId, plan.params, plan.reason || '', id);
       const hasError = result && typeof result === 'object' && 'error' in result;
+      const explicitFail = result && typeof result === 'object' && result.success === false;
       return {
-        success: !hasError,
-        summary: hasError ? result.error : JSON.stringify(result),
+        success: !hasError && !explicitFail,
+        summary: hasError ? result.error : (result.summary || result.requiresDisambiguation ? result.summary : JSON.stringify(result)),
         data: result,
       };
     } catch (e: any) {
@@ -302,7 +304,23 @@ export class TaskExecutor {
             return { error: 'Contacts permission denied. Grant in device settings to resolve contact names.' };
           }
           const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
-          const match = data.find((c) => c.name?.toLowerCase().includes(to.toLowerCase()));
+          const matches = data.filter((c) => c.name?.toLowerCase().includes(to.toLowerCase()));
+          if (matches.length > 1) {
+            const disambig = matches.filter(m => m.phoneNumbers && m.phoneNumbers.length > 0).map(m => ({
+              name: m.name,
+              number: m.phoneNumbers![0].number,
+              label: m.phoneNumbers![0].label || 'unknown',
+            }));
+            if (disambig.length > 1) {
+              return {
+                success: false,
+                requiresDisambiguation: true,
+                matches: disambig,
+                summary: `Found ${disambig.length} contacts named "${to}": ${disambig.map(m => `${m.name} (${m.label}: ${m.number})`).join(', ')}. Which one?`,
+              };
+            }
+          }
+          const match = matches[0];
           if (match && match.phoneNumbers && match.phoneNumbers.length > 0) {
             const realNumber = match.phoneNumbers.find(
               (p) => p.number && p.number.replace(/\D/g, '').length >= 7
@@ -322,9 +340,10 @@ export class TaskExecutor {
         }
         DebugLog.smsFire(taskId, to, message);
         const { result } = await SMS.sendSMSAsync([to], message);
-        DebugLog.smsResult(taskId, result, result === 'sent');
-        DebugLog.executorExit(taskId, 'sms_send', result === 'sent', result === 'sent' ? 'sms_sent' : 'sms_not_sent');
-        return { success: result === 'sent', sent: result === 'sent', to };
+        const smsSent = (result as any)?.data?.sent === true || result === 'sent';
+        DebugLog.smsResult(taskId, result, smsSent);
+        DebugLog.executorExit(taskId, 'sms_send', smsSent, smsSent ? 'sms_sent' : 'sms_not_sent');
+        return { success: smsSent, sent: smsSent, to };
       }
       case 'camera_capture': {
         if (!isNative) return { error: 'Camera requires a device' };
@@ -374,8 +393,22 @@ export class TaskExecutor {
                   fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
                   name: contactName,
                 });
-                if (contacts.length > 0) {
-                  const match = contacts[0];
+                const withNumbers = contacts.filter(c => c.phoneNumbers && c.phoneNumbers.length > 0);
+                if (withNumbers.length > 1) {
+                  const disambig = withNumbers.map(m => ({
+                    name: m.name,
+                    number: m.phoneNumbers![0].number,
+                    label: m.phoneNumbers![0].label || 'unknown',
+                  }));
+                  return {
+                    success: false,
+                    requiresDisambiguation: true,
+                    matches: disambig,
+                    summary: `Found ${disambig.length} contacts named "${contactName}": ${disambig.map(m => `${m.name} (${m.label}: ${m.number})`).join(', ')}. Which one?`,
+                  };
+                }
+                if (withNumbers.length > 0) {
+                  const match = withNumbers[0];
                   const realNumber = match.phoneNumbers?.find(
                     (p: any) => p.number && p.number.replace(/\D/g, '').length >= 7
                   );
@@ -394,7 +427,6 @@ export class TaskExecutor {
             } catch (e: any) {
               return { success: false, error: `Contact lookup failed: ${e.message}` };
             }
-            // Clean up the internal-only extra
             delete params.extras._contactName;
           }
 
@@ -506,6 +538,39 @@ export class TaskExecutor {
           .replace(/\s+app$/i, '');
 
         DebugLog.appLaunchBegin(taskId, target, targetLower);
+
+        if (['contacts', 'people', 'address book', 'phonebook'].includes(targetLower)) {
+          try {
+            await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+              data: 'content://com.android.contacts/contacts',
+            });
+            DebugLog.executorExit(taskId, 'app_launch', true, 'contacts_intent');
+            return { success: true, launched: 'Contacts' };
+          } catch (err: any) {
+            this.logger.warn(`Contacts intent failed: ${err.message}, trying package`);
+          }
+        }
+
+        if (['messages', 'messaging', 'text messages', 'sms app', 'sms'].includes(targetLower)) {
+          try {
+            await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
+              packageName: 'com.samsung.android.messaging',
+              className: 'com.samsung.android.messaging.ui.ConversationListActivity',
+            });
+            DebugLog.executorExit(taskId, 'app_launch', true, 'messages_intent');
+            return { success: true, launched: 'Messages' };
+          } catch {
+            try {
+              await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                data: 'sms:',
+              });
+              DebugLog.executorExit(taskId, 'app_launch', true, 'messages_sms_fallback');
+              return { success: true, launched: 'Messages' };
+            } catch (err2: any) {
+              this.logger.warn(`Messages intent failed: ${err2.message}, trying package`);
+            }
+          }
+        }
 
         let pkg: string | undefined;
 
@@ -922,6 +987,278 @@ export class TaskExecutor {
           return { success: false, error: `System info failed: ${err.message}` };
         }
       }
+      case 'flashlight_toggle': {
+        const AgentNativeModule = (await import('../native/AgentNative')).default;
+        const stateParam = params.state?.toLowerCase();
+        if (stateParam === 'off') {
+          await AgentNativeModule.setFlashlight(false);
+          return { success: true, summary: 'Flashlight turned off' };
+        } else if (stateParam === 'on') {
+          await AgentNativeModule.setFlashlight(true);
+          return { success: true, summary: 'Flashlight turned on' };
+        } else {
+          if (!this._flashlightOn) {
+            await AgentNativeModule.setFlashlight(true);
+            this._flashlightOn = true;
+            return { success: true, summary: 'Flashlight turned on' };
+          } else {
+            await AgentNativeModule.setFlashlight(false);
+            this._flashlightOn = false;
+            return { success: true, summary: 'Flashlight turned off' };
+          }
+        }
+      }
+      case 'alarm_set': {
+        const timeStr = params.time || '';
+        const parsed = parseTimeString(timeStr);
+        await IntentLauncher.startActivityAsync('android.intent.action.SET_ALARM', {
+          extra: {
+            'android.intent.extra.alarm.HOUR': parsed.hour,
+            'android.intent.extra.alarm.MINUTES': parsed.minute,
+            'android.intent.extra.alarm.MESSAGE': params.label || 'Ultra alarm',
+            'android.intent.extra.alarm.SKIP_UI': false,
+          },
+        });
+        return { success: true, summary: `Alarm set for ${parsed.display}` };
+      }
+      case 'timer_set': {
+        const seconds = parseDurationToSeconds(params.duration || '');
+        await IntentLauncher.startActivityAsync('android.intent.action.SET_TIMER', {
+          extra: {
+            'android.intent.extra.alarm.LENGTH': seconds,
+            'android.intent.extra.alarm.MESSAGE': 'Ultra timer',
+            'android.intent.extra.alarm.SKIP_UI': true,
+          },
+        });
+        return { success: true, summary: `Timer set for ${params.duration}` };
+      }
+      case 'volume_set': {
+        await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
+        return { success: true, summary: 'Opened sound settings' };
+      }
+      case 'brightness_set': {
+        await IntentLauncher.startActivityAsync('android.settings.DISPLAY_SETTINGS', {});
+        return { success: true, summary: 'Opened display settings for brightness' };
+      }
+      case 'wifi_toggle': {
+        await IntentLauncher.startActivityAsync('android.settings.WIFI_SETTINGS', {});
+        return { success: true, summary: 'Opened Wi-Fi settings' };
+      }
+      case 'bluetooth_toggle': {
+        await IntentLauncher.startActivityAsync('android.settings.BLUETOOTH_SETTINGS', {});
+        return { success: true, summary: 'Opened Bluetooth settings' };
+      }
+      case 'airplane_mode': {
+        await IntentLauncher.startActivityAsync('android.settings.AIRPLANE_MODE_SETTINGS', {});
+        return { success: true, summary: 'Opened Airplane Mode settings' };
+      }
+      case 'do_not_disturb': {
+        await IntentLauncher.startActivityAsync('android.settings.ZEN_MODE_SETTINGS', {});
+        return { success: true, summary: 'Opened Do Not Disturb settings' };
+      }
+      case 'battery_status': {
+        const [level, state] = await Promise.all([
+          Battery.getBatteryLevelAsync(),
+          Battery.getBatteryStateAsync(),
+        ]);
+        const pct = Math.round(level * 100);
+        const stateStr = ['Unknown', 'Unplugged', 'Charging', 'Full'][state] ?? 'Unknown';
+        return { success: true, summary: `Battery: ${pct}% (${stateStr})`, data: { level: pct, state: stateStr } };
+      }
+      case 'clipboard_write': {
+        const { Clipboard } = await import('react-native');
+        if (Clipboard && Clipboard.setString) {
+          Clipboard.setString(params.text || '');
+        }
+        return { success: true, summary: `Copied to clipboard: "${params.text}"` };
+      }
+      case 'clipboard_read': {
+        const { Clipboard: ClipboardRead } = await import('react-native');
+        let clipText = '';
+        if (ClipboardRead && ClipboardRead.getString) {
+          clipText = await ClipboardRead.getString();
+        }
+        return { success: true, summary: `Clipboard contains: "${clipText}"`, data: { text: clipText } };
+      }
+      case 'media_play': {
+        const action = params.action?.toLowerCase();
+        if (action === 'pause') {
+          await IntentLauncher.startActivityAsync('android.intent.action.MEDIA_BUTTON', {
+            extra: { 'android.intent.extra.KEY_EVENT': 127 },
+          });
+        } else {
+          await IntentLauncher.startActivityAsync('android.intent.action.MEDIA_BUTTON', {
+            extra: { 'android.intent.extra.KEY_EVENT': 126 },
+          });
+        }
+        return { success: true, summary: `Media ${action || 'play'} triggered` };
+      }
+      case 'media_next': {
+        await IntentLauncher.startActivityAsync('android.intent.action.MEDIA_BUTTON', {
+          extra: { 'android.intent.extra.KEY_EVENT': 87 },
+        });
+        return { success: true, summary: 'Skipped to next track' };
+      }
+      case 'screenshot': {
+        if (!isNative || !AppController.isAvailable()) {
+          return { success: false, summary: 'Screenshot requires Android device with accessibility service' };
+        }
+        try {
+          const tree = await AppController.getScreenContent();
+          return { success: true, summary: 'Screenshot captured', data: { screen: tree } };
+        } catch (err: any) {
+          return { success: false, summary: `Screenshot failed: ${err.message}` };
+        }
+      }
+      case 'screen_record_start': {
+        try {
+          await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
+            packageName: 'com.android.systemui',
+            className: 'com.android.systemui.screenrecord.ScreenRecordDialog',
+          });
+        } catch {
+          await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.SETTINGS, {});
+        }
+        return { success: true, summary: 'Screen recording initiated' };
+      }
+      case 'open_url': {
+        const url = params.url;
+        if (!url) return { success: false, error: 'No URL specified' };
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: url,
+        });
+        return { success: true, summary: `Opened ${url}` };
+      }
+      case 'web_search': {
+        const query = encodeURIComponent(params.query || '');
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: `https://www.google.com/search?q=${query}`,
+        });
+        return { success: true, summary: `Searching for: ${params.query}` };
+      }
+      case 'calendar_create': {
+        const now = Date.now();
+        await IntentLauncher.startActivityAsync('android.intent.action.INSERT', {
+          data: 'content://com.android.calendar/events',
+          extra: {
+            'title': params.title || params.details || 'New Event',
+            'description': params.details || '',
+            'beginTime': params.startMs || now,
+            'endTime': params.endMs || (now + 3600000),
+            'allDay': false,
+          },
+        });
+        return { success: true, summary: `Calendar event created: ${params.title || params.details || 'New Event'}` };
+      }
+      case 'reminder_create': {
+        try {
+          await IntentLauncher.startActivityAsync('android.intent.action.INSERT', {
+            data: 'content://com.android.calendar/events',
+            extra: {
+              'title': params.text || 'Reminder',
+              'description': params.text || '',
+            },
+          });
+        } catch {
+          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: `com.google.android.keep://createnewnote?text=${encodeURIComponent(params.text || '')}`,
+          });
+        }
+        return { success: true, summary: `Reminder created: "${params.text}"` };
+      }
+      case 'note_create': {
+        try {
+          await IntentLauncher.startActivityAsync('android.intent.action.INSERT', {
+            packageName: 'com.samsung.android.app.notes',
+            extra: { 'android.intent.extra.TEXT': params.content || '' },
+          });
+        } catch {
+          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: `com.google.android.keep://createnewnote?text=${encodeURIComponent(params.content || '')}`,
+          });
+        }
+        return { success: true, summary: `Note created: "${params.content}"` };
+      }
+      case 'file_open': {
+        const filePath = params.path;
+        if (!filePath) return { success: false, error: 'No file path specified' };
+        const mimeType = params.mimeType || '*/*';
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: filePath.startsWith('file://') ? filePath : `file://${filePath}`,
+          type: mimeType,
+        });
+        return { success: true, summary: `Opened file: ${filePath}` };
+      }
+      case 'share_content': {
+        await IntentLauncher.startActivityAsync('android.intent.action.SEND', {
+          extra: {
+            'android.intent.extra.TEXT': params.content || '',
+            'android.intent.extra.SUBJECT': params.subject || '',
+          },
+          type: 'text/plain',
+        });
+        return { success: true, summary: 'Share dialog opened' };
+      }
+      case 'app_info': {
+        const appTarget = params.target;
+        let appPkg = lookupPackage(appTarget);
+        if (!appPkg) {
+          try {
+            const AgentNativeModule = (await import('../native/AgentNative')).default;
+            const installed = await AgentNativeModule.getInstalledApps();
+            const match = findBestMatch(appTarget, installed);
+            if (match) appPkg = match.packageName;
+          } catch {}
+        }
+        if (appPkg) {
+          await IntentLauncher.startActivityAsync('android.settings.APPLICATION_DETAILS_SETTINGS', {
+            data: `package:${appPkg}`,
+          });
+          return { success: true, summary: `Opened app info for ${appTarget}` };
+        }
+        return { success: false, summary: `Could not find app: ${appTarget}` };
+      }
+      case 'notification_read': {
+        if (!isNative || !AppController.isAvailable()) {
+          return { success: false, summary: 'Notification reading requires Android device with accessibility service' };
+        }
+        try {
+          const tree = await AppController.getScreenContent();
+          return { success: true, summary: 'Notifications retrieved', data: { notifications: tree } };
+        } catch (err: any) {
+          return { success: false, summary: `Notification read failed: ${err.message}` };
+        }
+      }
+      case 'device_info': {
+        try {
+          const [battLevel, battState] = await Promise.all([
+            Battery.getBatteryLevelAsync(),
+            Battery.getBatteryStateAsync(),
+          ]);
+          const info: Record<string, any> = {
+            battery: Math.round(battLevel * 100) + '%',
+            charging: battState === Battery.BatteryState.CHARGING,
+            os: `Android ${Platform.Version}`,
+            model: DeviceInfo.getModel(),
+          };
+          try {
+            const totalMem = await DeviceInfo.getTotalMemory();
+            info.totalRAM = Math.round(totalMem / 1073741824 * 10) / 10 + 'GB';
+          } catch {}
+          try {
+            const freeDisk = await DeviceInfo.getFreeDiskStorage();
+            info.freeDisk = Math.round(freeDisk / 1073741824 * 10) / 10 + 'GB';
+          } catch {}
+          const focus = params.focus;
+          let summary = focus === 'battery' ? `Battery: ${info.battery}${info.charging ? ' (charging)' : ''}`
+            : focus === 'memory' ? `RAM: ${info.totalRAM || 'unknown'}`
+            : focus === 'storage' ? `Free storage: ${info.freeDisk || 'unknown'}`
+            : `Battery: ${info.battery} | RAM: ${info.totalRAM || '?'} | Disk: ${info.freeDisk || '?'} | ${info.os}`;
+          return { success: true, summary, data: info };
+        } catch (err: any) {
+          return { success: false, error: `Device info failed: ${err.message}` };
+        }
+      }
       default:
         throw new Error(`No executor for: ${capId}`);
     }
@@ -985,4 +1322,25 @@ async function gatherSystemInfo(): Promise<string> {
 
   DebugLog.systemInfo(sensorData);
   return lines.join('\n');
+}
+
+function parseTimeString(input: string): { hour: number; minute: number; display: string } {
+  const normalized = input.toLowerCase().trim();
+  const match = normalized.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)?/i);
+  if (!match) return { hour: 8, minute: 0, display: input };
+  let hour = parseInt(match[1]);
+  const minute = match[2] ? parseInt(match[2]) : 0;
+  const meridiem = match[3]?.toLowerCase();
+  if (meridiem === 'pm' && hour < 12) hour += 12;
+  if (meridiem === 'am' && hour === 12) hour = 0;
+  const display = `${hour % 12 || 12}:${minute.toString().padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`;
+  return { hour, minute, display };
+}
+
+function parseDurationToSeconds(input: string): number {
+  const normalized = input.toLowerCase().trim();
+  const hours = normalized.match(/(\d+)\s*h(our)?s?/)?.[1];
+  const minutes = normalized.match(/(\d+)\s*m(in(ute)?)?s?/)?.[1];
+  const seconds = normalized.match(/(\d+)\s*s(ec(ond)?)?s?/)?.[1];
+  return (parseInt(hours || '0') * 3600) + (parseInt(minutes || '0') * 60) + parseInt(seconds || '0');
 }

@@ -315,25 +315,224 @@ const rules: ParseRule[] = [
   },
 
   // ════════════════════════════════════════════════════
-  // SYSTEM INFO PATTERNS
+  // FLASHLIGHT
   // ════════════════════════════════════════════════════
   {
-    pattern: /^(?:system\s+info(?:rmation)?|device\s+info(?:rmation)?|phone\s+info(?:rmation)?)$/i,
+    pattern: /^(?:turn\s+)?(on|off|toggle)\s+(?:the\s+)?flash(?:light)?$/i,
+    capability: 'flashlight_toggle',
+    extractParams: (m) => ({ state: m[1].toLowerCase() }),
+  },
+  {
+    pattern: /^flash(?:light)?\s+(on|off)$/i,
+    capability: 'flashlight_toggle',
+    extractParams: (m) => ({ state: m[1].toLowerCase() }),
+  },
+  {
+    pattern: /^(?:turn\s+)?(?:the\s+)?flash(?:light)?\s+(on|off)$/i,
+    capability: 'flashlight_toggle',
+    extractParams: (m) => ({ state: m[1].toLowerCase() }),
+  },
+  {
+    pattern: /^(?:toggle\s+)?(?:the\s+)?(?:torch|flashlight)$/i,
+    capability: 'flashlight_toggle',
+    extractParams: () => ({ state: 'toggle' }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // VOLUME
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:set\s+)?(?:volume|ringer|media)\s+(?:to\s+)?(\d+)(%)?$/i,
+    capability: 'volume_set',
+    extractParams: (m) => ({ level: parseInt(m[1], 10) }),
+  },
+  {
+    pattern: /^(?:turn\s+)?(?:volume\s+)?(up|down)$/i,
+    capability: 'volume_set',
+    extractParams: (m) => ({ direction: m[1].toLowerCase() }),
+  },
+  {
+    pattern: /^(mute|unmute|silence)(?:\s+phone|\s+ringer)?$/i,
+    capability: 'volume_set',
+    extractParams: (m) => ({ state: m[1].toLowerCase() }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // BRIGHTNESS
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:set\s+)?brightness\s+(?:to\s+)?(\d+)(%)?$/i,
+    capability: 'brightness_set',
+    extractParams: (m) => ({ level: parseInt(m[1], 10) }),
+  },
+  {
+    pattern: /^(dim|brighten)\s+(?:the\s+)?screen$/i,
+    capability: 'brightness_set',
+    extractParams: (m) => ({ direction: m[1].toLowerCase() }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // WIFI / BLUETOOTH / AIRPLANE
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:turn\s+)?(on|off|toggle)\s+(?:the\s+)?(?:wi-?fi|wireless)$/i,
+    capability: 'wifi_toggle',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:wi-?fi)\s+(on|off)$/i,
+    capability: 'wifi_toggle',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:turn\s+)?(on|off|toggle)\s+(?:the\s+)?bluetooth$/i,
+    capability: 'bluetooth_toggle',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^bluetooth\s+(on|off)$/i,
+    capability: 'bluetooth_toggle',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:turn\s+)?(on|off|toggle)\s+(?:the\s+)?(?:airplane|flight)\s*mode$/i,
+    capability: 'airplane_mode',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:airplane|flight)\s*mode\s+(on|off)$/i,
+    capability: 'airplane_mode',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:turn\s+)?(on|off|toggle)\s+(?:the\s+)?(?:do\s+not\s+disturb|dnd)$/i,
+    capability: 'do_not_disturb',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:do\s+not\s+disturb|dnd)\s+(on|off)$/i,
+    capability: 'do_not_disturb',
+    extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // MEDIA CONTROLS
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(play|pause|resume)\s*(?:music|audio|media)?$/i,
+    capability: 'media_play',
+    extractParams: (m) => ({ action: m[1].toLowerCase() }),
+  },
+  {
+    pattern: /^(next|skip)\s*(?:track|song)?$/i,
+    capability: 'media_next',
+    extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // CLIPBOARD
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:copy|clipboard)\s+(.+)$/i,
+    capability: 'clipboard_write',
+    extractParams: (m) => ({ text: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:read|show|get)\s+(?:my\s+)?clipboard$/i,
+    capability: 'clipboard_read',
+    extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // SCREENSHOT
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^take\s+a?\s*screenshot$/i,
+    capability: 'screenshot',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:capture|grab)\s+(?:the\s+)?screen$/i,
+    capability: 'screenshot',
+    extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // NOTIFICATIONS
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:read|show|list)\s+(?:my\s+)?(?:notifications?|alerts?)$/i,
+    capability: 'notification_read',
+    extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // NOTE CREATE
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:create|new|add|write)\s+(?:a\s+)?(?:note|memo)\s*(.*)$/i,
+    capability: 'note_create',
+    extractParams: (m) => ({ content: m[1]?.trim() || '' }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // APP INFO
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:app\s+info|info)\s+(?:for\s+)?(.+)$/i,
+    capability: 'app_info',
+    extractParams: (m) => ({ target: m[1].trim() }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // DEVICE INFO / STATUS
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:device\s+)?(?:status|info(?:rmation)?|stats|system\s+info)$/i,
+    capability: 'device_info',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:battery|charge)\s*(?:level|status|percent)?$/i,
+    capability: 'device_info',
+    extractParams: () => ({ focus: 'battery' }),
+  },
+  {
+    pattern: /^(?:ram|memory)\s*(?:usage|status)?$/i,
+    capability: 'device_info',
+    extractParams: () => ({ focus: 'memory' }),
+  },
+  {
+    pattern: /^(?:storage|disk|space)\s*(?:usage|status)?$/i,
+    capability: 'device_info',
+    extractParams: () => ({ focus: 'storage' }),
+  },
+  {
+    pattern: /^(?:wifi|network)\s*(?:status|info)?$/i,
+    capability: 'device_info',
+    extractParams: () => ({ focus: 'network' }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // SYSTEM INFO PATTERNS (legacy, kept for backward compat)
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:system\s+info(?:rmation)?|phone\s+info(?:rmation)?)$/i,
     capability: 'system_info',
     extractParams: () => ({}),
   },
   {
-    pattern: /^(?:battery|battery\s+level|how(?:'s|\s+is)\s+my\s+battery|check\s+battery)$/i,
+    pattern: /^how(?:'s|\s+is)\s+my\s+battery$/i,
     capability: 'system_info',
     extractParams: () => ({ focus: 'battery' }),
   },
   {
-    pattern: /^(?:ram|memory|how\s+much\s+(?:ram|memory)|check\s+(?:ram|memory))$/i,
+    pattern: /^how\s+much\s+(?:ram|memory)$/i,
     capability: 'system_info',
     extractParams: () => ({ focus: 'memory' }),
   },
   {
-    pattern: /^(?:storage|how\s+much\s+space|disk\s+space|free\s+space|check\s+storage)$/i,
+    pattern: /^how\s+much\s+space$/i,
     capability: 'system_info',
     extractParams: () => ({ focus: 'storage' }),
   },
@@ -510,6 +709,26 @@ export class CommandParser {
     let trimmed = input.trim();
     if (!trimmed) return null;
     trimmed = trimmed.replace(/^ultra[\s,]+/i, '');
+
+    const VERB_CORRECTIONS: Record<string, string> = {
+      'opin':'open','ipon':'open','opne':'open','oped':'open','ope':'open',
+      'lauch':'launch','laucnh':'launch','lunach':'launch',
+      'tect':'text','txet':'text','tex':'text',
+      'sned':'send','sen':'send',
+      'clal':'call','cal':'call',
+      'turno':'turn','trun':'turn',
+      'shwo':'show','sho':'show',
+      'plya':'play','paly':'play',
+      'fnd':'find','fin':'find',
+      'sett':'set','se':'set',
+      'chekc':'check','chek':'check',
+      'reaed':'read','rea':'read',
+    };
+    const words = trimmed.split(/\s+/);
+    if (words[0] && VERB_CORRECTIONS[words[0].toLowerCase()]) {
+      words[0] = VERB_CORRECTIONS[words[0].toLowerCase()];
+      trimmed = words.join(' ');
+    }
 
     for (const rule of rules) {
       const match = trimmed.match(rule.pattern);

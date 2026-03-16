@@ -201,6 +201,209 @@ const schemas: CapabilitySchema[] = [
       negative: { type: 'string', description: 'Negative prompt' },
     },
   },
+  {
+    capabilityId: 'flashlight_toggle',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      state: { type: 'string', description: 'Desired state: on, off, or toggle (default)' },
+    },
+  },
+  {
+    capabilityId: 'alarm_set',
+    version: 1,
+    requiredParams: {
+      time: { type: 'string', description: 'Time string e.g. "7:30 am", "14:00"' },
+    },
+    optionalParams: {
+      label: { type: 'string', description: 'Alarm label' },
+    },
+  },
+  {
+    capabilityId: 'timer_set',
+    version: 1,
+    requiredParams: {
+      duration: { type: 'string', description: 'Duration string e.g. "5 minutes", "1 hour 30 minutes"' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'volume_set',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      type: { type: 'string', description: 'Volume type: media, ringer, notification' },
+      level: { type: 'number', description: 'Volume level 0-100' },
+      direction: { type: 'string', description: 'up or down' },
+      state: { type: 'string', description: 'mute or unmute' },
+    },
+  },
+  {
+    capabilityId: 'brightness_set',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      level: { type: 'number', description: 'Brightness level 0-100' },
+      direction: { type: 'string', description: 'dim or brighten' },
+    },
+  },
+  {
+    capabilityId: 'wifi_toggle',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'bluetooth_toggle',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'airplane_mode',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'do_not_disturb',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'battery_status',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'clipboard_read',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'clipboard_write',
+    version: 1,
+    requiredParams: {
+      text: { type: 'string', description: 'Text to copy to clipboard' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'media_play',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      action: { type: 'string', description: 'play, pause, or resume' },
+    },
+  },
+  {
+    capabilityId: 'media_next',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'screenshot',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'screen_record_start',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'open_url',
+    version: 1,
+    requiredParams: {
+      url: { type: 'string', description: 'URL to open' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'web_search',
+    version: 1,
+    requiredParams: {
+      query: { type: 'string', description: 'Search query' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'calendar_create',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      title: { type: 'string', description: 'Event title' },
+      details: { type: 'string', description: 'Event description or details' },
+      startMs: { type: 'number', description: 'Start time in milliseconds' },
+      endMs: { type: 'number', description: 'End time in milliseconds' },
+    },
+  },
+  {
+    capabilityId: 'reminder_create',
+    version: 1,
+    requiredParams: {
+      text: { type: 'string', description: 'Reminder text' },
+    },
+    optionalParams: {
+      time: { type: 'string', description: 'Time for the reminder' },
+    },
+  },
+  {
+    capabilityId: 'note_create',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      content: { type: 'string', description: 'Note content' },
+    },
+  },
+  {
+    capabilityId: 'file_open',
+    version: 1,
+    requiredParams: {
+      path: { type: 'string', description: 'File path to open' },
+    },
+    optionalParams: {
+      mimeType: { type: 'string', description: 'MIME type of the file' },
+    },
+  },
+  {
+    capabilityId: 'share_content',
+    version: 1,
+    requiredParams: {
+      content: { type: 'string', description: 'Content to share' },
+    },
+    optionalParams: {
+      subject: { type: 'string', description: 'Subject line for sharing' },
+    },
+  },
+  {
+    capabilityId: 'app_info',
+    version: 1,
+    requiredParams: {
+      target: { type: 'string', description: 'App name or package to get info for' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'notification_read',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'device_info',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      focus: { type: 'string', description: 'Focus area: battery, memory, storage, network, or all' },
+    },
+  },
 ];
 
 const schemaMap = new Map<string, CapabilitySchema>();

@@ -30,7 +30,7 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 
 **Core Agent Loop:** A 9-step autonomous loop (INGEST, ROUTE, PLAN, VERIFY, APPROVE, EXECUTE, VERIFY_RESULT, WRITE_MEMORY, ADAPT) governs agent decision-making.
 
-**Capability Management:** `CapabilityRegistry` defines 23 capabilities (e.g., file operations, camera, location, app build, self-modify, system_info) with risk levels, executed by `TaskExecutor`.
+**Capability Management:** `CapabilityRegistry` defines 49 capabilities (23 original + 26 new: flashlight_toggle, alarm_set, timer_set, volume_set, brightness_set, wifi_toggle, bluetooth_toggle, airplane_mode, do_not_disturb, battery_status, clipboard_read, clipboard_write, media_play, media_next, screenshot, screen_record_start, open_url, web_search, calendar_create, reminder_create, note_create, file_open, share_content, app_info, notification_read, device_info) with risk levels, executed by `TaskExecutor`.
 
 **Total Access Features (v3.23.0):**
 - **Settings Intent Resolution:** 37 Android settings entries with deep linking (WiFi, Bluetooth, Display, Sound, Developer Options, Accessibility, etc.)
@@ -94,6 +94,19 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 
 ## Known Issues (v3.23.0)
 - **None critical.** All Total Access features integrated with comprehensive logging.
+
+## Recent Changes (v3.24.0 — Capability Expansion)
+- **26 New Capabilities:** Flashlight, alarms, timers, volume, brightness, wifi/bluetooth/airplane/DND toggles, battery status, clipboard, media controls, screenshot, screen record, URL/search, calendar/reminder/note creation, file open, share, app info, notifications, device info.
+- **Contacts Fix:** Contacts/people/phonebook now use `startActivityAsync('android.intent.action.VIEW', { data: 'content://com.android.contacts/contacts' })` instead of `openApplication`.
+- **Messages Fix:** Messages/SMS app uses Samsung messaging component intent with `sms:` URI fallback.
+- **SMS Bug Fix:** `sendSMSAsync` result now checks `result.data?.sent === true` instead of `result === 'sent'`.
+- **Contact Disambiguation:** SMS and phone call handlers return disambiguation prompt when multiple contacts match.
+- **Verb Typo Correction:** CommandParser auto-corrects 30+ common verb misspellings (opin→open, lauch→launch, tect→text, etc.).
+- **System Prompt Upgrade:** AgentCore uses new Ultra persona — direct, action-oriented, no hedging.
+- **Settings Directory Expansion:** 50+ new settings entries covering display, sound, battery, security, privacy, Samsung-specific, developer, and accessibility.
+- **Flashlight Native Bridge:** `setFlashlight(boolean)` Java method via CameraManager with toggle state tracking.
+- **Android Manifest Permissions:** 32 permissions auto-injected (camera, contacts, SMS, calendar, alarm, Bluetooth, NFC, location, etc.).
+- **Result Propagation Fix:** `runWithPlan` now honors `result.success === false` for disambiguation and other explicit failures.
 
 ## Recent Fixes (v3.23.0)
 - **Total Access Implementation:** Added settings intent resolution, deep link routing, system actions, system info gathering, preference backup/restore.

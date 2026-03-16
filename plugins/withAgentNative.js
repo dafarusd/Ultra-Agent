@@ -369,6 +369,27 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             promise.reject("APP_LIST_ERROR", e.getMessage(), e);
         }
     }
+
+    @ReactMethod
+    public void setFlashlight(boolean on, Promise promise) {
+        try {
+            android.hardware.camera2.CameraManager cm =
+                (android.hardware.camera2.CameraManager) ctx.getSystemService(android.content.Context.CAMERA_SERVICE);
+            String[] ids = cm.getCameraIdList();
+            for (String id : ids) {
+                android.hardware.camera2.CameraCharacteristics chars = cm.getCameraCharacteristics(id);
+                Boolean hasFlash = chars.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                if (hasFlash != null && hasFlash) {
+                    cm.setTorchMode(id, on);
+                    promise.resolve(true);
+                    return;
+                }
+            }
+            promise.reject("NO_FLASH", "No flash available");
+        } catch (Exception e) {
+            promise.reject("FLASH_ERROR", e.getMessage(), e);
+        }
+    }
 }`;
 
 const BINARY_MANIFEST_WRITER_JAVA = `package com.agent.ultra;
@@ -1578,15 +1599,48 @@ function withAgentNative(config) {
       });
     }
 
-    // Add QUERY_ALL_PACKAGES for getInstalledApps
     const perms = manifest.manifest['uses-permission'] || [];
-    const hasQueryAll = perms.some(
-      (p) => p.$['android:name'] === 'android.permission.QUERY_ALL_PACKAGES'
-    );
-    if (!hasQueryAll) {
-      perms.push({ $: { 'android:name': 'android.permission.QUERY_ALL_PACKAGES' } });
-      manifest.manifest['uses-permission'] = perms;
+    const requiredPermissions = [
+      'android.permission.QUERY_ALL_PACKAGES',
+      'android.permission.CAMERA',
+      'android.permission.FLASHLIGHT',
+      'android.permission.READ_CONTACTS',
+      'android.permission.WRITE_CONTACTS',
+      'android.permission.READ_CALL_LOG',
+      'android.permission.SEND_SMS',
+      'android.permission.READ_SMS',
+      'android.permission.RECEIVE_SMS',
+      'android.permission.READ_CALENDAR',
+      'android.permission.WRITE_CALENDAR',
+      'android.permission.SET_ALARM',
+      'android.permission.VIBRATE',
+      'android.permission.MODIFY_AUDIO_SETTINGS',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+      'android.permission.INTERNET',
+      'android.permission.ACCESS_NETWORK_STATE',
+      'android.permission.ACCESS_WIFI_STATE',
+      'android.permission.CHANGE_WIFI_STATE',
+      'android.permission.ACCESS_FINE_LOCATION',
+      'android.permission.ACCESS_COARSE_LOCATION',
+      'android.permission.RECORD_AUDIO',
+      'android.permission.FOREGROUND_SERVICE',
+      'android.permission.RECEIVE_BOOT_COMPLETED',
+      'android.permission.USE_BIOMETRIC',
+      'android.permission.USE_FINGERPRINT',
+      'android.permission.CHANGE_NETWORK_STATE',
+      'android.permission.NFC',
+      'android.permission.BLUETOOTH',
+      'android.permission.BLUETOOTH_ADMIN',
+      'android.permission.BLUETOOTH_CONNECT',
+      'android.permission.BLUETOOTH_SCAN',
+    ];
+    for (const perm of requiredPermissions) {
+      if (!perms.some(p => p.$['android:name'] === perm)) {
+        perms.push({ $: { 'android:name': perm } });
+      }
     }
+    manifest.manifest['uses-permission'] = perms;
 
     return config;
   });
