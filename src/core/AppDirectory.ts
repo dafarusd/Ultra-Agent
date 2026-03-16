@@ -166,6 +166,7 @@ const KNOWN_APPS: Record<string, string> = {
   'samsung internet': 'com.sec.android.app.sbrowser',
   'samsung health': 'com.sec.android.app.shealth',
   'kraken': 'com.krakenpro.app',
+  'kraken pro': 'com.krakenpro.app',
 
   // Games
   'candy crush': 'com.king.candycrushsaga',
