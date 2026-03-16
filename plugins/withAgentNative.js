@@ -1441,31 +1441,65 @@ function withAgentNative(config) {
         }
       }
 
-      const mainAppPath = path.join(javaDir, 'MainApplication.java');
-      if (fs.existsSync(mainAppPath)) {
+      // Patch MainApplication.java or MainApplication.kt
+      const mainAppPathJava = path.join(javaDir, 'MainApplication.java');
+      const mainAppPathKotlin = path.join(javaDir, 'MainApplication.kt');
+      const mainAppPath = fs.existsSync(mainAppPathJava) ? mainAppPathJava
+        : fs.existsSync(mainAppPathKotlin) ? mainAppPathKotlin
+        : null;
+
+      if (mainAppPath) {
         let mainApp = fs.readFileSync(mainAppPath, 'utf8');
+        const isKotlin = mainAppPath.endsWith('.kt');
+
         if (!mainApp.includes('AgentNativePackage')) {
-          if (mainApp.includes('packages.add(new com.facebook.react.shell.MainReactPackage());')) {
-            mainApp = mainApp.replace(
-              'packages.add(new com.facebook.react.shell.MainReactPackage());',
-              'packages.add(new com.facebook.react.shell.MainReactPackage());\n            packages.add(new AgentNativePackage());'
-            );
-          } else {
-            const autolinkedMatch = mainApp.match(/(new\s+PackageList\(this\)\.getPackages\(\))/);
-            if (autolinkedMatch) {
+          if (isKotlin) {
+            // New Architecture Kotlin pattern:
+            // override fun getPackages(): List<ReactPackage> =
+            //   PackageList(this).packages.apply { add(AgentNativePackage()) }
+            // OR the older override fun getPackages() block style
+            const kotlinApplyPattern = /PackageList\(this\)\.packages\.apply\s*\{([\s\S]*?)\}/;
+            const kotlinApplyMatch = mainApp.match(kotlinApplyPattern);
+            if (kotlinApplyMatch) {
               mainApp = mainApp.replace(
-                autolinkedMatch[0],
-                autolinkedMatch[0] + ';\n            packages.add(new AgentNativePackage())'
+                kotlinApplyPattern,
+                `PackageList(this).packages.apply {$1  add(AgentNativePackage())\n          }`
               );
-            }
-            if (!mainApp.includes('AgentNativePackage')) {
-              const addPackagesPattern = /(@Override\s+protected\s+List<ReactPackage>\s+getPackages\(\)\s*\{[\s\S]*?)(return\s+packages;)/;
-              const addMatch = mainApp.match(addPackagesPattern);
-              if (addMatch) {
+            } else {
+              // Block-style getPackages override
+              const kotlinBlockPattern = /(override fun getPackages\(\)[\s\S]*?PackageList\(this\)\.packages)([\s\S]*?)(return packages|return mutableListOf)/;
+              const kotlinBlockMatch = mainApp.match(kotlinBlockPattern);
+              if (kotlinBlockMatch) {
                 mainApp = mainApp.replace(
-                  addMatch[2],
-                  'packages.add(new AgentNativePackage());\n            ' + addMatch[2]
+                  kotlinBlockMatch[3],
+                  'packages.add(AgentNativePackage())\n      ' + kotlinBlockMatch[3]
                 );
+              }
+            }
+          } else {
+            // Java patterns (original logic)
+            if (mainApp.includes('packages.add(new com.facebook.react.shell.MainReactPackage());')) {
+              mainApp = mainApp.replace(
+                'packages.add(new com.facebook.react.shell.MainReactPackage());',
+                'packages.add(new com.facebook.react.shell.MainReactPackage());\n            packages.add(new AgentNativePackage());'
+              );
+            } else {
+              const autolinkedMatch = mainApp.match(/(new\s+PackageList\(this\)\.getPackages\(\))/);
+              if (autolinkedMatch) {
+                mainApp = mainApp.replace(
+                  autolinkedMatch[0],
+                  autolinkedMatch[0] + ';\n            packages.add(new AgentNativePackage())'
+                );
+              }
+              if (!mainApp.includes('AgentNativePackage')) {
+                const addPackagesPattern = /(@Override\s+protected\s+List<ReactPackage>\s+getPackages\(\)\s*\{[\s\S]*?)(return\s+packages;)/;
+                const addMatch = mainApp.match(addPackagesPattern);
+                if (addMatch) {
+                  mainApp = mainApp.replace(
+                    addMatch[2],
+                    'packages.add(new AgentNativePackage());\n            ' + addMatch[2]
+                  );
+                }
               }
             }
           }
