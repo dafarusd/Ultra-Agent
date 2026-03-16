@@ -897,6 +897,13 @@ export class TaskExecutor {
 
 async function gatherSystemInfo(): Promise<string> {
   const lines: string[] = [];
+  const sensorData: Parameters<typeof DebugLog.systemInfo>[0] = {
+    batteryPct: undefined, batteryState: undefined, lowPower: undefined,
+    ramUsedMB: undefined, ramTotalMB: undefined,
+    storageFreeGB: undefined, storageTotalGB: undefined,
+    cpuTempC: undefined, failedReads: [],
+  };
+
   try {
     const [level, state, lowPower] = await Promise.all([
       Battery.getBatteryLevelAsync(),
@@ -904,30 +911,45 @@ async function gatherSystemInfo(): Promise<string> {
       Battery.isLowPowerModeEnabledAsync(),
     ]);
     const pct = Math.round(level * 100);
-    const states = ['Unknown', 'Unplugged', 'Charging', 'Full'];
-    lines.push(`Battery: ${pct}% (${states[state] ?? 'Unknown'})${lowPower ? ' — Low Power Mode ON' : ''}`);
-  } catch { lines.push('Battery: unavailable'); }
+    const stateStr = ['Unknown', 'Unplugged', 'Charging', 'Full'][state] ?? 'Unknown';
+    sensorData.batteryPct = pct;
+    sensorData.batteryState = stateStr;
+    sensorData.lowPower = lowPower;
+    lines.push(`Battery: ${pct}% (${stateStr})${lowPower ? ' — Low Power Mode ON' : ''}`);
+  } catch { lines.push('Battery: unavailable'); sensorData.failedReads.push('battery'); }
   try {
     const [used, total] = await Promise.all([
       DeviceInfo.getUsedMemory(),
       DeviceInfo.getTotalMemory(),
     ]);
-    lines.push(`RAM: ${Math.round(used/1024/1024)} MB used of ${Math.round(total/1024/1024)} MB`);
-  } catch { lines.push('RAM: unavailable'); }
+    const usedMB = Math.round(used/1024/1024);
+    const totalMB = Math.round(total/1024/1024);
+    sensorData.ramUsedMB = usedMB;
+    sensorData.ramTotalMB = totalMB;
+    lines.push(`RAM: ${usedMB} MB used of ${totalMB} MB`);
+  } catch { lines.push('RAM: unavailable'); sensorData.failedReads.push('ram'); }
   try {
     const [free, total] = await Promise.all([
       DeviceInfo.getFreeDiskStorage(),
       DeviceInfo.getTotalDiskCapacity(),
     ]);
+    const freeGB = parseFloat((free/1024/1024/1024).toFixed(1));
+    const totalGB = parseFloat((total/1024/1024/1024).toFixed(1));
+    sensorData.storageFreeGB = freeGB;
+    sensorData.storageTotalGB = totalGB;
     lines.push(`Storage: ${Math.round(free/1024/1024)} MB free of ${Math.round(total/1024/1024)} MB`);
-  } catch { lines.push('Storage: unavailable'); }
+  } catch { lines.push('Storage: unavailable'); sensorData.failedReads.push('storage'); }
   try {
     const AppControllerModule = AppController;
     const temp = await AppControllerModule.exec?.('cat /sys/class/thermal/thermal_zone0/temp');
     if (temp && !isNaN(parseInt(temp))) {
-      lines.push(`CPU Temp: ${(parseInt(temp)/1000).toFixed(1)}°C`);
+      const tempC = parseFloat((parseInt(temp)/1000).toFixed(1));
+      sensorData.cpuTempC = tempC;
+      lines.push(`CPU Temp: ${tempC}°C`);
     }
-  } catch {}
+  } catch { sensorData.failedReads.push('temp'); }
   lines.push(`Device: ${DeviceInfo.getModel()} (Android ${DeviceInfo.getSystemVersion()})`);
+
+  DebugLog.systemInfo(sensorData);
   return lines.join('\n');
 }

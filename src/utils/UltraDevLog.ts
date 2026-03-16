@@ -61,7 +61,13 @@ export type UltraLogCat =
   | 'DEVICE_INFO'
   | 'NETWORK_STATUS'
   | 'PERMISSION_STATUS'
-  | 'ERROR_BOUNDARY';
+  | 'ERROR_BOUNDARY'
+  | 'SETTINGS_INTENT'
+  | 'DEEP_LINK'
+  | 'SYSTEM_ACTION'
+  | 'SYSTEM_INFO'
+  | 'PREFERENCE_BACKUP'
+  | 'LEARN_PACKAGE';
 
 interface UltraLogEntry {
   ts: string;
@@ -535,7 +541,11 @@ export class UltraDevLog {
     UltraDevLog.push('DEVICE_INFO', info);
   }
 
+  private static lastNetworkKey = '';
   static networkStatus(isConnected: boolean, type: string, note?: string): void {
+    const key = `${isConnected}:${type}`;
+    if (key === UltraDevLog.lastNetworkKey && !note) return;
+    UltraDevLog.lastNetworkKey = key;
     UltraDevLog.push('NETWORK_STATUS', { isConnected, type, note: note ?? (isConnected ? 'ok' : 'WARN: offline -- Venice API unreachable') });
   }
 
@@ -545,6 +555,76 @@ export class UltraDevLog {
 
   static errorBoundary(error: string, componentStack: string): void {
     UltraDevLog.push('ERROR_BOUNDARY', { error: error.slice(0, 500), componentStack: componentStack.slice(0, 1000) });
+  }
+
+  static settingsIntent(query: string, matched: boolean, action?: string, label?: string): void {
+    UltraDevLog.push('SETTINGS_INTENT', {
+      query,
+      matched,
+      action: action ?? null,
+      label: label ?? null,
+      note: matched ? `ok -- matched "${label}"` : `WARN: no settings match for "${query}"`,
+    });
+  }
+
+  static deepLink(query: string, matched: boolean, uri?: string, label?: string): void {
+    UltraDevLog.push('DEEP_LINK', {
+      query,
+      matched,
+      uri: uri ?? null,
+      label: label ?? null,
+      note: matched ? `ok -- "${label}" → ${uri}` : `WARN: no deep link match for "${query}"`,
+    });
+  }
+
+  static systemAction(trigger: string, routedToSettings: boolean, message: string, success: boolean): void {
+    UltraDevLog.push('SYSTEM_ACTION', {
+      trigger,
+      routedToSettings,
+      message,
+      success,
+      note: routedToSettings ? `Routed to settings panel` : `Executed directly`,
+    });
+  }
+
+  static systemInfo(values: {
+    batteryPct?: number;
+    batteryState?: string;
+    lowPower?: boolean;
+    ramUsedMB?: number;
+    ramTotalMB?: number;
+    storageFreeGB?: number;
+    storageTotalGB?: number;
+    cpuTempC?: number;
+    failedReads: string[];
+  }): void {
+    UltraDevLog.push('SYSTEM_INFO', {
+      ...values,
+      note: values.failedReads.length > 0
+        ? `WARN: failed reads: ${values.failedReads.join(', ')}`
+        : 'ok',
+    });
+  }
+
+  static preferenceBackup(operation: 'export' | 'import', success: boolean, keysCount: number, error?: string): void {
+    UltraDevLog.push('PREFERENCE_BACKUP', {
+      operation,
+      success,
+      keysCount,
+      error: error ?? null,
+      note: success ? `${operation} ok -- ${keysCount} keys` : `WARN: ${operation} failed: ${error}`,
+    });
+  }
+
+  static learnPackage(trigger: string, packageName: string, wasUpdate: boolean): void {
+    UltraDevLog.push('LEARN_PACKAGE', {
+      trigger,
+      packageName,
+      wasUpdate,
+      note: wasUpdate
+        ? `Updated existing pattern for "${trigger}" → ${packageName}`
+        : `New pattern stored: "${trigger}" → ${packageName} at confidence 1.0`,
+    });
   }
 
   static sessionSummary(): void {
@@ -615,7 +695,13 @@ export class UltraDevLog {
   static modelImageError(taskId: string, error: string): void { UltraDevLog.push('SYSTEM', { event: 'model_image_error', taskId, error }); }
   static modelSetDefault(modelId: string, source: string): void { UltraDevLog.push('SYSTEM', { event: 'model_set_default', modelId, source }); }
   static modelSetDefaultError(modelId: string, error: string): void { UltraDevLog.push('SYSTEM', { event: 'model_set_default_error', modelId, error }); }
-  static modelState(key: string, value: unknown): void { UltraDevLog.push('SYSTEM', { event: 'model_state', key, value }); }
+  private static lastModelStateHash = new Map<string, string>();
+  static modelState(key: string, value: unknown): void {
+    const hash = JSON.stringify(value);
+    if (UltraDevLog.lastModelStateHash.get(key) === hash) return;
+    UltraDevLog.lastModelStateHash.set(key, hash);
+    UltraDevLog.push('SYSTEM', { event: 'model_state', key, value });
+  }
   static permissionCheck(permission: string, status: string): void { UltraDevLog.push('SYSTEM', { event: 'permission_check', permission, status }); }
   static settingsApiSave(key: string, success: boolean): void { UltraDevLog.push('SYSTEM', { event: 'settings_api_save', key, success }); }
   static settingsApiDelete(key: string, success: boolean): void { UltraDevLog.push('SYSTEM', { event: 'settings_api_delete', key, success }); }
@@ -745,6 +831,12 @@ export class UltraDevLog {
       case 'NETWORK_STATUS': return `${t} [NETWORK ] ${d.isConnected ? 'online' : 'OFFLINE'} type=${d.type}${d.note ? ' ' + d.note : ''}`;
       case 'PERMISSION_STATUS': return `${t} [PERM    ] ${d.permission} status=${d.status}`;
       case 'ERROR_BOUNDARY': return `${t} [REACT_ERR]${c} ${d.error} | stack=${String(d.componentStack).slice(0, 300)}`;
+      case 'SETTINGS_INTENT': return `${t} [SETTINGS ]${c} ${d.matched ? 'HIT' : 'MISS'} query="${d.query}" action=${d.action ?? 'none'} label=${d.label ?? 'none'}`;
+      case 'DEEP_LINK': return `${t} [DEEPLINK ]${c} ${d.matched ? 'HIT' : 'MISS'} query="${d.query}" uri=${d.uri ?? 'none'}`;
+      case 'SYSTEM_ACTION': return `${t} [SYS_ACT  ]${c} trigger="${d.trigger}" routed=${d.routedToSettings} ok=${d.success}`;
+      case 'SYSTEM_INFO': return `${t} [SYS_INFO ]${c} bat=${d.batteryPct ?? '?'}% ram=${d.ramUsedMB ?? '?'}/${d.ramTotalMB ?? '?'}MB storage=${d.storageFreeGB ?? '?'}/${d.storageTotalGB ?? '?'}GB temp=${d.cpuTempC ?? '?'}°C${d.failedReads?.length ? ' WARN:failed=' + d.failedReads : ''}`;
+      case 'PREFERENCE_BACKUP': return `${t} [PREF_BAK ]${c} ${d.operation} ${d.success ? 'OK' : 'FAIL'} keys=${d.keysCount}${d.error ? ' err=' + d.error : ''}`;
+      case 'LEARN_PACKAGE': return `${t} [LEARN_PKG]${c} "${d.trigger}" → ${d.packageName} update=${d.wasUpdate}`;
       default: return `${t} [${e.cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }

@@ -1,5 +1,6 @@
 import { SecureVault } from '../security/SecureVault';
 import { Logger } from './Logger';
+import { UltraDevLog } from './UltraDevLog';
 
 interface Pattern {
   id: string;
@@ -116,6 +117,7 @@ export class PreferenceLearner {
       }
     }
     await this.persist();
+    UltraDevLog.learnPackage(trigger, packageName, !!existing);
   }
 
   findPattern(request: string): Pattern | null {

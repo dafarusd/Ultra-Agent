@@ -3,6 +3,7 @@ import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import { SecureVault } from '../security/SecureVault';
 import { LogFolder } from './LogFolder';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 const EXPORT_KEYS = [
   'preferred_model', 'api_defaults', 'saved_apis',
@@ -32,8 +33,11 @@ export async function exportPreferences(): Promise<{ success: boolean; message: 
         dialogTitle: 'Save Agent Ultra Preferences Backup',
       });
     }
+    const keyCount = Object.keys(data).length - 3;
+    UltraDevLog.preferenceBackup('export', true, keyCount);
     return { success: true, message: 'Preferences exported. Share or save the file to back up your settings.' };
   } catch (err: any) {
+    UltraDevLog.preferenceBackup('export', false, 0, err.message);
     return { success: false, message: `Export failed: ${err.message}` };
   }
 }
@@ -65,11 +69,13 @@ export async function importPreferences(): Promise<{ success: boolean; message: 
         imported.push(key);
       }
     }
+    UltraDevLog.preferenceBackup('import', true, imported.length);
     return {
       success: true,
       message: `Restored ${imported.length} settings: ${imported.join(', ')}. Restart the app to apply all changes.`
     };
   } catch (err: any) {
+    UltraDevLog.preferenceBackup('import', false, 0, err.message);
     return { success: false, message: `Import failed: ${err.message}` };
   }
 }
