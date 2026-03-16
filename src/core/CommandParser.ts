@@ -315,6 +315,35 @@ const rules: ParseRule[] = [
   },
 
   // ════════════════════════════════════════════════════
+  // SYSTEM INFO PATTERNS
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:system\s+info(?:rmation)?|device\s+info(?:rmation)?|phone\s+info(?:rmation)?)$/i,
+    capability: 'system_info',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:battery|battery\s+level|how(?:'s|\s+is)\s+my\s+battery|check\s+battery)$/i,
+    capability: 'system_info',
+    extractParams: () => ({ focus: 'battery' }),
+  },
+  {
+    pattern: /^(?:ram|memory|how\s+much\s+(?:ram|memory)|check\s+(?:ram|memory))$/i,
+    capability: 'system_info',
+    extractParams: () => ({ focus: 'memory' }),
+  },
+  {
+    pattern: /^(?:storage|how\s+much\s+space|disk\s+space|free\s+space|check\s+storage)$/i,
+    capability: 'system_info',
+    extractParams: () => ({ focus: 'storage' }),
+  },
+  {
+    pattern: /^(?:cpu\s+temp(?:erature)?|temperature|how\s+hot(?:\s+is\s+(?:my\s+)?(?:phone|device))?)$/i,
+    capability: 'system_info',
+    extractParams: () => ({ focus: 'temperature' }),
+  },
+
+  // ════════════════════════════════════════════════════
   // SIMPLE APP LAUNCH (existing patterns, preserved)
   // These generate app_launch plans with only `target` —
   // TaskExecutor uses openApplication() for these

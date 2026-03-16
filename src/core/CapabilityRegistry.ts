@@ -42,6 +42,7 @@ export class CapabilityRegistry {
       { id: 'self_modify', name: 'Self Modify', description: 'Evolve own genome via mutation and fitness evaluation', riskLevel: 'dangerous', available: true, permissionsRequired: [] },
       { id: 'self_replicate', name: 'Self Replicate', description: 'Compile genome into offspring APK', riskLevel: 'dangerous', available: true, permissionsRequired: ['WRITE_EXTERNAL_STORAGE'] },
       { id: 'image_generate', name: 'Image Generate', description: 'Generate images from text prompts', riskLevel: 'moderate', available: true, permissionsRequired: [] },
+      { id: 'system_info', name: 'System Info', description: 'Get device system information: battery, RAM, storage, CPU temperature', riskLevel: 'safe', available: true, permissionsRequired: [] },
     ];
     for (const c of caps) this.capabilities.set(c.id, c);
     this.logger.info(`Registered ${this.capabilities.size} capabilities`);

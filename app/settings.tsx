@@ -12,6 +12,7 @@ import {
   Share,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { exportPreferences, importPreferences } from '@/src/services/PreferenceBackup';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -629,6 +630,31 @@ export default function SettingsScreen() {
               </>
             )}
           </>
+        )}
+
+        {tab === "apis" && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Preferences Backup</Text>
+            <Text style={styles.dimText}>Export your settings, saved APIs, and learned patterns to a file. Import to restore after reinstalling.</Text>
+            <Pressable
+              style={[styles.btn, { marginTop: 12 }]}
+              onPress={async () => {
+                const result = await exportPreferences();
+                Alert.alert(result.success ? 'Export Complete' : 'Export Failed', result.message);
+              }}
+            >
+              <Text style={styles.btnText}>Export Preferences</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.btn, { marginTop: 8, backgroundColor: '#1a1a1a' }]}
+              onPress={async () => {
+                const result = await importPreferences();
+                Alert.alert(result.success ? 'Import Complete' : 'Import Failed', result.message);
+              }}
+            >
+              <Text style={styles.btnText}>Import Preferences</Text>
+            </Pressable>
+          </View>
         )}
 
         {/* ══════════════════════════════════════════

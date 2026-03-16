@@ -16,6 +16,8 @@ import { MavenResolver } from './MavenResolver';
 import { TestRunner } from './TestRunner';
 import { Logger } from '../utils/Logger';
 import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
+import * as Battery from 'expo-battery';
+import DeviceInfo from 'react-native-device-info';
 import AppController from '../native/AppController';
 import type { ActionPlan } from '../types/ultra';
 import type { Genome } from '../genome/types';
@@ -456,6 +458,16 @@ export class TaskExecutor {
 
         // ── PATH B: Simple app launch (no action — just open the app) ──
         DebugLog.executorBranch(taskId, 'app_launch', 'simple_launch');
+
+        // ── Layer 4: System actions (before package lookup) ──
+        const { resolveSystemAction } = await import('./SystemActions');
+        const systemAction = resolveSystemAction(target);
+        if (systemAction) {
+          const sysResult = await systemAction.handler();
+          DebugLog.executorExit(taskId, 'app_launch', sysResult.success, 'system_action');
+          return sysResult;
+        }
+
         const targetLower = target.toLowerCase().trim()
           .replace(/^(the|a|an|my)\s+/i, '')
           .replace(/\s+app$/i, '');
@@ -866,8 +878,56 @@ export class TaskExecutor {
           return { error: `Image generation failed: ${err.message}` };
         }
       }
+      case 'system_info': {
+        DebugLog.executorEnter(taskId, 'system_info');
+        try {
+          const info = await gatherSystemInfo();
+          DebugLog.executorExit(taskId, 'system_info', true, 'success');
+          return { success: true, summary: info, data: { info } };
+        } catch (err: any) {
+          DebugLog.executorExit(taskId, 'system_info', false, 'error');
+          return { success: false, error: `System info failed: ${err.message}` };
+        }
+      }
       default:
         throw new Error(`No executor for: ${capId}`);
     }
   }
+}
+
+async function gatherSystemInfo(): Promise<string> {
+  const lines: string[] = [];
+  try {
+    const [level, state, lowPower] = await Promise.all([
+      Battery.getBatteryLevelAsync(),
+      Battery.getBatteryStateAsync(),
+      Battery.isLowPowerModeEnabledAsync(),
+    ]);
+    const pct = Math.round(level * 100);
+    const states = ['Unknown', 'Unplugged', 'Charging', 'Full'];
+    lines.push(`Battery: ${pct}% (${states[state] ?? 'Unknown'})${lowPower ? ' — Low Power Mode ON' : ''}`);
+  } catch { lines.push('Battery: unavailable'); }
+  try {
+    const [used, total] = await Promise.all([
+      DeviceInfo.getUsedMemory(),
+      DeviceInfo.getTotalMemory(),
+    ]);
+    lines.push(`RAM: ${Math.round(used/1024/1024)} MB used of ${Math.round(total/1024/1024)} MB`);
+  } catch { lines.push('RAM: unavailable'); }
+  try {
+    const [free, total] = await Promise.all([
+      DeviceInfo.getFreeDiskStorage(),
+      DeviceInfo.getTotalDiskCapacity(),
+    ]);
+    lines.push(`Storage: ${Math.round(free/1024/1024)} MB free of ${Math.round(total/1024/1024)} MB`);
+  } catch { lines.push('Storage: unavailable'); }
+  try {
+    const AppControllerModule = AppController;
+    const temp = await AppControllerModule.exec?.('cat /sys/class/thermal/thermal_zone0/temp');
+    if (temp && !isNaN(parseInt(temp))) {
+      lines.push(`CPU Temp: ${(parseInt(temp)/1000).toFixed(1)}°C`);
+    }
+  } catch {}
+  lines.push(`Device: ${DeviceInfo.getModel()} (Android ${DeviceInfo.getSystemVersion()})`);
+  return lines.join('\n');
 }

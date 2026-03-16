@@ -88,6 +88,36 @@ export class PreferenceLearner {
     await this.persist();
   }
 
+  async learnPackage(trigger: string, packageName: string): Promise<void> {
+    const existing = this.patterns.find(
+      p => p.trigger === trigger.toLowerCase().trim() &&
+           p.capabilities.includes('app_launch')
+    );
+    if (existing) {
+      existing.confidence = 1.0;
+      existing.outcome = packageName;
+      existing.lastUsed = Date.now();
+    } else {
+      this.patterns.unshift({
+        id: Date.now().toString(36),
+        trigger: trigger.toLowerCase().trim(),
+        capabilities: ['app_launch'],
+        outcome: packageName,
+        success: true,
+        confidence: 1.0,
+        usageCount: 1,
+        lastUsed: Date.now(),
+        createdAt: Date.now(),
+      });
+      if (this.patterns.length > PreferenceLearner.MAX_PATTERNS) {
+        this.patterns = this.patterns
+          .sort((a, b) => b.confidence * b.usageCount - a.confidence * a.usageCount)
+          .slice(0, PreferenceLearner.MAX_PATTERNS);
+      }
+    }
+    await this.persist();
+  }
+
   findPattern(request: string): Pattern | null {
     const words = request.toLowerCase().split(/\s+/);
     let bestMatch: Pattern | null = null;

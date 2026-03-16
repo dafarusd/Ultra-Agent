@@ -11,6 +11,9 @@
  */
 
 import { lookupPackage } from './AppDirectory';
+import { ActivityAction } from 'expo-intent-launcher';
+import { resolveSettingsIntent } from './SettingsDirectory';
+import { resolveDeepLink } from './DeepLinkDirectory';
 
 // ── Types ──────────────────────────────────────────────
 export interface ResolvedIntent {
@@ -315,6 +318,28 @@ export function resolveIntent(input: string): ResolvedIntent | null {
   const trimmed = input.trim()
     .replace(/^ultra[\s,]+/i, '')
     .replace(/^(?:hey\s+)?(?:ultra|agent)\s*,?\s*/i, '');
+
+  // ── Layer 2: Settings intents (checked before all other patterns) ──
+  const settingsMatch = resolveSettingsIntent(trimmed);
+  if (settingsMatch) {
+    return {
+      action: settingsMatch.action,
+      data: undefined,
+      extras: {},
+      description: `Open ${settingsMatch.label}`,
+    };
+  }
+
+  // ── Layer 3: App deep links ──
+  const deepLinkMatch = resolveDeepLink(trimmed);
+  if (deepLinkMatch) {
+    return {
+      action: ActivityAction.VIEW,
+      data: deepLinkMatch.uri,
+      packageName: deepLinkMatch.packageHint,
+      description: `Open ${deepLinkMatch.label}`,
+    };
+  }
 
   for (const { pattern, resolve } of INTENT_PATTERNS) {
     const match = trimmed.match(pattern);
