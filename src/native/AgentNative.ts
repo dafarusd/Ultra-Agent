@@ -1,4 +1,5 @@
 import { NativeModules, Platform } from 'react-native';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 interface CompileResult {
   success: boolean;
@@ -61,7 +62,11 @@ const noopModule: AgentNativeInterface = {
 
 function createNativeWrapper(): AgentNativeInterface {
   const native = NativeModules.AgentNative;
-  if (!native) return noopModule;
+  if (!native) {
+    UltraDevLog.error('AgentNative', 'NativeModules.AgentNative is null — native module not loaded. getInstalledApps will return empty array.');
+    return noopModule;
+  }
+  UltraDevLog.systemEvent('AgentNative', 'NativeModules.AgentNative loaded successfully');
 
   return {
     writeFile: (filePath: string, content: string) => native.writeFile(filePath, content),
