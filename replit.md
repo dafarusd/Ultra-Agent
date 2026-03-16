@@ -30,14 +30,22 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 
 **Core Agent Loop:** A 9-step autonomous loop (INGEST, ROUTE, PLAN, VERIFY, APPROVE, EXECUTE, VERIFY_RESULT, WRITE_MEMORY, ADAPT) governs agent decision-making.
 
-**Capability Management:** `CapabilityRegistry` defines 22 capabilities (e.g., file operations, camera, location, app build, self-modify) with risk levels, executed by `TaskExecutor`.
+**Capability Management:** `CapabilityRegistry` defines 23 capabilities (e.g., file operations, camera, location, app build, self-modify, system_info) with risk levels, executed by `TaskExecutor`.
+
+**Total Access Features (v3.23.0):**
+- **Settings Intent Resolution:** 37 Android settings entries with deep linking (WiFi, Bluetooth, Display, Sound, Developer Options, Accessibility, etc.)
+- **App Deep Links:** 19 built-in deep links for popular apps (Spotify, YouTube, Gmail, Maps, WhatsApp, Instagram, TikTok, Calendar, Clock, Play Store)
+- **System Actions:** WiFi toggle, Bluetooth toggle, Airplane Mode, Brightness adjustment (all route to settings panels due to Android 12+ restrictions)
+- **System Information:** Battery level/state/low-power-mode, RAM usage, storage capacity, CPU temperature, device model/Android version
+- **Preference Backup:** Export/import user settings (API defaults, learned patterns, cost limits) to JSON via DocumentPicker + Sharing
+- **Package Learning:** Automatically capture successful app launches for faster future lookups
 
 **Error Handling and Debugging:** An `ErrorBoundary` handles UI errors, and a `DebugEngine` provides AI-driven self-healing for build errors.
 
 **Persistence and Monitoring:** `ConversationManager` for chat storage, `ExecutionLedger` for event logging and idempotency/autonomy budgets, and `CostTracker` for API usage.
 
-**Debug Logging (v3.20.0 — SESSION STATE):** 
-- **UltraDevLog** (primary logger) — 60+ sensors covering conversations, agent loop, intents, SMS, UI state, lifecycle events. 3,000-entry in-memory buffer updated every 2 seconds.
+**Debug Logging (v3.23.0 — SESSION STATE):** 
+- **UltraDevLog** (primary logger) — 60+ sensors covering conversations, agent loop, intents, SMS, UI state, lifecycle events, system info, preferences, and package learning. 3,000-entry in-memory buffer updated every 2 seconds.
 - **Three log files on device:**
   1. `ultra-devlog.jsonl` — UltraDevLog auto-flush (fixed filename, grows naturally)
   2. `debug-log.jsonl` — Legacy DebugLog (alias to UltraDevLog)
@@ -79,14 +87,18 @@ Agent Ultra is an autonomous AI agent application for Android focused on on-devi
 *   **`expo-sharing`:** File sharing via Android intents.
 *   **`expo-image-picker`:** Camera and gallery access.
 *   **`expo-location`:** GPS/device location access.
+*   **`expo-battery`:** Battery level and state (v3.23.0).
+*   **`expo-document-picker`:** Document/file selection (v3.23.0).
+*   **`react-native-device-info`:** Device system information (v3.23.0).
+*   **`expo-intent-launcher`:** Native intent launching for settings and deep links (v3.23.0).
 
-## Known Issues (v3.20.0)
-- **None critical.** All 7 original bugs fixed.
+## Known Issues (v3.23.0)
+- **None critical.** All Total Access features integrated with comprehensive logging.
 
-## Recent Fixes (v3.20.0)
-- **Bug 8:** Early `loadLogs()` call in mount removed — it fired before useCallback was initialized, causing crash.
-- **Log file proliferation:** Fixed hundreds of timestamped files being created. Now uses fixed filenames (`ultra-devlog.jsonl`, etc.) that are overwritten on flush.
-- **Comprehensive reporting:** Two detailed bug reports written for user to share with Claude.
+## Recent Fixes (v3.23.0)
+- **Total Access Implementation:** Added settings intent resolution, deep link routing, system actions, system info gathering, preference backup/restore.
+- **Comprehensive Sensor Integration:** All Total Access operations logged to UltraDevLog with 6 new categories and dedicated formatting.
+- **Deduplication:** Fixed networkStatus() and modelState() to suppress identical repeated logs.
 
 ## File Structure
 ```
@@ -104,20 +116,25 @@ agent-ultra/
 ├── src/
 │   ├── core/                # Agent loop & execution
 │   │   ├── AgentCore.ts     # 9-step loop
-│   │   ├── TaskExecutor.ts  # 22 capabilities
+│   │   ├── TaskExecutor.ts  # 23 capabilities
 │   │   ├── ModelRouter.ts   # Venice API interface
+│   │   ├── SettingsDirectory.ts       # 37 Android settings [NEW v3.23.0]
+│   │   ├── DeepLinkDirectory.ts       # 19 app deep links [NEW v3.23.0]
+│   │   ├── SystemActions.ts           # WiFi/BT/Airplane/Brightness [NEW v3.23.0]
 │   │   └── [others]
 │   ├── services/            # Persistence & logging
 │   │   ├── LogFolder.ts     # Log file management
 │   │   ├── ConversationManager.ts
 │   │   ├── CostTracker.ts
+│   │   ├── PreferenceBackup.ts       # Export/import preferences [NEW v3.23.0]
 │   │   └── [others]
 │   ├── genome/              # Self-evolution
 │   │   ├── GenomeFactory.ts
 │   │   ├── SelfImprover.ts
 │   │   └── [others]
 │   ├── utils/
-│   │   ├── UltraDevLog.ts   # Main diagnostic logger
+│   │   ├── UltraDevLog.ts   # Main diagnostic logger (6 new categories v3.23.0)
+│   │   ├── PreferenceLearner.ts # App package learning [UPDATED v3.23.0]
 │   │   └── [others]
 │   ├── security/
 │   │   └── SecureVault.ts   # Encrypted storage
