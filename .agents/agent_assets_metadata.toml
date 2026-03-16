@@ -18,3 +18,9 @@ id = "wzNfZEf843SlVCt44Ap28"
 uri = "file://.local/RAW_SOURCE_EXPORTS.md"
 type = "text"
 title = "Raw Source Code Exports — All Code in One File"
+
+[[outputs]]
+id = "1SIhr7R1kx_0PhUyMK3Fx"
+uri = "file://.local/CLAUDE_IMPLEMENTATION_REFERENCE.md"
+type = "text"
+title = "Implementation Reference — Raw Source Code for Claude"
