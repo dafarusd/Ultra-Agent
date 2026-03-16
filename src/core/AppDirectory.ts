@@ -43,17 +43,14 @@ const KNOWN_APPS: Record<string, string> = {
   'google home': 'com.google.android.apps.chromecast.app',
   'youtube music': 'com.google.android.apps.youtube.music',
   'google messages': 'com.google.android.apps.messaging',
-  'messages': 'com.google.android.apps.messaging',
+  'messages': 'com.samsung.android.messaging',
   'google phone': 'com.google.android.dialer',
-  'phone': 'com.google.android.dialer',
   'google contacts': 'com.google.android.contacts',
-  'contacts': 'com.google.android.contacts',
   'google clock': 'com.google.android.deskclock',
   'clock': 'com.google.android.deskclock',
   'google calculator': 'com.google.android.calculator',
   'calculator': 'com.google.android.calculator',
   'google files': 'com.google.android.apps.nbu.files',
-  'files': 'com.google.android.apps.nbu.files',
   'google assistant': 'com.google.android.apps.googleassistant',
   'assistant': 'com.google.android.apps.googleassistant',
   'google news': 'com.google.android.apps.magazines',
@@ -165,8 +162,14 @@ const KNOWN_APPS: Record<string, string> = {
   'samsung notes': 'com.samsung.android.app.notes',
   'samsung internet': 'com.sec.android.app.sbrowser',
   'samsung health': 'com.sec.android.app.shealth',
-  'kraken': 'com.krakenpro.app',
   'kraken pro': 'com.krakenpro.app',
+  'browser': 'com.sec.android.app.sbrowser',
+  'sms': 'com.samsung.android.messaging',
+  'phone': 'com.samsung.android.dialer',
+  'contacts': 'com.samsung.android.contacts',
+  'downloads': 'com.sec.android.app.myfiles',
+  'my files': 'com.sec.android.app.myfiles',
+  'files': 'com.sec.android.app.myfiles',
 
   // Games
   'candy crush': 'com.king.candycrushsaga',
@@ -243,6 +246,7 @@ export function findBestMatch(
         matchType: 'directory',
       };
     }
+    // Static entry not installed — fall through to fuzzy scan
   }
 
   let best: MatchResult | null = null;
@@ -285,9 +289,9 @@ export function findBestMatch(
       for (const w of qWords) {
         if (nWords.has(w)) overlap++;
         // Also check partial word matches (e.g., "tube" in "youtube")
-        else {
+        else if (w.length >= 4) { // ignore short words in partial matching
           for (const nw of nWords) {
-            if (nw.includes(w) || w.includes(nw)) {
+            if (nw.length >= 4 && (nw.includes(w) || w.includes(nw))) {
               overlap += 0.5;
               break;
             }
@@ -302,7 +306,8 @@ export function findBestMatch(
     }
 
     // Package name partial match bonus (e.g., "spotify" matches "com.spotify.music")
-    if (score < 50 && pkg.includes(q.replace(/\s+/g, ''))) {
+    const pkgQuery = q.replace(/\s+/g, '');
+    if (score < 50 && pkgQuery.length >= 5 && pkg.includes(pkgQuery)) {
       score = Math.max(score, 60);
       matchType = 'contains';
     }
