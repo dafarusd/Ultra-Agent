@@ -586,6 +586,11 @@ const rules: ParseRule[] = [
   // FLASHLIGHT — ADDITIONAL
   // ════════════════════════════════════════════════════
   {
+    pattern: /^(?:open|launch|start)\s+(?:the\s+)?flashlight$/i,
+    capability: 'flashlight_toggle',
+    extractParams: () => ({ state: 'on' }),
+  },
+  {
     pattern: /^(?:turn\s+on|enable|activate)\s+(?:the\s+)?(?:flashlight|torch|light)$/i,
     capability: 'flashlight_toggle',
     extractParams: () => ({ state: 'on' }),
@@ -672,6 +677,27 @@ const rules: ParseRule[] = [
     pattern: /^(?:recall|what\s+do\s+you\s+know\s+about)\s+(.+)$/i,
     capability: 'memory_recall',
     extractParams: (m) => ({ query: m[1].trim() }),
+  },
+
+  {
+    pattern: /^settings$/i,
+    capability: 'app_launch',
+    extractParams: () => ({ target: 'settings' }),
+  },
+  {
+    pattern: /^bluetooth\s+settings?$/i,
+    capability: 'app_launch',
+    extractParams: () => ({ target: 'bluetooth settings' }),
+  },
+  {
+    pattern: /^wifi\s+settings?$/i,
+    capability: 'app_launch',
+    extractParams: () => ({ target: 'wifi settings' }),
+  },
+  {
+    pattern: /^(?:turn\s+(?:wifi|wi-fi)\s+(?:on|off)|wifi\s+(?:on|off)|wi-fi\s+(?:on|off))$/i,
+    capability: 'wifi_toggle',
+    extractParams: () => ({}),
   },
 
   // ════════════════════════════════════════════════════
