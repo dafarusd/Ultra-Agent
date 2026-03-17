@@ -368,7 +368,7 @@ You are always on. Always capable. Always direct.`;
 
     // === STEP 2: ROUTE ===
     DebugLog.executePhase(taskId, 'ROUTE');
-    const mode = this.detectMode(userInput);
+    let mode = this.detectMode(userInput);
     DebugLog.modeDetected(taskId, mode, userInput);
     step('ROUTE', `Detected mode: ${mode}`, true);
 
