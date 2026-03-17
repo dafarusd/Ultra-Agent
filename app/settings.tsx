@@ -88,6 +88,8 @@ export default function SettingsScreen() {
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
   const [defaultsExpanded, setDefaultsExpanded] = useState(false);
   const [availableModels, setAvailableModels] = useState<any[]>([]);
+  const [backupExporting, setBackupExporting] = useState(false);
+  const [backupImporting, setBackupImporting] = useState(false);
 
   // ── Draft persistence (survives app switches) ──────
   const saveDraft = useCallback(async (draft: SavedApi | null, isNew: boolean) => {
@@ -635,25 +637,47 @@ export default function SettingsScreen() {
         {tab === "apis" && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Preferences Backup</Text>
-            <Text style={styles.dimText}>Export your settings, saved APIs, and learned patterns to a file. Import to restore after reinstalling.</Text>
-            <Pressable
-              style={[styles.btn, { marginTop: 12 }]}
-              onPress={async () => {
-                const result = await exportPreferences();
-                Alert.alert(result.success ? 'Export Complete' : 'Export Failed', result.message);
-              }}
-            >
-              <Text style={styles.btnText}>Export Preferences</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.btn, { marginTop: 8, backgroundColor: '#1a1a1a' }]}
-              onPress={async () => {
-                const result = await importPreferences();
-                Alert.alert(result.success ? 'Import Complete' : 'Import Failed', result.message);
-              }}
-            >
-              <Text style={styles.btnText}>Import Preferences</Text>
-            </Pressable>
+            <Text style={styles.cardSubtitle}>
+              Export your settings, model defaults, and learned patterns to a file. API keys are excluded for security. Import to restore on a new device or after reinstalling.
+            </Text>
+            <View style={styles.btnRow}>
+              <Pressable
+                style={[styles.btn, styles.primaryBtn, { flex: 1, justifyContent: 'center' }, backupExporting && { opacity: 0.6 }]}
+                disabled={backupExporting}
+                onPress={async () => {
+                  setBackupExporting(true);
+                  try {
+                    const result = await exportPreferences();
+                    Alert.alert(result.success ? 'Export Complete' : 'Export Failed', result.message);
+                  } finally {
+                    setBackupExporting(false);
+                  }
+                }}
+              >
+                {backupExporting
+                  ? <ActivityIndicator size="small" color={BG} />
+                  : <Ionicons name="share-outline" size={16} color={BG} />}
+                <Text style={styles.primaryBtnText}>{backupExporting ? 'Exporting…' : 'Export'}</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.btn, styles.secondaryBtn, { flex: 1, justifyContent: 'center' }, backupImporting && { opacity: 0.6 }]}
+                disabled={backupImporting}
+                onPress={async () => {
+                  setBackupImporting(true);
+                  try {
+                    const result = await importPreferences();
+                    Alert.alert(result.success ? 'Import Complete' : 'Import Failed', result.message);
+                  } finally {
+                    setBackupImporting(false);
+                  }
+                }}
+              >
+                {backupImporting
+                  ? <ActivityIndicator size="small" color={TEXT} />
+                  : <Ionicons name="download-outline" size={16} color={TEXT} />}
+                <Text style={styles.secondaryBtnText}>{backupImporting ? 'Importing…' : 'Import'}</Text>
+              </Pressable>
+            </View>
           </View>
         )}
 

@@ -42,13 +42,18 @@ export class PreferenceLearner {
   async initialize(): Promise<void> {
     try {
       const pd = await this.vault.get(PreferenceLearner.PATTERNS_KEY);
-      if (pd) this.patterns = JSON.parse(pd);
+      if (pd) {
+        const all: Pattern[] = JSON.parse(pd);
+        const aliases = all.filter(p => p.capabilities.includes('app_launch') && p.confidence >= 0.8);
+        const rest = all.filter(p => !p.capabilities.includes('app_launch') || p.confidence < 0.8);
+        this.patterns = [...aliases, ...rest];
+      }
       const prd = await this.vault.get(PreferenceLearner.PREFS_KEY);
       if (prd) {
         const prefs: UserPreference[] = JSON.parse(prd);
         for (const p of prefs) this.preferences.set(p.key, p);
       }
-      this.logger.info(`Loaded ${this.patterns.length} patterns, ${this.preferences.size} preferences`);
+      this.logger.info(`Loaded ${this.patterns.length} patterns (${this.patterns.filter(p => p.capabilities.includes('app_launch')).length} aliases first), ${this.preferences.size} preferences`);
     } catch (error: any) {
       this.logger.error('Init failed: ' + error.message);
     }

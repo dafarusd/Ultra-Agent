@@ -10,6 +10,7 @@ import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { BuildSystem } from './BuildSystem';
 import { DebugEngine } from './DebugEngine';
 import { CapabilityRegistry } from './CapabilityRegistry';
+import { CapabilityProbe } from './CapabilityProbe';
 import { PermissionBroker } from './PermissionBroker';
 import { ModelRouter } from './ModelRouter';
 import { MavenResolver } from './MavenResolver';
@@ -44,6 +45,7 @@ export class TaskExecutor {
   private build: BuildSystem;
   private debug: DebugEngine;
   private caps: CapabilityRegistry;
+  private probe: CapabilityProbe | null;
   private perms: PermissionBroker;
   private ai: ModelRouter;
   private maven: MavenResolver;
@@ -53,10 +55,11 @@ export class TaskExecutor {
   private currentGenome: Genome | null = null;
   private onGenomeProgress: ((phase: string, message: string) => void) | null = null;
 
-  constructor(build: BuildSystem, debug: DebugEngine, caps: CapabilityRegistry, perms: PermissionBroker, ai: ModelRouter) {
+  constructor(build: BuildSystem, debug: DebugEngine, caps: CapabilityRegistry, perms: PermissionBroker, ai: ModelRouter, probe?: CapabilityProbe) {
     this.build = build;
     this.debug = debug;
     this.caps = caps;
+    this.probe = probe ?? null;
     this.perms = perms;
     this.ai = ai;
     this.maven = new MavenResolver();
@@ -195,9 +198,37 @@ export class TaskExecutor {
 
   async initialize(): Promise<void> { this.logger.info('TaskExecutor initialized'); }
 
+  private checkProbe(capId: string): { blocked: boolean; message: string } {
+    if (!this.probe) return { blocked: false, message: '' };
+    const probeKey = CapabilityProbe.capabilityToProbeKey(capId);
+    if (!probeKey) return { blocked: false, message: '' };
+
+    const result = this.probe.get(probeKey);
+    if (!result) return { blocked: false, message: '' };
+
+    if (result.unavailable) {
+      return {
+        blocked: true,
+        message: result.note || `${result.label} is not available on this device.`,
+      };
+    }
+    if (!result.granted && !result.canRequest) {
+      return {
+        blocked: true,
+        message: `${result.label} permission was denied. Please enable it in device Settings > Apps > Agent Ultra > Permissions.`,
+      };
+    }
+    return { blocked: false, message: '' };
+  }
+
   async runWithPlan(plan: ActionPlan, taskId?: string): Promise<TaskResult> {
     const id = taskId || Date.now().toString(36);
     const capId = plan.capability;
+
+    const probeCheck = this.checkProbe(capId);
+    if (probeCheck.blocked) {
+      return { success: false, summary: probeCheck.message };
+    }
 
     const reqPerms = this.caps.getRequiredPermissions([capId]);
     const missing = this.perms.getMissing(reqPerms);
@@ -222,6 +253,14 @@ export class TaskExecutor {
 
   async run(capIds: string[], request: string, taskId?: string): Promise<TaskResult> {
     const id = taskId || Date.now().toString(36);
+
+    for (const cid of capIds) {
+      const probeCheck = this.checkProbe(cid);
+      if (probeCheck.blocked) {
+        return { success: false, summary: probeCheck.message };
+      }
+    }
+
     const reqPerms = this.caps.getRequiredPermissions(capIds);
     const missing = this.perms.getMissing(reqPerms);
     if (missing.length > 0) {

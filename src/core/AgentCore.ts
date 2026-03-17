@@ -1,6 +1,7 @@
 import { SecureVault } from '../security/SecureVault';
 import { ModelRouter } from './ModelRouter';
 import { CapabilityRegistry } from './CapabilityRegistry';
+import { CapabilityProbe } from './CapabilityProbe';
 import { PermissionBroker } from './PermissionBroker';
 import { DebugEngine } from './DebugEngine';
 import { BuildSystem } from './BuildSystem';
@@ -71,6 +72,7 @@ export class AgentCore extends SimpleEmitter {
   private vault: SecureVault;
   private ai: ModelRouter;
   private caps: CapabilityRegistry;
+  private probe: CapabilityProbe;
   private perms: PermissionBroker;
   private debugEngine: DebugEngine;
   private buildSystem: BuildSystem;
@@ -98,11 +100,12 @@ export class AgentCore extends SimpleEmitter {
     this.storage = new StorageManager(500);
     this.ai = new ModelRouter(vault, this.costTracker);
     this.caps = new CapabilityRegistry();
+    this.probe = CapabilityProbe.getInstance();
     this.perms = new PermissionBroker();
     this.learner = new PreferenceLearner(vault);
     this.debugEngine = new DebugEngine(this.ai, this.learner);
     this.buildSystem = new BuildSystem(this.ai, this.debugEngine, this.storage);
-    this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai);
+    this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai, this.probe);
     this.orchestrator = new Orchestrator(this.ai, this.costTracker);
     this.conversations = new ConversationManager();
     this.ledger = new ExecutionLedger();
@@ -115,6 +118,10 @@ export class AgentCore extends SimpleEmitter {
 
   getInstanceId(): string {
     return this.instanceId;
+  }
+
+  getCapabilityProbe(): CapabilityProbe {
+    return this.probe;
   }
 
   destroy(reason: string = 'cleanup'): void {
@@ -147,6 +154,7 @@ export class AgentCore extends SimpleEmitter {
       safeInit('Learner', () => this.learner.initialize()),
       safeInit('Ledger', () => this.ledger.initialize()),
       safeInit('MemoryManager', () => this.memory.initialize()),
+      safeInit('CapabilityProbe', () => this.probe.probe().then(() => {})),
     ]);
 
     await safeInit('ModelRouter', () => this.ai.initialize());
