@@ -1457,7 +1457,7 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
     }
 
     @Override
-    public String getName() { return "AccessibilityBridge"; }
+    public String getName() { return "AppController"; }
 
     @ReactMethod
     public void isServiceEnabled(Promise promise) {
@@ -1468,7 +1468,7 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
             );
             boolean enabled = !TextUtils.isEmpty(enabledServices) &&
                 enabledServices.contains("com.agent.ultra");
-            promise.resolve(enabled && AgentAccessibilityService.isRunning());
+            promise.resolve(enabled || AgentAccessibilityService.isRunning());
         } catch (Exception e) {
             promise.resolve(false);
         }
