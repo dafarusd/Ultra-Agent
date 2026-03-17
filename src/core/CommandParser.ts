@@ -485,27 +485,27 @@ const rules: ParseRule[] = [
   // DEVICE INFO / STATUS
   // ════════════════════════════════════════════════════
   {
-    pattern: /^(?:device\s+)?(?:status|info(?:rmation)?|stats|system\s+info)$/i,
+    pattern: /^(?:device\s+)?(?:status|info(?:rmation)?|stats|system\s+info)[?.!]?\s*$/i,
     capability: 'device_info',
     extractParams: () => ({}),
   },
   {
-    pattern: /^(?:battery|charge)\s*(?:level|status|percent)?$/i,
+    pattern: /^(?:battery|charge)\s*(?:level|status|percent)?[?.!]?\s*$/i,
     capability: 'device_info',
     extractParams: () => ({ focus: 'battery' }),
   },
   {
-    pattern: /^(?:ram|memory)\s*(?:usage|status)?$/i,
+    pattern: /^(?:ram|memory)\s*(?:usage|status)?[?.!]?\s*$/i,
     capability: 'device_info',
     extractParams: () => ({ focus: 'memory' }),
   },
   {
-    pattern: /^(?:storage|disk|space)\s*(?:usage|status)?$/i,
+    pattern: /^(?:storage|disk|space)\s*(?:usage|status)?[?.!]?\s*$/i,
     capability: 'device_info',
     extractParams: () => ({ focus: 'storage' }),
   },
   {
-    pattern: /^(?:wifi|network)\s*(?:status|info)?$/i,
+    pattern: /^(?:wifi|network)\s*(?:status|info)?[?.!]?\s*$/i,
     capability: 'device_info',
     extractParams: () => ({ focus: 'network' }),
   },
@@ -514,27 +514,27 @@ const rules: ParseRule[] = [
   // SYSTEM INFO PATTERNS (legacy, kept for backward compat)
   // ════════════════════════════════════════════════════
   {
-    pattern: /^(?:system\s+info(?:rmation)?|phone\s+info(?:rmation)?)$/i,
+    pattern: /^(?:system\s+info(?:rmation)?|phone\s+info(?:rmation)?)[?.!]?\s*$/i,
     capability: 'system_info',
     extractParams: () => ({}),
   },
   {
-    pattern: /^how(?:'s|\s+is)\s+my\s+battery$/i,
+    pattern: /^how(?:'s|\s+is)\s+my\s+battery[?.!]?\s*$/i,
     capability: 'system_info',
     extractParams: () => ({ focus: 'battery' }),
   },
   {
-    pattern: /^how\s+much\s+(?:ram|memory)$/i,
+    pattern: /^how\s+much\s+(?:ram|memory)[?.!]?\s*$/i,
     capability: 'system_info',
     extractParams: () => ({ focus: 'memory' }),
   },
   {
-    pattern: /^how\s+much\s+space$/i,
+    pattern: /^how\s+much\s+space[?.!]?\s*$/i,
     capability: 'system_info',
     extractParams: () => ({ focus: 'storage' }),
   },
   {
-    pattern: /^(?:cpu\s+temp(?:erature)?|temperature|how\s+hot(?:\s+is\s+(?:my\s+)?(?:phone|device))?)$/i,
+    pattern: /^(?:cpu\s+temp(?:erature)?|temperature|how\s+hot(?:\s+is\s+(?:my\s+)?(?:phone|device))?)[?.!]?\s*$/i,
     capability: 'system_info',
     extractParams: () => ({ focus: 'temperature' }),
   },
@@ -698,6 +698,19 @@ const rules: ParseRule[] = [
     pattern: /^(?:turn\s+(?:wifi|wi-fi)\s+(?:on|off)|wifi\s+(?:on|off)|wi-fi\s+(?:on|off))$/i,
     capability: 'wifi_toggle',
     extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // URL OPENING (must come before generic app_launch)
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:open|go\s+to|visit|browse|launch)\s+((?:https?:\/\/|www\.)\S+)/i,
+    capability: 'open_url',
+    extractParams: (m) => {
+      let url = m[1].trim();
+      if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      return { url };
+    },
   },
 
   // ════════════════════════════════════════════════════

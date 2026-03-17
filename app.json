@@ -26,6 +26,7 @@
         "WRITE_EXTERNAL_STORAGE",
         "READ_CONTACTS",
         "SEND_SMS",
+        "CALL_PHONE",
         "CAMERA",
         "USE_BIOMETRIC",
         "VIBRATE",

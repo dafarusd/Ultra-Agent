@@ -636,12 +636,32 @@ You are always on. Always capable. Always direct.`;
 
       // === STEP 6: EXECUTE ===
       DebugLog.executePhase(taskId, 'EXECUTE');
-      const REPEATABLE_CAPABILITIES = new Set(['app_launch', 'camera_capture', 'media_access', 'device_location', 'contacts_read']);
+      const REPEATABLE_CAPABILITIES = new Set([
+        'app_launch', 'camera_capture', 'media_access', 'device_location', 'contacts_read',
+        'flashlight_toggle', 'do_not_disturb', 'wifi_toggle', 'bluetooth_toggle',
+        'airplane_mode', 'device_info', 'battery_status', 'volume_set', 'brightness',
+        'screen_rotate', 'open_url', 'web_search', 'sms_send', 'phone_call',
+        'clipboard_read', 'clipboard_write', 'media_play', 'media_next',
+        'system_info', 'screenshot'
+      ]);
       const idempotencyKey = `${conversationId}:${plan.capability}:${JSON.stringify(plan.params)}`;
       if (!REPEATABLE_CAPABILITIES.has(plan.capability)) {
         const isDuplicate = await this.ledger.checkIdempotency(idempotencyKey);
         if (isDuplicate) {
-          return { type: 'action_result', message: 'This action was already executed (duplicate prevented).', taskId };
+          const events = await this.ledger.getEvents({ capability: plan.capability, conversationId });
+          const lastMatch = events.filter((e: any) => e.idempotencyKey === idempotencyKey).pop();
+          if (lastMatch && (Date.now() - lastMatch.timestamp) < 5000) {
+            const dupeMsg: ChatMessage = {
+              id: uid('msg'),
+              role: 'assistant',
+              content: 'This action was just executed. Please wait a moment before retrying.',
+              createdAt: Date.now(),
+              source: 'ultra',
+              meta: { mode: 'command' },
+            };
+            await this.conversations.addMessage(conversationId, dupeMsg);
+            return { type: 'action_result', message: dupeMsg.content, taskId };
+          }
         }
       }
 
