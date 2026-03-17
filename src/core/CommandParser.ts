@@ -876,7 +876,7 @@ export class CommandParser {
       'clal':'call','cal':'call','cll':'call',
       'turno':'turn','trun':'turn','tun':'turn',
       'shwo':'show','sho':'show','hsow':'show',
-      'plya':'play','paly':'play','payl':'play',
+      'plya':'play','paly':'play','payl':'play','ream':'read',
       'fnd':'find','fin':'find','fidn':'find',
       'sett':'set','se':'set',
       'chekc':'check','chek':'check','hceck':'check',

@@ -1604,6 +1604,18 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
         }
         promise.resolve(AgentAccessibilityService.getInstance().performHome());
     }
+
+    @ReactMethod
+    public void allowPackage(String pkg, Promise promise) {
+      AgentAccessibilityService.allowPackage(pkg);
+      promise.resolve(true);
+    }
+
+    @ReactMethod
+    public void revokePackage(String pkg, Promise promise) {
+      AgentAccessibilityService.revokePackage(pkg);
+      promise.resolve(true);
+    }
 }`;
 
 const BACKGROUND_SERVICE_JAVA = `package com.agent.ultra;

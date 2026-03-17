@@ -15,7 +15,9 @@ const KNOWN_APPS: Record<string, string> = {
   // Google
   'chrome': 'com.android.chrome',
   'google chrome': 'com.android.chrome',
+  'email': 'com.google.android.gm',
   'gmail': 'com.google.android.gm',
+  'samsung email': 'com.samsung.android.email.provider',
   'google maps': 'com.google.android.apps.maps',
   'maps': 'com.google.android.apps.maps',
   'youtube': 'com.google.android.youtube',

@@ -405,6 +405,14 @@ const schemas: CapabilitySchema[] = [
     },
   },
   {
+    capabilityId: 'system_info',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      focus: { type: 'string', description: 'battery | memory | storage | temperature | all' },
+    },
+  },
+  {
     capabilityId: 'react_navigate',
     version: 1,
     requiredParams: {
