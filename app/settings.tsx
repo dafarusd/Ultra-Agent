@@ -714,35 +714,58 @@ export default function SettingsScreen() {
             TAB: LOGS
             ══════════════════════════════════════════ */}
         {tab === "logs" && (
-          <View style={styles.card}>
-            <View style={styles.logHeader}>
-              <Text style={styles.cardTitle}>Log Files</Text>
-              <Pressable onPress={loadLogs} style={styles.logActionBtn}>
-                <Ionicons name="refresh" size={16} color={DIM} />
+          <>
+            <View style={styles.card}>
+              <View style={styles.logHeader}>
+                <Text style={styles.cardTitle}>Log Files</Text>
+                <Pressable onPress={loadLogs} style={styles.logActionBtn}>
+                  <Ionicons name="refresh" size={16} color={DIM} />
+                </Pressable>
+              </View>
+              {!logsLoaded ? (
+                <Text style={styles.emptyText}>Loading logs...</Text>
+              ) : logFiles.length === 0 ? (
+                <Text style={styles.emptyText}>No log files yet. Tap refresh to check.</Text>
+              ) : (
+                <ScrollView style={styles.logScroll} nestedScrollEnabled>
+                  {logFiles.map((file) => (
+                    <Pressable
+                      key={file.path}
+                      onPress={() => downloadLog(file.path, file.name)}
+                      style={styles.logFileRow}
+                    >
+                      <View style={styles.logFileInfo}>
+                        <Text style={styles.logFileName}>{file.name}</Text>
+                        <Text style={styles.logFileSize}>{(file.size / 1024).toFixed(1)} KB</Text>
+                      </View>
+                      <Ionicons name="download-outline" size={16} color={ACCENT} />
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Bug Report</Text>
+              <Text style={styles.cardSubtitle}>
+                Generates a human-readable summary of failures, warnings, last task chain, and key traces. Auto-generated when the app goes to background. Share this file with Claude to diagnose issues.
+              </Text>
+              <Pressable
+                style={[styles.btn, styles.primaryBtn, { marginTop: 4 }]}
+                onPress={async () => {
+                  const ok = await UltraDevLog.generateBugReportFile();
+                  if (ok) {
+                    await loadLogs();
+                    Alert.alert("Done", "bug-report.txt written. Tap it in the list above to share.");
+                  } else {
+                    Alert.alert("Error", "Could not write bug-report.txt (web or no storage).");
+                  }
+                }}
+              >
+                <Ionicons name="bug-outline" size={16} color={BG} />
+                <Text style={styles.primaryBtnText}>Generate Report</Text>
               </Pressable>
             </View>
-            {!logsLoaded ? (
-              <Text style={styles.emptyText}>Loading logs...</Text>
-            ) : logFiles.length === 0 ? (
-              <Text style={styles.emptyText}>No log files yet. Tap refresh to check.</Text>
-            ) : (
-              <ScrollView style={styles.logScroll} nestedScrollEnabled>
-                {logFiles.map((file) => (
-                  <Pressable
-                    key={file.path}
-                    onPress={() => downloadLog(file.path, file.name)}
-                    style={styles.logFileRow}
-                  >
-                    <View style={styles.logFileInfo}>
-                      <Text style={styles.logFileName}>{file.name}</Text>
-                      <Text style={styles.logFileSize}>{(file.size / 1024).toFixed(1)} KB</Text>
-                    </View>
-                    <Ionicons name="download-outline" size={16} color={ACCENT} />
-                  </Pressable>
-                ))}
-              </ScrollView>
-            )}
-          </View>
+          </>
         )}
       </ScrollView>
     </View>

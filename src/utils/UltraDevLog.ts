@@ -434,6 +434,7 @@ export class UltraDevLog {
         try { AsyncStorage.setItem(PROCESS_RESTART_KEY, String(now)); } catch {}
         UltraDevLog.sessionSummary();
         UltraDevLog.flushSyncInternal();
+        UltraDevLog.writeBugReportFile();
       }
       UltraDevLog.lastAppStateChangeAt = now;
     });
@@ -960,6 +961,38 @@ export class UltraDevLog {
   }
 
   static async forceFlush(): Promise<void> { await UltraDevLog.doFlush(); }
+
+  static writeBugReportFile(): void {
+    setTimeout(() => UltraDevLog.doWriteBugReport(), 0);
+  }
+
+  static async generateBugReportFile(): Promise<boolean> {
+    return UltraDevLog.doWriteBugReport();
+  }
+
+  private static async doWriteBugReport(): Promise<boolean> {
+    if (Platform.OS === 'web' || !FileSystem) return false;
+    try {
+      const report = UltraDevLog.generateBugReport();
+      const ok = await LogFolder.writeLog('bug-report.txt', report);
+      UltraDevLog.push('SYSTEM', {
+        event: 'bug_report_write',
+        success: ok,
+        trigger: 'doWriteBugReport',
+        reportChars: report.length,
+        note: ok ? 'bug-report.txt written ok' : 'WARN: bug-report.txt write failed',
+      });
+      return ok;
+    } catch (err: any) {
+      UltraDevLog.push('SYSTEM', {
+        event: 'bug_report_write',
+        success: false,
+        trigger: 'doWriteBugReport',
+        note: `WARN: bug-report.txt write threw: ${err?.message ?? 'unknown'}`,
+      });
+      return false;
+    }
+  }
 
   private static async doFlush(): Promise<void> {
     if (Platform.OS === 'web' || !FileSystem) return;
