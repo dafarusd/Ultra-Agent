@@ -959,6 +959,24 @@ You are always on. Always capable. Always direct.`;
                   `User resolved: ${userInput} → tel:${number}`
                 );
               } catch {}
+              // Execute the resolved plan immediately — do not fall through to conversation mode
+              try {
+                const disambigResult = await this.executor.runWithPlan(plan, taskId);
+                const disambigSummary = disambigResult.summary || `Calling ${number}`;
+                const disambigMsg: ChatMessage = {
+                  id: uid('msg'),
+                  role: 'assistant',
+                  content: disambigSummary,
+                  createdAt: Date.now(),
+                  source: 'ultra',
+                  meta: { mode: 'command', capability: plan.capability },
+                };
+                await this.conversations.addMessage(conversationId, disambigMsg);
+                return { type: 'action_result', message: disambigSummary, taskId };
+              } catch (disambigErr: any) {
+                DebugLog.error('DisambiguationExecute', disambigErr.message);
+                return { type: 'error', message: `Failed to execute resolved action: ${disambigErr.message}`, taskId };
+              }
             }
           }
         }

@@ -242,10 +242,15 @@ export class PreferenceLearner {
 
       const timestamp = Date.now();
       const filename = `agent_ultra_prefs_${timestamp}.json`;
-      const exportPath = (FileSystem?.documentDirectory || '') + filename;
+      const docDir = FileSystem.documentDirectory;
+      if (!docDir) {
+        throw new Error('FileSystem document directory not available');
+      }
+      const exportPath = docDir + filename;
       await FileSystem.writeAsStringAsync(exportPath, JSON.stringify(exportData, null, 2));
       return exportPath;
     } catch (err: any) {
+      this.logger.error('Export failed: ' + err.message);
       throw err;
     }
   }
