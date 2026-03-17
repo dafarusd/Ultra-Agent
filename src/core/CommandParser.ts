@@ -100,7 +100,7 @@ const rules: ParseRule[] = [
     capability: 'app_launch',
     extractParams: (m) => ({
       target: 'phone',
-      action: 'android.intent.action.DIAL',
+      action: 'android.intent.action.CALL',
       data: `tel:${m[1].replace(/\s/g, '')}`,
     }),
   },
@@ -114,7 +114,7 @@ const rules: ParseRule[] = [
       if (lookupPackage(contact)) return null;
       return {
         target: 'phone',
-        action: 'android.intent.action.DIAL',
+        action: 'android.intent.action.CALL',
         extras: { _contactName: contact },
       };
     },
@@ -125,7 +125,7 @@ const rules: ParseRule[] = [
     capability: 'app_launch',
     extractParams: (m) => ({
       target: 'phone',
-      action: 'android.intent.action.DIAL',
+      action: 'android.intent.action.CALL',
       data: `tel:${m[1].replace(/\s/g, '')}`,
     }),
   },
@@ -704,7 +704,7 @@ const rules: ParseRule[] = [
   // URL OPENING (must come before generic app_launch)
   // ════════════════════════════════════════════════════
   {
-    pattern: /^(?:open|go\s+to|visit|browse|launch)\s+((?:https?:\/\/|www\.)\S+)/i,
+    pattern: /^(?:open|go\s+to|visit|browse|launch)\s+((?:https?:\/\/|www\.)\S+|\S+\.(?:com|org|net|io|co|app|dev|ai|edu|gov|me|tv|us|uk|ca|info)(?:\/\S*)?)/i,
     capability: 'open_url',
     extractParams: (m) => {
       let url = m[1].trim();

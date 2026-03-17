@@ -74,7 +74,12 @@ export class SafetyChecker {
 
     const scopeOk = this.scopeMatches(userRequest, plan.capability);
     if (!scopeOk) {
-      reasons.push(`Scope mismatch: requested "${userRequest}" but planned "${plan.capability}"`);
+      // Exception: URLs are valid for both app_launch and open_url
+      const isUrl = /\S+\.(?:com|org|net|io|co|app|dev|ai|edu|gov|me|tv|us|uk|ca|info)(?:\/\S*)?|https?:\/\/|www\./.test(userRequest);
+      const isBothValid = isUrl && (plan.capability === 'app_launch' || plan.capability === 'open_url');
+      if (!isBothValid) {
+        reasons.push(`Scope mismatch: requested "${userRequest}" but planned "${plan.capability}"`);
+      }
     }
 
     if (reasons.length > 0) {

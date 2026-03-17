@@ -831,6 +831,51 @@ You are always on. Always capable. Always direct.`;
       };
     }
 
+    // === DISAMBIGUATION FOLLOW-UP DETECTION ===
+    if (mode === 'conversation') {
+      try {
+        const conv = await this.conversations.loadConversation(conversationId);
+        if (conv && conv.messages.length >= 2) {
+          const recentMsgs = conv.messages.slice(-4);
+          const lastAssistant = [...recentMsgs].reverse().find(m => m.role === 'assistant');
+          if (lastAssistant && (
+            lastAssistant.content.includes('Which one?') ||
+            lastAssistant.content.includes('requiresDisambiguation') ||
+            lastAssistant.content.includes('contacts named')
+          )) {
+            // User is answering a disambiguation — extract phone number or name
+            const phoneMatch = userInput.match(/(\+?[\d\s\-\(\)]{7,})/);
+            if (phoneMatch) {
+              const number = phoneMatch[1].replace(/[^\d+]/g, '');
+              DebugLog.systemEvent('DisambiguationResolve', `Resolved to number: ${number}`);
+              mode = 'command' as any;
+              plan = {
+                capability: 'app_launch',
+                params: {
+                  target: 'phone',
+                  action: 'android.intent.action.CALL',
+                  data: 'tel:' + number,
+                },
+                reason: 'User resolved disambiguation with phone number',
+              };
+              planFromParser = true;
+              step('PLAN', `Disambiguation resolved: calling ${number}`, true);
+              // Store the association for future
+              try {
+                await this.memory.promoteLongterm(
+                  userInput,
+                  'contact_resolution',
+                  `User resolved: ${userInput} → tel:${number}`
+                );
+              } catch {}
+            }
+          }
+        }
+      } catch (e: any) {
+        DebugLog.error('DisambiguationCheck', e.message);
+      }
+    }
+
     // === CONVERSATION / AI_INSTRUCTION MODE ===
     step('PLAN', `Conversation/AI instruction mode — no capability plan needed`, true);
     step('VERIFY', 'N/A — no capability action to verify in conversation mode', true);

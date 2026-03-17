@@ -244,6 +244,46 @@ export class TaskExecutor {
     return { success: results.every((r) => !r.result.error), summary: summaryResult.content, data: results };
   }
 
+  private async completeWithReActLoop(
+    goal: string,
+    taskId: string,
+    appHint?: string,
+    maxIterations: number = 6
+  ): Promise<{ success: boolean; summary: string; steps: number }> {
+    try {
+      const serviceEnabled = await AppController.isServiceEnabled().catch(() => false);
+      if (!serviceEnabled) {
+        return { success: false, summary: 'Accessibility service not enabled — action opened but could not interact', steps: 0 };
+      }
+      // Wait for the launched app/settings to render
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      const { ReActLoop } = await import('./ReActLoop');
+      const reactLoop = new ReActLoop(
+        async (prompt: string) => {
+          const aiResult = await this.ai.complete(prompt, {
+            taskId,
+            agentId: 'react',
+            maxTokens: 600,
+            temperature: 0.2,
+          });
+          return aiResult.content;
+        },
+        { maxIterations, iterationDelayMs: 1200 }
+      );
+      const result = await reactLoop.execute(goal, appHint);
+      return {
+        success: result.goalAchieved,
+        summary: result.goalAchieved
+          ? `Done: ${goal}`
+          : `Opened but could not complete: ${goal} (${result.steps.length} attempts)`,
+        steps: result.steps.length,
+      };
+    } catch (err: any) {
+      return { success: false, summary: `UI automation error: ${err.message}`, steps: 0 };
+    }
+  }
+
   private async execWithParams(capId: string, params: Record<string, any>, request: string, taskId: string): Promise<any> {
     switch (capId) {
       case 'file_read': {
@@ -521,6 +561,22 @@ export class TaskExecutor {
                 IntentLauncher.openApplication(pkg);
                 return { success: true, launched: target, packageName: pkg, fallback: true };
               } catch (err2: any) {
+                // Browser fallback — if the target looks like it could be a website
+                const webTarget = target.toLowerCase().replace(/\s+/g, '');
+                const commonSites = ['reddit','youtube','twitter','instagram','facebook','spotify',
+                  'amazon','netflix','tiktok','pinterest','linkedin','github','stackoverflow',
+                  'wikipedia','google','yahoo','bing','twitch','discord','slack','whatsapp','telegram'];
+                if (commonSites.includes(webTarget) || webTarget.includes('.')) {
+                  try {
+                    const { Linking } = require('react-native');
+                    const url = webTarget.includes('.') ? 'https://' + webTarget : 'https://www.' + webTarget + '.com';
+                    await Linking.openURL(url);
+                    DebugLog.executorExit(taskId, 'app_launch', true, 'browser_fallback');
+                    return { success: true, summary: `App not installed — opened ${url} in browser instead.`, fallback: 'browser' };
+                  } catch (browserErr: any) {
+                    DebugLog.error('app_launch_browser_fallback', browserErr.message);
+                  }
+                }
                 return { success: false, error: `Failed to launch ${target}: ${err.message} (fallback also failed: ${err2.message})` };
               }
             }
@@ -1029,19 +1085,55 @@ export class TaskExecutor {
       }
       case 'wifi_toggle': {
         await IntentLauncher.startActivityAsync('android.settings.WIFI_SETTINGS', {});
-        return { success: true, summary: 'Opened Wi-Fi settings' };
+        const reactResult = await this.completeWithReActLoop(
+          'Find the Wi-Fi on/off toggle switch and tap it',
+          taskId,
+          'com.android.settings',
+          4
+        );
+        if (reactResult.success) {
+          return { success: true, summary: 'Wi-Fi toggled' };
+        }
+        return { success: true, summary: 'Opened Wi-Fi settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'bluetooth_toggle': {
         await IntentLauncher.startActivityAsync('android.settings.BLUETOOTH_SETTINGS', {});
-        return { success: true, summary: 'Opened Bluetooth settings' };
+        const reactResult = await this.completeWithReActLoop(
+          'Find the Bluetooth on/off toggle switch and tap it',
+          taskId,
+          'com.android.settings',
+          4
+        );
+        if (reactResult.success) {
+          return { success: true, summary: 'Bluetooth toggled' };
+        }
+        return { success: true, summary: 'Opened Bluetooth settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'airplane_mode': {
         await IntentLauncher.startActivityAsync('android.settings.AIRPLANE_MODE_SETTINGS', {});
-        return { success: true, summary: 'Opened Airplane Mode settings' };
+        const reactResult = await this.completeWithReActLoop(
+          'Find the Airplane Mode toggle switch and tap it to toggle it on or off',
+          taskId,
+          'com.android.settings',
+          4
+        );
+        if (reactResult.success) {
+          return { success: true, summary: 'Airplane Mode toggled' };
+        }
+        return { success: true, summary: 'Opened Airplane Mode settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'do_not_disturb': {
         await IntentLauncher.startActivityAsync('android.settings.ZEN_MODE_SETTINGS', {});
-        return { success: true, summary: 'Opened Do Not Disturb settings' };
+        const reactResult = await this.completeWithReActLoop(
+          'Find the Do Not Disturb toggle switch and tap it to toggle it',
+          taskId,
+          'com.android.settings',
+          4
+        );
+        if (reactResult.success) {
+          return { success: true, summary: 'Do Not Disturb toggled' };
+        }
+        return { success: true, summary: 'Opened DND settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'battery_status': {
         const [level, state] = await Promise.all([
@@ -1275,7 +1367,26 @@ export class TaskExecutor {
       case 'system_info': {
         DebugLog.executorEnter(taskId, 'system_info');
         try {
+          const focus = params.focus as string | undefined;
+          if (focus === 'temperature') {
+            return {
+              success: true,
+              summary: "CPU temperature is not accessible through standard Android APIs. Use 'device status' for battery, RAM, and storage info.",
+            };
+          }
           const info = await gatherSystemInfo();
+          if (focus === 'battery') {
+            const batteryMatch = info.match(/Battery[^\n]*/);
+            return { success: true, summary: batteryMatch ? batteryMatch[0] : info };
+          }
+          if (focus === 'storage') {
+            const storageMatch = info.match(/Storage[^\n]*/);
+            return { success: true, summary: storageMatch ? storageMatch[0] : info };
+          }
+          if (focus === 'memory') {
+            const memoryMatch = info.match(/RAM[^\n]*/);
+            return { success: true, summary: memoryMatch ? memoryMatch[0] : info };
+          }
           DebugLog.executorExit(taskId, 'system_info', true, 'success');
           return { success: true, summary: info, data: { info } };
         } catch (err: any) {
