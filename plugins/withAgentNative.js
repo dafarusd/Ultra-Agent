@@ -1395,6 +1395,7 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public boolean performText(String selector, String text) {
+        if (!checkPackageAllowed()) return false;
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return false;
         AccessibilityNodeInfo target = selector.isEmpty() ? findFocusedEditable(root) : findNode(root, selector);
@@ -1410,6 +1411,7 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public boolean performScroll(String direction) {
+        if (!checkPackageAllowed()) return false;
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return false;
         AccessibilityNodeInfo scrollable = findScrollable(root);
