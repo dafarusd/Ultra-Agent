@@ -26,7 +26,6 @@
         "WRITE_EXTERNAL_STORAGE",
         "READ_CONTACTS",
         "SEND_SMS",
-        "CALL_PHONE",
         "CAMERA",
         "USE_BIOMETRIC",
         "VIBRATE",
@@ -35,7 +34,8 @@
         "ACCESS_NETWORK_STATE",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "QUERY_ALL_PACKAGES"
+        "QUERY_ALL_PACKAGES",
+        "CALL_PHONE"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#000000",
