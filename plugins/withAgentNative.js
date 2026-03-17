@@ -1446,11 +1446,11 @@ import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.Promise;
 import android.util.Log;
 
-public class AccessibilityBridge extends ReactContextBaseJavaModule {
+public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
     private static final String TAG = "A11yBridge";
     private final ReactApplicationContext reactContext;
 
-    public AccessibilityBridge(ReactApplicationContext reactContext) {
+    public AccessibilityBridgeModule(ReactApplicationContext reactContext) {
         super(reactContext);
         this.reactContext = reactContext;
         AgentAccessibilityService.setReactContext(reactContext);
