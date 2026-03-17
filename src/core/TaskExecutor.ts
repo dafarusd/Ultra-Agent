@@ -974,142 +974,6 @@ export class TaskExecutor {
         };
       }
 
-      default:
-        throw new Error(`No executor for: ${capId}`);
-    }
-  }
-
-  private async exec(capId: string, request: string, taskId: string): Promise<any> {
-    switch (capId) {
-      case 'file_read': {
-        if (!isNative) return { error: 'File operations require Android device' };
-        const files = await FileSystem.readDirectoryAsync(this.docDir);
-        return { directory: this.docDir, files, count: files.length };
-      }
-      case 'file_write': {
-        if (!isNative) return { error: 'File operations require Android device' };
-        const r = await this.ai.complete(`User wants to write a file: "${request}". Respond JSON: {"filename":"name","content":"data"}`, { taskId, agentId: 'file-write', maxTokens: 4000 });
-        const p = JSON.parse(r.content);
-        const filePath = this.docDir + p.filename;
-        await FileSystem.writeAsStringAsync(filePath, p.content);
-        return { path: filePath, size: p.content.length };
-      }
-      case 'file_delete': {
-        if (!isNative) return { error: 'File operations require Android device' };
-        const r = await this.ai.complete(`Extract filename from: "${request}". Respond filename only.`, { agentId: 'file-del', maxTokens: 100 });
-        const fn = r.content.trim();
-        const filePath = this.docDir + fn;
-        const info = await FileSystem.getInfoAsync(filePath);
-        if (info.exists) { await FileSystem.deleteAsync(filePath); return { deleted: filePath }; }
-        return { error: `File not found: ${fn}` };
-      }
-      case 'file_organize': {
-        if (!isNative) return { error: 'File operations require Android device' };
-        const r = await this.ai.complete(`User wants to organize: "${request}". Respond JSON: {"actions":[{"source":"path","destination":"path"}]}`, { taskId, agentId: 'file-org', maxTokens: 2000 });
-        const p = JSON.parse(r.content);
-        const done: string[] = [];
-        for (const a of p.actions) {
-          const destDir = a.destination.substring(0, a.destination.lastIndexOf('/'));
-          await FileSystem.makeDirectoryAsync(this.docDir + destDir, { intermediates: true });
-          await FileSystem.moveAsync({ from: this.docDir + a.source, to: this.docDir + a.destination });
-          done.push(`${a.source} -> ${a.destination}`);
-        }
-        return { organized: done.length, actions: done };
-      }
-      case 'contacts_read': {
-        const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
-        return { contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
-      }
-      case 'sms_send': {
-        const r = await this.ai.complete(`Extract SMS details: "${request}". JSON: {"to":"number","message":"text"}`, { taskId, agentId: 'sms', maxTokens: 500 });
-        const p = JSON.parse(r.content);
-        const avail = await SMS.isAvailableAsync();
-        if (!avail) return { error: 'SMS unavailable' };
-        const { result } = await SMS.sendSMSAsync([p.to], p.message);
-        return { sent: result === 'sent', to: p.to };
-      }
-      case 'camera_capture': {
-        if (!isNative) return { error: 'Camera requires a device' };
-        return { note: 'Camera capture initiated. Use the device camera app.' };
-      }
-      case 'media_access': {
-        const { assets } = await MediaLibrary.getAssetsAsync({ first: 20, sortBy: [MediaLibrary.SortBy.creationTime] });
-        return { count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
-      }
-      case 'app_launch':
-        // All app_launch commands are handled by runWithPlan().
-        // This fallback should never be reached.
-        return { error: 'app_launch should be routed through runWithPlan' };
-      case 'app_share': {
-        const avail = await Sharing.isAvailableAsync();
-        return { available: avail };
-      }
-      case 'code_generate': {
-        const r = await this.ai.complete(`Generate complete production code for: "${request}". All imports, error handling, comments.`, { taskId, agentId: 'codegen', maxTokens: 8000, temperature: 0.5 });
-        if (isNative) {
-          const fn = `generated_${Date.now()}.java`;
-          const filePath = this.docDir + 'projects/' + fn;
-          await FileSystem.writeAsStringAsync(filePath, r.content);
-          return { path: filePath, lines: r.content.split('\n').length, cost: r.cost };
-        }
-        return { lines: r.content.split('\n').length, cost: r.cost, note: 'File save requires Android device' };
-      }
-      case 'app_build':
-        return this.build.buildApp(request, taskId);
-      case 'app_install': {
-        if (!isNative) return { error: 'APK install requires Android device' };
-        const files = await FileSystem.readDirectoryAsync(this.docDir + 'projects/');
-        const apks = files.filter((f: string) => f.endsWith('-signed.apk'));
-        if (apks.length === 0) return { error: 'No APK found. Build first.' };
-        await this.build.installApk(this.docDir + 'projects/' + apks[apks.length - 1]);
-        return { installing: apks[apks.length - 1] };
-      }
-      case 'network_request': {
-        const r = await this.ai.complete(`Network request for: "${request}". JSON: {"url":"https://...","method":"GET"}`, { taskId, agentId: 'net', maxTokens: 500 });
-        const p = JSON.parse(r.content);
-        const resp = await fetch(p.url, { method: p.method || 'GET' });
-        const text = await resp.text();
-        return { status: resp.status, length: text.length, body: text.substring(0, 1000) };
-      }
-      case 'ai_query': {
-        const r = await this.ai.complete(request, { taskId, agentId: 'query' });
-        return { response: r.content, cost: r.cost };
-      }
-      case 'image_generate': {
-        const prompt = request;
-        if (!prompt) return { error: 'No image prompt specified' };
-        try {
-          const result = await this.ai.generateImage(prompt, { taskId });
-          if (result.images.length === 0) return { error: 'No images generated' };
-          const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
-          const imagePath = `${docDirSlash}generated_${Date.now()}.png`;
-          if (isNative && FileSystem) {
-            const raw = result.images[0].replace(/^data:image\/\w+;base64,/, '');
-            await FileSystem.writeAsStringAsync(imagePath, raw, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
-          }
-          return {
-            success: true,
-            imageCount: result.images.length,
-            path: isNative ? imagePath : undefined,
-            model: result.model,
-          };
-        } catch (err: any) {
-          return { error: `Image generation failed: ${err.message}` };
-        }
-      }
-      case 'system_info': {
-        DebugLog.executorEnter(taskId, 'system_info');
-        try {
-          const info = await gatherSystemInfo();
-          DebugLog.executorExit(taskId, 'system_info', true, 'success');
-          return { success: true, summary: info, data: { info } };
-        } catch (err: any) {
-          DebugLog.executorExit(taskId, 'system_info', false, 'error');
-          return { success: false, error: `System info failed: ${err.message}` };
-        }
-      }
       case 'flashlight_toggle': {
         const AgentNativeModule = (await import('../native/AgentNative')).default;
         const stateParam = params.state?.toLowerCase();
@@ -1380,6 +1244,143 @@ export class TaskExecutor {
           return { success: true, summary, data: info };
         } catch (err: any) {
           return { success: false, error: `Device info failed: ${err.message}` };
+        }
+      }
+
+      default:
+        throw new Error(`No executor for: ${capId}`);
+    }
+  }
+
+  private async exec(capId: string, request: string, taskId: string): Promise<any> {
+    switch (capId) {
+      case 'file_read': {
+        if (!isNative) return { error: 'File operations require Android device' };
+        const files = await FileSystem.readDirectoryAsync(this.docDir);
+        return { directory: this.docDir, files, count: files.length };
+      }
+      case 'file_write': {
+        if (!isNative) return { error: 'File operations require Android device' };
+        const r = await this.ai.complete(`User wants to write a file: "${request}". Respond JSON: {"filename":"name","content":"data"}`, { taskId, agentId: 'file-write', maxTokens: 4000 });
+        const p = JSON.parse(r.content);
+        const filePath = this.docDir + p.filename;
+        await FileSystem.writeAsStringAsync(filePath, p.content);
+        return { path: filePath, size: p.content.length };
+      }
+      case 'file_delete': {
+        if (!isNative) return { error: 'File operations require Android device' };
+        const r = await this.ai.complete(`Extract filename from: "${request}". Respond filename only.`, { agentId: 'file-del', maxTokens: 100 });
+        const fn = r.content.trim();
+        const filePath = this.docDir + fn;
+        const info = await FileSystem.getInfoAsync(filePath);
+        if (info.exists) { await FileSystem.deleteAsync(filePath); return { deleted: filePath }; }
+        return { error: `File not found: ${fn}` };
+      }
+      case 'file_organize': {
+        if (!isNative) return { error: 'File operations require Android device' };
+        const r = await this.ai.complete(`User wants to organize: "${request}". Respond JSON: {"actions":[{"source":"path","destination":"path"}]}`, { taskId, agentId: 'file-org', maxTokens: 2000 });
+        const p = JSON.parse(r.content);
+        const done: string[] = [];
+        for (const a of p.actions) {
+          const destDir = a.destination.substring(0, a.destination.lastIndexOf('/'));
+          await FileSystem.makeDirectoryAsync(this.docDir + destDir, { intermediates: true });
+          await FileSystem.moveAsync({ from: this.docDir + a.source, to: this.docDir + a.destination });
+          done.push(`${a.source} -> ${a.destination}`);
+        }
+        return { organized: done.length, actions: done };
+      }
+      case 'contacts_read': {
+        const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
+        return { contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
+      }
+      case 'sms_send': {
+        const r = await this.ai.complete(`Extract SMS details: "${request}". JSON: {"to":"number","message":"text"}`, { taskId, agentId: 'sms', maxTokens: 500 });
+        const p = JSON.parse(r.content);
+        const avail = await SMS.isAvailableAsync();
+        if (!avail) return { error: 'SMS unavailable' };
+        const { result } = await SMS.sendSMSAsync([p.to], p.message);
+        return { sent: result === 'sent', to: p.to };
+      }
+      case 'camera_capture': {
+        if (!isNative) return { error: 'Camera requires a device' };
+        return { note: 'Camera capture initiated. Use the device camera app.' };
+      }
+      case 'media_access': {
+        const { assets } = await MediaLibrary.getAssetsAsync({ first: 20, sortBy: [MediaLibrary.SortBy.creationTime] });
+        return { count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
+      }
+      case 'app_launch':
+        // All app_launch commands are handled by runWithPlan().
+        // This fallback should never be reached.
+        return { error: 'app_launch should be routed through runWithPlan' };
+      case 'app_share': {
+        const avail = await Sharing.isAvailableAsync();
+        return { available: avail };
+      }
+      case 'code_generate': {
+        const r = await this.ai.complete(`Generate complete production code for: "${request}". All imports, error handling, comments.`, { taskId, agentId: 'codegen', maxTokens: 8000, temperature: 0.5 });
+        if (isNative) {
+          const fn = `generated_${Date.now()}.java`;
+          const filePath = this.docDir + 'projects/' + fn;
+          await FileSystem.writeAsStringAsync(filePath, r.content);
+          return { path: filePath, lines: r.content.split('\n').length, cost: r.cost };
+        }
+        return { lines: r.content.split('\n').length, cost: r.cost, note: 'File save requires Android device' };
+      }
+      case 'app_build':
+        return this.build.buildApp(request, taskId);
+      case 'app_install': {
+        if (!isNative) return { error: 'APK install requires Android device' };
+        const files = await FileSystem.readDirectoryAsync(this.docDir + 'projects/');
+        const apks = files.filter((f: string) => f.endsWith('-signed.apk'));
+        if (apks.length === 0) return { error: 'No APK found. Build first.' };
+        await this.build.installApk(this.docDir + 'projects/' + apks[apks.length - 1]);
+        return { installing: apks[apks.length - 1] };
+      }
+      case 'network_request': {
+        const r = await this.ai.complete(`Network request for: "${request}". JSON: {"url":"https://...","method":"GET"}`, { taskId, agentId: 'net', maxTokens: 500 });
+        const p = JSON.parse(r.content);
+        const resp = await fetch(p.url, { method: p.method || 'GET' });
+        const text = await resp.text();
+        return { status: resp.status, length: text.length, body: text.substring(0, 1000) };
+      }
+      case 'ai_query': {
+        const r = await this.ai.complete(request, { taskId, agentId: 'query' });
+        return { response: r.content, cost: r.cost };
+      }
+      case 'image_generate': {
+        const prompt = request;
+        if (!prompt) return { error: 'No image prompt specified' };
+        try {
+          const result = await this.ai.generateImage(prompt, { taskId });
+          if (result.images.length === 0) return { error: 'No images generated' };
+          const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
+          const imagePath = `${docDirSlash}generated_${Date.now()}.png`;
+          if (isNative && FileSystem) {
+            const raw = result.images[0].replace(/^data:image\/\w+;base64,/, '');
+            await FileSystem.writeAsStringAsync(imagePath, raw, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+          }
+          return {
+            success: true,
+            imageCount: result.images.length,
+            path: isNative ? imagePath : undefined,
+            model: result.model,
+          };
+        } catch (err: any) {
+          return { error: `Image generation failed: ${err.message}` };
+        }
+      }
+      case 'system_info': {
+        DebugLog.executorEnter(taskId, 'system_info');
+        try {
+          const info = await gatherSystemInfo();
+          DebugLog.executorExit(taskId, 'system_info', true, 'success');
+          return { success: true, summary: info, data: { info } };
+        } catch (err: any) {
+          DebugLog.executorExit(taskId, 'system_info', false, 'error');
+          return { success: false, error: `System info failed: ${err.message}` };
         }
       }
       default:
