@@ -973,6 +973,7 @@ export class UltraDevLog {
       const content = UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
       await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), content);
       await LogFolder.writeLog(`ultra-devlog.jsonl`, content);
+      await LogFolder.writeLog(`debug-log.jsonl`, content);
     } catch {} finally { UltraDevLog.writing = false; }
   }
 
@@ -982,7 +983,11 @@ export class UltraDevLog {
     try {
       const fp = UltraDevLog.getSessionFilePath();
       const info = await FileSystem.getInfoAsync(fp);
-      if (info.exists) return await FileSystem.readAsStringAsync(fp);
+      const content = info.exists
+        ? await FileSystem.readAsStringAsync(fp)
+        : UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
+      await LogFolder.writeLog(`raw-export.jsonl`, content);
+      return content;
     } catch {}
     return UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n');
   }
@@ -999,6 +1004,15 @@ export class UltraDevLog {
     UltraDevLog.lastRenderedHeights.clear();
     for (const e of UltraDevLog.watchdogs.values()) clearTimeout(e.timeoutHandle);
     UltraDevLog.watchdogs.clear();
+  }
+
+  static scheduleStartupRawExport(): void {
+    if (Platform.OS === 'web' || !FileSystem) return;
+    setTimeout(async () => {
+      try {
+        await UltraDevLog.exportAll();
+      } catch {}
+    }, 5000);
   }
 
   static async cleanOldLogs(maxAgeDays = 7): Promise<number> {
@@ -1019,3 +1033,5 @@ export class UltraDevLog {
     } catch { return 0; }
   }
 }
+
+UltraDevLog.scheduleStartupRawExport();
