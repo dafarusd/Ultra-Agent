@@ -36,9 +36,9 @@ export class TaskPlanner {
   }
 
   private deterministicDecompose(goal: string): PlanStep[] {
-    const connectors = /\b(then|and then|after that|followed by|next|afterwards|subsequently|once done|when done|after which|and also)\b/i;
+    const connectors = /\b(?:then|and then|after that|followed by|next|afterwards|subsequently|once done|when done|after which|and also)\b/i;
     const rawParts = goal.split(connectors);
-    const parts = rawParts.map(s => s.trim()).filter(s => s.length > 3 && !connectors.test(s.trim()));
+    const parts = rawParts.map(s => s.trim()).filter(s => s.length > 3);
     if (parts.length < 2) return [];
     const steps: PlanStep[] = [];
     for (let i = 0; i < parts.length; i++) {
@@ -137,7 +137,8 @@ Respond ONLY with valid JSON array, no other text:
         : `Failed: ${step.description}`
       );
       if (!succeeded) allSucceeded = false;
-      await new Promise(r => setTimeout(r, 500));
+      const STEP_DELAY_MS = 500;
+      await new Promise(r => setTimeout(r, STEP_DELAY_MS));
     }
 
     const summary = results.join(' -> ');

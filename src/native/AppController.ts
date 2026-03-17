@@ -56,8 +56,13 @@ function createNativeController(): AppControllerInterface {
 
   return {
     getScreenContent: async () => {
-      const json = await native.getScreenContent();
-      return JSON.parse(json) as UINode;
+      try {
+        const json = await native.getScreenContent();
+        return JSON.parse(json) as UINode;
+      } catch (error) {
+        console.error('Failed to parse screen content:', error);
+        return emptyNode;
+      }
     },
     performClick: (nodeSelector: string) => native.performClick(nodeSelector),
     performScroll: (direction: 'up' | 'down' | 'left' | 'right') => native.performScroll(direction),

@@ -100,7 +100,9 @@ export class MemoryManager {
         const record: MemoryRecord = JSON.parse(raw);
         const score = this.keywordScore(queryKeywords, record.keywords);
         if (score > 0) results.push({ record, score });
-      } catch {}
+      } catch (err: any) {
+        DebugLog.error('MemoryManager', `Failed to retrieve record ${id}: ${err.message}`);
+      }
     }
 
     const sorted = results

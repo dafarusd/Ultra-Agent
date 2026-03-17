@@ -92,6 +92,7 @@ export class EventMonitor {
         const ampm = timeMatch[3]?.toLowerCase();
         if (ampm === 'pm' && targetHour < 12) targetHour += 12;
         if (ampm === 'am' && targetHour === 12) targetHour = 0;
+        if (targetHour < 0 || targetHour > 23 || targetMin < 0 || targetMin > 59) return false;
         return data.hour === targetHour && Math.abs(data.minute - targetMin) <= 1;
       }
     }
@@ -125,6 +126,7 @@ export class EventMonitor {
 
   async removeTrigger(id: string): Promise<void> {
     this.triggers = this.triggers.filter(t => t.id !== id);
+    await this.memory.storeLongterm(`trigger:${id}`, 'event_trigger', JSON.stringify({ deleted: true, id }));
   }
 
   getTriggers(): EventTrigger[] {
@@ -132,15 +134,18 @@ export class EventMonitor {
   }
 
   private async loadTriggers(): Promise<void> {
+    this.triggers = [];
     const stored = await this.memory.retrieveRelevant('event_trigger', 50);
     for (const record of stored) {
       if (record.capability === 'event_trigger') {
         try {
           const trigger: EventTrigger = JSON.parse(record.outcome);
-          if (trigger.id && trigger.type && trigger.action) {
+          if (trigger.id && trigger.type && trigger.action && !(trigger as any).deleted) {
             this.triggers.push(trigger);
           }
-        } catch {}
+        } catch (e) {
+          DebugLog.error('EventMonitor', `Failed to parse trigger: ${e instanceof Error ? e.message : 'unknown error'}`);
+        }
       }
     }
   }

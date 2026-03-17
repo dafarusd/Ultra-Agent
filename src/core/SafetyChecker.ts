@@ -45,7 +45,7 @@ const SCOPE_MAP: Record<string, string[]> = {
   image_generate: ['generate', 'image', 'picture', 'photo', 'draw', 'create image'],
 };
 
-const ALWAYS_APPROVE_CAPABILITIES = [
+const DANGEROUS_CAPABILITIES_REQUIRING_APPROVAL = [
   'app_control',
   'self_modify',
   'self_replicate',
@@ -92,7 +92,7 @@ export class SafetyChecker {
       };
     }
 
-    if (ALWAYS_APPROVE_CAPABILITIES.includes(plan.capability)) {
+    if (DANGEROUS_CAPABILITIES_REQUIRING_APPROVAL.includes(plan.capability)) {
       return {
         allowed: true,
         risk: 'dangerous',

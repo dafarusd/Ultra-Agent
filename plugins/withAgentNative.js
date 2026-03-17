@@ -44,6 +44,13 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
     public void writeFile(String filePath, String content, Promise promise) {
         try {
             File f = new File(filePath);
+            String canonicalPath = f.getCanonicalPath();
+            String dataDir = ctx.getFilesDir().getCanonicalPath();
+            String cacheDir = ctx.getCacheDir().getCanonicalPath();
+            if (!canonicalPath.startsWith(dataDir) && !canonicalPath.startsWith(cacheDir)) {
+                promise.reject("WRITE_ERROR", "Path traversal detected: " + filePath);
+                return;
+            }
             f.getParentFile().mkdirs();
             FileOutputStream fos = new FileOutputStream(f);
             fos.write(content.getBytes(StandardCharsets.UTF_8));
@@ -60,6 +67,14 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             File out = new File(outputDir);
             out.mkdirs();
             String ecj = ctx.getFilesDir() + "/build-tools/ecj.jar";
+
+            if (!new File(ecj).exists()) {
+                WritableMap map = Arguments.createMap();
+                map.putBoolean("success", false);
+                map.putString("error", "ECJ compiler not found at " + ecj);
+                promise.resolve(map);
+                return;
+            }
 
             List<String> allSources = new ArrayList<>();
             for (int i = 0; i < sourcePaths.size(); i++) {
@@ -131,6 +146,15 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             File outDir = new File(outputDir);
             outDir.mkdirs();
             String d8 = ctx.getFilesDir() + "/build-tools/d8.jar";
+
+            if (!new File(d8).exists()) {
+                WritableMap map = Arguments.createMap();
+                map.putBoolean("success", false);
+                map.putString("error", "D8 compiler not found at " + d8);
+                promise.resolve(map);
+                return;
+            }
+
             File dir = new File(classDir);
             List<String> classFiles = new ArrayList<>();
             findClassFiles(dir, classFiles);
@@ -231,6 +255,12 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             );
 
             File dexFile = new File(projectDir, "build/dex/classes.dex");
+
+            if (!dexFile.exists()) {
+                promise.reject("PACKAGE_ERROR", "classes.dex not found at " + dexFile.getAbsolutePath());
+                return;
+            }
+
             File output = new File(outputPath);
             output.getParentFile().mkdirs();
 
@@ -258,6 +288,10 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void signApk(String unsignedPath, Promise promise) {
         try {
+            if (!new File(unsignedPath).exists()) {
+                promise.reject("SIGN_ERROR", "APK not found: " + unsignedPath);
+                return;
+            }
             ApkSignerV1 signer = new ApkSignerV1(ctx);
             String signedPath = signer.sign(unsignedPath);
             promise.resolve(signedPath);
@@ -1294,7 +1328,16 @@ public class AgentAccessibilityService extends AccessibilityService {
         return false;
     }
 
+    private boolean checkPackageAllowed() {
+        if (!isPackageAllowed(currentPackage)) {
+            Log.w(TAG, "Package not allowed: " + currentPackage);
+            return false;
+        }
+        return true;
+    }
+
     public boolean performTap(int x, int y) {
+        if (!checkPackageAllowed()) return false;
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean success = new AtomicBoolean(false);
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -1317,6 +1360,7 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public boolean performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
+        if (!checkPackageAllowed()) return false;
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean success = new AtomicBoolean(false);
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -1340,6 +1384,7 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public boolean performClick(String selector) {
+        if (!checkPackageAllowed()) return false;
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return false;
         AccessibilityNodeInfo target = findNode(root, selector);
