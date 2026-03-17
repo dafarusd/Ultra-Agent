@@ -1248,6 +1248,42 @@ export class TaskExecutor {
       }
 
       default:
+      case 'image_generate': {
+        const prompt = request;
+        if (!prompt) return { error: 'No image prompt specified' };
+        try {
+          const result = await this.ai.generateImage(prompt, { taskId });
+          if (result.images.length === 0) return { error: 'No images generated' };
+          const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
+          const imagePath = `${docDirSlash}generated_${Date.now()}.png`;
+          if (isNative && FileSystem) {
+            const raw = result.images[0].replace(/^data:image\/\w+;base64,/, '');
+            await FileSystem.writeAsStringAsync(imagePath, raw, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+          }
+          return {
+            success: true,
+            imageCount: result.images.length,
+            path: isNative ? imagePath : undefined,
+            model: result.model,
+          };
+        } catch (err: any) {
+          return { error: `Image generation failed: ${err.message}` };
+        }
+      }
+      case 'system_info': {
+        DebugLog.executorEnter(taskId, 'system_info');
+        try {
+          const info = await gatherSystemInfo();
+          DebugLog.executorExit(taskId, 'system_info', true, 'success');
+          return { success: true, summary: info, data: { info } };
+        } catch (err: any) {
+          DebugLog.executorExit(taskId, 'system_info', false, 'error');
+          return { success: false, error: `System info failed: ${err.message}` };
+        }
+      }
+
         throw new Error(`No executor for: ${capId}`);
     }
   }
@@ -1347,41 +1383,6 @@ export class TaskExecutor {
       case 'ai_query': {
         const r = await this.ai.complete(request, { taskId, agentId: 'query' });
         return { response: r.content, cost: r.cost };
-      }
-      case 'image_generate': {
-        const prompt = request;
-        if (!prompt) return { error: 'No image prompt specified' };
-        try {
-          const result = await this.ai.generateImage(prompt, { taskId });
-          if (result.images.length === 0) return { error: 'No images generated' };
-          const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
-          const imagePath = `${docDirSlash}generated_${Date.now()}.png`;
-          if (isNative && FileSystem) {
-            const raw = result.images[0].replace(/^data:image\/\w+;base64,/, '');
-            await FileSystem.writeAsStringAsync(imagePath, raw, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
-          }
-          return {
-            success: true,
-            imageCount: result.images.length,
-            path: isNative ? imagePath : undefined,
-            model: result.model,
-          };
-        } catch (err: any) {
-          return { error: `Image generation failed: ${err.message}` };
-        }
-      }
-      case 'system_info': {
-        DebugLog.executorEnter(taskId, 'system_info');
-        try {
-          const info = await gatherSystemInfo();
-          DebugLog.executorExit(taskId, 'system_info', true, 'success');
-          return { success: true, summary: info, data: { info } };
-        } catch (err: any) {
-          DebugLog.executorExit(taskId, 'system_info', false, 'error');
-          return { success: false, error: `System info failed: ${err.message}` };
-        }
       }
       default:
         throw new Error(`No executor for: ${capId}`);
