@@ -212,7 +212,7 @@ export class TaskExecutor {
       const explicitFail = result && typeof result === 'object' && result.success === false;
       return {
         success: !hasError && !explicitFail,
-        summary: hasError ? result.error : (result.summary || result.requiresDisambiguation ? result.summary : JSON.stringify(result)),
+        summary: hasError ? result.error : (result.requiresDisambiguation ? result.summary : (result.summary || JSON.stringify(result))),
         data: result,
       };
     } catch (e: any) {
