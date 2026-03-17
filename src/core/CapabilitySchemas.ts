@@ -404,6 +404,57 @@ const schemas: CapabilitySchema[] = [
       focus: { type: 'string', description: 'Focus area: battery, memory, storage, network, or all' },
     },
   },
+  {
+    capabilityId: 'react_navigate',
+    version: 1,
+    requiredParams: {
+      goal: { type: 'string', description: 'What to accomplish via UI navigation' },
+    },
+    optionalParams: {
+      appHint: { type: 'string', description: 'App name or package to navigate in' },
+      packageName: { type: 'string', description: 'Explicit package name of target app' },
+    },
+  },
+  {
+    capabilityId: 'multi_step',
+    version: 1,
+    requiredParams: {
+      steps: { type: 'array', description: 'Array of step descriptions' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'event_trigger_set',
+    version: 1,
+    requiredParams: {
+      type: { type: 'string', description: 'Trigger type: sms, battery, notification, schedule' },
+      condition: { type: 'string', description: 'Condition to evaluate' },
+      action: { type: 'string', description: 'Action to execute when triggered' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'event_trigger_list',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'event_trigger_remove',
+    version: 1,
+    requiredParams: {
+      id: { type: 'string', description: 'Trigger ID to remove' },
+    },
+    optionalParams: {},
+  },
+  {
+    capabilityId: 'memory_recall',
+    version: 1,
+    requiredParams: {
+      query: { type: 'string', description: 'What to recall from memory' },
+    },
+    optionalParams: {},
+  },
 ];
 
 const schemaMap = new Map<string, CapabilitySchema>();

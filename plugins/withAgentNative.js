@@ -1085,28 +1085,47 @@ const FILE_PROVIDER_PATHS = `<?xml version="1.0" encoding="utf-8"?>
     <external-files-path name="external" path="." />
 </paths>`;
 
+
 const ACCESSIBILITY_SERVICE_JAVA = `package com.agent.ultra;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.accessibilityservice.GestureDescription;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.util.Log;
+import com.facebook.react.bridge.Arguments;
+import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.modules.core.DeviceEventManagerModule;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class AgentAccessibilityService extends AccessibilityService {
     private static final String TAG = "AgentA11y";
     private static AgentAccessibilityService instance;
+    private static final Object instanceLock = new Object();
     private String currentPackage = "";
     private static final Set<String> allowedPackages = Collections.synchronizedSet(new HashSet<String>());
+    private static ReactApplicationContext reactContext = null;
 
-    public static AgentAccessibilityService getInstance() { return instance; }
-    public static boolean isRunning() { return instance != null; }
-
+    public static void setReactContext(ReactApplicationContext ctx) { reactContext = ctx; }
+    public static AgentAccessibilityService getInstance() {
+        synchronized (instanceLock) { return instance; }
+    }
+    public static boolean isRunning() {
+        synchronized (instanceLock) { return instance != null; }
+    }
     public static void allowPackage(String pkg) { allowedPackages.add(pkg); }
     public static void revokePackage(String pkg) { allowedPackages.remove(pkg); }
     public static boolean isPackageAllowed(String pkg) { return allowedPackages.contains(pkg); }
@@ -1114,11 +1133,12 @@ public class AgentAccessibilityService extends AccessibilityService {
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
-        instance = this;
-        AccessibilityServiceInfo info = getServiceInfo();
+        synchronized (instanceLock) { instance = this; }
+        AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-            | AccessibilityEvent.TYPE_VIEW_CLICKED;
+            | AccessibilityEvent.TYPE_VIEW_CLICKED
+            | AccessibilityEvent.TYPE_VIEW_SCROLLED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
         info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
@@ -1133,16 +1153,31 @@ public class AgentAccessibilityService extends AccessibilityService {
         if (event.getPackageName() != null) {
             currentPackage = event.getPackageName().toString();
         }
+        int type = event.getEventType();
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            emitUiTreeChanged();
+        }
+    }
+
+    private void emitUiTreeChanged() {
+        if (reactContext == null || !reactContext.hasActiveCatalystInstance()) return;
+        try {
+            WritableMap payload = Arguments.createMap();
+            payload.putString("packageName", currentPackage);
+            payload.putDouble("timestamp", System.currentTimeMillis());
+            reactContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                .emit("onUiTreeChanged", payload);
+        } catch (Exception ignored) {}
     }
 
     @Override
-    public void onInterrupt() {
-        Log.w(TAG, "Accessibility service interrupted");
-    }
+    public void onInterrupt() { Log.w(TAG, "Interrupted"); }
 
     @Override
     public void onDestroy() {
-        instance = null;
+        synchronized (instanceLock) { instance = null; }
         super.onDestroy();
     }
 
@@ -1176,7 +1211,6 @@ public class AgentAccessibilityService extends AccessibilityService {
             obj.put("editable", node.isEditable());
             obj.put("enabled", node.isEnabled());
             obj.put("focused", node.isFocused());
-
             if (depth < maxDepth && node.getChildCount() > 0) {
                 JSONArray children = new JSONArray();
                 for (int i = 0; i < node.getChildCount() && i < 50; i++) {
@@ -1194,15 +1228,123 @@ public class AgentAccessibilityService extends AccessibilityService {
         return obj;
     }
 
+    public String getScreenContentFlat() {
+        AtomicReference<String> result = new AtomicReference<>("[]");
+        CountDownLatch latch = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root != null) {
+                    JSONArray flat = new JSONArray();
+                    flattenNode(root, flat);
+                    root.recycle();
+                    result.set(flat.toString());
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "getScreenContentFlat error", e);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try { latch.await(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        return result.get();
+    }
+
+    private void flattenNode(AccessibilityNodeInfo node, JSONArray flat) {
+        if (node == null) return;
+        String text = node.getText() != null ? node.getText().toString().trim() : "";
+        String desc = node.getContentDescription() != null ? node.getContentDescription().toString().trim() : "";
+        boolean hasContent = !text.isEmpty() || !desc.isEmpty();
+        boolean interactive = node.isClickable() || node.isScrollable() || node.isEditable();
+        if (hasContent || interactive) {
+            try {
+                Rect bounds = new Rect();
+                node.getBoundsInScreen(bounds);
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    JSONObject obj = new JSONObject();
+                    obj.put("i", flat.length());
+                    obj.put("t", text);
+                    obj.put("d", desc);
+                    obj.put("c", node.isClickable());
+                    obj.put("e", node.isEditable());
+                    obj.put("s", node.isScrollable());
+                    obj.put("x", bounds.centerX());
+                    obj.put("y", bounds.centerY());
+                    flat.put(obj);
+                }
+            } catch (Exception ignored) {}
+        }
+        for (int i = 0; i < Math.min(node.getChildCount(), 60); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                flattenNode(child, flat);
+                child.recycle();
+            }
+        }
+    }
+
+    public boolean waitForUiChange(int timeoutMs) {
+        String initial = getScreenContentFlat();
+        long start = System.currentTimeMillis();
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            try { Thread.sleep(150); } catch (InterruptedException e) { return false; }
+            String current = getScreenContentFlat();
+            if (!current.equals(initial) && !current.equals("[]")) return true;
+        }
+        return false;
+    }
+
+    public boolean performTap(int x, int y) {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicBoolean success = new AtomicBoolean(false);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                Path path = new Path();
+                path.moveTo(x, y);
+                GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 50))
+                    .build();
+                dispatchGesture(gesture, new GestureResultCallback() {
+                    @Override
+                    public void onCompleted(GestureDescription g) { success.set(true); latch.countDown(); }
+                    @Override
+                    public void onCancelled(GestureDescription g) { latch.countDown(); }
+                }, null);
+            } catch (Exception e) { Log.e(TAG, "performTap error", e); latch.countDown(); }
+        });
+        try { latch.await(5, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        return success.get();
+    }
+
+    public boolean performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicBoolean success = new AtomicBoolean(false);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                Path path = new Path();
+                path.moveTo(x1, y1);
+                path.lineTo(x2, y2);
+                GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, Math.max(durationMs, 100)))
+                    .build();
+                dispatchGesture(gesture, new GestureResultCallback() {
+                    @Override
+                    public void onCompleted(GestureDescription g) { success.set(true); latch.countDown(); }
+                    @Override
+                    public void onCancelled(GestureDescription g) { latch.countDown(); }
+                }, null);
+            } catch (Exception e) { Log.e(TAG, "performSwipe error", e); latch.countDown(); }
+        });
+        try { latch.await(6, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        return success.get();
+    }
+
     public boolean performClick(String selector) {
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return false;
         AccessibilityNodeInfo target = findNode(root, selector);
         boolean result = false;
-        if (target != null) {
-            result = target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            target.recycle();
-        }
+        if (target != null) { result = target.performAction(AccessibilityNodeInfo.ACTION_CLICK); target.recycle(); }
         root.recycle();
         return result;
     }
@@ -1210,7 +1352,7 @@ public class AgentAccessibilityService extends AccessibilityService {
     public boolean performText(String selector, String text) {
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return false;
-        AccessibilityNodeInfo target = findNode(root, selector);
+        AccessibilityNodeInfo target = selector.isEmpty() ? findFocusedEditable(root) : findNode(root, selector);
         boolean result = false;
         if (target != null) {
             Bundle args = new Bundle();
@@ -1238,12 +1380,20 @@ public class AgentAccessibilityService extends AccessibilityService {
         return result;
     }
 
-    public boolean performBack() {
-        return performGlobalAction(GLOBAL_ACTION_BACK);
-    }
+    public boolean performBack() { return performGlobalAction(GLOBAL_ACTION_BACK); }
+    public boolean performHome() { return performGlobalAction(GLOBAL_ACTION_HOME); }
 
-    public boolean performHome() {
-        return performGlobalAction(GLOBAL_ACTION_HOME);
+    private AccessibilityNodeInfo findFocusedEditable(AccessibilityNodeInfo root) {
+        if (root.isEditable() && root.isFocused()) return AccessibilityNodeInfo.obtain(root);
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo child = root.getChild(i);
+            if (child != null) {
+                AccessibilityNodeInfo found = findFocusedEditable(child);
+                if (found != null) { child.recycle(); return found; }
+                child.recycle();
+            }
+        }
+        return null;
     }
 
     private AccessibilityNodeInfo findNode(AccessibilityNodeInfo root, String selector) {
@@ -1290,30 +1440,35 @@ import android.content.Context;
 import android.content.Intent;
 import android.provider.Settings;
 import android.text.TextUtils;
+import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.ReactContextBaseJavaModule;
+import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.bridge.Promise;
+import android.util.Log;
 
-import com.facebook.react.bridge.*;
+public class AccessibilityBridge extends ReactContextBaseJavaModule {
+    private static final String TAG = "A11yBridge";
+    private final ReactApplicationContext reactContext;
 
-public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
-    private final ReactApplicationContext ctx;
-
-    public AccessibilityBridgeModule(ReactApplicationContext context) {
-        super(context);
-        this.ctx = context;
+    public AccessibilityBridge(ReactApplicationContext reactContext) {
+        super(reactContext);
+        this.reactContext = reactContext;
+        AgentAccessibilityService.setReactContext(reactContext);
     }
 
     @Override
-    public String getName() {
-        return "AppController";
-    }
+    public String getName() { return "AccessibilityBridge"; }
 
     @ReactMethod
     public void isServiceEnabled(Promise promise) {
         try {
-            String service = ctx.getPackageName() + "/" + AgentAccessibilityService.class.getCanonicalName();
             String enabledServices = Settings.Secure.getString(
-                ctx.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-            boolean enabled = enabledServices != null && enabledServices.contains(service);
-            promise.resolve(enabled || AgentAccessibilityService.isRunning());
+                reactContext.getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            );
+            boolean enabled = !TextUtils.isEmpty(enabledServices) &&
+                enabledServices.contains("com.agent.ultra");
+            promise.resolve(enabled && AgentAccessibilityService.isRunning());
         } catch (Exception e) {
             promise.resolve(false);
         }
@@ -1324,23 +1479,103 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
         try {
             Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            ctx.startActivity(intent);
+            reactContext.startActivity(intent);
             promise.resolve(true);
         } catch (Exception e) {
-            promise.reject("SETTINGS_ERROR", e.getMessage(), e);
+            promise.reject("ERROR", e.getMessage());
         }
     }
 
     @ReactMethod
-    public void allowPackage(String pkg, Promise promise) {
-        AgentAccessibilityService.allowPackage(pkg);
-        promise.resolve(true);
+    public void getScreenContent(Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        try {
+            promise.resolve(AgentAccessibilityService.getInstance().getScreenContent());
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
     }
 
     @ReactMethod
-    public void revokePackage(String pkg, Promise promise) {
-        AgentAccessibilityService.revokePackage(pkg);
-        promise.resolve(true);
+    public void getScreenContentFlat(Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        try {
+            promise.resolve(AgentAccessibilityService.getInstance().getScreenContentFlat());
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void performTap(int x, int y, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        try {
+            promise.resolve(AgentAccessibilityService.getInstance().performTap(x, y));
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void performSwipe(int x1, int y1, int x2, int y2, int durationMs, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        try {
+            promise.resolve(AgentAccessibilityService.getInstance().performSwipe(x1, y1, x2, y2, durationMs));
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void waitForUiChange(int timeoutMs, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        try {
+            promise.resolve(AgentAccessibilityService.getInstance().waitForUiChange(timeoutMs));
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void performClick(String selector, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        promise.resolve(AgentAccessibilityService.getInstance().performClick(selector));
+    }
+
+    @ReactMethod
+    public void performText(String selector, String text, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        promise.resolve(AgentAccessibilityService.getInstance().performText(selector, text));
+    }
+
+    @ReactMethod
+    public void performScroll(String direction, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        promise.resolve(AgentAccessibilityService.getInstance().performScroll(direction));
     }
 
     @ReactMethod
@@ -1353,55 +1588,9 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
-    public void getScreenContent(Promise promise) {
-        if (!AgentAccessibilityService.isRunning()) {
-            promise.resolve("{\\"error\\":\\"Service not running\\"}");
-            return;
-        }
-        promise.resolve(AgentAccessibilityService.getInstance().getScreenContent());
-    }
-
-    @ReactMethod
-    public void performClick(String selector, Promise promise) {
-        if (!AgentAccessibilityService.isRunning()) {
-            promise.resolve(false);
-            return;
-        }
-        String pkg = AgentAccessibilityService.getInstance().getActivePackage();
-        if (!AgentAccessibilityService.isPackageAllowed(pkg)) {
-            promise.reject("NOT_ALLOWED", "Package " + pkg + " is not in the allowlist");
-            return;
-        }
-        promise.resolve(AgentAccessibilityService.getInstance().performClick(selector));
-    }
-
-    @ReactMethod
-    public void performText(String selector, String text, Promise promise) {
-        if (!AgentAccessibilityService.isRunning()) {
-            promise.resolve(false);
-            return;
-        }
-        String pkg = AgentAccessibilityService.getInstance().getActivePackage();
-        if (!AgentAccessibilityService.isPackageAllowed(pkg)) {
-            promise.reject("NOT_ALLOWED", "Package " + pkg + " is not in the allowlist");
-            return;
-        }
-        promise.resolve(AgentAccessibilityService.getInstance().performText(selector, text));
-    }
-
-    @ReactMethod
-    public void performScroll(String direction, Promise promise) {
-        if (!AgentAccessibilityService.isRunning()) {
-            promise.resolve(false);
-            return;
-        }
-        promise.resolve(AgentAccessibilityService.getInstance().performScroll(direction));
-    }
-
-    @ReactMethod
     public void performBack(Promise promise) {
         if (!AgentAccessibilityService.isRunning()) {
-            promise.resolve(false);
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
             return;
         }
         promise.resolve(AgentAccessibilityService.getInstance().performBack());
@@ -1410,12 +1599,75 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void performHome(Promise promise) {
         if (!AgentAccessibilityService.isRunning()) {
-            promise.resolve(false);
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
             return;
         }
         promise.resolve(AgentAccessibilityService.getInstance().performHome());
     }
 }`;
+
+const BACKGROUND_SERVICE_JAVA = `package com.agent.ultra;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Intent;
+import android.os.Build;
+import android.os.IBinder;
+import android.util.Log;
+import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
+
+public class AgentBackgroundService extends Service {
+    private static final String TAG = "AgentBgSvc";
+    private static final String CHANNEL_ID = "agent_ultra_bg";
+    private static final int NOTIFICATION_ID = 7001;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        createNotificationChannel();
+        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Agent Ultra")
+            .setContentText("Running in background")
+            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build();
+        startForeground(NOTIFICATION_ID, notification);
+        Log.i(TAG, "Background service started");
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        return START_STICKY;
+    }
+
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) { return null; }
+
+    @Override
+    public void onDestroy() {
+        Log.i(TAG, "Background service destroyed");
+        super.onDestroy();
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID,
+                "Agent Ultra Background",
+                NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Keeps Agent Ultra running in the background");
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) manager.createNotificationChannel(channel);
+        }
+    }
+}`;
+
 
 const ACCESSIBILITY_SERVICE_CONFIG = `<?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
@@ -1447,6 +1699,7 @@ function withAgentNative(config) {
       fs.writeFileSync(path.join(javaDir, 'ApkSignerV1.java'), APK_SIGNER_V1_JAVA);
       fs.writeFileSync(path.join(javaDir, 'AgentAccessibilityService.java'), ACCESSIBILITY_SERVICE_JAVA);
       fs.writeFileSync(path.join(javaDir, 'AccessibilityBridgeModule.java'), ACCESSIBILITY_BRIDGE_JAVA);
+      fs.writeFileSync(path.join(javaDir, 'AgentBackgroundService.java'), BACKGROUND_SERVICE_JAVA);
 
       const xmlDir = path.join(androidDir, 'app', 'src', 'main', 'res', 'xml');
       fs.mkdirSync(xmlDir, { recursive: true });
@@ -1596,6 +1849,20 @@ function withAgentNative(config) {
             'android:resource': '@xml/accessibility_service_config',
           },
         }],
+      });
+    }
+
+    const hasBgService = (app.service || []).some(
+      (s) => s.$['android:name'] === '.AgentBackgroundService'
+    );
+    if (!hasBgService) {
+      if (!app.service) app.service = [];
+      app.service.push({
+        $: {
+          'android:name': '.AgentBackgroundService',
+          'android:exported': 'false',
+          'android:foregroundServiceType': 'dataSync',
+        },
       });
     }
 

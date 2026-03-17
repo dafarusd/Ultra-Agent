@@ -111,32 +111,37 @@ export class SafetyChecker {
     plan: ActionPlan,
     result: any
   ): { verified: boolean; issues: string[] } {
-    const issues: string[] = [];
+    try {
+      const { verify } = require('./VerificationRegistry');
+      return verify(plan, result);
+    } catch {
+      const issues: string[] = [];
 
-    if (result === null || result === undefined) {
-      issues.push('Result is null or undefined');
-      return { verified: false, issues };
-    }
-
-    if (typeof result === 'object' && 'success' in result && result.success === false) {
-      issues.push(`Capability returned failure: ${result.error || result.message || 'unknown error'}`);
-    }
-
-    if (typeof result === 'object' && 'success' in result && result.success === true) {
-      if ('data' in result && result.data === undefined) {
-        issues.push('Capability returned success but data is undefined');
+      if (result === null || result === undefined) {
+        issues.push('Result is null or undefined');
+        return { verified: false, issues };
       }
-    }
 
-    if (typeof result === 'string' && result.trim() === '') {
-      issues.push('Result is an empty string');
-    }
+      if (typeof result === 'object' && 'success' in result && result.success === false) {
+        issues.push(`Capability returned failure: ${result.error || result.message || 'unknown error'}`);
+      }
 
-    if (Array.isArray(result) && result.length === 0) {
-      issues.push('Result is an empty array — expected data may be missing');
-    }
+      if (typeof result === 'object' && 'success' in result && result.success === true) {
+        if ('data' in result && result.data === undefined) {
+          issues.push('Capability returned success but data is undefined');
+        }
+      }
 
-    return { verified: issues.length === 0, issues };
+      if (typeof result === 'string' && result.trim() === '') {
+        issues.push('Result is an empty string');
+      }
+
+      if (Array.isArray(result) && result.length === 0) {
+        issues.push('Result is an empty array — expected data may be missing');
+      }
+
+      return { verified: issues.length === 0, issues };
+    }
   }
 
   private scopeMatches(userRequest: string, capability: string): boolean {

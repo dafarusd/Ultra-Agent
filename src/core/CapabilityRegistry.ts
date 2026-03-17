@@ -69,6 +69,12 @@ export class CapabilityRegistry {
       { id: 'app_info', name: 'App Info', description: 'Open app info settings for a specific app', riskLevel: 'safe', available: true, permissionsRequired: [] },
       { id: 'notification_read', name: 'Notification Read', description: 'Read notifications via AccessibilityService', riskLevel: 'sensitive', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
       { id: 'device_info', name: 'Device Info', description: 'Return full device stats: battery, RAM, storage, network, OS', riskLevel: 'safe', available: true, permissionsRequired: [] },
+      { id: 'react_navigate', name: 'UI Navigation', description: 'Navigate inside any app using accessibility service ReAct loop', riskLevel: 'moderate', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
+      { id: 'multi_step', name: 'Multi-Step Task', description: 'Execute sequential multi-step tasks', riskLevel: 'moderate', available: true, permissionsRequired: [] },
+      { id: 'event_trigger_set', name: 'Set Event Trigger', description: 'Set up autonomous event-based triggers', riskLevel: 'moderate', available: true, permissionsRequired: [] },
+      { id: 'event_trigger_list', name: 'List Triggers', description: 'List active autonomous triggers', riskLevel: 'safe', available: true, permissionsRequired: [] },
+      { id: 'event_trigger_remove', name: 'Remove Trigger', description: 'Remove an autonomous trigger', riskLevel: 'safe', available: true, permissionsRequired: [] },
+      { id: 'memory_recall', name: 'Memory Recall', description: 'Recall stored memory about a topic', riskLevel: 'safe', available: true, permissionsRequired: [] },
     ];
     for (const c of caps) this.capabilities.set(c.id, c);
     this.logger.info(`Registered ${this.capabilities.size} capabilities`);

@@ -1,6 +1,7 @@
 import { SecureVault } from '../security/SecureVault';
 import { Logger } from './Logger';
 import { UltraDevLog } from './UltraDevLog';
+import * as FileSystem from 'expo-file-system/legacy';
 
 interface Pattern {
   id: string;
@@ -175,6 +176,38 @@ export class PreferenceLearner {
       await this.vault.set(PreferenceLearner.PREFS_KEY, JSON.stringify(Array.from(this.preferences.values())));
     } catch (error: any) {
       this.logger.error('Persist failed: ' + error.message);
+    }
+  }
+
+  async exportToFile(): Promise<string> {
+    try {
+      const [preferredModel, apiDefaults, savedApis, learnedPatterns, userPreferences] =
+        await Promise.all([
+          this.vault.get('preferred_model').catch(() => null),
+          this.vault.get('api_defaults').catch(() => null),
+          this.vault.get('saved_apis').catch(() => null),
+          this.vault.get('learned_patterns').catch(() => null),
+          this.vault.get('user_preferences').catch(() => null),
+        ]);
+
+      const exportData = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        source: 'agent-ultra',
+        preferred_model: preferredModel,
+        api_defaults: apiDefaults,
+        saved_apis: savedApis,
+        learned_patterns: learnedPatterns,
+        user_preferences: userPreferences,
+      };
+
+      const timestamp = Date.now();
+      const filename = `agent_ultra_prefs_${timestamp}.json`;
+      const exportPath = (FileSystem?.documentDirectory || '') + filename;
+      await FileSystem.writeAsStringAsync(exportPath, JSON.stringify(exportData, null, 2));
+      return exportPath;
+    } catch (err: any) {
+      throw err;
     }
   }
 

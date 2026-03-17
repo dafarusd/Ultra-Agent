@@ -77,3 +77,35 @@ const AppController: AppControllerInterface =
   Platform.OS !== 'web' ? createNativeController() : noopController;
 
 export default AppController;
+
+export async function performTap(x: number, y: number): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  const mod = NativeModules.AppController;
+  if (!mod?.performTap) return false;
+  return mod.performTap(x, y);
+}
+
+export async function performSwipe(
+  x1: number, y1: number,
+  x2: number, y2: number,
+  durationMs: number = 350
+): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  const mod = NativeModules.AppController;
+  if (!mod?.performSwipe) return false;
+  return mod.performSwipe(x1, y1, x2, y2, durationMs);
+}
+
+export async function getScreenContentFlat(): Promise<string> {
+  if (Platform.OS !== 'android') return '[]';
+  const mod = NativeModules.AppController;
+  if (!mod?.getScreenContentFlat) return '[]';
+  return mod.getScreenContentFlat();
+}
+
+export async function waitForUiChange(timeoutMs: number = 3000): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  const mod = NativeModules.AppController;
+  if (!mod?.waitForUiChange) return false;
+  return mod.waitForUiChange(timeoutMs);
+}

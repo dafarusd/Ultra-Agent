@@ -16,6 +16,8 @@ import { CommandParser } from './CommandParser';
 import { validatePlan } from './CapabilitySchemas';
 import { Logger } from '../utils/Logger';
 import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
+import { MemoryManager } from './MemoryManager';
+import { EventMonitor } from '../services/EventMonitor';
 import type {
   ChatMessage,
   UltraExecutionResult,
@@ -81,6 +83,8 @@ export class AgentCore extends SimpleEmitter {
   private ledger: ExecutionLedger;
   private safety: SafetyChecker;
   private parser: CommandParser;
+  private memory: MemoryManager;
+  private eventMonitor: EventMonitor | null = null;
   private logger: Logger;
   private ready: boolean;
   private instanceId: string;
@@ -104,6 +108,7 @@ export class AgentCore extends SimpleEmitter {
     this.ledger = new ExecutionLedger();
     this.safety = new SafetyChecker();
     this.parser = new CommandParser();
+    this.memory = new MemoryManager(vault);
     this.ready = false;
     this.on('log', cb);
   }
@@ -141,6 +146,7 @@ export class AgentCore extends SimpleEmitter {
       safeInit('Permissions', () => this.perms.initialize()),
       safeInit('Learner', () => this.learner.initialize()),
       safeInit('Ledger', () => this.ledger.initialize()),
+      safeInit('MemoryManager', () => this.memory.initialize()),
     ]);
 
     await safeInit('ModelRouter', () => this.ai.initialize());
@@ -154,6 +160,15 @@ export class AgentCore extends SimpleEmitter {
     DebugLog.agentInitComplete(Date.now() - initStart);
 
     this.ready = true;
+
+    try {
+      this.eventMonitor = new EventMonitor(this.executor, this.memory, this.ai);
+      await this.eventMonitor.start();
+      DebugLog.systemEvent('AgentCore', 'EventMonitor started');
+    } catch (evErr: any) {
+      DebugLog.error('EventMonitor', `Failed to start: ${evErr.message}`);
+    }
+
     this.emit('log', 'All systems online', 'agent');
   }
 
@@ -164,10 +179,10 @@ export class AgentCore extends SimpleEmitter {
     }
     const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
     if (genomePatterns.test(t)) return 'command';
-    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map)\b/i.test(t);
+    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map|turn|set|search|google|look|flash|torch|mute|unmute|silence|dim|brighten|copy|paste|capture|grab|clip|notify|check|battery|network|storage|ram|memory|disk|space|wifi|system|device|status|info|phone|cpu|temp|weather|remind|wake|alarm|volume|ringer|brightness|screenshot|record|scan|download|upload|install|uninstall|update|sync|pair|connect|disconnect|reset|clear|lock|unlock|enable|disable|activate|deactivate|toggle|browse|visit|go|stop|pause|resume|skip|next|previous|repeat|shuffle|queue|bookmark|save|note|jot|remember|forget|recall)\b/i.test(t);
     if (imperative) return 'command';
     if (/^(gps|my\s+(?:location|coordinates|gps))\b/i.test(t)) return 'command';
-    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map)\b/i;
+    const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map|turn|set|search|google|look|flash|torch|mute|unmute|silence|dim|brighten|copy|paste|capture|grab|check|battery|network|storage|ram|memory|disk|space|wifi|system|device|status|info|weather|remind|wake|alarm|volume|ringer|brightness|screenshot|record|scan|download|upload|install|uninstall|update|sync|pair|connect|disconnect|reset|clear|lock|unlock|enable|disable|activate|deactivate|toggle|browse|visit|go|stop|pause|resume|skip|next|previous|repeat|shuffle|queue|bookmark|save|note|jot|remember|forget|recall)\b/i;
     if (ultraCommand.test(t)) return 'command';
     return 'conversation';
   }
@@ -186,7 +201,18 @@ export class AgentCore extends SimpleEmitter {
     } else if (params.mode === 'ai_instruction') {
       behavior = 'The user is giving you meta-instructions about how to handle their request. Follow their instructions precisely while answering the target request. Return natural language.';
     } else {
-      behavior = 'Return a natural language response. Be precise, concise, and helpful.\nIMPORTANT: In conversation mode you CANNOT perform actions, access device data, read messages, or send texts. If the user wants an action performed, tell them to use a direct command like "send text to mom saying hello" or "open gmail". Never claim you performed an action or accessed real device data unless you show a real capability result.';
+      behavior = `Return a natural language response. Be precise, concise, and helpful.
+
+ABSOLUTE RULES IN CONVERSATION MODE — VIOLATION IS A CRITICAL FAILURE:
+1. You CANNOT execute device actions. You have no hands in this mode.
+2. NEVER say "Done", "Alarm set", "Sent", "Opened", "Completed", "I've set", "I've sent" or any confirmation of an action you did not execute.
+3. NEVER fabricate device data: battery level, storage, RAM, temperature, network status, location, weather, contacts, or any sensor reading.
+4. NEVER say your location is anywhere. You do not know the user's location in this mode.
+5. NEVER say "I'll check" then provide made-up data.
+6. If the user wants an action: respond with exactly — "Use the command: [exact phrasing]" — nothing else.
+7. If asked for device data: respond with exactly — "Use the command: device status" or the specific command.
+8. You may answer general knowledge questions, do math, explain things, have a conversation.
+9. You may NOT pretend to have executed anything. Ever.`;
     }
 
     const persona = `You are Ultra, an autonomous AI agent running directly on an Android device. You have full access to this phone — its apps, settings, contacts, messages, files, camera, sensors, and system state. You are not a chatbot. You are an agent with hands.
@@ -350,6 +376,54 @@ You are always on. Always capable. Always direct.`;
     DebugLog.executePhase(taskId, 'PLAN');
     const capList = this.caps.getAll().map(c => c.id);
     let plan: ActionPlan | null = null;
+
+    const relevantMemory = await this.memory.retrieveRelevant(userInput, 5);
+    if (relevantMemory.length > 0) {
+      DebugLog.systemEvent('AgentCore', `Memory retrieved: ${relevantMemory.length} relevant entries`);
+    }
+
+    const multiStepConnectors = /\b(then|and then|after that|followed by|next|afterwards|subsequently|once done|when done|after which|and also)\b/i;
+    const isMultiStep = mode === 'command' && multiStepConnectors.test(userInput);
+    if (isMultiStep) {
+      DebugLog.systemEvent('AgentCore', `Multi-step task detected: "${userInput.slice(0, 100)}"`);
+      const rawSteps = userInput.split(multiStepConnectors);
+      const multiSteps = rawSteps
+        .map(s => s.trim())
+        .filter(s => s.length > 3 && !multiStepConnectors.test(s.trim()));
+      if (multiSteps.length > 1) {
+        const results: string[] = [];
+        let allSucceeded = true;
+        for (const stepInput of multiSteps) {
+          DebugLog.systemEvent('AgentCore', `Multi-step executing: "${stepInput}"`);
+          const stepPlan = this.parser.parse(stepInput);
+          if (stepPlan) {
+            try {
+              const stepResult = await this.executor.runWithPlan(stepPlan, taskId);
+              results.push(stepResult.summary || `${stepInput}: done`);
+              if (!stepResult.success) allSucceeded = false;
+            } catch (e: any) {
+              results.push(`${stepInput}: failed — ${e.message}`);
+              allSucceeded = false;
+            }
+          } else {
+            results.push(`${stepInput}: could not parse`);
+            allSucceeded = false;
+          }
+        }
+        const summary = results.join(' → ');
+        const multiMsg: ChatMessage = {
+          id: uid('msg'),
+          role: 'assistant',
+          content: summary,
+          createdAt: Date.now(),
+          source: 'ultra',
+          meta: { mode: 'command', multiStep: true, stepCount: multiSteps.length },
+        };
+        await this.conversations.addMessage(conversationId, multiMsg);
+        await this.learner.learnFromExecution(userInput, ['multi_step'], summary, allSucceeded);
+        return { type: 'action_result', message: summary, taskId };
+      }
+    }
 
     let planFromParser = false;
     if (mode === 'command') {
@@ -714,6 +788,10 @@ You are always on. Always capable. Always direct.`;
         resultSummary,
         verification.verified
       );
+      if (verification.verified && execResult?.success !== false) {
+        await this.memory.storeSession(userInput, plan.capability, resultSummary);
+        await this.memory.promoteLongterm(userInput, plan.capability, resultSummary);
+      }
       step('ADAPT', `Learned from execution: verified=${verification.verified}`, true);
 
       await this.ledger.logEvent({

@@ -164,61 +164,54 @@ const rules: ParseRule[] = [
   },
 
   // ── WEB SEARCH ─────────────────────────────────────
-
-  // "search for best restaurants near me" / "google quantum computing"
   {
     pattern: /^(?:search|google|look\s+up)\s+(?:for\s+)?(.+)$/i,
-    capability: 'app_launch',
-    extractParams: (m) => ({
-      target: 'browser',
-      action: 'android.intent.action.WEB_SEARCH',
-      extras: { query: m[1].trim() },
-    }),
+    capability: 'web_search',
+    extractParams: (m) => ({ query: m[1].trim() }),
+  },
+  {
+    pattern: /^web\s+search\s+(.+)$/i,
+    capability: 'web_search',
+    extractParams: (m) => ({ query: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:find|look\s+up)\s+(?:info(?:rmation)?\s+(?:on|about)|info\s+on)\s+(.+)$/i,
+    capability: 'web_search',
+    extractParams: (m) => ({ query: m[1].trim() }),
   },
 
   // ── ALARMS ─────────────────────────────────────────
-
-  // "set alarm for 7:30 am" / "set an alarm for 2 pm" / "set alarm for 14:00"
   {
-    pattern: /^set\s+(?:an?\s+)?alarm\s+(?:for\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i,
-    capability: 'app_launch',
-    extractParams: (m) => {
-      let hour = parseInt(m[1], 10);
-      const minutes = m[2] ? parseInt(m[2], 10) : 0;
-      const ampm = m[3]?.toLowerCase();
-      if (ampm === 'pm' && hour < 12) hour += 12;
-      if (ampm === 'am' && hour === 12) hour = 0;
-      return {
-        target: 'clock',
-        action: 'android.intent.action.SET_ALARM',
-        extras: {
-          'android.intent.extra.alarm.HOUR': hour,
-          'android.intent.extra.alarm.MINUTES': minutes,
-        },
-      };
-    },
+    pattern: /^set\s+(?:an?\s+)?alarm\s+(?:for\s+)?(.+)$/i,
+    capability: 'alarm_set',
+    extractParams: (m) => ({ time: m[1].trim() }),
+  },
+  {
+    pattern: /^wake\s+me\s+(?:up\s+)?at\s+(.+)$/i,
+    capability: 'alarm_set',
+    extractParams: (m) => ({ time: m[1].trim() }),
+  },
+  {
+    pattern: /^alarm\s+(?:for\s+|at\s+)?(.+)$/i,
+    capability: 'alarm_set',
+    extractParams: (m) => ({ time: m[1].trim() }),
   },
 
   // ── TIMERS ─────────────────────────────────────────
-
-  // "set timer for 5 minutes" / "set a timer 30 seconds" / "timer for 2 hours"
   {
     pattern: /^(?:set\s+(?:a\s+)?)?timer\s+(?:for\s+)?(\d+)\s*(seconds?|minutes?|hours?|mins?|hrs?|secs?)$/i,
-    capability: 'app_launch',
-    extractParams: (m) => {
-      const value = parseInt(m[1], 10);
-      const unit = m[2].toLowerCase();
-      let seconds = value;
-      if (unit.startsWith('min')) seconds = value * 60;
-      else if (unit.startsWith('hr') || unit.startsWith('hour')) seconds = value * 3600;
-      return {
-        target: 'clock',
-        action: 'android.intent.action.SET_TIMER',
-        extras: {
-          'android.intent.extra.alarm.LENGTH': seconds,
-        },
-      };
-    },
+    capability: 'timer_set',
+    extractParams: (m) => ({ duration: `${m[1].trim()} ${m[2].trim()}` }),
+  },
+  {
+    pattern: /^(\d+)\s*(second|minute|hour|min|hr|sec)s?\s+timer$/i,
+    capability: 'timer_set',
+    extractParams: (m) => ({ duration: `${m[1].trim()} ${m[2].trim()}` }),
+  },
+  {
+    pattern: /^timer\s+(\d+)\s*(second|minute|hour|min|hr|sec)s?$/i,
+    capability: 'timer_set',
+    extractParams: (m) => ({ duration: `${m[1].trim()} ${m[2].trim()}` }),
   },
 
   // ── EMAIL ──────────────────────────────────────────
@@ -257,17 +250,20 @@ const rules: ParseRule[] = [
   },
 
   // ── CALENDAR / SCHEDULING ─────────────────────────
-
-  // "schedule a dentist appointment for tomorrow at 3pm"
   {
     pattern: /^(?:schedule|add\s+(?:a\s+)?(?:calendar\s+)?event|create\s+(?:a\s+)?(?:calendar\s+)?event|add\s+to\s+calendar)\s+(.+)$/i,
-    capability: 'app_launch',
-    extractParams: (m) => ({
-      target: 'calendar',
-      action: 'android.intent.action.INSERT',
-      data: 'content://com.android.calendar/events',
-      extras: { 'title': m[1].trim() },
-    }),
+    capability: 'calendar_create',
+    extractParams: (m) => ({ details: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:set\s+a?\s+)?(?:calendar\s+)?reminder(?:\s+for)?\s+(.+)$/i,
+    capability: 'reminder_create',
+    extractParams: (m) => ({ text: m[1].trim() }),
+  },
+  {
+    pattern: /^remind\s+me\s+(?:to\s+|about\s+)?(.+)$/i,
+    capability: 'reminder_create',
+    extractParams: (m) => ({ text: m[1].trim() }),
   },
 
   // ── URL WITH BROWSER TARGET ────────────────────────
@@ -288,13 +284,14 @@ const rules: ParseRule[] = [
   },
   // "open https://google.com" (URL without browser specified)
   {
-    pattern: /^(?:open|go\s+to|visit|browse)\s+(https?:\/\/\S+)$/i,
-    capability: 'app_launch',
-    extractParams: (m) => ({
-      target: 'browser',
-      action: 'android.intent.action.VIEW',
-      data: m[1].trim(),
-    }),
+    pattern: /^(?:open|go\s+to|visit|browse\s+to?)\s+(https?:\/\/\S+)$/i,
+    capability: 'open_url',
+    extractParams: (m) => ({ url: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:open|go\s+to|visit)\s+(www\.\S+)$/i,
+    capability: 'open_url',
+    extractParams: (m) => ({ url: `https://${m[1].trim()}` }),
   },
   // "open google.com" (domain without scheme — add https)
   {
@@ -543,6 +540,141 @@ const rules: ParseRule[] = [
   },
 
   // ════════════════════════════════════════════════════
+  // REACT NAVIGATE
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:navigate|use|go through|interact with)\s+(.+?)\s+(?:to|and)\s+(.+)$/i,
+    capability: 'react_navigate',
+    extractParams: (m) => ({ goal: `${m[2].trim()} in ${m[1].trim()}`, appHint: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:in|inside|within)\s+(.+?),?\s+(?:navigate to|find|tap|click|go to)\s+(.+)$/i,
+    capability: 'react_navigate',
+    extractParams: (m) => ({ goal: m[2].trim(), appHint: m[1].trim() }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // DEVICE INFO — NATURAL LANGUAGE
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^what(?:'s|\s+is)\s+(?:my\s+)?battery(?:\s+(?:level|percentage|percent|life))?[?]?$/i,
+    capability: 'device_info',
+    extractParams: () => ({ focus: 'battery' }),
+  },
+  {
+    pattern: /^how(?:'s|\s+is)\s+(?:the\s+)?(?:wifi|network|connection|internet)[?]?$/i,
+    capability: 'device_info',
+    extractParams: () => ({ focus: 'network' }),
+  },
+  {
+    pattern: /^(?:show|tell|give)\s+(?:me\s+)?(?:device|system|phone)\s+(?:status|info(?:rmation)?|stats)[?]?$/i,
+    capability: 'device_info',
+    extractParams: () => ({}),
+  },
+  {
+    pattern: /^what(?:'s|\s+is)\s+(?:my\s+)?(?:storage|disk\s+space|free\s+space)[?]?$/i,
+    capability: 'device_info',
+    extractParams: () => ({ focus: 'storage' }),
+  },
+  {
+    pattern: /^what(?:'s|\s+is)\s+(?:my\s+)?(?:ram|memory\s+usage)[?]?$/i,
+    capability: 'device_info',
+    extractParams: () => ({ focus: 'memory' }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // FLASHLIGHT — ADDITIONAL
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:turn\s+on|enable|activate)\s+(?:the\s+)?(?:flashlight|torch|light)$/i,
+    capability: 'flashlight_toggle',
+    extractParams: () => ({ state: 'on' }),
+  },
+  {
+    pattern: /^(?:turn\s+off|disable|deactivate)\s+(?:the\s+)?(?:flashlight|torch|light)$/i,
+    capability: 'flashlight_toggle',
+    extractParams: () => ({ state: 'off' }),
+  },
+  {
+    pattern: /^(?:flashlight|torch|light)\s+(on|off)$/i,
+    capability: 'flashlight_toggle',
+    extractParams: (m) => ({ state: m[1].toLowerCase() }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // DO NOT DISTURB
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:turn\s+on|enable|activate)\s+(?:do\s+not\s+disturb|dnd|silent\s+mode)$/i,
+    capability: 'do_not_disturb',
+    extractParams: () => ({ state: 'on' }),
+  },
+  {
+    pattern: /^(?:turn\s+off|disable)\s+(?:do\s+not\s+disturb|dnd)$/i,
+    capability: 'do_not_disturb',
+    extractParams: () => ({ state: 'off' }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // APP INFO — ADDITIONAL
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:show|open|get)\s+app\s+info(?:rmation)?\s+(?:for\s+)?(.+)$/i,
+    capability: 'app_info',
+    extractParams: (m) => ({ target: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:app\s+settings|settings)\s+for\s+(.+)$/i,
+    capability: 'app_info',
+    extractParams: (m) => ({ target: m[1].trim() }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // NOTE — ADDITIONAL
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:remember|jot(?:\s+down)?|note\s+down?)\s+(?:that\s+)?(.+)$/i,
+    capability: 'note_create',
+    extractParams: (m) => ({ content: m[1].trim() }),
+  },
+
+  // ════════════════════════════════════════════════════
+  // SCREENSHOT — BARE WORD
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^screenshot$/i,
+    capability: 'screenshot',
+    extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // EVENT TRIGGERS
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:when|if|whenever)\s+(.+?)\s*,\s*(.+)$/i,
+    capability: 'event_trigger_set',
+    extractParams: (m) => ({
+      type: 'schedule',
+      condition: m[1].trim(),
+      action: m[2].trim(),
+    }),
+  },
+  {
+    pattern: /^(?:list|show)\s+(?:my\s+)?(?:triggers?|automations?|routines?)$/i,
+    capability: 'event_trigger_list',
+    extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // MEMORY RECALL
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:recall|what\s+do\s+you\s+know\s+about)\s+(.+)$/i,
+    capability: 'memory_recall',
+    extractParams: (m) => ({ query: m[1].trim() }),
+  },
+
+  // ════════════════════════════════════════════════════
   // SIMPLE APP LAUNCH (existing patterns, preserved)
   // These generate app_launch plans with only `target` —
   // TaskExecutor uses openApplication() for these
@@ -711,18 +843,28 @@ export class CommandParser {
     trimmed = trimmed.replace(/^ultra[\s,]+/i, '');
 
     const VERB_CORRECTIONS: Record<string, string> = {
-      'opin':'open','ipon':'open','opne':'open','oped':'open','ope':'open',
+      'opin':'open','ipon':'open','opne':'open','oped':'open','ope':'open','opem':'open','opeen':'open',
       'lauch':'launch','laucnh':'launch','lunach':'launch',
-      'tect':'text','txet':'text','tex':'text',
-      'sned':'send','sen':'send',
-      'clal':'call','cal':'call',
-      'turno':'turn','trun':'turn',
-      'shwo':'show','sho':'show',
-      'plya':'play','paly':'play',
-      'fnd':'find','fin':'find',
+      'tect':'text','txet':'text','tex':'text','texxt':'text',
+      'sned':'send','sen':'send','snend':'send',
+      'clal':'call','cal':'call','cll':'call',
+      'turno':'turn','trun':'turn','tun':'turn',
+      'shwo':'show','sho':'show','hsow':'show',
+      'plya':'play','paly':'play','payl':'play',
+      'fnd':'find','fin':'find','fidn':'find',
       'sett':'set','se':'set',
-      'chekc':'check','chek':'check',
-      'reaed':'read','rea':'read',
+      'chekc':'check','chek':'check','hceck':'check',
+      'reaed':'read','rea':'read','raed':'read',
+      'seach':'search','serach':'search','saerch':'search',
+      'alram':'alarm','aalrm':'alarm','alrm':'alarm',
+      'baterry':'battery','batery':'battery','battry':'battery',
+      'notifcation':'notification','notif':'notification',
+      'screenshto':'screenshot','sceenshot':'screenshot',
+      'navigte':'navigate','nvaigate':'navigate',
+      'coppy':'copy','coyp':'copy',
+      'messge':'message','mesage':'message',
+      'calentar':'calendar','calander':'calendar',
+      'remdiner':'reminder','remidner':'reminder',
     };
     const words = trimmed.split(/\s+/);
     if (words[0] && VERB_CORRECTIONS[words[0].toLowerCase()]) {
