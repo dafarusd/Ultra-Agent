@@ -152,6 +152,40 @@ export class PreferenceLearner {
     return p ? p.value : null;
   }
 
+  /**
+   * Permanently store an app name → package name alias so future lookups skip directory/fuzzy.
+   * The key is stored as "app_alias:{normalizedName}" in preferences.
+   */
+  async learnAppAlias(appName: string, packageName: string): Promise<void> {
+    const key = `app_alias:${appName.toLowerCase().trim()}`;
+    this.preferences.set(key, { key, value: packageName, source: 'user_confirmed', confidence: 1.0, updatedAt: Date.now() });
+    await this.persist();
+    UltraDevLog.systemEvent('PreferenceLearner', `Learned alias: "${appName}" → ${packageName}`);
+  }
+
+  /**
+   * Look up a permanently learned app alias.
+   * Returns the package name if found, null otherwise.
+   */
+  getAppAlias(appName: string): string | null {
+    const key = `app_alias:${appName.toLowerCase().trim()}`;
+    const p = this.preferences.get(key);
+    return p ? p.value : null;
+  }
+
+  /**
+   * Get all learned app aliases (app_alias:* keys).
+   */
+  getLearnedAliases(): Array<{ appName: string; packageName: string }> {
+    const results: Array<{ appName: string; packageName: string }> = [];
+    for (const [key, pref] of this.preferences.entries()) {
+      if (key.startsWith('app_alias:')) {
+        results.push({ appName: key.slice('app_alias:'.length), packageName: pref.value });
+      }
+    }
+    return results;
+  }
+
   getAllPreferences(): UserPreference[] {
     return Array.from(this.preferences.values());
   }

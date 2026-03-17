@@ -106,6 +106,7 @@ export class AgentCore extends SimpleEmitter {
     this.debugEngine = new DebugEngine(this.ai, this.learner);
     this.buildSystem = new BuildSystem(this.ai, this.debugEngine, this.storage);
     this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai, this.probe);
+    this.executor.setPreferenceLearner(this.learner);
     this.orchestrator = new Orchestrator(this.ai, this.costTracker);
     this.conversations = new ConversationManager();
     this.ledger = new ExecutionLedger();
@@ -793,18 +794,27 @@ You are always on. Always capable. Always direct.`;
         ledgerEvents: traceLedger,
       };
 
+      // Build meta — include fuzzy confirmation data so the follow-up detector can use it
+      const resultMeta: Record<string, any> = {
+        mode: 'command',
+        capability: plan.capability,
+        risk: safetyResult.risk as any,
+        promptTrace,
+      };
+      const execData = execResult?.data ?? execResult;
+      if (execData?.requiresFuzzyConfirmation) {
+        resultMeta.requiresFuzzyConfirmation = true;
+        resultMeta.candidates = execData.candidates || [];
+        resultMeta.fuzzyQuery = execData.query || plan.params?.target || '';
+      }
+
       const resultMsg: ChatMessage = {
         id: uid('msg'),
         role: 'assistant',
         content: resultSummary.slice(0, 4000),
         createdAt: Date.now(),
         source: 'ultra',
-        meta: {
-          mode: 'command',
-          capability: plan.capability,
-          risk: safetyResult.risk as any,
-          promptTrace,
-        },
+        meta: resultMeta,
       };
       await this.conversations.addMessage(conversationId, resultMsg);
 
@@ -844,9 +854,82 @@ You are always on. Always capable. Always direct.`;
       try {
         const conv = await this.conversations.loadConversation(conversationId);
         if (conv && conv.messages.length >= 2) {
-          const recentMsgs = conv.messages.slice(-4);
+          const recentMsgs = conv.messages.slice(-6);
           const lastAssistant = [...recentMsgs].reverse().find(m => m.role === 'assistant');
-          if (lastAssistant && (
+
+          // ── Fuzzy app confirmation follow-up ──
+          // Detect when the last assistant message asked for fuzzy app confirmation
+          if (lastAssistant?.meta?.requiresFuzzyConfirmation) {
+            const candidates: Array<{ appName: string; packageName: string }> = lastAssistant.meta.candidates || [];
+            const query: string = lastAssistant.meta.fuzzyQuery || '';
+            const inputLower = userInput.toLowerCase().trim();
+
+            // User said yes/confirm — launch the first (best) candidate
+            const isYes = /^(yes|yeah|yep|sure|ok|okay|correct|that('s| is) it|that one|open it|launch it|go)$/i.test(inputLower);
+            // User named a specific app from the list
+            const namedCandidate = candidates.find(c =>
+              inputLower.includes(c.appName.toLowerCase()) ||
+              c.appName.toLowerCase().includes(inputLower)
+            );
+            // User said an ordinal like "1", "2", "first", "second", "the third one"
+            const ordinalMap: Record<string, number> = {
+              '1': 0, 'first': 0, '1st': 0,
+              '2': 1, 'second': 1, '2nd': 1,
+              '3': 2, 'third': 2, '3rd': 2,
+              '4': 3, 'fourth': 3, '4th': 3,
+            };
+            const ordinalKey = Object.keys(ordinalMap).find(k => new RegExp(`\\b${k}\\b`, 'i').test(inputLower));
+            const ordinalCandidate = ordinalKey !== undefined ? candidates[ordinalMap[ordinalKey]] : undefined;
+
+            if (isYes && candidates.length > 0) {
+              const chosen = candidates[0];
+              DebugLog.systemEvent('FuzzyConfirmResolve', `User confirmed "${chosen.appName}" for query "${query}"`);
+              mode = 'command';
+              plan = {
+                capability: 'app_launch',
+                params: { target: chosen.appName, packageName: chosen.packageName },
+                reason: `User confirmed fuzzy match: "${query}" → "${chosen.appName}"`,
+              };
+              planFromParser = true;
+              step('PLAN', `Fuzzy confirmation resolved: opening "${chosen.appName}" (${chosen.packageName})`, true);
+              // Permanently learn the alias
+              try {
+                await this.learner.learnAppAlias(query, chosen.packageName);
+                await this.learner.learnPackage(query, chosen.packageName);
+              } catch {}
+            } else if (ordinalCandidate) {
+              DebugLog.systemEvent('FuzzyConfirmResolve', `User chose ordinal "${ordinalKey}" → "${ordinalCandidate.appName}" for query "${query}"`);
+              mode = 'command';
+              plan = {
+                capability: 'app_launch',
+                params: { target: ordinalCandidate.appName, packageName: ordinalCandidate.packageName },
+                reason: `User ordinal-selected fuzzy match: "${query}" → "${ordinalCandidate.appName}"`,
+              };
+              planFromParser = true;
+              step('PLAN', `Fuzzy ordinal resolved: opening "${ordinalCandidate.appName}" (${ordinalCandidate.packageName})`, true);
+              try {
+                await this.learner.learnAppAlias(query, ordinalCandidate.packageName);
+                await this.learner.learnPackage(query, ordinalCandidate.packageName);
+              } catch {}
+            } else if (namedCandidate) {
+              DebugLog.systemEvent('FuzzyConfirmResolve', `User chose "${namedCandidate.appName}" for query "${query}"`);
+              mode = 'command';
+              plan = {
+                capability: 'app_launch',
+                params: { target: namedCandidate.appName, packageName: namedCandidate.packageName },
+                reason: `User selected fuzzy match: "${query}" → "${namedCandidate.appName}"`,
+              };
+              planFromParser = true;
+              step('PLAN', `Fuzzy selection resolved: opening "${namedCandidate.appName}" (${namedCandidate.packageName})`, true);
+              try {
+                await this.learner.learnAppAlias(query, namedCandidate.packageName);
+                await this.learner.learnPackage(query, namedCandidate.packageName);
+              } catch {}
+            }
+          }
+
+          // ── Contact disambiguation follow-up ──
+          if (lastAssistant && !plan && (
             lastAssistant.content.includes('Which one?') ||
             lastAssistant.content.includes('requiresDisambiguation') ||
             lastAssistant.content.includes('contacts named')
@@ -856,7 +939,7 @@ You are always on. Always capable. Always direct.`;
             if (phoneMatch) {
               const number = phoneMatch[1].replace(/[^\d+]/g, '');
               DebugLog.systemEvent('DisambiguationResolve', `Resolved to number: ${number}`);
-              mode = 'command' as any;
+              mode = 'command';
               plan = {
                 capability: 'app_launch',
                 params: {
@@ -882,6 +965,33 @@ You are always on. Always capable. Always direct.`;
       } catch (e: any) {
         DebugLog.error('DisambiguationCheck', e.message);
       }
+    }
+
+    // === EXECUTE PLAN SET BY DISAMBIGUATION FOLLOW-UP ===
+    // If the disambiguation block set a plan (fuzzy app or contact resolve), execute it now
+    if (plan && planFromParser) {
+      this.emit('log', `Executing ${plan.capability}...`, 'system');
+      DebugLog.executePhase(taskId, 'EXECUTE');
+      let disambigResult: any;
+      try {
+        disambigResult = await this.executor.runWithPlan(plan, taskId);
+      } catch (err: any) {
+        disambigResult = { success: false, error: err.message };
+      }
+      const disambigSummary = disambigResult?.success !== false
+        ? (disambigResult?.summary || `Opened ${plan.params?.target || ''}`)
+        : `Failed: ${disambigResult?.error || 'unknown error'}`;
+      const disambigMsg: ChatMessage = {
+        id: uid('msg'),
+        role: 'assistant',
+        content: disambigSummary,
+        createdAt: Date.now(),
+        source: 'ultra',
+        meta: { mode: 'command', capability: plan.capability },
+      };
+      await this.conversations.addMessage(conversationId, disambigMsg);
+      await this.learner.learnFromExecution(userInput, [plan.capability], disambigSummary, disambigResult?.success !== false);
+      return { type: 'action_result', message: disambigSummary, taskId };
     }
 
     // === CONVERSATION / AI_INSTRUCTION MODE ===
@@ -1068,6 +1178,11 @@ You are always on. Always capable. Always direct.`;
     verification: { verified: boolean; issues: string[] }
   ): Promise<string> {
     const result = execResult?.data ?? execResult;
+
+    // Fuzzy match confirmation needed — ask the user to disambiguate
+    if (result?.requiresFuzzyConfirmation) {
+      return result.summary || `I found a possible match but need confirmation. ${result.candidates?.map((c: any) => c.appName).join(', ')}`;
+    }
 
     if (result?.success === false && (result?.error || execResult?.summary)) {
       const errMsg = result?.error || execResult?.summary;

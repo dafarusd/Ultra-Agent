@@ -29,6 +29,7 @@ import { SelfImprover } from '../genome/SelfImprover';
 import { TaskEvaluator } from '../genome/TaskEvaluator';
 import { resolveIntent, looksLikeRichIntent } from './IntentResolver';
 import { lookupPackage, findBestMatch } from './AppDirectory';
+import type { PreferenceLearner } from '../utils/PreferenceLearner';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
@@ -54,6 +55,7 @@ export class TaskExecutor {
   private docDir: string;
   private currentGenome: Genome | null = null;
   private onGenomeProgress: ((phase: string, message: string) => void) | null = null;
+  private learner: PreferenceLearner | null = null;
 
   constructor(build: BuildSystem, debug: DebugEngine, caps: CapabilityRegistry, perms: PermissionBroker, ai: ModelRouter, probe?: CapabilityProbe) {
     this.build = build;
@@ -66,6 +68,10 @@ export class TaskExecutor {
     this.testRunner = new TestRunner(ai);
     this.logger = new Logger('TaskExecutor');
     this.docDir = (isNative && FileSystem?.documentDirectory) || '';
+  }
+
+  setPreferenceLearner(learner: PreferenceLearner): void {
+    this.learner = learner;
   }
 
   setGenomeProgressCallback(cb: ((phase: string, message: string) => void) | null): void {
@@ -709,11 +715,35 @@ export class TaskExecutor {
         }
 
         let pkg: string | undefined;
+        let resolvedViaAlias = false;
+
+        // Step 0a: Use pre-supplied packageName if caller already resolved it (e.g., from disambiguation)
+        if (params.packageName && params.packageName.includes('.')) {
+          pkg = params.packageName;
+          resolvedViaAlias = true; // Treat as pre-confirmed — skip alias write
+          this.logger.info(`Pre-supplied package: "${target}" → ${pkg}`);
+          DebugLog.appLaunchMatch(taskId, targetLower, 'exact', target, pkg);
+        }
+
+        // Step 0b: Check permanently learned aliases (user-confirmed mappings — never re-query)
+        if (!pkg && this.learner) {
+          const aliasedPkg = this.learner.getAppAlias(targetLower);
+          if (aliasedPkg) {
+            pkg = aliasedPkg;
+            resolvedViaAlias = true;
+            this.logger.info(`Alias hit: "${targetLower}" → ${aliasedPkg}`);
+            DebugLog.appLaunchMatch(taskId, targetLower, 'exact', targetLower, aliasedPkg);
+          }
+        }
 
         // Step 1: Check static directory (instant, no network, no AI credits)
-        pkg = lookupPackage(targetLower);
+        if (!pkg) {
+          pkg = lookupPackage(targetLower);
+        }
 
         // Step 2: Query installed apps with fuzzy matching
+        let fuzzyMatch: { packageName: string; appName: string; score: number; matchType: string } | null = null;
+        let fuzzyAlternatives: Array<{ packageName: string; appName: string; score: number }> = [];
         if (!pkg) {
           try {
             const _qStart = Date.now();
@@ -723,9 +753,25 @@ export class TaskExecutor {
             if (installed && installed.length > 0) {
               const match = findBestMatch(targetLower, installed);
               if (match) {
+                fuzzyMatch = match;
                 pkg = match.packageName;
                 DebugLog.appLaunchMatch(taskId, targetLower, match.matchType === 'exact' ? 'exact' : 'partial', match.appName, pkg);
                 this.logger.info(`Fuzzy match: "${targetLower}" → "${match.appName}" (${match.packageName}) score=${match.score} type=${match.matchType}`);
+
+                // When confidence is low (score 35–70), also find runner-up candidates
+                // so the user can confirm the right one
+                if (match.score < 70 && match.matchType !== 'exact' && match.matchType !== 'directory') {
+                  for (const app of installed) {
+                    if (app.packageName === match.packageName) continue;
+                    const altMatch = findBestMatch(targetLower, [app], 25);
+                    if (altMatch && altMatch.score >= 35 && altMatch.score >= match.score - 20) {
+                      fuzzyAlternatives.push(altMatch);
+                    }
+                  }
+                  fuzzyAlternatives = fuzzyAlternatives
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, 3);
+                }
               } else {
                 DebugLog.appLaunchMatch(taskId, targetLower, 'none');
               }
@@ -733,6 +779,23 @@ export class TaskExecutor {
           } catch (e: any) {
             this.logger.warn('getInstalledApps failed, using AI fallback', { error: e.message });
             DebugLog.appLaunchDeviceQuery(taskId, 0, 0, e.message);
+          }
+
+          // When fuzzy match confidence is low and alternatives exist, ask user to confirm
+          if (fuzzyMatch && fuzzyMatch.score < 70 && fuzzyMatch.matchType !== 'exact' && fuzzyMatch.matchType !== 'directory') {
+            const candidates = [fuzzyMatch, ...fuzzyAlternatives];
+            if (candidates.length > 1 || fuzzyMatch.score < 55) {
+              DebugLog.executorExit(taskId, 'app_launch', false, 'fuzzy_confirm_needed');
+              return {
+                success: false,
+                requiresFuzzyConfirmation: true,
+                query: target,
+                candidates: candidates.map(c => ({ appName: c.appName, packageName: c.packageName, score: c.score })),
+                summary: candidates.length > 1
+                  ? `Found ${candidates.length} possible matches for "${target}": ${candidates.map(c => c.appName).join(', ')}. Which one did you mean?`
+                  : `Found "${fuzzyMatch.appName}" — did you mean to open that?`,
+              };
+            }
           }
         }
 
@@ -769,6 +832,17 @@ export class TaskExecutor {
           DebugLog.executorExit(taskId, 'app_launch', false, 'intent_launch_error');
           return { success: false, error: `Failed to launch ${target} (${pkg}): ${err.message}` };
         }
+
+        // Permanently learn the mapping so future launches are instant (skip if already from alias)
+        if (!resolvedViaAlias && this.learner && pkg && pkg.includes('.')) {
+          try {
+            await this.learner.learnAppAlias(targetLower, pkg);
+            this.logger.info(`Learned alias permanently: "${targetLower}" → ${pkg}`);
+          } catch (e: any) {
+            this.logger.warn(`Failed to persist alias: ${e.message}`);
+          }
+        }
+
         DebugLog.executorExit(taskId, 'app_launch', true, 'simple_launch_success');
         return launchResult;
       }

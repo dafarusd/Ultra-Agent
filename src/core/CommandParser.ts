@@ -694,6 +694,22 @@ const rules: ParseRule[] = [
     capability: 'app_launch',
     extractParams: () => ({ target: 'wifi settings' }),
   },
+
+  // ════════════════════════════════════════════════════
+  // SETTINGS NAVIGATION — "go to X settings", "open X settings"
+  // These all route to app_launch with a settings target.
+  // SettingsDirectory handles the actual intent resolution.
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:go\s+to|take\s+me\s+to|show\s+me|navigate\s+to|bring\s+up|open|launch)\s+(.+?)\s+settings?$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({ target: `${m[1].trim()} settings` }),
+  },
+  {
+    pattern: /^(?:go\s+to|take\s+me\s+to|show\s+me|navigate\s+to|bring\s+up|open|launch)\s+settings?\s+(?:for\s+|page\s+for\s+)?(.+)$/i,
+    capability: 'app_launch',
+    extractParams: (m) => ({ target: `${m[1].trim()} settings` }),
+  },
   {
     pattern: /^(?:turn\s+(?:wifi|wi-fi)\s+(?:on|off)|wifi\s+(?:on|off)|wi-fi\s+(?:on|off))$/i,
     capability: 'wifi_toggle',

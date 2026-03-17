@@ -177,17 +177,31 @@ export const SETTINGS_MAP: SettingsEntry[] = [
 
 export function resolveSettingsIntent(query: string): SettingsEntry | null {
   const q = query.toLowerCase().trim()
-    .replace(/^(open|go to|show|show me|launch|take me to)\s+/i, '')
-    .replace(/\s+(please|now)$/i, '');
+    .replace(/^(?:hey\s+)?(?:ultra|agent)\s*,?\s*/i, '')
+    .replace(/^(?:open|go\s+to|show|show\s+me|launch|take\s+me\s+to|navigate\s+to|bring\s+(?:up|me\s+to)|get\s+to)\s+/i, '')
+    .replace(/\s+(?:please|now|for\s+me)$/i, '');
+
+  if (!q) return null;
+
   let best: SettingsEntry | null = null;
-  let bestLen = 0;
+  let bestScore = 0;
+
   for (const entry of SETTINGS_MAP) {
     for (const trigger of entry.triggers) {
-      if ((q === trigger || q.includes(trigger)) && trigger.length > bestLen) {
+      let score = 0;
+
+      if (q === trigger) {
+        score = trigger.length * 3 + 100;
+      } else if (q.startsWith(trigger + ' ') || q.endsWith(' ' + trigger) || q.includes(trigger)) {
+        score = trigger.length * 2;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
         best = entry;
-        bestLen = trigger.length;
       }
     }
   }
+
   return best;
 }
