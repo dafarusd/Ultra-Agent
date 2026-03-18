@@ -32,6 +32,7 @@ import ActionMenu, { ActionMenuItem } from "@/components/ActionMenu";
 import ModelPickerSheet, { PickerModel } from "@/components/ModelPickerSheet";
 import PlusMenu, { ActionType } from "@/components/PlusMenu";
 import QuickReplies from "@/components/QuickReplies";
+import SystemInfoCard from "@/components/SystemInfoCard";
 
 // ── Color Palette (softened green accent) ──────────────
 const ACCENT = "#34d399";       // softer mint green (was #00ff88)
@@ -718,6 +719,11 @@ export default function ChatScreen() {
               </>
             );
           })()}
+
+          {/* System Info Card */}
+          {item.meta?.data?.systemInfoData && (
+            <SystemInfoCard data={item.meta.data.systemInfoData} />
+          )}
 
           {/* Message action row: copy + prompt trace */}
           <View style={styles.msgActions}>

@@ -1426,30 +1426,22 @@ export class TaskExecutor {
       }
       case 'device_info': {
         try {
-          const [battLevel, battState] = await Promise.all([
-            Battery.getBatteryLevelAsync(),
-            Battery.getBatteryStateAsync(),
-          ]);
-          const info: Record<string, any> = {
-            battery: Math.round(battLevel * 100) + '%',
-            charging: battState === Battery.BatteryState.CHARGING,
-            os: `Android ${Platform.Version}`,
-            model: DeviceInfo.getModel(),
-          };
-          try {
-            const totalMem = await DeviceInfo.getTotalMemory();
-            info.totalRAM = Math.round(totalMem / 1073741824 * 10) / 10 + 'GB';
-          } catch {}
-          try {
-            const freeDisk = await DeviceInfo.getFreeDiskStorage();
-            info.freeDisk = Math.round(freeDisk / 1073741824 * 10) / 10 + 'GB';
-          } catch {}
-          const focus = params.focus;
-          let summary = focus === 'battery' ? `Battery: ${info.battery}${info.charging ? ' (charging)' : ''}`
-            : focus === 'memory' ? `RAM: ${info.totalRAM || 'unknown'}`
-            : focus === 'storage' ? `Free storage: ${info.freeDisk || 'unknown'}`
-            : `Battery: ${info.battery} | RAM: ${info.totalRAM || '?'} | Disk: ${info.freeDisk || '?'} | ${info.os}`;
-          return { success: true, summary, data: info };
+          const { SystemInfoService } = await import('../services/SystemInfoService');
+          const sysData = await SystemInfoService.gather();
+          const focus = params.focus as string | undefined;
+          let summary: string;
+          if (focus === 'battery') {
+            summary = `Battery: ${sysData.battery.level}%${sysData.battery.state === 'Charging' ? ' (charging)' : ''}`;
+          } else if (focus === 'memory') {
+            summary = `RAM: ${sysData.memory.usedMB} MB / ${sysData.memory.totalMB} MB (${sysData.memory.usedPercent}%)`;
+          } else if (focus === 'storage') {
+            summary = `Storage: ${(sysData.storage.freeMB / 1024).toFixed(1)} GB free / ${(sysData.storage.totalMB / 1024).toFixed(1)} GB total`;
+          } else if (focus === 'network') {
+            summary = `Network: ${sysData.network.connected ? sysData.network.type : 'Disconnected'}`;
+          } else {
+            summary = SystemInfoService.toSummaryString(sysData);
+          }
+          return { success: true, summary, data: { systemInfoData: sysData } };
         } catch (err: any) {
           return { success: false, error: `Device info failed: ${err.message}` };
         }
@@ -1484,28 +1476,11 @@ export class TaskExecutor {
       case 'system_info': {
         DebugLog.executorEnter(taskId, 'system_info');
         try {
-          const focus = params.focus as string | undefined;
-          if (focus === 'temperature') {
-            return {
-              success: true,
-              summary: "CPU temperature is not accessible through standard Android APIs. Use 'device status' for battery, RAM, and storage info.",
-            };
-          }
-          const info = await gatherSystemInfo();
-          if (focus === 'battery') {
-            const batteryMatch = info.match(/Battery[^\n]*/);
-            return { success: true, summary: batteryMatch ? batteryMatch[0] : info };
-          }
-          if (focus === 'storage') {
-            const storageMatch = info.match(/Storage[^\n]*/);
-            return { success: true, summary: storageMatch ? storageMatch[0] : info };
-          }
-          if (focus === 'memory') {
-            const memoryMatch = info.match(/RAM[^\n]*/);
-            return { success: true, summary: memoryMatch ? memoryMatch[0] : info };
-          }
+          const { SystemInfoService } = await import('../services/SystemInfoService');
+          const sysData = await SystemInfoService.gather();
+          const summary = SystemInfoService.toSummaryString(sysData);
           DebugLog.executorExit(taskId, 'system_info', true, 'success');
-          return { success: true, summary: info, data: { info } };
+          return { success: true, summary, data: { systemInfoData: sysData } };
         } catch (err: any) {
           DebugLog.executorExit(taskId, 'system_info', false, 'error');
           return { success: false, error: `System info failed: ${err.message}` };

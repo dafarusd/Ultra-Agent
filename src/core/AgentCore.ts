@@ -196,6 +196,22 @@ export class AgentCore extends SimpleEmitter {
     return 'conversation';
   }
 
+  private lastSystemContext: string = '';
+
+  async refreshSystemContext(): Promise<void> {
+    try {
+      const { SystemInfoService } = await import('../services/SystemInfoService');
+      const data = await SystemInfoService.gather();
+      this.lastSystemContext = SystemInfoService.toContextString(data);
+    } catch {
+      this.lastSystemContext = '';
+    }
+  }
+
+  getLastSystemContext(): string {
+    return this.lastSystemContext;
+  }
+
   private buildDynamicPrompt(params: {
     mode: Mode;
     userInput: string;
@@ -241,6 +257,7 @@ You are always on. Always capable. Always direct.`;
       `Mode: ${params.mode}`,
       `Available capabilities: ${params.capabilities.join(', ')}`,
       `Device permissions: ${permReport}`,
+      this.lastSystemContext ? `Current device state: ${this.lastSystemContext}` : '',
       params.summary ? `Conversation memory: ${params.summary}` : '',
       behavior,
     ].filter(Boolean).join('\n');
@@ -377,6 +394,7 @@ You are always on. Always capable. Always direct.`;
 
     // === STEP 2: ROUTE ===
     DebugLog.executePhase(taskId, 'ROUTE');
+    await this.refreshSystemContext();
     let mode = this.detectMode(userInput);
     DebugLog.modeDetected(taskId, mode, userInput);
     step('ROUTE', `Detected mode: ${mode}`, true);
@@ -794,7 +812,6 @@ You are always on. Always capable. Always direct.`;
         ledgerEvents: traceLedger,
       };
 
-      // Build meta — include fuzzy confirmation data so the follow-up detector can use it
       const resultMeta: Record<string, any> = {
         mode: 'command',
         capability: plan.capability,
@@ -807,7 +824,9 @@ You are always on. Always capable. Always direct.`;
         resultMeta.candidates = execData.candidates || [];
         resultMeta.fuzzyQuery = execData.query || plan.params?.target || '';
       }
-
+      if ((plan.capability === 'system_info' || plan.capability === 'device_info') && execResult?.data?.systemInfoData) {
+        resultMeta.data = { systemInfoData: execResult.data.systemInfoData };
+      }
       const resultMsg: ChatMessage = {
         id: uid('msg'),
         role: 'assistant',
@@ -1209,9 +1228,12 @@ You are always on. Always capable. Always direct.`;
   ): Promise<string> {
     const result = execResult?.data ?? execResult;
 
-    // Fuzzy match confirmation needed — ask the user to disambiguate
     if (result?.requiresFuzzyConfirmation) {
       return result.summary || `I found a possible match but need confirmation. ${result.candidates?.map((c: any) => c.appName).join(', ')}`;
+    }
+
+    if ((capability === 'system_info' || capability === 'device_info') && execResult?.summary) {
+      return execResult.summary;
     }
 
     if (result?.success === false && (result?.error || execResult?.summary)) {
