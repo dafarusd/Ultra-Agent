@@ -1009,6 +1009,16 @@ You are always on. Always capable. Always direct.`;
                   `User resolved: ${userInput} → tel:${number}`
                 );
               } catch {}
+              // FIX 3: Permanently store the contact preference so
+              // future calls/texts to this name skip disambiguation.
+              try {
+                const nameMatch = lastAssistant.content.match(/contacts?\s+named\s+"([^"]+)"/i);
+                const contactName = nameMatch ? nameMatch[1] : userInput.replace(/[^a-zA-Z\s]/g, '').trim();
+                if (contactName) {
+                  await this.memory.rememberContact(contactName, number, 'resolved');
+                  DebugLog.systemEvent('AgentCore', `Contact preference stored: "${contactName}" → ${number.slice(0, 6)}****`);
+                }
+              } catch {}
               // Execute the resolved plan immediately — do not fall through to conversation mode
               try {
                 const disambigResult = await this.executor.runWithPlan(plan, taskId);
@@ -1344,6 +1354,9 @@ You are always on. Always capable. Always direct.`;
   getDebugStats() { return this.debugEngine.getStats(); }
   getLearnedPatterns() { return this.learner.getTopPatterns(); }
   killSwarm(): void { this.orchestrator.killAll(); }
+  async recallContact(name: string): Promise<{ name: string; number: string; label: string } | null> {
+    return this.memory.recallContact(name);
+  }
 }
 
 let _agentCoreInstance: AgentCore | null = null;

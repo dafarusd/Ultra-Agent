@@ -16,6 +16,8 @@ export class MemoryManager {
   private workingMemory: Map<string, string> = new Map();
   private sessionCache: MemoryRecord[] = [];
   private longtermIndex: string[] = [];
+  private longtermCache: Map<string, MemoryRecord> | null = null;
+  private longtermCacheDirty = true;
 
   constructor(private vault: SecureVault) {}
 
@@ -75,6 +77,7 @@ export class MemoryManager {
     await this.vault.set(id, JSON.stringify(record));
     this.longtermIndex.push(id);
     await this.vault.set('lt_memory_index', JSON.stringify(this.longtermIndex));
+    this.longtermCacheDirty = true;
     DebugLog.systemEvent('MemoryManager', `LONGTERM_SET key=${key} category=${category}`);
   }
 
@@ -92,17 +95,24 @@ export class MemoryManager {
       if (score > 0) results.push({ record, score: score + 10 });
     }
 
-    const recentIds = this.longtermIndex.slice(-200);
-    for (const id of recentIds) {
-      try {
-        const raw = await this.vault.get(id);
-        if (!raw) continue;
-        const record: MemoryRecord = JSON.parse(raw);
-        const score = this.keywordScore(queryKeywords, record.keywords);
-        if (score > 0) results.push({ record, score });
-      } catch (err: any) {
-        DebugLog.error('MemoryManager', `Failed to retrieve record ${id}: ${err.message}`);
+    if (this.longtermCacheDirty || !this.longtermCache) {
+      this.longtermCache = new Map();
+      const recentIds = this.longtermIndex.slice(-200);
+      for (const id of recentIds) {
+        try {
+          const raw = await this.vault.get(id);
+          if (!raw) continue;
+          const record: MemoryRecord = JSON.parse(raw);
+          this.longtermCache.set(id, record);
+        } catch (err: any) {
+          DebugLog.error('MemoryManager', `Failed to retrieve record ${id}: ${err.message}`);
+        }
       }
+      this.longtermCacheDirty = false;
+    }
+    for (const record of this.longtermCache.values()) {
+      const score = this.keywordScore(queryKeywords, record.keywords);
+      if (score > 0) results.push({ record, score });
     }
 
     const sorted = results
@@ -125,13 +135,21 @@ export class MemoryManager {
   }
 
   async rememberContact(name: string, number: string, label: string): Promise<void> {
-    await this.storeLongterm(`contact:${name.toLowerCase()}`, 'contact_resolution', JSON.stringify({ name, number, label }));
+    const key = `contact_pref:${name.toLowerCase().trim()}`;
+    const value = JSON.stringify({ name, number, label, storedAt: Date.now() });
+    await this.vault.set(key, value);
+    DebugLog.systemEvent('MemoryManager', `Stored contact pref: "${name}" → ${number.slice(0, 6)}****`);
   }
 
   async recallContact(name: string): Promise<{ name: string; number: string; label: string } | null> {
-    const records = await this.retrieveRelevant(`contact:${name.toLowerCase()}`, 1);
-    if (records.length === 0) return null;
-    try { return JSON.parse(records[0].outcome); } catch { return null; }
+    try {
+      const key = `contact_pref:${name.toLowerCase().trim()}`;
+      const raw = await this.vault.get(key);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
 
   async rememberApp(label: string, packageName: string): Promise<void> {

@@ -1,167 +1,103 @@
-import { Platform } from 'react-native';
-import * as Contacts from 'expo-contacts';
-import * as MediaLibrary from 'expo-media-library';
-import * as Camera from 'expo-camera';
-import * as Location from 'expo-location';
-import { Logger } from '../utils/Logger';
+import { PermissionsAndroid, Platform } from 'react-native';
+import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
-interface PermissionStatus {
-  id: string;
-  granted: boolean;
-  canAsk: boolean;
-}
+const PERMISSION_MAP: Record<string, string> = {
+  'READ_CONTACTS':          PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
+  'WRITE_CONTACTS':         PermissionsAndroid.PERMISSIONS.WRITE_CONTACTS,
+  'SEND_SMS':               PermissionsAndroid.PERMISSIONS.SEND_SMS,
+  'RECEIVE_SMS':            PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
+  'READ_SMS':               PermissionsAndroid.PERMISSIONS.READ_SMS,
+  'CAMERA':                 PermissionsAndroid.PERMISSIONS.CAMERA,
+  'RECORD_AUDIO':           PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+  'ACCESS_FINE_LOCATION':   PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+  'ACCESS_COARSE_LOCATION': PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+  'READ_EXTERNAL_STORAGE':  PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+  'WRITE_EXTERNAL_STORAGE': PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+  'READ_CALL_LOG':          PermissionsAndroid.PERMISSIONS.READ_CALL_LOG,
+  'CALL_PHONE':             PermissionsAndroid.PERMISSIONS.CALL_PHONE,
+  'BLUETOOTH':              'android.permission.BLUETOOTH',
+  'BLUETOOTH_CONNECT':      'android.permission.BLUETOOTH_CONNECT',
+  'BLUETOOTH_SCAN':         'android.permission.BLUETOOTH_SCAN',
+  'MODIFY_AUDIO_SETTINGS':  'android.permission.MODIFY_AUDIO_SETTINGS',
+  'BIND_ACCESSIBILITY_SERVICE': 'android.permission.BIND_ACCESSIBILITY_SERVICE',
+  'CHANGE_WIFI_STATE':      'android.permission.CHANGE_WIFI_STATE',
+  'FLASHLIGHT':             'android.permission.FLASHLIGHT',
+  'VIBRATE':                'android.permission.VIBRATE',
+  'INTERNET':               'android.permission.INTERNET',
+  'FOREGROUND_SERVICE':     'android.permission.FOREGROUND_SERVICE',
+  'QUERY_ALL_PACKAGES':     'android.permission.QUERY_ALL_PACKAGES',
+  'WRITE_CALENDAR':         'android.permission.WRITE_CALENDAR',
+  'READ_CALENDAR':          'android.permission.READ_CALENDAR',
+  'com.android.alarm.permission.SET_ALARM': 'com.android.alarm.permission.SET_ALARM',
+  'SET_ALARM':              'com.android.alarm.permission.SET_ALARM',
+};
 
 export class PermissionBroker {
-  private logger: Logger;
-  private statuses: Map<string, PermissionStatus>;
-
-  constructor() {
-    this.logger = new Logger('PermissionBroker');
-    this.statuses = new Map();
-  }
+  private granted = new Set<string>();
+  private denied = new Set<string>();
 
   async initialize(): Promise<void> {
-    await this.refreshAll();
-    this.logger.info('PermissionBroker initialized');
-  }
-
-  async refreshAll(): Promise<void> {
-    await Promise.allSettled([
-      this.checkContacts(),
-      this.checkMediaLibrary(),
-      this.checkCamera(),
-      this.checkLocation(),
-    ]);
-  }
-
-  private async checkContacts(): Promise<void> {
-    try {
-      const { status } = await Contacts.getPermissionsAsync();
-      this.statuses.set('READ_CONTACTS', { id: 'READ_CONTACTS', granted: status === 'granted', canAsk: status !== 'denied' });
-    } catch {
-      this.statuses.set('READ_CONTACTS', { id: 'READ_CONTACTS', granted: false, canAsk: false });
+    if (Platform.OS !== 'android') return;
+    for (const [key, androidPerm] of Object.entries(PERMISSION_MAP)) {
+      try {
+        const result = await PermissionsAndroid.check(androidPerm as any);
+        if (result) this.granted.add(key);
+        else this.denied.add(key);
+      } catch {}
     }
-  }
-
-  private async checkMediaLibrary(): Promise<void> {
-    try {
-      const { status } = await MediaLibrary.getPermissionsAsync();
-      const granted = status === 'granted';
-      const canAsk = status !== 'denied';
-      this.statuses.set('READ_EXTERNAL_STORAGE', { id: 'READ_EXTERNAL_STORAGE', granted, canAsk });
-      this.statuses.set('WRITE_EXTERNAL_STORAGE', { id: 'WRITE_EXTERNAL_STORAGE', granted, canAsk });
-    } catch {
-      this.statuses.set('READ_EXTERNAL_STORAGE', { id: 'READ_EXTERNAL_STORAGE', granted: false, canAsk: false });
-      this.statuses.set('WRITE_EXTERNAL_STORAGE', { id: 'WRITE_EXTERNAL_STORAGE', granted: false, canAsk: false });
-    }
-  }
-
-  private async checkCamera(): Promise<void> {
-    try {
-      const fn = (Camera as any).getCameraPermissionsAsync
-        ?? (Camera as any).Camera?.getCameraPermissionsAsync;
-      if (fn) {
-        const { status } = await fn();
-        this.statuses.set('CAMERA', { id: 'CAMERA', granted: status === 'granted', canAsk: status !== 'denied' });
-      } else {
-        this.statuses.set('CAMERA', { id: 'CAMERA', granted: false, canAsk: true });
-      }
-    } catch {
-      this.statuses.set('CAMERA', { id: 'CAMERA', granted: false, canAsk: true });
-    }
-  }
-
-  private async checkLocation(): Promise<void> {
-    try {
-      if (Platform.OS === 'web') {
-        this.statuses.set('ACCESS_FINE_LOCATION', { id: 'ACCESS_FINE_LOCATION', granted: true, canAsk: true });
-        return;
-      }
-      const { status } = await Location.getForegroundPermissionsAsync();
-      this.statuses.set('ACCESS_FINE_LOCATION', { id: 'ACCESS_FINE_LOCATION', granted: status === 'granted', canAsk: status !== 'denied' });
-    } catch {
-      this.statuses.set('ACCESS_FINE_LOCATION', { id: 'ACCESS_FINE_LOCATION', granted: false, canAsk: false });
-    }
-  }
-
-  isGranted(permission: string): boolean {
-    return this.statuses.get(permission)?.granted ?? false;
-  }
-
-  allGranted(permissions: string[]): boolean {
-    return permissions.every((p) => this.isGranted(p));
+    DebugLog.systemEvent('PermissionBroker', `Init: ${this.granted.size} granted, ${this.denied.size} denied`);
   }
 
   getMissing(permissions: string[]): string[] {
-    return permissions.filter((p) => !this.isGranted(p));
-  }
-
-  async request(permission: string): Promise<boolean> {
-    try {
-      switch (permission) {
-        case 'READ_CONTACTS': {
-          const { status } = await Contacts.requestPermissionsAsync();
-          const g = status === 'granted';
-          this.statuses.set(permission, { id: permission, granted: g, canAsk: true });
-          return g;
-        }
-        case 'READ_EXTERNAL_STORAGE':
-        case 'WRITE_EXTERNAL_STORAGE': {
-          const { status } = await MediaLibrary.requestPermissionsAsync();
-          const g = status === 'granted';
-          this.statuses.set('READ_EXTERNAL_STORAGE', { id: 'READ_EXTERNAL_STORAGE', granted: g, canAsk: true });
-          this.statuses.set('WRITE_EXTERNAL_STORAGE', { id: 'WRITE_EXTERNAL_STORAGE', granted: g, canAsk: true });
-          return g;
-        }
-        case 'CAMERA': {
-          try {
-            const fn = (Camera as any).requestCameraPermissionsAsync
-              ?? (Camera as any).Camera?.requestCameraPermissionsAsync;
-            if (fn) {
-              const { status } = await fn();
-              const g = status === 'granted';
-              this.statuses.set(permission, { id: permission, granted: g, canAsk: true });
-              return g;
-            }
-            return false;
-          } catch (e: any) {
-            this.logger.error(`Camera permission request failed: ${e.message}`);
-            return false;
-          }
-        }
-        case 'ACCESS_FINE_LOCATION': {
-          if (Platform.OS === 'web') {
-            this.statuses.set(permission, { id: permission, granted: true, canAsk: true });
-            return true;
-          }
-          const { status } = await Location.requestForegroundPermissionsAsync();
-          const g = status === 'granted';
-          this.statuses.set(permission, { id: permission, granted: g, canAsk: true });
-          return g;
-        }
-        default:
-          return true;
-      }
-    } catch (error: any) {
-      this.logger.error(`Permission request failed for ${permission}: ${error.message}`);
-      return false;
-    }
+    if (Platform.OS !== 'android') return [];
+    return permissions.filter(p => {
+      if (!PERMISSION_MAP[p]) return false;
+      return !this.granted.has(p);
+    });
   }
 
   async requestAll(permissions: string[]): Promise<string[]> {
+    if (Platform.OS !== 'android') return [];
     const failed: string[] = [];
-    for (const p of permissions) {
-      if (!this.isGranted(p)) {
-        const granted = await this.request(p);
-        if (!granted) failed.push(p);
+    for (const key of permissions) {
+      const androidPerm = PERMISSION_MAP[key];
+      if (!androidPerm) continue;
+      try {
+        const result = await PermissionsAndroid.request(androidPerm as any, {
+          title: 'Agent Ultra needs permission',
+          message: `Agent Ultra needs ${key.toLowerCase().replace(/_/g, ' ')} permission to complete this action.`,
+          buttonPositive: 'Allow',
+          buttonNegative: 'Deny',
+        });
+        if (result === PermissionsAndroid.RESULTS.GRANTED) {
+          this.granted.add(key);
+          this.denied.delete(key);
+          DebugLog.permissionStatus(key, 'granted');
+        } else {
+          this.denied.add(key);
+          this.granted.delete(key);
+          failed.push(key);
+          DebugLog.permissionStatus(key, result);
+        }
+      } catch (e: any) {
+        failed.push(key);
+        DebugLog.error('PermissionBroker', `Request failed for ${key}: ${e.message}`);
       }
     }
     return failed;
   }
 
+  isGranted(permission: string): boolean {
+    return this.granted.has(permission);
+  }
+
+  allGranted(permissions: string[]): boolean {
+    return permissions.every(p => this.isGranted(p));
+  }
+
   getStatusReport(): string {
-    return Array.from(this.statuses.values())
-      .map((s) => `${s.id}: ${s.granted ? 'GRANTED' : 'DENIED'}${!s.canAsk ? ' (blocked)' : ''}`)
-      .join('\n');
+    const g = [...this.granted].slice(0, 15).join(', ') || 'none';
+    const d = [...this.denied].slice(0, 10).join(', ') || 'none';
+    return `Granted: ${g}. Denied: ${d}`;
   }
 }

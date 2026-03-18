@@ -396,6 +396,21 @@ export class TaskExecutor {
         const message = params.message || '';
         if (!to) { DebugLog.executorExit(taskId, 'sms_send', false, 'no_recipient'); return { error: 'No recipient specified' }; }
         const avail = await SMS.isAvailableAsync();
+        // FIX 3: Check if user has previously resolved this contact name.
+        // If so, use the stored number directly — skip disambiguation.
+        if (to && !/^\+?[\d\s\-\(\)]{7,}$/.test(to)) {
+          try {
+            const core = (await import('./AgentCore')).getAgentCoreInstance();
+            if (core) {
+              const recalled = await core.recallContact(to);
+              if (recalled?.number) {
+                DebugLog.smsResolve(taskId, to, recalled.number, 0);
+                this.logger.info(`Contact recalled from memory: "${to}" → ${recalled.number}`);
+                to = recalled.number;
+              }
+            }
+          } catch {}
+        }
         try {
           const { status: smsContactStatus } = await Contacts.requestPermissionsAsync();
           if (smsContactStatus !== 'granted') {
@@ -514,49 +529,64 @@ export class TaskExecutor {
               (params.action === 'android.intent.action.DIAL' ||
                params.action === 'android.intent.action.CALL')) {
             const contactName = params.extras._contactName as string;
+            // FIX 3: Check stored contact preference first
             try {
-              const { status } = await Contacts.requestPermissionsAsync();
-              if (status === 'granted') {
-                const { data: contacts } = await Contacts.getContactsAsync({
-                  fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
-                  name: contactName,
-                });
-                const withNumbers = contacts.filter(c => c.phoneNumbers && c.phoneNumbers.length > 0);
-                if (withNumbers.length > 1) {
-                  const disambig = withNumbers.map(m => ({
-                    name: m.name,
-                    number: m.phoneNumbers![0].number ?? '',
-                    label: m.phoneNumbers![0].label || 'unknown',
-                  }));
-                  return {
-                    success: false,
-                    requiresDisambiguation: true,
-                    matches: disambig,
-                    summary: `Found ${disambig.length} contacts named "${contactName}": ${disambig.map(m => `${m.name} (${m.label}: ${m.number})`).join(', ')}. Which one?`,
-                  };
+              const core = (await import('./AgentCore')).getAgentCoreInstance();
+              if (core) {
+                const recalled = await core.recallContact(contactName);
+                if (recalled?.number) {
+                  params.data = `tel:${recalled.number}`;
+                  params.action = 'android.intent.action.CALL';
+                  delete params.extras._contactName;
+                  this.logger.info(`Contact recalled: "${contactName}" → ${recalled.number}`);
                 }
-                if (withNumbers.length > 0) {
-                  const match = withNumbers[0];
-                  const realNumber = match.phoneNumbers?.find(
-                    (p: any) => p.number && p.number.replace(/\D/g, '').length >= 7
-                  );
-                  if (realNumber?.number) {
-                    params.data = `tel:${realNumber.number}`;
-                    params.action = 'android.intent.action.CALL';
-                    this.logger.info(`Resolved contact "${contactName}" → ${realNumber.number} (ACTION_CALL)`);
+              }
+            } catch {}
+            if (!params.data) { // Only do full lookup if recall missed
+              try {
+                const { status } = await Contacts.requestPermissionsAsync();
+                if (status === 'granted') {
+                  const { data: contacts } = await Contacts.getContactsAsync({
+                    fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
+                    name: contactName,
+                  });
+                  const withNumbers = contacts.filter(c => c.phoneNumbers && c.phoneNumbers.length > 0);
+                  if (withNumbers.length > 1) {
+                    const disambig = withNumbers.map(m => ({
+                      name: m.name,
+                      number: m.phoneNumbers![0].number ?? '',
+                      label: m.phoneNumbers![0].label || 'unknown',
+                    }));
+                    return {
+                      success: false,
+                      requiresDisambiguation: true,
+                      matches: disambig,
+                      summary: `Found ${disambig.length} contacts named "${contactName}": ${disambig.map(m => `${m.name} (${m.label}: ${m.number})`).join(', ')}. Which one?`,
+                    };
+                  }
+                  if (withNumbers.length > 0) {
+                    const match = withNumbers[0];
+                    const realNumber = match.phoneNumbers?.find(
+                      (p: any) => p.number && p.number.replace(/\D/g, '').length >= 7
+                    );
+                    if (realNumber?.number) {
+                      params.data = `tel:${realNumber.number}`;
+                      params.action = 'android.intent.action.CALL';
+                      this.logger.info(`Resolved contact "${contactName}" → ${realNumber.number} (ACTION_CALL)`);
+                    } else {
+                      return { success: false, error: `Found contact "${contactName}" but no valid phone number` };
+                    }
                   } else {
-                    return { success: false, error: `Found contact "${contactName}" but no valid phone number` };
+                    return { success: false, error: `Contact "${contactName}" not found` };
                   }
                 } else {
-                  return { success: false, error: `Contact "${contactName}" not found` };
+                  return { success: false, error: 'Contacts permission denied — cannot resolve contact name' };
                 }
-              } else {
-                return { success: false, error: 'Contacts permission denied — cannot resolve contact name' };
+              } catch (e: any) {
+                return { success: false, error: `Contact lookup failed: ${e.message}` };
               }
-            } catch (e: any) {
-              return { success: false, error: `Contact lookup failed: ${e.message}` };
+              delete params.extras._contactName;
             }
-            delete params.extras._contactName;
           }
 
           // Resolve package name if not provided
@@ -602,6 +632,40 @@ export class TaskExecutor {
           } catch (err: any) {
             DebugLog.executorBranch(taskId, 'app_launch', 'rich_intent_failed', { error: err.message });
             this.logger.warn(`Rich intent failed: ${err.message}, falling back to openApplication`);
+
+            // FIX 2: If ACTION_CALL was blocked by missing CALL_PHONE
+            // permission, retry with ACTION_DIAL — opens dialer with
+            // number pre-filled, no permission required.
+            if (
+              params.action === 'android.intent.action.CALL' &&
+              (err.message?.includes('SecurityException') ||
+               err.message?.includes('Permission Denial') ||
+               err.message?.includes('revoked') ||
+               err.message?.includes('CALL_PHONE'))
+            ) {
+              try {
+                const dialParams: any = {};
+                if (params.data) dialParams.data = params.data;
+                const dialResult = await IntentLauncher.startActivityAsync(
+                  'android.intent.action.DIAL',
+                  dialParams
+                );
+                DebugLog.executorExit(taskId, 'app_launch', true, 'dial_fallback');
+                this.logger.info('CALL_PHONE denied — opened dialer via ACTION_DIAL');
+                return {
+                  success: true,
+                  launched: target,
+                  action: 'android.intent.action.DIAL',
+                  data: params.data,
+                  packageName: pkg,
+                  resultCode: dialResult.resultCode,
+                  note: 'CALL_PHONE permission denied — dialer opened, tap Call to complete',
+                };
+              } catch (dialErr: any) {
+                this.logger.warn(`DIAL fallback failed: ${dialErr.message}`);
+                // Fall through to existing openApplication fallback
+              }
+            }
 
             // Fallback: try simple app launch if we have a package
             if (pkg) {
@@ -738,9 +802,31 @@ export class TaskExecutor {
           }
         }
 
-        // Step 1: Check static directory (instant, no network, no AI credits)
+        // Step 1: Check static directory, then verify the package
+        // is actually installed before trusting it.
+        // On Samsung/OEM devices, Google packages in the directory
+        // often don't exist — fall through to fuzzy device query.
         if (!pkg) {
-          pkg = lookupPackage(targetLower);
+          const staticPkg = lookupPackage(targetLower);
+          if (staticPkg) {
+            try {
+              const AgentNativeModule = (await import('../native/AgentNative')).default;
+              const installed = await AgentNativeModule.getInstalledApps();
+              const isInstalled = installed?.some((a: any) => a.packageName === staticPkg);
+              if (isInstalled) {
+                pkg = staticPkg;
+                DebugLog.appLaunchMatch(taskId, targetLower, 'exact', targetLower, staticPkg);
+                this.logger.info(`Static dir verified installed: "${targetLower}" → ${staticPkg}`);
+              } else {
+                this.logger.info(`Static dir match not installed: ${staticPkg} — using device query`);
+                // pkg stays null, falls through to Step 2 fuzzy device query
+              }
+            } catch {
+              // If device query fails, trust the static entry
+              pkg = staticPkg;
+              DebugLog.appLaunchMatch(taskId, targetLower, 'exact', targetLower, staticPkg);
+            }
+          }
         }
 
         // Step 2: Query installed apps with fuzzy matching
