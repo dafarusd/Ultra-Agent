@@ -386,7 +386,7 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void getInstalledApps(Promise promise) {
         try {
-            PackageManager pm = ctx.getPackageManager();
+            android.content.pm.PackageManager pm = ctx.getPackageManager();
             android.content.Intent launcherIntent = new android.content.Intent(android.content.Intent.ACTION_MAIN);
             launcherIntent.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
             java.util.List<android.content.pm.ResolveInfo> activities = pm.queryIntentActivities(launcherIntent, 0);
