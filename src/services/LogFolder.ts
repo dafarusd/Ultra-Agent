@@ -12,6 +12,7 @@ export class LogFolder {
   private static FS: any = null;
   private static LOGS_DIR_CACHE: string | null = null;
   private static initialized = false;
+  private static initFailed = false;
 
   private static getFS() {
     if (this.FS) return this.FS;
@@ -33,7 +34,7 @@ export class LogFolder {
   static async initialize() {
     const fs = this.getFS();
     const dir = this.getLogsDir();
-    if (!fs || !dir || this.initialized) return;
+    if (!fs || !dir || this.initialized || this.initFailed) return;
     try {
       const info = await fs.getInfoAsync(dir);
       if (!info.exists) {
@@ -49,6 +50,7 @@ export class LogFolder {
       } catch {}
       this.initialized = true;
     } catch (err) {
+      this.initFailed = true;
       console.error('[LogFolder] Init error:', err);
     }
   }
@@ -57,6 +59,7 @@ export class LogFolder {
     const fs = this.getFS();
     const dir = this.getLogsDir();
     if (!fs || !dir) return false;
+    if (this.initFailed) return false;
     await this.initialize();
     try {
       const filePath = `${dir}/${filename}`;
@@ -64,6 +67,28 @@ export class LogFolder {
       return true;
     } catch (err) {
       console.error('[LogFolder] Write error:', err);
+      return false;
+    }
+  }
+
+  static async appendLog(filename: string, content: string): Promise<boolean> {
+    const fs = this.getFS();
+    const dir = this.getLogsDir();
+    if (!fs || !dir) return false;
+    if (this.initFailed) return false;
+    await this.initialize();
+    try {
+      const filePath = `${dir}/${filename}`;
+      const info = await fs.getInfoAsync(filePath);
+      if (info.exists) {
+        const existing = await fs.readAsStringAsync(filePath);
+        await fs.writeAsStringAsync(filePath, existing + content);
+      } else {
+        await fs.writeAsStringAsync(filePath, content);
+      }
+      return true;
+    } catch (err) {
+      console.error('[LogFolder] Append error:', err);
       return false;
     }
   }
@@ -76,29 +101,21 @@ export class LogFolder {
         console.warn('[LogFolder] No FileSystem or directory path');
         return [];
       }
-
-      try {
-        await this.initialize();
-      } catch (initErr) {
+      try { await this.initialize(); } catch (initErr) {
         console.error('[LogFolder] Initialize error:', initErr);
         return [];
       }
-
       try {
         const info = await fs.getInfoAsync(dir);
-        if (!info || !info.exists) {
-          return [];
-        }
+        if (!info || !info.exists) return [];
       } catch (infoErr) {
         console.error('[LogFolder] getInfoAsync error:', infoErr);
         return [];
       }
-
       try {
         const files = await fs.readDirectoryAsync(dir);
         if (!Array.isArray(files)) return [];
         const logFiles: LogFile[] = [];
-
         for (const name of files) {
           try {
             const filePath = `${dir}/${name}`;
@@ -108,14 +125,13 @@ export class LogFolder {
                 name,
                 path: filePath,
                 size: (fileInfo.size as number) || 0,
-                createdAt: fileInfo.modificationTime ? (fileInfo.modificationTime as number) * 1000 : 0,
+                createdAt: fileInfo.modificationTime
+                  ? (fileInfo.modificationTime as number) * 1000
+                  : 0,
               });
             }
-          } catch (fileErr) {
-            // Skip this file
-          }
+          } catch {}
         }
-
         return logFiles.sort((a, b) => b.createdAt - a.createdAt);
       } catch (readErr) {
         console.error('[LogFolder] readDirectory error:', readErr);

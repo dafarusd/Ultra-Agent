@@ -295,7 +295,7 @@ export default function SettingsScreen() {
     setApis(updated);
     const cleanDefaults = { ...defaults };
     for (const role of Object.keys(cleanDefaults) as DefaultRole[]) {
-      if (cleanDefaults[role] === id) cleanDefaults[role] = "";
+      cleanDefaults[role] = "";
     }
     setDefaults(cleanDefaults);
 

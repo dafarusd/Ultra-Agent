@@ -73,6 +73,8 @@ export class CapabilityRegistry {
       { id: 'event_trigger_set', name: 'Set Event Trigger', description: 'Set up autonomous event-based triggers', riskLevel: 'moderate', available: true, permissionsRequired: [] },
       { id: 'event_trigger_list', name: 'List Triggers', description: 'List active autonomous triggers', riskLevel: 'safe', available: true, permissionsRequired: [] },
       { id: 'memory_recall', name: 'Memory Recall', description: 'Recall stored memory about a topic', riskLevel: 'safe', available: true, permissionsRequired: [] },
+      { id: 'event_trigger_remove', name: 'Remove Trigger', description: 'Remove an active event trigger by ID', riskLevel: 'moderate', available: true, permissionsRequired: [] },
+      { id: 'multi_step', name: 'Multi-Step Task', description: 'Execute a sequence of capability steps', riskLevel: 'moderate', available: true, permissionsRequired: [] },
     ];
     for (const c of caps) this.capabilities.set(c.id, c);
     this.logger.info(`Registered ${this.capabilities.size} capabilities`);

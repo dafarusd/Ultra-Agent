@@ -83,7 +83,7 @@ export class ConversationManager {
         }
         DebugLog.conversationSaved(conv.id, conv.messages.length);
       } catch (err: any) {
-        DebugLog.conversationError('save', conv.id, err.message);
+        DebugLog.conversationError(conv.id, `[save] ${err.message}`);
         throw err;
       }
       return;
@@ -121,7 +121,7 @@ export class ConversationManager {
       if (conv) DebugLog.conversationLoaded(id, conv.messages.length);
       return conv;
     } catch (err: any) {
-      DebugLog.conversationError('load', id, err.message);
+      DebugLog.conversationError(id, `[load] ${err.message}`);
       return null;
     }
   }

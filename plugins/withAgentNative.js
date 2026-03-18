@@ -405,6 +405,24 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
+    public void sendMediaKey(int keyCode, Promise promise) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager)
+                ctx.getSystemService(android.content.Context.AUDIO_SERVICE);
+            long now = android.os.SystemClock.uptimeMillis();
+            android.view.KeyEvent down = new android.view.KeyEvent(
+                now, now, android.view.KeyEvent.ACTION_DOWN, keyCode, 0);
+            android.view.KeyEvent up = new android.view.KeyEvent(
+                now, now, android.view.KeyEvent.ACTION_UP, keyCode, 0);
+            am.dispatchMediaKeyEvent(down);
+            am.dispatchMediaKeyEvent(up);
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("MEDIA_KEY_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
     public void setFlashlight(boolean on, Promise promise) {
         try {
             android.hardware.camera2.CameraManager cm =

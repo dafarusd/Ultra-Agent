@@ -81,7 +81,7 @@ const registry: Record<string, Verifier> = {
   react_navigate: (_plan, result) => {
     const r = result?.data ?? result;
     if (r?.goalAchieved === true) return { verified: true, issues: [] };
-    if (r?.steps > 0) return { verified: true, issues: ['Navigation ran but goal achievement uncertain'] };
+    if (r?.steps?.length > 0) return { verified: true, issues: ['Navigation ran but goal achievement uncertain'] };
     return { verified: false, issues: ['ReAct navigation did not achieve goal'] };
   },
 

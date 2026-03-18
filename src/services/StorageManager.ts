@@ -76,8 +76,13 @@ export class StorageManager {
       const files = await FileSystem.readDirectoryAsync(dirPath);
       let total = 0;
       for (const file of files) {
-        const fi = await FileSystem.getInfoAsync(dirPath + file);
-        if (fi.exists && fi.size) total += fi.size;
+        const fullPath = dirPath.endsWith('/') ? dirPath + file : dirPath + '/' + file;
+        const fi = await FileSystem.getInfoAsync(fullPath);
+        if (fi.exists && fi.isDirectory) {
+          total += await this.getDirSize(fullPath + '/');
+        } else if (fi.exists && fi.size) {
+          total += fi.size;
+        }
       }
       return total;
     } catch {

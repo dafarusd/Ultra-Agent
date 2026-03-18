@@ -168,14 +168,10 @@ export class TaskExecutor {
     const router = this.ai;
     return {
       chat: async (args: { model: string; messages: Array<{ role: string; content: string }>; max_tokens: number }): Promise<string> => {
-        const lastMsg = args.messages[args.messages.length - 1];
-        const systemMsg = args.messages.find(m => m.role === 'system');
-        const result = await router.complete(lastMsg?.content || '', {
+        const result = await router.completeWithConversation(args.messages, {
           model: args.model,
-          systemPrompt: systemMsg?.content,
           maxTokens: args.max_tokens,
           agentId: 'genome',
-          timeout: timeoutMs,
         });
         return result.content;
       },
@@ -411,7 +407,7 @@ export class TaskExecutor {
           if (matches.length > 1) {
             const disambig = matches.filter(m => m.phoneNumbers && m.phoneNumbers.length > 0).map(m => ({
               name: m.name,
-              number: m.phoneNumbers![0].number,
+              number: m.phoneNumbers![0].number ?? '',
               label: m.phoneNumbers![0].label || 'unknown',
             }));
             if (disambig.length > 1) {
@@ -529,7 +525,7 @@ export class TaskExecutor {
                 if (withNumbers.length > 1) {
                   const disambig = withNumbers.map(m => ({
                     name: m.name,
-                    number: m.phoneNumbers![0].number,
+                    number: m.phoneNumbers![0].number ?? '',
                     label: m.phoneNumbers![0].label || 'unknown',
                   }));
                   return {
@@ -610,7 +606,7 @@ export class TaskExecutor {
             // Fallback: try simple app launch if we have a package
             if (pkg) {
               try {
-                IntentLauncher.openApplication(pkg);
+                await IntentLauncher.openApplication(pkg);
                 return { success: true, launched: target, packageName: pkg, fallback: true };
               } catch (err2: any) {
                 // Browser fallback — if the target looks like it could be a website
@@ -703,8 +699,7 @@ export class TaskExecutor {
         if (['messages', 'messaging', 'text messages', 'sms app', 'sms'].includes(targetLower)) {
           try {
             await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
-              packageName: 'com.samsung.android.messaging',
-              className: 'com.samsung.android.messaging.ui.ConversationListActivity',
+              category: 'android.intent.category.APP_MESSAGING',
             });
             DebugLog.executorExit(taskId, 'app_launch', true, 'messages_intent');
             return { success: true, launched: 'Messages' };
@@ -833,7 +828,7 @@ export class TaskExecutor {
         const launchResult = { success: true, launched: target, packageName: pkg };
         DebugLog.appLaunchFire(taskId, pkg, target);
         try {
-          IntentLauncher.openApplication(pkg);
+          await IntentLauncher.openApplication(pkg);
         } catch (err: any) {
           DebugLog.appLaunchFail(taskId, target, pkg, err.message, 'intent_launch');
           DebugLog.executorExit(taskId, 'app_launch', false, 'intent_launch_error');
@@ -1265,38 +1260,45 @@ export class TaskExecutor {
         return { success: true, summary: `Battery: ${pct}% (${stateStr})`, data: { level: pct, state: stateStr } };
       }
       case 'clipboard_write': {
-        const { Clipboard } = await import('react-native');
-        if (Clipboard && Clipboard.setString) {
-          Clipboard.setString(params.text || '');
+        try {
+          const ExpoClipboard = await import('expo-clipboard');
+          await ExpoClipboard.setStringAsync(params.text || '');
+          return { success: true, summary: `Copied to clipboard: "${params.text}"` };
+        } catch (clipErr: any) {
+          return { success: false, summary: `Clipboard write failed: ${clipErr.message}` };
         }
-        return { success: true, summary: `Copied to clipboard: "${params.text}"` };
       }
       case 'clipboard_read': {
-        const { Clipboard: ClipboardRead } = await import('react-native');
-        let clipText = '';
-        if (ClipboardRead && ClipboardRead.getString) {
-          clipText = await ClipboardRead.getString();
+        try {
+          const ExpoClipboard = await import('expo-clipboard');
+          const clipText = await ExpoClipboard.getStringAsync();
+          return { success: true, summary: `Clipboard contains: "${clipText}"`, data: { text: clipText } };
+        } catch (clipErr: any) {
+          return { success: false, summary: `Clipboard read failed: ${clipErr.message}` };
         }
-        return { success: true, summary: `Clipboard contains: "${clipText}"`, data: { text: clipText } };
       }
       case 'media_play': {
         const action = params.action?.toLowerCase();
-        if (action === 'pause') {
-          await IntentLauncher.startActivityAsync('android.intent.action.MEDIA_BUTTON', {
-            extra: { 'android.intent.extra.KEY_EVENT': 127 },
-          });
-        } else {
-          await IntentLauncher.startActivityAsync('android.intent.action.MEDIA_BUTTON', {
-            extra: { 'android.intent.extra.KEY_EVENT': 126 },
-          });
-        }
-        return { success: true, summary: `Media ${action || 'play'} triggered` };
+        const keyCode = action === 'pause' ? 127 : 85;
+        try {
+          const AgentNativeModule = (await import('../native/AgentNative')).default;
+          if (AgentNativeModule?.sendMediaKey) {
+            await AgentNativeModule.sendMediaKey(keyCode);
+            return { success: true, summary: `Media ${action || 'play/pause'} triggered` };
+          }
+        } catch {}
+        await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
+        return { success: true, summary: 'Opened media controls (native key injection unavailable)' };
       }
       case 'media_next': {
-        await IntentLauncher.startActivityAsync('android.intent.action.MEDIA_BUTTON', {
-          extra: { 'android.intent.extra.KEY_EVENT': 87 },
-        });
-        return { success: true, summary: 'Skipped to next track' };
+        try {
+          const AgentNativeModule = (await import('../native/AgentNative')).default;
+          if (AgentNativeModule?.sendMediaKey) {
+            await AgentNativeModule.sendMediaKey(87);
+            return { success: true, summary: 'Skipped to next track' };
+          }
+        } catch {}
+        return { success: false, summary: 'Media next requires native module (sendMediaKey)' };
       }
       case 'screenshot': {
         if (!isNative || !AppController.isAvailable()) {

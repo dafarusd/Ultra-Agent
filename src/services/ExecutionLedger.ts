@@ -26,7 +26,7 @@ const WEB_STORAGE_KEY = 'ultra_execution_ledger';
 export class ExecutionLedger {
   private events: ExecutionEvent[] = [];
   private logger: Logger;
-  private budgetLimits: BudgetLimits;
+  budgetLimits: BudgetLimits;
   private baseDir: string;
   private initialized = false;
 
@@ -59,6 +59,12 @@ export class ExecutionLedger {
     };
 
     this.events.push(fullEvent);
+
+    const MAX_LEDGER_EVENTS = 500;
+    if (this.events.length > MAX_LEDGER_EVENTS) {
+      this.events = this.events.slice(-MAX_LEDGER_EVENTS);
+    }
+
     await this.persistEvents();
     this.logger.info(`Event logged: ${fullEvent.phase} ${fullEvent.capability ?? ''}`);
     return fullEvent;

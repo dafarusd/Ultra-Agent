@@ -91,6 +91,7 @@ export class UltraDevLog {
   private static seq = 0;
   private static sessionId = Date.now().toString(36);
   private static writing = false;
+  private static lastFlushedSeq = 0;
   private static pendingFlush = false;
   private static activeCoreId: string | null = null;
   private static watchdogs = new Map<string, WatchdogEntry>();
@@ -359,9 +360,7 @@ export class UltraDevLog {
       const first = UltraDevLog.lastRenderedHeights.keys().next().value;
       if (first) UltraDevLog.lastRenderedHeights.delete(first);
     }
-    const viewportBottom = listScrollOffsetPx + listHeightPx;
-    const msgTop = indexInList * measuredHeightPx;
-    const isVisible = listHeightPx > 0 ? (msgTop >= listScrollOffsetPx && msgTop <= viewportBottom) : indexInList === 0;
+    const isVisible = true;
     const tallWarning = measuredHeightPx > 300;
     UltraDevLog.push('UI_MESSAGE_RENDERED', {
       messageId, role, contentLength, measuredHeightPx, indexInList,
@@ -680,8 +679,8 @@ export class UltraDevLog {
   static conversationSaved(conversationId: string, messageCount?: number): void { UltraDevLog.push('SYSTEM', { event: 'conversation_saved', conversationId, messageCount }); }
   static costLimitCheck(model: string, withinLimit: boolean, spent?: number, limit?: number): void { UltraDevLog.push('SYSTEM', { event: 'cost_limit_check', model, withinLimit, spent, limit }); }
   static flushToFile(): void { UltraDevLog.flushSyncInternal(); }
-  static getDir(): string { return ''; }
-  static getFilePath(): string { return ''; }
+  static getDir(): string { return UltraDevLog.getLogDir(); }
+  static getFilePath(): string { return UltraDevLog.getSessionFilePath(); }
   static getMemoryEntriesFormatted(limit?: number): string { return UltraDevLog.getFormattedLog(limit); }
   static modelAbort(taskId: string, reason: string): void { UltraDevLog.push('SYSTEM', { event: 'model_abort', taskId, reason }); }
   static modelApiError(model: string, taskId: string, error: string, durationMs: number): void { UltraDevLog.push('SYSTEM', { event: 'model_api_error', model, taskId, error, durationMs }); }
@@ -1002,10 +1001,14 @@ export class UltraDevLog {
       if (!dir) return;
       const info = await FileSystem.getInfoAsync(dir);
       if (!info.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-      const content = UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
-      await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), content);
-      await LogFolder.writeLog(`ultra-devlog.jsonl`, content);
-      await LogFolder.writeLog(`debug-log.jsonl`, content);
+      const newEntries = UltraDevLog.entries.filter(e => e.seq > UltraDevLog.lastFlushedSeq);
+      if (newEntries.length === 0) return;
+      const content = newEntries.map(e => JSON.stringify(e)).join('\n') + '\n';
+      await LogFolder.appendLog(`ultra-devlog.jsonl`, content);
+      await LogFolder.appendLog(`debug-log.jsonl`, content);
+      const fullContent = UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
+      await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), fullContent);
+      UltraDevLog.lastFlushedSeq = UltraDevLog.seq;
     } catch {} finally { UltraDevLog.writing = false; }
   }
 
@@ -1066,4 +1069,3 @@ export class UltraDevLog {
   }
 }
 
-UltraDevLog.scheduleStartupRawExport();

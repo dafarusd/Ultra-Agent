@@ -22,12 +22,12 @@ const SCOPE_MAP: Record<string, string[]> = {
     'search', 'google', 'look up', 'map', 'browse', 'visit',
     'set alarm', 'set timer', 'email', 'mail',
   ],
-  sms_send: ['send text', 'sms', 'message', 'text to', 'text', 'call'],
+  sms_send: ['send text', 'sms', 'message', 'text to', 'text'],
   file_read: ['read', 'show', 'open file', 'list files', 'show files'],
   file_delete: ['delete', 'remove'],
   file_write: ['write', 'create file', 'save'],
   file_organize: ['organize', 'move', 'sort', 'make', 'create', 'folder', 'album'],
-  contacts_read: ['contacts', 'contact', 'call', 'text'],
+  contacts_read: ['contacts', 'contact'],
   camera_capture: ['photo', 'camera', 'picture', 'take a photo', 'selfie', 'take a picture'],
   media_access: ['photos', 'gallery', 'media', 'images', 'pick', 'choose', 'select'],
   app_share: ['share'],
@@ -64,7 +64,7 @@ const MODERATE_CAPABILITIES = [
 
 export class SafetyChecker {
   check(userRequest: string, plan: ActionPlan): SafetyCheckResult {
-    DebugLog.permissionCheck(plan.capability, true);
+    DebugLog.permissionCheck(plan.capability, 'checked');
     const reasons: string[] = [];
     const blob = `${plan.capability} ${JSON.stringify(plan.params || {})} ${plan.raw || ''}`;
 

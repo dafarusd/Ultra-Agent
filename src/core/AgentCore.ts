@@ -39,7 +39,7 @@ class SimpleEmitter {
   emit(event: string, ...args: any[]): boolean {
     const fns = this.listeners.get(event);
     if (!fns) return false;
-    fns.forEach(fn => { try { fn(...args); } catch {} });
+    fns.forEach(fn => { try { fn(...args); } catch (e) { console.error(`[SimpleEmitter] listener error on "${event}":`, e); } });
     return true;
   }
   removeAllListeners(event?: string): this {
@@ -165,6 +165,15 @@ export class AgentCore extends SimpleEmitter {
     await safeInit('StorageBudget', () => this.storage.enforceBudget());
     await safeInit('LogCleanup', async () => { await Logger.cleanOldLogs(7); });
     await safeInit('DebugLogCleanup', async () => { await DebugLog.cleanOldLogs(7); });
+    DebugLog.scheduleStartupRawExport();
+    try {
+      const costLimitsRaw = await this.vault.get('cost_limits');
+      if (costLimitsRaw) {
+        const parsed = JSON.parse(costLimitsRaw);
+        if (parsed.dailyUsd !== undefined) this.ledger.budgetLimits.maxDailyActions = parsed.dailyUsd;
+        if (parsed.perTaskUsd !== undefined) this.ledger.budgetLimits.maxActionsPerTask = parsed.perTaskUsd;
+      }
+    } catch {}
     await safeInit('CostCleanup', () => this.costTracker.cleanup(30));
     DebugLog.agentInitComplete(Date.now() - initStart);
 
@@ -671,7 +680,7 @@ You are always on. Always capable. Always direct.`;
         'clipboard_read', 'clipboard_write', 'media_play', 'media_next',
         'system_info', 'screenshot'
       ]);
-      const idempotencyKey = `${conversationId}:${plan.capability}:${JSON.stringify(plan.params)}`;
+      const idempotencyKey = `${conversationId}:${plan.capability}:${JSON.stringify(plan.params)}`.slice(0, 200);
       if (!REPEATABLE_CAPABILITIES.has(plan.capability)) {
         const isDuplicate = await this.ledger.checkIdempotency(idempotencyKey);
         if (isDuplicate) {
@@ -772,7 +781,7 @@ You are always on. Always capable. Always direct.`;
         conversationId,
       });
 
-      const resultSummary = await this.summarizeResult(plan.capability, execResult, userInput, verification);
+      const resultSummary = await this.summarizeResult(plan.capability, execResult, userInput, verification, taskId);
 
       // === STEP 8: WRITE MEMORY ===
       DebugLog.executePhase(taskId, 'WRITE_MEMORY');
@@ -965,15 +974,25 @@ You are always on. Always capable. Always direct.`;
               const number = phoneMatch[1].replace(/[^\d+]/g, '');
               DebugLog.systemEvent('DisambiguationResolve', `Resolved to number: ${number}`);
               mode = 'command';
-              plan = {
-                capability: 'app_launch',
-                params: {
-                  target: 'phone',
-                  action: 'android.intent.action.CALL',
-                  data: 'tel:' + number,
-                },
-                reason: 'User resolved disambiguation with phone number',
-              };
+              const originalCapability = lastAssistant.meta?.capability as string || '';
+              if (originalCapability === 'sms_send') {
+                const originalMessage = (lastAssistant.meta?.originalMessage as string) || '';
+                plan = {
+                  capability: 'sms_send',
+                  params: { to: number, message: originalMessage },
+                  reason: 'User resolved SMS contact disambiguation',
+                };
+              } else {
+                plan = {
+                  capability: 'app_launch',
+                  params: {
+                    target: 'phone',
+                    action: 'android.intent.action.CALL',
+                    data: 'tel:' + number,
+                  },
+                  reason: 'User resolved disambiguation with phone number',
+                };
+              }
               planFromParser = true;
               step('PLAN', `Disambiguation resolved: calling ${number}`, true);
               // Store the association for future
@@ -1224,7 +1243,8 @@ You are always on. Always capable. Always direct.`;
     capability: string,
     execResult: any,
     userInput: string,
-    verification: { verified: boolean; issues: string[] }
+    verification: { verified: boolean; issues: string[] },
+    taskId?: string,
   ): Promise<string> {
     const result = execResult?.data ?? execResult;
 

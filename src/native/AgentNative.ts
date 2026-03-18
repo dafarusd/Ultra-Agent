@@ -35,6 +35,7 @@ export interface AgentNativeInterface {
   getStorageInfo(): Promise<{ total: number; free: number; used: number }>;
   getInstalledApps(): Promise<Array<{ packageName: string; appName: string }>>;
   setFlashlight(on: boolean): Promise<boolean>;
+  sendMediaKey(keyCode: number): Promise<boolean>;
 }
 
 const ALLOWED_COMMANDS = ['dalvikvm', 'keytool', 'ls', 'mkdir', 'cp', 'cat', 'chmod', 'find'];
@@ -60,6 +61,7 @@ const noopModule: AgentNativeInterface = {
   getStorageInfo: async () => ({ total: 0, free: 0, used: 0 }),
   getInstalledApps: async () => [],
   setFlashlight: async () => false,
+  sendMediaKey: async () => false,
 };
 
 function createNativeWrapper(): AgentNativeInterface {
@@ -98,6 +100,7 @@ function createNativeWrapper(): AgentNativeInterface {
     getStorageInfo: () => native.getStorageInfo(),
     getInstalledApps: () => native.getInstalledApps ? native.getInstalledApps() : Promise.resolve([]),
     setFlashlight: (on: boolean) => native.setFlashlight ? native.setFlashlight(on) : Promise.resolve(false),
+    sendMediaKey: (keyCode: number) => native.sendMediaKey ? native.sendMediaKey(keyCode) : Promise.resolve(false),
   };
 }
 
