@@ -182,6 +182,7 @@ const KNOWN_APPS: Record<string, string> = {
 
   // Weather
   'weather': 'com.google.android.apps.weather',
+  'samsung weather': 'com.sec.android.daemonapp',
   'google weather': 'com.google.android.apps.weather',
   'accuweather': 'com.accuweather.android',
   'weather channel': 'com.weather.Weather',

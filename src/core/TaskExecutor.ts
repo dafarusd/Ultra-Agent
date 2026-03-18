@@ -802,33 +802,6 @@ export class TaskExecutor {
           }
         }
 
-        // Step 1: Check static directory, then verify the package
-        // is actually installed before trusting it.
-        // On Samsung/OEM devices, Google packages in the directory
-        // often don't exist — fall through to fuzzy device query.
-        if (!pkg) {
-          const staticPkg = lookupPackage(targetLower);
-          if (staticPkg) {
-            try {
-              const AgentNativeModule = (await import('../native/AgentNative')).default;
-              const installed = await AgentNativeModule.getInstalledApps();
-              const isInstalled = installed?.some((a: any) => a.packageName === staticPkg);
-              if (isInstalled) {
-                pkg = staticPkg;
-                DebugLog.appLaunchMatch(taskId, targetLower, 'exact', targetLower, staticPkg);
-                this.logger.info(`Static dir verified installed: "${targetLower}" → ${staticPkg}`);
-              } else {
-                this.logger.info(`Static dir match not installed: ${staticPkg} — using device query`);
-                // pkg stays null, falls through to Step 2 fuzzy device query
-              }
-            } catch {
-              // If device query fails, trust the static entry
-              pkg = staticPkg;
-              DebugLog.appLaunchMatch(taskId, targetLower, 'exact', targetLower, staticPkg);
-            }
-          }
-        }
-
         // Step 2: Query installed apps with fuzzy matching
         let fuzzyMatch: { packageName: string; appName: string; score: number; matchType: string } | null = null;
         let fuzzyAlternatives: Array<{ packageName: string; appName: string; score: number }> = [];
