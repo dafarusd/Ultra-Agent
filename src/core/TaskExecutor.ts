@@ -451,12 +451,11 @@ export class TaskExecutor {
         } catch (smsIntentErr: any) {
           if (avail) {
             try {
-              const { result } = await SMS.sendSMSAsync([to], message);
-              smsSent = (result as any)?.data?.sent === true || result === 'sent';
-              smsResult = result;
-            } catch (expoSmsErr: any) {
-              smsResult = expoSmsErr.message;
-            }
+            const { result } = await SMS.sendSMSAsync([to], message);
+            smsSent = (result as any)?.data?.sent === true || result === 'sent';
+            smsResult = result;
+          } catch (expoSmsErr: any) {
+            smsResult = expoSmsErr.message;
           }
         }
         DebugLog.smsResult(taskId, smsResult, smsSent);
@@ -1455,6 +1454,7 @@ export class TaskExecutor {
         }
       }
 
+      default:
       case 'image_generate': {
         const prompt = request;
         if (!prompt) return { error: 'No image prompt specified' };
@@ -1512,7 +1512,6 @@ export class TaskExecutor {
         }
       }
 
-      default:
         throw new Error(`No executor for: ${capId}`);
     }
   }
