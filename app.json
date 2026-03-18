@@ -35,7 +35,8 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "QUERY_ALL_PACKAGES",
-        "CALL_PHONE"
+        "CALL_PHONE",
+        "com.android.alarm.permission.SET_ALARM"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#000000",

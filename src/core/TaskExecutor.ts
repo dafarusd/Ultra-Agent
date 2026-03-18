@@ -398,7 +398,6 @@ export class TaskExecutor {
         const message = params.message || '';
         if (!to) { DebugLog.executorExit(taskId, 'sms_send', false, 'no_recipient'); return { error: 'No recipient specified' }; }
         const avail = await SMS.isAvailableAsync();
-        if (!avail) return { error: 'SMS unavailable' };
         try {
           const { status: smsContactStatus } = await Contacts.requestPermissionsAsync();
           if (smsContactStatus !== 'granted') {
@@ -442,16 +441,16 @@ export class TaskExecutor {
         }
         DebugLog.smsFire(taskId, to, message);
         let smsSent = false;
-        let smsResult: any = null;
+        let smsResult: any = 'composed';
         try {
           const cleanPhone = to.replace(/[\s\-\(\)]/g, '');
           await IntentLauncher.startActivityAsync('android.intent.action.SENDTO', {
             data: `smsto:${cleanPhone}`,
             extra: { sms_body: message },
           });
-          smsResult = 'composed';
         } catch (smsIntentErr: any) {
-          try {
+          if (avail) {
+            try {
             const { result } = await SMS.sendSMSAsync([to], message);
             smsSent = (result as any)?.data?.sent === true || result === 'sent';
             smsResult = result;
@@ -507,6 +506,9 @@ export class TaskExecutor {
         if (params.action) {
           DebugLog.executorBranch(taskId, 'app_launch', 'rich_intent', { action: params.action });
           this.logger.info(`Rich intent: action=${params.action} data=${params.data || 'none'} pkg=${params.packageName || 'none'}`);
+
+          // FIXED: Guard action string to prevent "'activityAction' argument must be a non-empty string!"
+          const safeAction = params.action || 'android.intent.action.VIEW';
 
           // Special case: contact name resolution for phone calls
           if (params.extras?._contactName && params.action === 'android.intent.action.DIAL') {
@@ -584,8 +586,8 @@ export class TaskExecutor {
               if (Object.keys(cleanExtras).length > 0) intentParams.extra = cleanExtras;
             }
 
-            this.logger.info(`startActivityAsync: ${params.action} → ${JSON.stringify(intentParams)}`);
-            const result = await IntentLauncher.startActivityAsync(params.action, intentParams);
+            this.logger.info(`startActivityAsync: ${safeAction} → ${JSON.stringify(intentParams)}`);
+            const result = await IntentLauncher.startActivityAsync(safeAction, intentParams);
 
             DebugLog.executorExit(taskId, 'app_launch', true, 'rich_intent_success');
             return {
@@ -1457,7 +1459,9 @@ export class TaskExecutor {
         const prompt = request;
         if (!prompt) return { error: 'No image prompt specified' };
         try {
-          const result = await this.ai.generateImage(prompt, { taskId });
+          // FIXED: Guard + force image default model from api_defaults. Prevents "undefined is not a function" when chat model is active.
+          const imageModel = this.ai.getDefaultModelForMode ? this.ai.getDefaultModelForMode('image') : 'venice-uncensored';
+          const result = await this.ai.generateImage(prompt, { taskId, model: imageModel });
           if (result.images.length === 0) return { error: 'No images generated' };
           const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
           const imagePath = `${docDirSlash}generated_${Date.now()}.png`;

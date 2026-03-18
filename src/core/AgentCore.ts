@@ -188,7 +188,7 @@ export class AgentCore extends SimpleEmitter {
     }
     const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
     if (genomePatterns.test(t)) return 'command';
-    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|what|how|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map|turn|set|search|google|look|flash|torch|flashlight|mute|unmute|silence|dim|brighten|copy|paste|capture|grab|clip|notify|check|battery|network|storage|ram|memory|disk|space|wifi|bluetooth|system|device|status|info|phone|cpu|temp|weather|remind|wake|alarm|volume|ringer|brightness|screenshot|record|scan|download|upload|install|uninstall|update|sync|pair|connect|disconnect|reset|clear|lock|unlock|enable|disable|activate|deactivate|toggle|browse|visit|go|stop|pause|resume|skip|next|previous|repeat|shuffle|queue|bookmark|save|note|jot|remember|forget|recall|settings|camera|contacts|messages|photos|gallery|apps|calendar|maps|clock|calculator)\b/i.test(t);
+    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|what|how|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map|turn|set|search|google|look|flash|torch|flashlight|mute|unmute|silence|dim|brighten|copy|paste|capture|grab|clip|notify|check|battery|network|storage|ram|memory|disk|space|wifi|bluetooth|system|device|status|info|phone|cpu|temp|weather|remind|wake|alarm|volume|ringer|brightness|screenshot|record|scan|download|upload|install|uninstall|update|sync|pair|connect|disconnect|reset|clear|lock|unlock|enable|disable|activate|deactivate|toggle|browse|visit|go|stop|pause|resume|skip|next|previous|repeat|shuffle|queue|bookmark|save|note|jot|remember|forget|recall|settings|camera|contacts|messages|photos|gallery|apps|calendar|maps|clock|calculator|location|gps|coordinates)\b/i.test(t);
     if (imperative) return 'command';
     if (/^(gps|my\s+(?:location|coordinates|gps))\b/i.test(t)) return 'command';
     const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|what|how|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map|turn|set|search|google|look|flash|torch|mute|unmute|silence|dim|brighten|copy|paste|capture|grab|check|battery|network|storage|ram|memory|disk|space|wifi|system|device|status|info|weather|remind|wake|alarm|volume|ringer|brightness|screenshot|record|scan|download|upload|install|uninstall|update|sync|pair|connect|disconnect|reset|clear|lock|unlock|enable|disable|activate|deactivate|toggle|browse|visit|go|stop|pause|resume|skip|next|previous|repeat|shuffle|queue|bookmark|save|note|jot|remember|forget|recall)\b/i;
@@ -820,17 +820,23 @@ You are always on. Always capable. Always direct.`;
 
       // === STEP 9: ADAPT ===
       DebugLog.executePhase(taskId, 'ADAPT');
-      await this.learner.learnFromExecution(
-        userInput,
-        [plan.capability],
-        resultSummary,
-        verification.verified
-      );
-      if (verification.verified && execResult?.success !== false) {
-        await this.memory.storeSession(userInput, plan.capability, resultSummary);
-        await this.memory.promoteLongterm(userInput, plan.capability, resultSummary);
+      // FIXED: wrap entire ADAPT in try/catch — prevents "PHASE GAP: crash in ADAPT phase" when learner or memory throws on verification failure
+      try {
+        await this.learner.learnFromExecution(
+          userInput,
+          [plan.capability],
+          resultSummary,
+          verification.verified
+        );
+        if (verification.verified && execResult?.success !== false) {
+          await this.memory.storeSession(userInput, plan.capability, resultSummary);
+          await this.memory.promoteLongterm(userInput, plan.capability, resultSummary);
+        }
+        step('ADAPT', `Learned from execution: verified=${verification.verified}`, true);
+      } catch (adaptErr: any) {
+        DebugLog.error('ADAPT', adaptErr.message);
+        step('ADAPT', `Learned with error: ${adaptErr.message}`, false);
       }
-      step('ADAPT', `Learned from execution: verified=${verification.verified}`, true);
 
       await this.ledger.logEvent({
         phase: 'LEARN',
@@ -1046,7 +1052,13 @@ You are always on. Always capable. Always direct.`;
     );
 
     if (!args.skipModelSwitchPrompt && !args.approvedModel) {
-      const taskType = userInput.toLowerCase().includes('code') ? 'code' as const : 'conversation' as const;
+      // FIXED: explicit image task type detection so recommendModel switches to venice-uncensored (prevents "undefined is not a function" on chat-only models)
+      let taskType: 'image' | 'code' | 'conversation' = 'conversation';
+      if (plan && plan.capability === 'image_generate') {
+        taskType = 'image';
+      } else if (userInput.toLowerCase().includes('code')) {
+        taskType = 'code';
+      }
       const recommendation = this.ai.recommendModel({
         taskType,
         requiredContextTokens,

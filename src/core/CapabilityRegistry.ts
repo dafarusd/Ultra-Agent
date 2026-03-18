@@ -44,7 +44,7 @@ export class CapabilityRegistry {
       { id: 'image_generate', name: 'Image Generate', description: 'Generate images from text prompts', riskLevel: 'moderate', available: true, permissionsRequired: [] },
       { id: 'system_info', name: 'System Info', description: 'Get device system information: battery, RAM, storage, CPU temperature', riskLevel: 'safe', available: true, permissionsRequired: [] },
       { id: 'flashlight_toggle', name: 'Flashlight', description: 'Toggle device flashlight/torch on or off', riskLevel: 'safe', available: true, permissionsRequired: ['CAMERA'] },
-      { id: 'alarm_set', name: 'Set Alarm', description: 'Set an alarm via AlarmClock intent', riskLevel: 'safe', available: true, permissionsRequired: ['SET_ALARM'] },
+      { id: 'alarm_set', name: 'Set Alarm', description: 'Set an alarm via AlarmClock intent', riskLevel: 'safe', available: true, permissionsRequired: ['com.android.alarm.permission.SET_ALARM'] },
       { id: 'timer_set', name: 'Set Timer', description: 'Set a countdown timer via AlarmClock intent', riskLevel: 'safe', available: true, permissionsRequired: ['SET_ALARM'] },
       { id: 'volume_set', name: 'Volume Control', description: 'Set media/ringer/notification volume level', riskLevel: 'moderate', available: true, permissionsRequired: ['MODIFY_AUDIO_SETTINGS'] },
       { id: 'brightness_set', name: 'Brightness Control', description: 'Set screen brightness level', riskLevel: 'moderate', available: true, permissionsRequired: [] },
