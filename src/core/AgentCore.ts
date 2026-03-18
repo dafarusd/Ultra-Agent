@@ -167,13 +167,19 @@ export class AgentCore extends SimpleEmitter {
     await safeInit('DebugLogCleanup', async () => { await DebugLog.cleanOldLogs(7); });
     DebugLog.scheduleStartupRawExport();
     try {
-      const costLimitsRaw = await this.vault.get('cost_limits');
-      if (costLimitsRaw) {
-        const parsed = JSON.parse(costLimitsRaw);
-        if (parsed.dailyUsd !== undefined) this.ledger.budgetLimits.maxDailyActions = parsed.dailyUsd;
-        if (parsed.perTaskUsd !== undefined) this.ledger.budgetLimits.maxActionsPerTask = parsed.perTaskUsd;
+      const rawDaily = await this.vault.get('daily_cost_limit');
+      const rawTask = await this.vault.get('task_cost_limit');
+      const dailyLimit = parseFloat(rawDaily || '0');
+      const taskLimit = parseFloat(rawTask || '0');
+      if (dailyLimit > 0) {
+        this.ledger.budgetLimits.maxCostPerSession = dailyLimit;
+        DebugLog.systemEvent('AgentCore', `Cost limit loaded from vault: $${dailyLimit}/session (task limit: $${taskLimit})`);
+      } else {
+        DebugLog.systemEvent('AgentCore', 'No cost limit configured — using default $2.00/session');
       }
-    } catch {}
+    } catch (costErr: any) {
+      DebugLog.error('AgentCore', `Failed to load cost limits from vault: ${costErr.message}`);
+    }
     await safeInit('CostCleanup', () => this.costTracker.cleanup(30));
     DebugLog.agentInitComplete(Date.now() - initStart);
 

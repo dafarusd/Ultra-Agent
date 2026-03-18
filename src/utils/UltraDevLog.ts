@@ -1003,11 +1003,24 @@ export class UltraDevLog {
       if (!info.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
       const newEntries = UltraDevLog.entries.filter(e => e.seq > UltraDevLog.lastFlushedSeq);
       if (newEntries.length === 0) return;
-      const content = newEntries.map(e => JSON.stringify(e)).join('\n') + '\n';
-      await LogFolder.appendLog(`ultra-devlog.jsonl`, content);
-      await LogFolder.appendLog(`debug-log.jsonl`, content);
-      const fullContent = UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
-      await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), fullContent);
+      const appendContent = newEntries.map(e => JSON.stringify(e)).join('\n') + '\n';
+
+      await LogFolder.appendLog(`ultra-devlog.jsonl`, appendContent);
+
+      const sessionPath = UltraDevLog.getSessionFilePath();
+      try {
+        const sessionInfo = await FileSystem.getInfoAsync(sessionPath);
+        if (sessionInfo.exists) {
+          const existing = await FileSystem.readAsStringAsync(sessionPath);
+          await FileSystem.writeAsStringAsync(sessionPath, existing + appendContent);
+        } else {
+          await FileSystem.writeAsStringAsync(sessionPath, appendContent);
+        }
+      } catch {
+        const fallbackContent = UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
+        await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), fallbackContent);
+      }
+
       UltraDevLog.lastFlushedSeq = UltraDevLog.seq;
     } catch {} finally { UltraDevLog.writing = false; }
   }
