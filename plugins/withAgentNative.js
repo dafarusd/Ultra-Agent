@@ -386,21 +386,20 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void getInstalledApps(Promise promise) {
         try {
-            android.content.pm.PackageManager pm = ctx.getPackageManager();
-            java.util.List<android.content.pm.ApplicationInfo> apps = pm.getInstalledApplications(0);
+            PackageManager pm = ctx.getPackageManager();
+            android.content.Intent launcherIntent = new android.content.Intent(android.content.Intent.ACTION_MAIN);
+            launcherIntent.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
+            java.util.List<android.content.pm.ResolveInfo> activities = pm.queryIntentActivities(launcherIntent, 0);
             WritableArray result = Arguments.createArray();
-            for (android.content.pm.ApplicationInfo app : apps) {
-                android.content.Intent launchIntent = pm.getLaunchIntentForPackage(app.packageName);
-                if (launchIntent == null) continue;
-                WritableMap entry = Arguments.createMap();
-                entry.putString("packageName", app.packageName);
-                CharSequence label = pm.getApplicationLabel(app);
-                entry.putString("appName", label != null ? label.toString() : app.packageName);
-                result.pushMap(entry);
+            for (android.content.pm.ResolveInfo info : activities) {
+                WritableMap app = Arguments.createMap();
+                app.putString("packageName", info.activityInfo.packageName);
+                app.putString("appName", info.loadLabel(pm).toString());
+                result.pushMap(app);
             }
             promise.resolve(result);
         } catch (Exception e) {
-            promise.reject("APP_LIST_ERROR", e.getMessage(), e);
+            promise.reject("GET_APPS_ERROR", e.getMessage(), e);
         }
     }
 
