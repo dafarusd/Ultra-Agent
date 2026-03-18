@@ -135,7 +135,7 @@ export class MemoryManager {
   }
 
   async rememberContact(name: string, number: string, label: string): Promise<void> {
-    const key = `contact_pref:${name.toLowerCase().trim()}`;
+    const key = `contact_pref_${name.toLowerCase().trim().replace(/[^a-z0-9]/g, '_')}`;
     const value = JSON.stringify({ name, number, label, storedAt: Date.now() });
     await this.vault.set(key, value);
     DebugLog.systemEvent('MemoryManager', `Stored contact pref: "${name}" → ${number.slice(0, 6)}****`);
@@ -143,7 +143,7 @@ export class MemoryManager {
 
   async recallContact(name: string): Promise<{ name: string; number: string; label: string } | null> {
     try {
-      const key = `contact_pref:${name.toLowerCase().trim()}`;
+      const key = `contact_pref_${name.toLowerCase().trim().replace(/[^a-z0-9]/g, '_')}`;
       const raw = await this.vault.get(key);
       if (!raw) return null;
       return JSON.parse(raw);
