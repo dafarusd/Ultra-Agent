@@ -455,6 +455,33 @@ export class TaskExecutor {
         DebugLog.smsFire(taskId, to, message);
         let smsSent = false;
         let smsResult: any = 'composed';
+
+        // Try native direct send first (no UI, requires SEND_SMS permission)
+        if (message) {
+          try {
+            const AgentNativeModule = (await import('../native/AgentNative')).default;
+            if (AgentNativeModule?.sendSms) {
+              const cleanPhone = to.replace(/[\s\-\(\)]/g, '');
+              const sent = await AgentNativeModule.sendSms(cleanPhone, message);
+              if (sent) {
+                smsSent = true;
+                smsResult = 'sent_native';
+                DebugLog.smsResult(taskId, smsResult, true);
+                DebugLog.executorExit(taskId, 'sms_send', true, 'sms_sent_native');
+                return {
+                  success: true,
+                  sent: true,
+                  to,
+                  summary: `Sent "${message}" to ${to}`,
+                };
+              }
+            }
+          } catch (nativeSmsErr: any) {
+            this.logger.warn(`Native SMS failed: ${nativeSmsErr.message}, falling back to intent`);
+          }
+        }
+
+        // Fallback: open SMS composer (user taps Send)
         try {
           const cleanPhone = to.replace(/[\s\-\(\)]/g, '');
           await IntentLauncher.startActivityAsync('android.intent.action.SENDTO', {

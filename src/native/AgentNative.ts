@@ -36,6 +36,7 @@ export interface AgentNativeInterface {
   getInstalledApps(): Promise<Array<{ packageName: string; appName: string }>>;
   setFlashlight(on: boolean): Promise<boolean>;
   sendMediaKey(keyCode: number): Promise<boolean>;
+  sendSms(phoneNumber: string, message: string): Promise<boolean>;
 }
 
 const ALLOWED_COMMANDS = ['dalvikvm', 'keytool', 'ls', 'mkdir', 'cp', 'cat', 'chmod', 'find'];
@@ -62,6 +63,7 @@ const noopModule: AgentNativeInterface = {
   getInstalledApps: async () => [],
   setFlashlight: async () => false,
   sendMediaKey: async () => false,
+  sendSms: async () => false,
 };
 
 function createNativeWrapper(): AgentNativeInterface {
@@ -101,6 +103,8 @@ function createNativeWrapper(): AgentNativeInterface {
     getInstalledApps: () => native.getInstalledApps ? native.getInstalledApps() : Promise.resolve([]),
     setFlashlight: (on: boolean) => native.setFlashlight ? native.setFlashlight(on) : Promise.resolve(false),
     sendMediaKey: (keyCode: number) => native.sendMediaKey ? native.sendMediaKey(keyCode) : Promise.resolve(false),
+    sendSms: (phoneNumber: string, message: string) =>
+      native.sendSms ? native.sendSms(phoneNumber, message) : Promise.resolve(false),
   };
 }
 

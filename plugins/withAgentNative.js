@@ -442,6 +442,31 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             promise.reject("FLASH_ERROR", e.getMessage(), e);
         }
     }
+
+    @ReactMethod
+    public void sendSms(String phoneNumber, String message, Promise promise) {
+        try {
+            android.telephony.SmsManager sms;
+            if (android.os.Build.VERSION.SDK_INT >= 23) {
+                sms = ctx.getSystemService(android.telephony.SmsManager.class);
+            } else {
+                sms = android.telephony.SmsManager.getDefault();
+            }
+            if (sms == null) {
+                promise.reject("SMS_ERROR", "SmsManager unavailable");
+                return;
+            }
+            java.util.ArrayList<String> parts = sms.divideMessage(message);
+            if (parts.size() == 1) {
+                sms.sendTextMessage(phoneNumber, null, message, null, null);
+            } else {
+                sms.sendMultipartTextMessage(phoneNumber, null, parts, null, null);
+            }
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("SMS_ERROR", e.getMessage(), e);
+        }
+    }
 }`;
 
 const BINARY_MANIFEST_WRITER_JAVA = `package com.agent.ultra;
