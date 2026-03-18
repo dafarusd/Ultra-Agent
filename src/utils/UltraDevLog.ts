@@ -434,7 +434,6 @@ export class UltraDevLog {
         try { AsyncStorage.setItem(PROCESS_RESTART_KEY, String(now)); } catch {}
         UltraDevLog.sessionSummary();
         UltraDevLog.flushSyncInternal();
-        UltraDevLog.writeBugReportFile();
       }
       UltraDevLog.lastAppStateChangeAt = now;
     });

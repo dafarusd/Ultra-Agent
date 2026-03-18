@@ -231,9 +231,11 @@ export class TaskExecutor {
     const id = taskId || Date.now().toString(36);
     const capId = plan.capability;
 
-    const probeCheck = this.checkProbe(capId);
-    if (probeCheck.blocked) {
-      return { success: false, summary: probeCheck.message };
+    if (capId !== 'sms_send') {
+      const probeCheck = this.checkProbe(capId);
+      if (probeCheck.blocked) {
+        return { success: false, summary: probeCheck.message };
+      }
     }
 
     const reqPerms = this.caps.getRequiredPermissions([capId]);
@@ -512,7 +514,9 @@ export class TaskExecutor {
           const safeAction = params.action || 'android.intent.action.VIEW';
 
           // Special case: contact name resolution for phone calls
-          if (params.extras?._contactName && params.action === 'android.intent.action.DIAL') {
+          if (params.extras?._contactName &&
+              (params.action === 'android.intent.action.DIAL' ||
+               params.action === 'android.intent.action.CALL')) {
             const contactName = params.extras._contactName as string;
             try {
               const { status } = await Contacts.requestPermissionsAsync();

@@ -186,6 +186,12 @@ export class ConversationManager {
   async addMessage(conversationId: string, msg: ChatMessage): Promise<Conversation> {
     const conv = await this.loadConversation(conversationId);
     if (!conv) throw new Error(`Conversation ${conversationId} not found`);
+
+    const MAX_MESSAGES = 200;
+    if (conv.messages.length >= MAX_MESSAGES) {
+      conv.messages = conv.messages.slice(-150);
+    }
+
     conv.messages.push(msg);
     conv.updatedAt = now();
     conv.messageCountSinceSummary = (conv.messageCountSinceSummary ?? 0) + 1;
