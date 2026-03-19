@@ -1995,39 +1995,76 @@ function withAgentNative(config) {
 
     const perms = manifest.manifest['uses-permission'] || [];
     const requiredPermissions = [
-      'android.permission.QUERY_ALL_PACKAGES',
-      'android.permission.CAMERA',
-      'android.permission.FLASHLIGHT',
-      'android.permission.READ_CONTACTS',
-      'android.permission.WRITE_CONTACTS',
-      'android.permission.READ_CALL_LOG',
-      'android.permission.SEND_SMS',
-      'android.permission.READ_SMS',
-      'android.permission.RECEIVE_SMS',
-      'android.permission.READ_CALENDAR',
-      'android.permission.WRITE_CALENDAR',
-      'android.permission.SET_ALARM',
-      'android.permission.VIBRATE',
-      'android.permission.MODIFY_AUDIO_SETTINGS',
-      'android.permission.READ_EXTERNAL_STORAGE',
-      'android.permission.WRITE_EXTERNAL_STORAGE',
+      // Network
       'android.permission.INTERNET',
       'android.permission.ACCESS_NETWORK_STATE',
       'android.permission.ACCESS_WIFI_STATE',
       'android.permission.CHANGE_WIFI_STATE',
-      'android.permission.ACCESS_FINE_LOCATION',
-      'android.permission.ACCESS_COARSE_LOCATION',
-      'android.permission.RECORD_AUDIO',
-      'android.permission.FOREGROUND_SERVICE',
-      'android.permission.RECEIVE_BOOT_COMPLETED',
-      'android.permission.USE_BIOMETRIC',
-      'android.permission.USE_FINGERPRINT',
       'android.permission.CHANGE_NETWORK_STATE',
       'android.permission.NFC',
+
+      // Phone & SMS
+      'android.permission.CALL_PHONE',
+      'android.permission.READ_PHONE_STATE',
+      'android.permission.SEND_SMS',
+      'android.permission.READ_SMS',
+      'android.permission.RECEIVE_SMS',
+      'android.permission.READ_CALL_LOG',
+
+      // Contacts & Calendar
+      'android.permission.READ_CONTACTS',
+      'android.permission.WRITE_CONTACTS',
+      'android.permission.READ_CALENDAR',
+      'android.permission.WRITE_CALENDAR',
+
+      // Location
+      'android.permission.ACCESS_FINE_LOCATION',
+      'android.permission.ACCESS_COARSE_LOCATION',
+      'android.permission.ACCESS_BACKGROUND_LOCATION',
+
+      // Camera & Microphone
+      'android.permission.CAMERA',
+      'android.permission.RECORD_AUDIO',
+
+      // Storage (pre-Android 13)
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+
+      // Storage (Android 13+ / API 33+)
+      'android.permission.READ_MEDIA_IMAGES',
+      'android.permission.READ_MEDIA_VIDEO',
+      'android.permission.READ_MEDIA_AUDIO',
+
+      // Notifications (Android 13+)
+      'android.permission.POST_NOTIFICATIONS',
+
+      // Device control
+      'android.permission.FLASHLIGHT',
+      'android.permission.VIBRATE',
+      'android.permission.MODIFY_AUDIO_SETTINGS',
+      'android.permission.SET_ALARM',
+      'android.permission.SCHEDULE_EXACT_ALARM',
+      'android.permission.USE_EXACT_ALARM',
+
+      // Bluetooth
       'android.permission.BLUETOOTH',
       'android.permission.BLUETOOTH_ADMIN',
       'android.permission.BLUETOOTH_CONNECT',
       'android.permission.BLUETOOTH_SCAN',
+
+      // System
+      'android.permission.FOREGROUND_SERVICE',
+      'android.permission.FOREGROUND_SERVICE_LOCATION',
+      'android.permission.RECEIVE_BOOT_COMPLETED',
+      'android.permission.QUERY_ALL_PACKAGES',
+      'android.permission.REQUEST_INSTALL_PACKAGES',
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.WRITE_SETTINGS',
+      'android.permission.ACCESS_NOTIFICATION_POLICY',
+
+      // Biometric
+      'android.permission.USE_BIOMETRIC',
+      'android.permission.USE_FINGERPRINT',
     ];
     for (const perm of requiredPermissions) {
       if (!perms.some(p => p.$['android:name'] === perm)) {

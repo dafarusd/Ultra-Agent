@@ -383,10 +383,6 @@ export class TaskExecutor {
         return { success: true, organized: done.length, actions: done };
       }
       case 'contacts_read': {
-        const { status: contactsStatus } = await Contacts.requestPermissionsAsync();
-        if (contactsStatus !== 'granted') {
-          return { success: false, error: 'Contacts permission denied. Grant in device settings.' };
-        }
         const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
         return { success: true, contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
       }
@@ -412,11 +408,6 @@ export class TaskExecutor {
           } catch {}
         }
         try {
-          const { status: smsContactStatus } = await Contacts.requestPermissionsAsync();
-          if (smsContactStatus !== 'granted') {
-            DebugLog.smsResolve(taskId, to, null, 0, 'Contacts permission denied');
-            return { error: 'Contacts permission denied. Grant in device settings to resolve contact names.' };
-          }
           const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
           const matches = data.filter((c) => c.name?.toLowerCase().includes(to.toLowerCase()));
           if (matches.length > 1) {
@@ -571,43 +562,38 @@ export class TaskExecutor {
             } catch {}
             if (!params.data) { // Only do full lookup if recall missed
               try {
-                const { status } = await Contacts.requestPermissionsAsync();
-                if (status === 'granted') {
-                  const { data: contacts } = await Contacts.getContactsAsync({
-                    fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
-                    name: contactName,
-                  });
-                  const withNumbers = contacts.filter(c => c.phoneNumbers && c.phoneNumbers.length > 0);
-                  if (withNumbers.length > 1) {
-                    const disambig = withNumbers.map(m => ({
-                      name: m.name,
-                      number: m.phoneNumbers![0].number ?? '',
-                      label: m.phoneNumbers![0].label || 'unknown',
-                    }));
-                    return {
-                      success: false,
-                      requiresDisambiguation: true,
-                      matches: disambig,
-                      summary: `Found ${disambig.length} contacts named "${contactName}": ${disambig.map(m => `${m.name} (${m.label}: ${m.number})`).join(', ')}. Which one?`,
-                    };
-                  }
-                  if (withNumbers.length > 0) {
-                    const match = withNumbers[0];
-                    const realNumber = match.phoneNumbers?.find(
-                      (p: any) => p.number && p.number.replace(/\D/g, '').length >= 7
-                    );
-                    if (realNumber?.number) {
-                      params.data = `tel:${realNumber.number}`;
-                      params.action = 'android.intent.action.CALL';
-                      this.logger.info(`Resolved contact "${contactName}" → ${realNumber.number} (ACTION_CALL)`);
-                    } else {
-                      return { success: false, error: `Found contact "${contactName}" but no valid phone number` };
-                    }
+                const { data: contacts } = await Contacts.getContactsAsync({
+                  fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
+                  name: contactName,
+                });
+                const withNumbers = contacts.filter(c => c.phoneNumbers && c.phoneNumbers.length > 0);
+                if (withNumbers.length > 1) {
+                  const disambig = withNumbers.map(m => ({
+                    name: m.name,
+                    number: m.phoneNumbers![0].number ?? '',
+                    label: m.phoneNumbers![0].label || 'unknown',
+                  }));
+                  return {
+                    success: false,
+                    requiresDisambiguation: true,
+                    matches: disambig,
+                    summary: `Found ${disambig.length} contacts named "${contactName}": ${disambig.map(m => `${m.name} (${m.label}: ${m.number})`).join(', ')}. Which one?`,
+                  };
+                }
+                if (withNumbers.length > 0) {
+                  const match = withNumbers[0];
+                  const realNumber = match.phoneNumbers?.find(
+                    (p: any) => p.number && p.number.replace(/\D/g, '').length >= 7
+                  );
+                  if (realNumber?.number) {
+                    params.data = `tel:${realNumber.number}`;
+                    params.action = 'android.intent.action.CALL';
+                    this.logger.info(`Resolved contact "${contactName}" → ${realNumber.number} (ACTION_CALL)`);
                   } else {
-                    return { success: false, error: `Contact "${contactName}" not found` };
+                    return { success: false, error: `Found contact "${contactName}" but no valid phone number` };
                   }
                 } else {
-                  return { success: false, error: 'Contacts permission denied — cannot resolve contact name' };
+                  return { success: false, error: `Contact "${contactName}" not found` };
                 }
               } catch (e: any) {
                 return { success: false, error: `Contact lookup failed: ${e.message}` };
@@ -642,39 +628,6 @@ export class TaskExecutor {
                 if (!k.startsWith('_')) cleanExtras[k] = v;
               }
               if (Object.keys(cleanExtras).length > 0) intentParams.extra = cleanExtras;
-            }
-
-            // Pre-request CALL_PHONE permission if ACTION_CALL so retry doesn't fail
-            if (params.action === 'android.intent.action.CALL') {
-              const { PermissionsAndroid } = await import('react-native');
-              const already = await PermissionsAndroid.check(
-                PermissionsAndroid.PERMISSIONS.CALL_PHONE
-              );
-              if (!already) {
-                const granted = await PermissionsAndroid.request(
-                  PermissionsAndroid.PERMISSIONS.CALL_PHONE,
-                  {
-                    title: 'Phone Permission',
-                    message: 'Agent Ultra needs permission to make calls directly.',
-                    buttonPositive: 'Allow',
-                  }
-                );
-                if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-                  // Permission denied — fall back to dialer
-                  const dialData = params.data || (params.extras?._contactName ? undefined : undefined);
-                  if (dialData) {
-                    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-                      data: dialData.replace('tel:', 'tel:'),
-                    });
-                  }
-                  DebugLog.executorExit(taskId, 'app_launch', true, 'dial_fallback_permission_denied');
-                  return {
-                    success: true,
-                    summary: `CALL_PHONE permission denied — dialer opened`,
-                    data: { note: 'Grant phone permission to call directly' },
-                  };
-                }
-              }
             }
 
             this.logger.info(`startActivityAsync: ${safeAction} → ${JSON.stringify(intentParams)}`);
