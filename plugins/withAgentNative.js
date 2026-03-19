@@ -404,6 +404,32 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
+    public void launchApp(String packageName, Promise promise) {
+        try {
+            android.content.pm.PackageManager pm = ctx.getPackageManager();
+            android.content.Intent launchIntent = pm.getLaunchIntentForPackage(packageName);
+            if (launchIntent == null) {
+                WritableMap map = Arguments.createMap();
+                map.putBoolean("success", false);
+                map.putString("error", "Package not found or not launchable: " + packageName);
+                promise.resolve(map);
+                return;
+            }
+            launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(launchIntent);
+            WritableMap map = Arguments.createMap();
+            map.putBoolean("success", true);
+            map.putString("packageName", packageName);
+            promise.resolve(map);
+        } catch (Exception e) {
+            WritableMap map = Arguments.createMap();
+            map.putBoolean("success", false);
+            map.putString("error", e.getMessage());
+            promise.resolve(map);
+        }
+    }
+
+    @ReactMethod
     public void sendMediaKey(int keyCode, Promise promise) {
         try {
             android.media.AudioManager am = (android.media.AudioManager)

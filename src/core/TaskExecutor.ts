@@ -934,7 +934,27 @@ export class TaskExecutor {
           );
           const aiPkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
           if (aiPkg && aiPkg.includes('.') && aiPkg !== 'unknown') {
-            pkg = aiPkg;
+            // Validate AI-suggested package is actually installed before trusting it
+            try {
+              const AgentNativeModuleValidate = (await import('../native/AgentNative')).default;
+              const allApps = await AgentNativeModuleValidate.getInstalledApps();
+              const aiPkgExists = allApps.some((a: { packageName: string }) => a.packageName === aiPkg);
+              if (aiPkgExists) {
+                pkg = aiPkg;
+              } else {
+                this.logger.warn(`AI suggested "${aiPkg}" but it is not installed on this device`);
+                // Try fuzzy matching the AI's suggestion as an app name against installed list
+                const aiNameMatch = findBestMatch(aiPkg.split('.').pop() || '', allApps, 60);
+                if (aiNameMatch) {
+                  pkg = aiNameMatch.packageName;
+                  this.logger.info(`AI fallback fuzzy recovered: "${aiPkg}" → "${aiNameMatch.appName}" (${aiNameMatch.packageName})`);
+                }
+              }
+            } catch (validateErr: any) {
+              // If validation fails, still use AI suggestion as last resort
+              pkg = aiPkg;
+              this.logger.warn(`Could not validate AI package suggestion: ${validateErr.message}`);
+            }
           }
           DebugLog.appLaunchAiFallback(taskId, target, _aiPrompt, pkg || 'NONE', Date.now() - _aiStart);
         }
@@ -947,11 +967,24 @@ export class TaskExecutor {
         const launchResult = { success: true, launched: target, packageName: pkg };
         DebugLog.appLaunchFire(taskId, pkg, target);
         try {
-          await IntentLauncher.openApplication(pkg);
+          // Use native launchApp which verifies package exists via getLaunchIntentForPackage
+          const AgentNativeModuleLaunch = (await import('../native/AgentNative')).default;
+          const nativeLaunchResult = await AgentNativeModuleLaunch.launchApp(pkg);
+          if (!nativeLaunchResult.success) {
+            // Native verification failed — package does not exist or is not launchable
+            DebugLog.appLaunchFail(taskId, target, pkg, nativeLaunchResult.error || 'Not launchable', 'native_launch_verify');
+            DebugLog.executorExit(taskId, 'app_launch', false, 'native_launch_not_found');
+            return { success: false, error: `"${target}" is not installed on this device. (tried package: ${pkg})` };
+          }
         } catch (err: any) {
-          DebugLog.appLaunchFail(taskId, target, pkg, err.message, 'intent_launch');
-          DebugLog.executorExit(taskId, 'app_launch', false, 'intent_launch_error');
-          return { success: false, error: `Failed to launch ${target} (${pkg}): ${err.message}` };
+          // Fallback to IntentLauncher.openApplication if native launchApp is unavailable
+          try {
+            await IntentLauncher.openApplication(pkg);
+          } catch (fallbackErr: any) {
+            DebugLog.appLaunchFail(taskId, target, pkg, fallbackErr.message, 'intent_launch');
+            DebugLog.executorExit(taskId, 'app_launch', false, 'intent_launch_error');
+            return { success: false, error: `Failed to launch ${target} (${pkg}): ${fallbackErr.message}` };
+          }
         }
 
         // Permanently learn the mapping so future launches are instant (skip if already from alias)
@@ -1196,6 +1229,38 @@ export class TaskExecutor {
         if (!serviceEnabled) {
           await AppController.openAccessibilitySettings();
           return { success: false, summary: 'Enable Agent Ultra in Accessibility Settings first' };
+        }
+        // If appHint specifies an app, launch it first
+        if (appHint) {
+          const launchTarget = appHint.toLowerCase().trim();
+          try {
+            const AgentNativeModuleNav = (await import('../native/AgentNative')).default;
+            const installed = await AgentNativeModuleNav.getInstalledApps();
+            const match = findBestMatch(launchTarget, installed);
+            if (match) {
+              const launchResult = await AgentNativeModuleNav.launchApp(match.packageName);
+              if (launchResult.success) {
+                // Wait for app to fully open
+                await new Promise(r => setTimeout(r, 2000));
+                // Allow the launched app for accessibility interaction
+                await AppController.allowPackage(match.packageName);
+              }
+            } else {
+              // Try launching via the static directory
+              const { lookupPackage } = await import('./AppDirectory');
+              const knownPkg = lookupPackage(launchTarget);
+              if (knownPkg) {
+                const launchResult = await AgentNativeModuleNav.launchApp(knownPkg);
+                if (launchResult.success) {
+                  await new Promise(r => setTimeout(r, 2000));
+                  await AppController.allowPackage(knownPkg);
+                }
+              }
+            }
+          } catch (launchErr: any) {
+            this.logger.warn(`react_navigate app launch failed: ${launchErr.message}`);
+            // Continue anyway — app might already be open
+          }
         }
         const { ReActLoop } = await import('./ReActLoop');
         const reactLoop = new ReActLoop(

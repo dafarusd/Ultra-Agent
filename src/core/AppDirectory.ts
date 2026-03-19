@@ -181,9 +181,9 @@ const KNOWN_APPS: Record<string, string> = {
   'among us': 'com.innersloth.spacemafia',
 
   // Weather
-  'weather': 'com.google.android.apps.weather',
+  'weather': 'com.sec.android.daemonapp',
   'samsung weather': 'com.sec.android.daemonapp',
-  'google weather': 'com.google.android.apps.weather',
+  'google weather': 'com.google.android.googlequicksearchbox',
   'accuweather': 'com.accuweather.android',
   'weather channel': 'com.weather.Weather',
   'the weather channel': 'com.weather.Weather',

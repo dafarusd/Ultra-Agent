@@ -12,8 +12,11 @@ export interface UINode {
 
 export interface AppControllerInterface {
   getScreenContent(): Promise<UINode>;
+  getScreenContentFlat(): Promise<string>;
   performClick(nodeSelector: string): Promise<boolean>;
-  performScroll(direction: 'up' | 'down' | 'left' | 'right'): Promise<boolean>;
+  performTap(x: number, y: number): Promise<boolean>;
+  performSwipe(x1: number, y1: number, x2: number, y2: number, durationMs: number): Promise<boolean>;
+  performScroll(direction: 'up' | 'down' | 'left' | 'right' | string): Promise<boolean>;
   performText(nodeSelector: string, text: string): Promise<boolean>;
   performBack(): Promise<boolean>;
   performHome(): Promise<boolean>;
@@ -22,6 +25,7 @@ export interface AppControllerInterface {
   openAccessibilitySettings(): Promise<void>;
   allowPackage(pkg: string): Promise<boolean>;
   revokePackage(pkg: string): Promise<boolean>;
+  waitForUiChange(timeoutMs: number): Promise<boolean>;
   isAvailable(): boolean;
 }
 
@@ -37,7 +41,10 @@ const emptyNode: UINode = {
 
 const noopController: AppControllerInterface = {
   getScreenContent: async () => emptyNode,
+  getScreenContentFlat: async () => '[]',
   performClick: async () => false,
+  performTap: async () => false,
+  performSwipe: async () => false,
   performScroll: async () => false,
   performText: async () => false,
   performBack: async () => false,
@@ -47,6 +54,7 @@ const noopController: AppControllerInterface = {
   openAccessibilitySettings: async () => {},
   allowPackage: async () => true,
   revokePackage: async () => true,
+  waitForUiChange: async () => false,
   isAvailable: () => false,
 };
 
@@ -64,8 +72,20 @@ function createNativeController(): AppControllerInterface {
         return emptyNode;
       }
     },
+    getScreenContentFlat: async () => {
+      if (!native.getScreenContentFlat) return '[]';
+      return native.getScreenContentFlat();
+    },
     performClick: (nodeSelector: string) => native.performClick(nodeSelector),
-    performScroll: (direction: 'up' | 'down' | 'left' | 'right') => native.performScroll(direction),
+    performTap: (x: number, y: number) => {
+      if (!native.performTap) return Promise.resolve(false);
+      return native.performTap(x, y);
+    },
+    performSwipe: (x1: number, y1: number, x2: number, y2: number, durationMs: number) => {
+      if (!native.performSwipe) return Promise.resolve(false);
+      return native.performSwipe(x1, y1, x2, y2, durationMs);
+    },
+    performScroll: (direction: string) => native.performScroll(direction),
     performText: (nodeSelector: string, text: string) => native.performText(nodeSelector, text),
     performBack: () => native.performBack(),
     performHome: () => native.performHome(),
@@ -74,6 +94,10 @@ function createNativeController(): AppControllerInterface {
     openAccessibilitySettings: () => native.openAccessibilitySettings(),
     allowPackage: (pkg: string) => native.allowPackage(pkg),
     revokePackage: (pkg: string) => native.revokePackage(pkg),
+    waitForUiChange: (timeoutMs: number) => {
+      if (!native.waitForUiChange) return Promise.resolve(false);
+      return native.waitForUiChange(timeoutMs);
+    },
     isAvailable: () => true,
   };
 }

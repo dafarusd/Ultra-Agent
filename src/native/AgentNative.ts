@@ -34,6 +34,7 @@ export interface AgentNativeInterface {
   exec(command: string, workDir: string): Promise<string>;
   getStorageInfo(): Promise<{ total: number; free: number; used: number }>;
   getInstalledApps(): Promise<Array<{ packageName: string; appName: string }>>;
+  launchApp(packageName: string): Promise<{ success: boolean; packageName?: string; error?: string }>;
   setFlashlight(on: boolean): Promise<boolean>;
   sendMediaKey(keyCode: number): Promise<boolean>;
   sendSms(phoneNumber: string, message: string): Promise<boolean>;
@@ -61,6 +62,7 @@ const noopModule: AgentNativeInterface = {
   exec: async () => 'AgentNative not available',
   getStorageInfo: async () => ({ total: 0, free: 0, used: 0 }),
   getInstalledApps: async () => [],
+  launchApp: async () => ({ success: false, error: 'AgentNative not available' }),
   setFlashlight: async () => false,
   sendMediaKey: async () => false,
   sendSms: async () => false,
@@ -101,6 +103,7 @@ function createNativeWrapper(): AgentNativeInterface {
     },
     getStorageInfo: () => native.getStorageInfo(),
     getInstalledApps: () => native.getInstalledApps ? native.getInstalledApps() : Promise.resolve([]),
+    launchApp: (packageName: string) => native.launchApp ? native.launchApp(packageName) : Promise.resolve({ success: false, error: 'launchApp not available' }),
     setFlashlight: (on: boolean) => native.setFlashlight ? native.setFlashlight(on) : Promise.resolve(false),
     sendMediaKey: (keyCode: number) => native.sendMediaKey ? native.sendMediaKey(keyCode) : Promise.resolve(false),
     sendSms: (phoneNumber: string, message: string) =>
