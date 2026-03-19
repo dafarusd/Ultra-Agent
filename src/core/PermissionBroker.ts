@@ -2,9 +2,10 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 /**
- * Runtime-requestable "dangerous" permissions.
- * Normal permissions (INTERNET, VIBRATE, etc.) are auto-granted at install.
- * Special permissions (SYSTEM_ALERT_WINDOW, WRITE_SETTINGS) require Settings intents — handled separately.
+ * Standard dangerous permissions that can be safely batched in requestMultiple().
+ * EXCLUDED intentionally:
+ *   ACCESS_BACKGROUND_LOCATION — Android 11+ throws SecurityException if batched with others; requested separately below.
+ *   SCHEDULE_EXACT_ALARM       — Android 12+ special app access, not a dangerous permission; not grantable via requestMultiple().
  */
 const RUNTIME_PERMISSIONS: Array<{ key: string; perm: string; minApi?: number }> = [
   { key: 'READ_CONTACTS',          perm: PermissionsAndroid.PERMISSIONS.READ_CONTACTS },
@@ -18,7 +19,6 @@ const RUNTIME_PERMISSIONS: Array<{ key: string; perm: string; minApi?: number }>
   { key: 'RECORD_AUDIO',           perm: PermissionsAndroid.PERMISSIONS.RECORD_AUDIO },
   { key: 'ACCESS_FINE_LOCATION',   perm: PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION },
   { key: 'ACCESS_COARSE_LOCATION', perm: PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION },
-  { key: 'ACCESS_BACKGROUND_LOCATION', perm: PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION },
   { key: 'READ_EXTERNAL_STORAGE',  perm: PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE },
   { key: 'WRITE_EXTERNAL_STORAGE', perm: PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE },
   { key: 'READ_CALENDAR',          perm: 'android.permission.READ_CALENDAR' },
@@ -30,7 +30,6 @@ const RUNTIME_PERMISSIONS: Array<{ key: string; perm: string; minApi?: number }>
   { key: 'READ_MEDIA_IMAGES',      perm: 'android.permission.READ_MEDIA_IMAGES', minApi: 33 },
   { key: 'READ_MEDIA_VIDEO',       perm: 'android.permission.READ_MEDIA_VIDEO', minApi: 33 },
   { key: 'READ_MEDIA_AUDIO',       perm: 'android.permission.READ_MEDIA_AUDIO', minApi: 33 },
-  { key: 'SCHEDULE_EXACT_ALARM',   perm: 'android.permission.SCHEDULE_EXACT_ALARM', minApi: 31 },
 ];
 
 export class PermissionBroker {
@@ -97,6 +96,37 @@ export class PermissionBroker {
           }
         }
       }
+    }
+
+    // Third pass: ACCESS_BACKGROUND_LOCATION — MUST be a solo requestMultiple() call.
+    // Android 11+ throws SecurityException if it shares a batch with any other permission.
+    // Only request it if foreground location was just granted.
+    const hasForeground = this.granted.has('ACCESS_FINE_LOCATION') || this.granted.has('ACCESS_COARSE_LOCATION');
+    if (hasForeground) {
+      const bgPerm = PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION;
+      const alreadyBg = await PermissionsAndroid.check(bgPerm as any).catch(() => false);
+      if (alreadyBg) {
+        this.granted.add('ACCESS_BACKGROUND_LOCATION');
+        DebugLog.permissionStatus('ACCESS_BACKGROUND_LOCATION', 'already granted');
+      } else {
+        try {
+          const bgResults = await PermissionsAndroid.requestMultiple([bgPerm] as any[]);
+          const bgResult = bgResults[bgPerm];
+          if (bgResult === PermissionsAndroid.RESULTS.GRANTED) {
+            this.granted.add('ACCESS_BACKGROUND_LOCATION');
+            DebugLog.permissionStatus('ACCESS_BACKGROUND_LOCATION', 'granted');
+          } else {
+            this.denied.add('ACCESS_BACKGROUND_LOCATION');
+            DebugLog.permissionStatus('ACCESS_BACKGROUND_LOCATION', bgResult || 'denied');
+          }
+        } catch (bgErr: any) {
+          this.denied.add('ACCESS_BACKGROUND_LOCATION');
+          DebugLog.error('PermissionBroker', `Background location solo request failed: ${bgErr.message}`);
+        }
+      }
+    } else {
+      this.denied.add('ACCESS_BACKGROUND_LOCATION');
+      DebugLog.permissionStatus('ACCESS_BACKGROUND_LOCATION', 'skipped — no foreground location');
     }
 
     this.initialized = true;
