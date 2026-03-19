@@ -57,6 +57,12 @@ export class ReActLoop {
     let lastTreePrefix = '';
 
     for (let iteration = 1; iteration <= this.maxIterations; iteration++) {
+      // Re-allow current foreground package each iteration — handles app redirects,
+      // permission dialogs, and package changes mid-loop
+      try {
+        const currentPkg = await AppController.getActivePackage();
+        if (currentPkg) await AppController.allowPackage(currentPkg);
+      } catch (_) {}
       const prompt = this.buildPrompt(goal, observation, steps);
       let reasoning: string;
       try {
