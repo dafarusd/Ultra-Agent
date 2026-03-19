@@ -52,7 +52,16 @@ export class ReActLoop {
 
     DebugLog.systemEvent('ReActLoop', `START goal="${goal.slice(0, 80)}" app="${appHint || 'any'}"`);
 
+    // Wait for accessibility tree to populate — first read may be empty
     let observation = await this.observe();
+    if (observation === 'Screen: empty or inaccessible' || observation === 'Screen: observation failed') {
+      await this.sleep(1500);
+      observation = await this.observe();
+      if (observation === 'Screen: empty or inaccessible' || observation === 'Screen: observation failed') {
+        await this.sleep(1500);
+        observation = await this.observe();
+      }
+    }
     let stuckCount = 0;
     let lastTreePrefix = '';
 
@@ -97,7 +106,7 @@ export class ReActLoop {
       if (treePrefix === lastTreePrefix) {
         stuckCount++;
         if (stuckCount >= 2) {
-          await AppController.performScroll('forward' as any);
+          await AppController.performScroll('down');
           await this.sleep(600);
           stuckCount = 0;
         }
@@ -179,8 +188,27 @@ ACTION: <single action command>`;
   }
 
   private extractAction(text: string): string | null {
-    const match = text.match(/^ACTION:\s*(.+)$/im);
-    return match ? match[1].trim() : null;
+    const strict = text.match(/^ACTION:\s*(.+)$/im);
+    if (strict) return strict[1].trim();
+
+    const actionPatterns = [
+      /\b(tap_index\(\s*\d+\s*\))/i,
+      /\b(tap\(\s*\d+\s*,\s*\d+\s*\))/i,
+      /\b(type\(\s*["']?.+?["']?\s*\))/i,
+      /\b(scroll\(\s*(?:up|down|forward|backward)\s*\))/i,
+      /\b(swipe\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\))/i,
+      /\b(back\(\))/i,
+      /\b(home\(\))/i,
+      /\b(done)\b/i,
+    ];
+    for (const pattern of actionPatterns) {
+      const found = text.match(pattern);
+      if (found) return found[1].trim();
+    }
+
+    const trimmed = text.trim().toLowerCase();
+    if (trimmed === 'done' || trimmed === 'back' || trimmed === 'back()') return trimmed;
+    return null;
   }
 
   private async executeAction(action: string): Promise<boolean> {
@@ -192,7 +220,7 @@ ACTION: <single action command>`;
       const scrollMatch = a.match(/^scroll\((up|down|forward|backward)\)$/i);
       if (scrollMatch) {
         const dir = scrollMatch[1].toLowerCase();
-        return await AppController.performScroll(dir === 'up' ? 'backward' as any : 'forward' as any);
+        return await AppController.performScroll(dir === 'up' || dir === 'backward' ? 'up' : 'down');
       }
 
       const tapMatch = a.match(/^tap\(\s*(\d+)\s*,\s*(\d+)\s*\)$/i);

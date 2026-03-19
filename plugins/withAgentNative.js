@@ -1497,6 +1497,57 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     public boolean performBack() { return performGlobalAction(GLOBAL_ACTION_BACK); }
     public boolean performHome() { return performGlobalAction(GLOBAL_ACTION_HOME); }
+    public boolean performQuickSettings() { return performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS); }
+    public boolean performNotifications() { return performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); }
+    public boolean performRecents() { return performGlobalAction(GLOBAL_ACTION_RECENTS); }
+    public boolean takeScreenshot() {
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            return performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT);
+        }
+        return false;
+    }
+
+    public boolean tapQuickSettingsTile(String tileLabel) {
+        allowPackage("com.android.systemui");
+        try {
+            Thread.sleep(500);
+            android.view.accessibility.AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return false;
+            java.util.List<android.view.accessibility.AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(tileLabel);
+            if (nodes != null && !nodes.isEmpty()) {
+                for (android.view.accessibility.AccessibilityNodeInfo node : nodes) {
+                    android.view.accessibility.AccessibilityNodeInfo current = node;
+                    for (int depth = 0; depth < 5; depth++) {
+                        if (current == null) break;
+                        if (current.isClickable()) {
+                            boolean result = current.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
+                            root.recycle();
+                            return result;
+                        }
+                        current = current.getParent();
+                    }
+                }
+            }
+            root.recycle();
+            return false;
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "tapQuickSettingsTile error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean toggleQuickSetting(String tileLabel) {
+        performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
+        try { Thread.sleep(600); } catch (InterruptedException ignored) {}
+        boolean result = tapQuickSettingsTile(tileLabel);
+        if (!result) {
+            performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
+            try { Thread.sleep(600); } catch (InterruptedException ignored) {}
+            result = tapQuickSettingsTile(tileLabel);
+        }
+        performGlobalAction(GLOBAL_ACTION_BACK);
+        return result;
+    }
 
     private AccessibilityNodeInfo findFocusedEditable(AccessibilityNodeInfo root) {
         if (root.isEditable() && root.isFocused()) return AccessibilityNodeInfo.obtain(root);
@@ -1731,6 +1782,27 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
       AgentAccessibilityService.revokePackage(pkg);
       promise.resolve(true);
     }
+
+    @ReactMethod
+    public void performQuickSettings(Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) { promise.reject("NOT_RUNNING", "Service not running"); return; }
+        promise.resolve(AgentAccessibilityService.getInstance().performQuickSettings());
+    }
+
+    @ReactMethod
+    public void takeScreenshot(Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) { promise.reject("NOT_RUNNING", "Service not running"); return; }
+        promise.resolve(AgentAccessibilityService.getInstance().takeScreenshot());
+    }
+
+    @ReactMethod
+    public void toggleQuickSetting(String tileLabel, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) { promise.reject("NOT_RUNNING", "Service not running"); return; }
+        new Thread(() -> {
+            boolean result = AgentAccessibilityService.getInstance().toggleQuickSetting(tileLabel);
+            promise.resolve(result);
+        }).start();
+    }
 }`;
 
 const BACKGROUND_SERVICE_JAVA = `package com.agent.ultra;
@@ -1799,12 +1871,14 @@ public class AgentBackgroundService extends Service {
 const ACCESSIBILITY_SERVICE_CONFIG = `<?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_service_description"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked"
+    android:accessibilityEventTypes="typeAllMask"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:notificationTimeout="100"
+    android:notificationTimeout="50"
     android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
+    android:canRequestFilterKeyEvents="true"
     android:settingsActivity="com.agent.ultra.MainActivity"
-    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews" />`;
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagIncludeNotImportantViews|flagRetrieveInteractiveWindows" />`;
 
 const STRINGS_XML_ADDITION = `    <string name="accessibility_service_description">Agent Ultra uses accessibility to interact with other apps on your behalf. Enable only if you want Ultra to control apps for you.</string>`;
 

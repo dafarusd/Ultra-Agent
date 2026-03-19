@@ -236,20 +236,20 @@ export function findBestMatch(
 
   if (!q) return null;
 
-  // First check static directory
+  // Trust KNOWN_APPS without requiring launcher list verification.
+  // launchApp() uses getLaunchIntentForPackage() which checks CATEGORY_INFO
+  // and CATEGORY_LAUNCHER — broader than getInstalledApps(). Widget-only
+  // apps (Samsung Weather = com.sec.android.daemonapp) won't appear in
+  // getInstalledApps() but ARE launchable.
   const knownPkg = KNOWN_APPS[q];
   if (knownPkg) {
-    // Verify it's actually installed
     const installed = installedApps.find(a => a.packageName === knownPkg);
-    if (installed) {
-      return {
-        packageName: knownPkg,
-        appName: installed.appName,
-        score: 100,
-        matchType: 'directory',
-      };
-    }
-    // Static entry not installed — fall through to fuzzy scan
+    return {
+      packageName: knownPkg,
+      appName: installed?.appName || q,
+      score: 100,
+      matchType: 'directory',
+    };
   }
 
   let best: MatchResult | null = null;

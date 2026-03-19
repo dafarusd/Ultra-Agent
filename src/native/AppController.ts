@@ -26,6 +26,9 @@ export interface AppControllerInterface {
   allowPackage(pkg: string): Promise<boolean>;
   revokePackage(pkg: string): Promise<boolean>;
   waitForUiChange(timeoutMs: number): Promise<boolean>;
+  performQuickSettings(): Promise<boolean>;
+  takeScreenshot(): Promise<boolean>;
+  toggleQuickSetting(tileLabel: string): Promise<boolean>;
   isAvailable(): boolean;
 }
 
@@ -55,6 +58,9 @@ const noopController: AppControllerInterface = {
   allowPackage: async () => true,
   revokePackage: async () => true,
   waitForUiChange: async () => false,
+  performQuickSettings: async () => false,
+  takeScreenshot: async () => false,
+  toggleQuickSetting: async () => false,
   isAvailable: () => false,
 };
 
@@ -98,6 +104,9 @@ function createNativeController(): AppControllerInterface {
       if (!native.waitForUiChange) return Promise.resolve(false);
       return native.waitForUiChange(timeoutMs);
     },
+    performQuickSettings: () => native.performQuickSettings ? native.performQuickSettings() : Promise.resolve(false),
+    takeScreenshot: () => native.takeScreenshot ? native.takeScreenshot() : Promise.resolve(false),
+    toggleQuickSetting: (tileLabel: string) => native.toggleQuickSetting ? native.toggleQuickSetting(tileLabel) : Promise.resolve(false),
     isAvailable: () => true,
   };
 }

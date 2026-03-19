@@ -163,6 +163,52 @@ const rules: ParseRule[] = [
     }),
   },
 
+  // ════════════════════════════════════════════════════
+  // REACT NAVIGATE (must come before web_search — more specific patterns)
+  // ════════════════════════════════════════════════════
+
+  // "Search for X on amazon.com/reddit.com/etc." (website URL)
+  {
+    pattern: /^(?:search|find|look\s*up)\s+(?:for\s+)?(.+?)\s+(?:on|in|at)\s+(\w[\w-]*\.(?:com|org|net|io|co|edu|gov)(?:\.\w{2,})?)/i,
+    capability: 'react_navigate',
+    extractParams: (m) => ({
+      goal: `Navigate to https://${m[2].trim()} and search for "${m[1].trim()}"`,
+      appHint: 'browser',
+    }),
+  },
+
+  // "Search for X on Chrome/browser/internet/samsung internet/etc."
+  {
+    pattern: /^(?:search|google|look\s*up|browse|find)\s+(?:for\s+)?(.+?)\s+(?:on|in|using|with|via)\s+(chrome|browser|internet|samsung internet|firefox|brave|edge|opera)/i,
+    capability: 'react_navigate',
+    extractParams: (m) => ({ goal: `Search for "${m[1].trim()}"`, appHint: m[2].trim() }),
+  },
+
+  // "Google X" / "Search the web for X"
+  {
+    pattern: /^(?:google|search\s+the\s+web\s+for|web\s+search)\s+(.+)/i,
+    capability: 'react_navigate',
+    extractParams: (m) => ({ goal: `Search for "${m[1].trim()}"`, appHint: 'browser' }),
+  },
+
+  // "Open X and search/find/browse/etc. Y"
+  {
+    pattern: /^open\s+(\S+)\s+and\s+((?:search|find|look|type|tap|click|scroll|navigate|go\s+to|browse|play|select|choose).+)$/i,
+    capability: 'react_navigate',
+    extractParams: (m) => ({ goal: m[2].trim(), appHint: m[1].trim() }),
+  },
+
+  {
+    pattern: /^(?:navigate|use|go through|interact with)\s+(.+?)\s+(?:to|and)\s+(.+)$/i,
+    capability: 'react_navigate',
+    extractParams: (m) => ({ goal: `${m[2].trim()} in ${m[1].trim()}`, appHint: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:in|inside|within)\s+(.+?),?\s+(?:navigate to|find|tap|click|go to)\s+(.+)$/i,
+    capability: 'react_navigate',
+    extractParams: (m) => ({ goal: m[2].trim(), appHint: m[1].trim() }),
+  },
+
   // ── WEB SEARCH ─────────────────────────────────────
   {
     pattern: /^(?:search|google|look\s+up)\s+(?:for\s+)?(.+)$/i,
@@ -537,42 +583,6 @@ const rules: ParseRule[] = [
     pattern: /^(?:cpu\s+temp(?:erature)?|temperature|how\s+hot(?:\s+is\s+(?:my\s+)?(?:phone|device))?)[?.!]?\s*$/i,
     capability: 'system_info',
     extractParams: () => ({ focus: 'temperature' }),
-  },
-
-  // ════════════════════════════════════════════════════
-  // REACT NAVIGATE
-  // ════════════════════════════════════════════════════
-
-  // "Search for X on Chrome/browser/internet/samsung internet/etc."
-  {
-    pattern: /^(?:search|google|look\s*up|browse|find)\s+(?:for\s+)?(.+?)\s+(?:on|in|using|with|via)\s+(chrome|browser|internet|samsung internet|firefox|brave|edge|opera)/i,
-    capability: 'react_navigate',
-    extractParams: (m) => ({ goal: `Search for "${m[1].trim()}"`, appHint: m[2].trim() }),
-  },
-
-  // "Google X" / "Search the web for X"
-  {
-    pattern: /^(?:google|search\s+the\s+web\s+for|web\s+search)\s+(.+)/i,
-    capability: 'react_navigate',
-    extractParams: (m) => ({ goal: `Search for "${m[1].trim()}"`, appHint: 'browser' }),
-  },
-
-  // "Open X and search/find/browse/etc. Y"
-  {
-    pattern: /^open\s+(\S+)\s+and\s+((?:search|find|look|type|tap|click|scroll|navigate|go\s+to|browse|play|select|choose).+)$/i,
-    capability: 'react_navigate',
-    extractParams: (m) => ({ goal: m[2].trim(), appHint: m[1].trim() }),
-  },
-
-  {
-    pattern: /^(?:navigate|use|go through|interact with)\s+(.+?)\s+(?:to|and)\s+(.+)$/i,
-    capability: 'react_navigate',
-    extractParams: (m) => ({ goal: `${m[2].trim()} in ${m[1].trim()}`, appHint: m[1].trim() }),
-  },
-  {
-    pattern: /^(?:in|inside|within)\s+(.+?),?\s+(?:navigate to|find|tap|click|go to)\s+(.+)$/i,
-    capability: 'react_navigate',
-    extractParams: (m) => ({ goal: m[2].trim(), appHint: m[1].trim() }),
   },
 
   // ════════════════════════════════════════════════════

@@ -298,8 +298,15 @@ export class TaskExecutor {
       if (!serviceEnabled) {
         return { success: false, summary: 'Accessibility service not enabled — action opened but could not interact', steps: 0 };
       }
+      // Pre-allow target package + systemui so first iteration actions aren't rejected
+      if (appHint) await AppController.allowPackage(appHint);
+      await AppController.allowPackage('com.android.systemui');
+      try {
+        const currentPkg = await AppController.getActivePackage();
+        if (currentPkg) await AppController.allowPackage(currentPkg);
+      } catch (_) {}
       // Wait for the launched app/settings to render
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       const { ReActLoop } = await import('./ReActLoop');
       const reactLoop = new ReActLoop(
@@ -405,7 +412,9 @@ export class TaskExecutor {
                 to = recalled.number;
               }
             }
-          } catch {}
+          } catch (memErr: any) {
+            this.logger.warn(`Contact memory recall failed: ${memErr.message}`);
+          }
         }
         try {
           const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
@@ -503,15 +512,27 @@ export class TaskExecutor {
       }
       case 'camera_capture': {
         if (!isNative) return { error: 'Camera requires a device' };
-        const camResult = await ImagePicker.launchCameraAsync({
-          mediaTypes: ['images'],
-          quality: 0.8,
-        });
-        if (camResult.canceled || !camResult.assets || camResult.assets.length === 0) {
-          return { success: false, error: 'Camera capture cancelled by user' };
+        try {
+          const AgentNativeModuleCam = (await import('../native/AgentNative')).default;
+          let launched = await AgentNativeModuleCam.launchApp('com.sec.android.app.camera');
+          if (!launched.success) launched = await AgentNativeModuleCam.launchApp('com.android.camera2');
+          if (!launched.success) launched = await AgentNativeModuleCam.launchApp('com.google.android.GoogleCamera');
+          if (!launched.success) {
+            const camResult = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
+            if (camResult.canceled || !camResult.assets?.length) return { success: false, error: 'Camera capture cancelled' };
+            return { success: true, uri: camResult.assets[0].uri };
+          }
+          const shutterResult = await this.completeWithReActLoop(
+            'Find the capture/shutter button (usually a large round button at the bottom center) and tap it to take a photo',
+            taskId, launched.packageName, 3
+          );
+          return {
+            success: true,
+            summary: shutterResult.success ? 'Photo captured' : 'Camera opened — tap the shutter button to take a photo',
+          };
+        } catch (err: any) {
+          return { success: false, error: `Camera error: ${err.message}` };
         }
-        const photo = camResult.assets[0];
-        return { success: true, uri: photo.uri, width: photo.width, height: photo.height, fileSize: photo.fileSize || null };
       }
       case 'media_access': {
         if (params.action === 'pick') {
@@ -559,7 +580,9 @@ export class TaskExecutor {
                   this.logger.info(`Contact recalled: "${contactName}" → ${recalled.number}`);
                 }
               }
-            } catch {}
+            } catch (callMemErr: any) {
+              this.logger.warn(`Call contact memory recall failed: ${callMemErr.message}`);
+            }
             if (!params.data) { // Only do full lookup if recall missed
               try {
                 const { data: contacts } = await Contacts.getContactsAsync({
@@ -612,7 +635,9 @@ export class TaskExecutor {
                 const installed = await AgentNativeModule.getInstalledApps();
                 const match = findBestMatch(target, installed);
                 if (match) pkg = match.packageName;
-              } catch {}
+              } catch (matchErr: any) {
+                this.logger.warn(`App package resolve failed: ${matchErr.message}`);
+              }
             }
           }
 
@@ -1215,6 +1240,12 @@ export class TaskExecutor {
             // Continue anyway — app might already be open
           }
         }
+        // Ensure whatever app is now in foreground is allowed for interaction
+        try {
+          const currentFg = await AppController.getActivePackage();
+          if (currentFg) await AppController.allowPackage(currentFg);
+        } catch (_) {}
+        await AppController.allowPackage('com.android.systemui');
         const { ReActLoop } = await import('./ReActLoop');
         const reactLoop = new ReActLoop(
           async (prompt: string) => {
@@ -1336,56 +1367,30 @@ export class TaskExecutor {
         return { success: true, summary: 'Opened display settings for brightness' };
       }
       case 'wifi_toggle': {
+        const toggled = await AppController.toggleQuickSetting('Wi-Fi');
+        if (toggled) return { success: true, summary: 'Wi-Fi toggled' };
         await IntentLauncher.startActivityAsync('android.settings.WIFI_SETTINGS', {});
-        const reactResult = await this.completeWithReActLoop(
-          'Find the Wi-Fi on/off toggle switch and tap it',
-          taskId,
-          'com.android.settings',
-          4
-        );
-        if (reactResult.success) {
-          return { success: true, summary: 'Wi-Fi toggled' };
-        }
         return { success: true, summary: 'Opened Wi-Fi settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'bluetooth_toggle': {
+        const toggled = await AppController.toggleQuickSetting('Bluetooth');
+        if (toggled) return { success: true, summary: 'Bluetooth toggled' };
         await IntentLauncher.startActivityAsync('android.settings.BLUETOOTH_SETTINGS', {});
-        const reactResult = await this.completeWithReActLoop(
-          'Find the Bluetooth on/off toggle switch and tap it',
-          taskId,
-          'com.android.settings',
-          4
-        );
-        if (reactResult.success) {
-          return { success: true, summary: 'Bluetooth toggled' };
-        }
         return { success: true, summary: 'Opened Bluetooth settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'airplane_mode': {
+        let toggled = await AppController.toggleQuickSetting('Airplane');
+        if (!toggled) toggled = await AppController.toggleQuickSetting('Flight');
+        if (toggled) return { success: true, summary: 'Airplane Mode toggled' };
         await IntentLauncher.startActivityAsync('android.settings.AIRPLANE_MODE_SETTINGS', {});
-        const reactResult = await this.completeWithReActLoop(
-          'Find the Airplane Mode toggle switch and tap it to toggle it on or off',
-          taskId,
-          'com.android.settings',
-          4
-        );
-        if (reactResult.success) {
-          return { success: true, summary: 'Airplane Mode toggled' };
-        }
-        return { success: true, summary: 'Opened Airplane Mode settings — tap the toggle to enable/disable', data: { partial: true } };
+        return { success: true, summary: 'Opened Airplane Mode settings — tap the toggle', data: { partial: true } };
       }
       case 'do_not_disturb': {
+        let toggled = await AppController.toggleQuickSetting('Do not disturb');
+        if (!toggled) toggled = await AppController.toggleQuickSetting('DND');
+        if (toggled) return { success: true, summary: 'Do Not Disturb toggled' };
         await IntentLauncher.startActivityAsync('android.settings.ZEN_MODE_SETTINGS', {});
-        const reactResult = await this.completeWithReActLoop(
-          'Find the Do Not Disturb toggle switch and tap it to toggle it',
-          taskId,
-          'com.android.settings',
-          4
-        );
-        if (reactResult.success) {
-          return { success: true, summary: 'Do Not Disturb toggled' };
-        }
-        return { success: true, summary: 'Opened DND settings — tap the toggle to enable/disable', data: { partial: true } };
+        return { success: true, summary: 'Opened DND settings — tap the toggle', data: { partial: true } };
       }
       case 'battery_status': {
         const [level, state] = await Promise.all([
@@ -1423,7 +1428,9 @@ export class TaskExecutor {
             await AgentNativeModule.sendMediaKey(keyCode);
             return { success: true, summary: `Media ${action || 'play/pause'} triggered` };
           }
-        } catch {}
+        } catch (mediaErr: any) {
+          this.logger.warn(`Media play key injection failed: ${mediaErr.message}`);
+        }
         await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
         return { success: true, summary: 'Opened media controls (native key injection unavailable)' };
       }
@@ -1434,16 +1441,20 @@ export class TaskExecutor {
             await AgentNativeModule.sendMediaKey(87);
             return { success: true, summary: 'Skipped to next track' };
           }
-        } catch {}
+        } catch (nextErr: any) {
+          this.logger.warn(`Media next key injection failed: ${nextErr.message}`);
+        }
         return { success: false, summary: 'Media next requires native module (sendMediaKey)' };
       }
       case 'screenshot': {
-        if (!isNative || !AppController.isAvailable()) {
-          return { success: false, summary: 'Screenshot requires Android device with accessibility service' };
+        if (!isNative) return { success: false, summary: 'Screenshot requires Android device' };
+        const screenshotTaken = await AppController.takeScreenshot().catch(() => false);
+        if (screenshotTaken) {
+          return { success: true, summary: 'Screenshot taken — saved to your Screenshots folder' };
         }
         try {
           const tree = await AppController.getScreenContent();
-          return { success: true, summary: 'Screenshot captured', data: { screen: tree } };
+          return { success: true, summary: 'Could not capture visual screenshot. Screen content returned as text.', data: { screen: tree } };
         } catch (err: any) {
           return { success: false, summary: `Screenshot failed: ${err.message}` };
         }
@@ -1546,7 +1557,9 @@ export class TaskExecutor {
             const installed = await AgentNativeModule.getInstalledApps();
             const match = findBestMatch(appTarget, installed);
             if (match) appPkg = match.packageName;
-          } catch {}
+          } catch (appInfoErr: any) {
+            this.logger.warn(`App info package resolve failed: ${appInfoErr.message}`);
+          }
         }
         if (appPkg) {
           await IntentLauncher.startActivityAsync('android.settings.APPLICATION_DETAILS_SETTINGS', {
@@ -1636,104 +1649,8 @@ export class TaskExecutor {
   }
 
   private async exec(capId: string, request: string, taskId: string): Promise<any> {
-    switch (capId) {
-      case 'file_read': {
-        if (!isNative) return { error: 'File operations require Android device' };
-        const files = await FileSystem.readDirectoryAsync(this.docDir);
-        return { directory: this.docDir, files, count: files.length };
-      }
-      case 'file_write': {
-        if (!isNative) return { error: 'File operations require Android device' };
-        const r = await this.ai.complete(`User wants to write a file: "${request}". Respond JSON: {"filename":"name","content":"data"}`, { taskId, agentId: 'file-write', maxTokens: 4000 });
-        const p = JSON.parse(r.content);
-        const filePath = this.docDir + p.filename;
-        await FileSystem.writeAsStringAsync(filePath, p.content);
-        return { path: filePath, size: p.content.length };
-      }
-      case 'file_delete': {
-        if (!isNative) return { error: 'File operations require Android device' };
-        const r = await this.ai.complete(`Extract filename from: "${request}". Respond filename only.`, { agentId: 'file-del', maxTokens: 100 });
-        const fn = r.content.trim();
-        const filePath = this.docDir + fn;
-        const info = await FileSystem.getInfoAsync(filePath);
-        if (info.exists) { await FileSystem.deleteAsync(filePath); return { deleted: filePath }; }
-        return { error: `File not found: ${fn}` };
-      }
-      case 'file_organize': {
-        if (!isNative) return { error: 'File operations require Android device' };
-        const r = await this.ai.complete(`User wants to organize: "${request}". Respond JSON: {"actions":[{"source":"path","destination":"path"}]}`, { taskId, agentId: 'file-org', maxTokens: 2000 });
-        const p = JSON.parse(r.content);
-        const done: string[] = [];
-        for (const a of p.actions) {
-          const destDir = a.destination.substring(0, a.destination.lastIndexOf('/'));
-          await FileSystem.makeDirectoryAsync(this.docDir + destDir, { intermediates: true });
-          await FileSystem.moveAsync({ from: this.docDir + a.source, to: this.docDir + a.destination });
-          done.push(`${a.source} -> ${a.destination}`);
-        }
-        return { organized: done.length, actions: done };
-      }
-      case 'contacts_read': {
-        const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
-        return { contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
-      }
-      case 'sms_send': {
-        const r = await this.ai.complete(`Extract SMS details: "${request}". JSON: {"to":"number","message":"text"}`, { taskId, agentId: 'sms', maxTokens: 500 });
-        const p = JSON.parse(r.content);
-        const avail = await SMS.isAvailableAsync();
-        if (!avail) return { error: 'SMS unavailable' };
-        const { result } = await SMS.sendSMSAsync([p.to], p.message);
-        return { sent: result === 'sent', to: p.to };
-      }
-      case 'camera_capture': {
-        if (!isNative) return { error: 'Camera requires a device' };
-        return { note: 'Camera capture initiated. Use the device camera app.' };
-      }
-      case 'media_access': {
-        const { assets } = await MediaLibrary.getAssetsAsync({ first: 20, sortBy: [MediaLibrary.SortBy.creationTime] });
-        return { count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
-      }
-      case 'app_launch':
-        // All app_launch commands are handled by runWithPlan().
-        // This fallback should never be reached.
-        return { error: 'app_launch should be routed through runWithPlan' };
-      case 'app_share': {
-        const avail = await Sharing.isAvailableAsync();
-        return { available: avail };
-      }
-      case 'code_generate': {
-        const r = await this.ai.complete(`Generate complete production code for: "${request}". All imports, error handling, comments.`, { taskId, agentId: 'codegen', maxTokens: 8000, temperature: 0.5 });
-        if (isNative) {
-          const fn = `generated_${Date.now()}.java`;
-          const filePath = this.docDir + 'projects/' + fn;
-          await FileSystem.writeAsStringAsync(filePath, r.content);
-          return { path: filePath, lines: r.content.split('\n').length, cost: r.cost };
-        }
-        return { lines: r.content.split('\n').length, cost: r.cost, note: 'File save requires Android device' };
-      }
-      case 'app_build':
-        return this.build.buildApp(request, taskId);
-      case 'app_install': {
-        if (!isNative) return { error: 'APK install requires Android device' };
-        const files = await FileSystem.readDirectoryAsync(this.docDir + 'projects/');
-        const apks = files.filter((f: string) => f.endsWith('-signed.apk'));
-        if (apks.length === 0) return { error: 'No APK found. Build first.' };
-        await this.build.installApk(this.docDir + 'projects/' + apks[apks.length - 1]);
-        return { installing: apks[apks.length - 1] };
-      }
-      case 'network_request': {
-        const r = await this.ai.complete(`Network request for: "${request}". JSON: {"url":"https://...","method":"GET"}`, { taskId, agentId: 'net', maxTokens: 500 });
-        const p = JSON.parse(r.content);
-        const resp = await fetch(p.url, { method: p.method || 'GET' });
-        const text = await resp.text();
-        return { status: resp.status, length: text.length, body: text.substring(0, 1000) };
-      }
-      case 'ai_query': {
-        const r = await this.ai.complete(request, { taskId, agentId: 'query' });
-        return { response: r.content, cost: r.cost };
-      }
-      default:
-        throw new Error(`No executor for: ${capId}`);
-    }
+    // Delegate to the canonical execWithParams() to avoid duplicate logic
+    return this.execWithParams(capId, {}, request, taskId);
   }
 }
 
