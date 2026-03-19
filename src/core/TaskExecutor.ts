@@ -644,6 +644,39 @@ export class TaskExecutor {
               if (Object.keys(cleanExtras).length > 0) intentParams.extra = cleanExtras;
             }
 
+            // Pre-request CALL_PHONE permission if ACTION_CALL so retry doesn't fail
+            if (params.action === 'android.intent.action.CALL') {
+              const { PermissionsAndroid } = await import('react-native');
+              const already = await PermissionsAndroid.check(
+                PermissionsAndroid.PERMISSIONS.CALL_PHONE
+              );
+              if (!already) {
+                const granted = await PermissionsAndroid.request(
+                  PermissionsAndroid.PERMISSIONS.CALL_PHONE,
+                  {
+                    title: 'Phone Permission',
+                    message: 'Agent Ultra needs permission to make calls directly.',
+                    buttonPositive: 'Allow',
+                  }
+                );
+                if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+                  // Permission denied — fall back to dialer
+                  const dialData = params.data || (params.extras?._contactName ? undefined : undefined);
+                  if (dialData) {
+                    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                      data: dialData.replace('tel:', 'tel:'),
+                    });
+                  }
+                  DebugLog.executorExit(taskId, 'app_launch', true, 'dial_fallback_permission_denied');
+                  return {
+                    success: true,
+                    summary: `CALL_PHONE permission denied — dialer opened`,
+                    data: { note: 'Grant phone permission to call directly' },
+                  };
+                }
+              }
+            }
+
             this.logger.info(`startActivityAsync: ${safeAction} → ${JSON.stringify(intentParams)}`);
             const result = await IntentLauncher.startActivityAsync(safeAction, intentParams);
 
