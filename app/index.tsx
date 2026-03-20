@@ -1016,6 +1016,7 @@ export default function ChatScreen() {
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          onLayout={(e) => { listHeightRef.current = e.nativeEvent.layout.height; }}
           onScroll={(e) => {
             scrollOffsetRef.current = UltraDevLog.listScrolled(
               e.nativeEvent.contentOffset.y,
@@ -1287,7 +1288,7 @@ const styles = StyleSheet.create({
 
   // Messages
   messageList: { flex: 1 },
-  messageListContent: { paddingHorizontal: 16, paddingVertical: 8, flexGrow: 1 },
+  messageListContent: { paddingHorizontal: 16, paddingVertical: 8 },
   emptyState: {
     flex: 1, justifyContent: "center", alignItems: "center", paddingVertical: 80,
     ...(Platform.OS === "web" ? { transform: [{ scaleY: -1 }] } : {}),
