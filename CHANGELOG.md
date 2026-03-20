@@ -4,6 +4,83 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.30.0] -- 2026-03-20 -- Feature: Onboarding, BiometricGate, Blocked Apps, Safety & Privacy (v5 Plan Tasks 1-20)
+
+### Added -- First-Launch Onboarding (Task 18)
+- **New `components/OnboardingScreen.tsx`** — 3-step onboarding flow: Welcome, Venice API Key, Enable Accessibility Service.
+  - Dot progress indicator with animated active dot; back/next/finish navigation; deep link to venice.ai and Accessibility Settings.
+  - `app/index.tsx` checks `AsyncStorage.getItem("onboarding_done")` on init; renders OnboardingScreen instead of chat on first launch.
+  - `onComplete` sets `AsyncStorage.setItem("onboarding_done", "1")` and dismisses.
+
+### Added -- Biometric App Lock (Task 19)
+- **`src/security/BiometricGate.ts`** rewritten — lock timer with `isLocked()` (async), `markUnlocked()`, `setLockTimeout(minutes)`, `getLockTimeout()`, `getLockTimeoutLabel()`, and `authenticate()` via `expo-local-authentication`. Falls back to granted access if hardware unavailable.
+- **`app/index.tsx`** wiring: `BiometricGate.init(vault)` called after vault init; `isLocked()` checked; full-screen lock overlay with fingerprint button shown when locked. `biometricGateRef` holds instance for re-auth.
+- **`app/settings.tsx`** wiring: "App Lock" card in API Setup tab — timeout picker buttons (Never / 1m / 5m / 15m / 30m / 1h). Active selection highlighted. Persists to vault via `gate.setLockTimeout()`.
+
+### Added -- Blocked Apps (Task 16)
+- **`components/BlockedAppsTab.tsx`** — full blocked apps manager. Add package names to blocklist; remove with trash button; shows service-unavailable state with Accessibility Settings shortcut.
+- **`plugins/withAgentNative.js`** — static `blockedPackages` HashSet added to `AgentAccessibilityService`; `blockPackage(pkg)`, `unblockPackage(pkg)`, `getBlockedPackages()` bridge methods added; `checkPackageAllowed(pkg)` checks blockedPackages Set before allowing control.
+- **`src/native/AppController.ts`** — `blockPackage`, `unblockPackage`, `getBlockedPackages` added to interface, `createNativeController()`, and `noopController`.
+- **`app/settings.tsx`** — `SettingsTab` type extended to `"apis" | "costs" | "logs" | "blocked"`; "Blocked" tab added to tab bar; `BlockedAppsTab` rendered when active.
+
+### Added -- On-Device Inference Groundwork (Task 17)
+- **`ModelRouter.canHandleLocally(taskType)`** — scans `offline: true` models in registry; returns true if a matching offline model exists for the requested task type. Groundwork for future on-device inference without Venice API.
+
+### Added -- Model Classification (Task 20)
+- **`ModelRouter.discoverModels()`** now calls `classifyModelType(m.id)` and uses the result as primary type, falling back to Venice API `m.type` only if classifier returns null. Fixes Venice reporting everything as `"text"`.
+
+### Fixed -- Safety: Self-Interaction Block (Task 1)
+- **`checkPackageAllowed(pkg)`** in `AgentAccessibilityService` now hard-blocks `com.agent.ultra` — agent cannot control itself even if explicitly asked.
+
+### Fixed -- Safety: ReActLoop Self-Stop (Task 2)
+- **`ReActLoop.execute()`** checks `getActivePackage()` at the start of each iteration; if foreground is `com.agent.ultra`, aborts immediately with `error: 'self_interaction'`.
+
+### Fixed -- Quick Settings Tap (Task 4)
+- **`tapQuickSettingsTile()`** replaced with gesture-based center-bounds tap (`(left+right)/2`, `(top+bottom)/2`) instead of deprecated `AccessibilityNodeInfo.performAction(ACTION_CLICK)`.
+- `toggleQuickSetting()` now calls `waitForUiChange(1500)` after tap for better reliability.
+
+### Fixed -- Privacy: Minimal Context Refresh (Task 5)
+- **`AgentCore.refreshSystemContext()`** now called ONLY in the LLM routing block (not on every user message). Prevents continuous GPS/sensor polling.
+
+### Fixed -- Privacy: Context Sanitization (Task 6)
+- **`AgentCore.sanitizeSystemContext(ctx)`** strips: GPS coordinates (`-?\d{1,3}\.\d{4,}`), lat/lon fields, coordinates fields, IMEI, and serial numbers before injecting into system prompt sent to Venice.
+
+### Fixed -- API Payload Logging (Task 9)
+- **`ModelRouter.complete()`** logs: `API_PAYLOAD model= task= system_chars= user_chars= temp= max_tokens=` via `DebugLog.systemEvent`.
+- **`ModelRouter.completeWithConversation()`** logs: `API_PAYLOAD model= task= msg_count= total_chars= temp= max_tokens=`.
+
+### Fixed -- react_navigate Priority (Task 10)
+- **`CommandParser`** — `react_navigate` pattern block (named popular apps: Amazon, Reddit, YouTube, etc.) moved to FIRST position before `web_search`. Ensures "search X on YouTube" routes to UI automation, not browser.
+
+### Fixed -- Volume via AudioManager (Task 11)
+- **`withAgentNative.js`** — `setVolume(streamType, level)`, `getVolume(streamType)`, `adjustVolume(direction)` Java methods added to `AgentNativeModule` using `android.media.AudioManager`.
+- **`AppController.ts`** — `setVolume`, `getVolume`, `adjustVolume` added to interface and both controllers.
+- **`TaskExecutor.ts`** — `volume_set` capability now calls `AppController.setVolume/getVolume/adjustVolume` directly instead of opening Sound Settings.
+
+### Fixed -- detectMode Apostrophe (Task 12)
+- **`AgentCore.detectMode()`** regex extended to match `whats` / `wheres` / `how` / `get` / `check` patterns without requiring apostrophes. "whats the battery" now routes to `command` mode.
+
+### Fixed -- Multi-Step Second Step Routing (Task 13)
+- **`AgentCore.execute()`** multi-step loop: if `CommandParser` fails to parse step N≥2, attempts AI routing with context from previous step (`prevCapability`, `prevResult`) injected into system prompt.
+
+### Fixed -- Result Verification Honesty (Task 14)
+- **Toggle results** (`wifi_toggle`, `bluetooth_toggle`, `flashlight_toggle`, etc.) now say "Check your status bar to confirm — toggle actions cannot be verified programmatically."
+- **Screenshot result** has 1000ms delay before reporting to allow screen content to settle.
+
+### Changed -- File Changes Summary
+- `app/index.tsx` +60 lines: imports (AsyncStorage, BiometricGate, OnboardingScreen), state vars (`showOnboarding`, `isAppLocked`, `biometricGateRef`), init logic, lock screen render, onboarding render, lock styles
+- `app/settings.tsx` +55 lines: imports (BlockedAppsTab, BiometricGate), SettingsTab type extended, App Lock card with timeout picker, Blocked tab, `biometricGate` state
+- `src/native/AppController.ts` +9 lines: blockPackage/unblockPackage/getBlockedPackages in interface + both controllers
+- `src/security/BiometricGate.ts` rewritten: async isLocked, timeout persistence, fallback for no hardware
+- `components/BlockedAppsTab.tsx` new (140 lines)
+- `components/OnboardingScreen.tsx` new (110 lines)
+- `plugins/withAgentNative.js` +60 lines: blockedPackages Set, block/unblock/getBlockedPackages Java methods, checkPackageAllowed update, setVolume/getVolume/adjustVolume Java methods, Quick Settings gesture tap
+- `src/core/ModelRouter.ts` +20 lines: canHandleLocally(), classifyModelType wired into discoverModels()
+- `src/core/ReActLoop.ts` +8 lines: per-iteration self-interaction safety check
+- `src/core/AgentCore.ts` +40 lines: refreshSystemContext moved, sanitizeSystemContext(), multi-step AI fallback, detectMode patterns
+
+---
+
 ## [v3.24.0] -- 2026-03-16 -- Feature: 26 New Capabilities + Bug Fixes
 
 ### Added -- 26 New Capabilities
