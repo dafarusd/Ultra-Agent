@@ -1292,6 +1292,10 @@ You are always on. Always capable. Always direct.`;
     return this.conversations;
   }
 
+  getTaskExecutor(): TaskExecutor {
+    return this.executor;
+  }
+
   getExecutionLedger(): ExecutionLedger {
     return this.ledger;
   }

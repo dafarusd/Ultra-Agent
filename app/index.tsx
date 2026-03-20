@@ -33,9 +33,14 @@ import PromptViewer from "@/components/PromptViewer";
 import ActionMenu, { ActionMenuItem } from "@/components/ActionMenu";
 import ModelPickerSheet, { PickerModel } from "@/components/ModelPickerSheet";
 import PlusMenu, { ActionType } from "@/components/PlusMenu";
-import QuickReplies from "@/components/QuickReplies";
+import ActionGrid from "@/components/ActionGrid";
+import ContextBar from "@/components/ContextBar";
+import TaskBuilder from "@/components/TaskBuilder";
 import SystemInfoCard from "@/components/SystemInfoCard";
 import OnboardingScreen from "@/components/OnboardingScreen";
+import type { TaskTemplate, TaskStep, TaskRunResult } from "@/src/types/actionGrid";
+import type { ActionPlan } from "@/src/types/ultra";
+import { DEFAULT_CATEGORIES } from "@/src/data/defaultGrid";
 
 // ── Color Palette (softened green accent) ──────────────
 const ACCENT = "#34d399";       // softer mint green (was #00ff88)
@@ -55,6 +60,7 @@ function getHeaderMenuItems(starred: boolean): ActionMenuItem[] {
   return [
     { id: "rename", label: "Rename", icon: "create-outline" },
     { id: "star", label: starred ? "Unstar" : "Star", icon: starred ? "star" : "star-outline", disabled: false },
+    { id: "build_task", label: "Build a Task", icon: "construct-outline" },
     { id: "add_home", label: "Add to home", icon: "home-outline", disabled: true },
     { id: "delete", label: "Delete", icon: "trash-outline", destructive: true },
     { id: "new_chat", label: "New chat", icon: "add-circle-outline" },
@@ -136,6 +142,12 @@ export default function ChatScreen() {
   // Expanded long messages
   const [expandedMsgs, setExpandedMsgs] = useState<Set<string>>(new Set());
 
+  // Action Grid / Task Builder
+  const [gridCollapsed, setGridCollapsed] = useState(true);
+  const [taskBuilderVisible, setTaskBuilderVisible] = useState(false);
+  const [savedTasks, setSavedTasks] = useState<TaskTemplate[]>([]);
+  const [sessionModelOverride, setSessionModelOverride] = useState(false);
+
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
   
@@ -151,6 +163,13 @@ export default function ChatScreen() {
       ])
     ).start();
   }, [pulseAnim]);
+
+  // ── Load saved tasks from storage ──────────────────
+  useEffect(() => {
+    AsyncStorage.getItem('task_templates').then(raw => {
+      if (raw) setSavedTasks(JSON.parse(raw));
+    }).catch(() => {});
+  }, []);
 
   // ── Data loaders ───────────────────────────────────
   const reloadMessages = useCallback(async (core: AgentCore, convId: string) => {
@@ -344,16 +363,19 @@ export default function ChatScreen() {
           if (raw) {
             const parsed = JSON.parse(raw);
             setSavedDefaults(parsed);
-            const modeDefault = parsed[currentMode];
-            if (modeDefault && modeDefault !== activeModelId) {
-              setActiveModelId(modeDefault);
-              DebugLog.uiModelApply(modeDefault, currentMode, "focusEffect_default_sync", true);
+            // Only apply saved defaults if user hasn't manually overridden this session
+            if (!sessionModelOverride) {
+              const modeDefault = parsed[currentMode];
+              if (modeDefault && modeDefault !== activeModelId) {
+                setActiveModelId(modeDefault);
+                DebugLog.uiModelApply(modeDefault, currentMode, "focusEffect_default_sync", true);
+              }
             }
             DebugLog.uiDefaultsLoaded("focusEffect", parsed);
           }
         } catch {}
       });
-    }, [agentCore, currentMode, activeModelId])
+    }, [agentCore, currentMode, activeModelId, sessionModelOverride])
   );
 
   // ── Result handler ─────────────────────────────────
@@ -478,6 +500,7 @@ export default function ChatScreen() {
     setConversationStarred(false);
     setPendingReplay(null);
     setConvListVisible(false);
+    setSessionModelOverride(false);
     await refreshConversations(agentCore);
   }, [agentCore, refreshConversations]);
 
@@ -571,6 +594,7 @@ export default function ChatScreen() {
         }
         break;
       case "new_chat": handleNewChat(); break;
+      case "build_task": setTaskBuilderVisible(true); break;
     }
   }, [handleRenameConversation, handleDeleteConversation, handleNewChat, conversationId, agentCore, refreshConversations]);
 
@@ -605,7 +629,126 @@ export default function ChatScreen() {
     snapUI("model_select");
     await agentCore.setDefaultModel(modelId);
     setActiveModelId(modelId);
+    setSessionModelOverride(true);
   }, [agentCore, activeModelId, snapUI]);
+
+  // ── Action Grid execution ──────────────────────────
+  const handleGridExecute = useCallback(async (capability: string, params: Record<string, any>) => {
+    if (!agentCore) return;
+    setGridCollapsed(true);
+    const plan: ActionPlan = { capability, params, reason: 'Action Grid' };
+    try {
+      UltraDevLog.processingState(true, 'gridAction_start');
+      setIsProcessing(true);
+      const result = await agentCore.getTaskExecutor().runWithPlan(plan, `grid_${capability}_${Date.now()}`);
+      const msg: ChatMessage = {
+        id: `msg_grid_${Date.now()}`,
+        role: 'assistant',
+        content: result.summary || `${capability}: ${result.success ? 'Done' : 'Failed'}`,
+        createdAt: Date.now(),
+        source: 'ultra',
+        meta: { capability, mode: 'command' },
+      };
+      if (conversationId) {
+        await agentCore.getConversationManager().addMessage(conversationId, msg);
+        await reloadMessages(agentCore, conversationId);
+      }
+    } catch (err: any) {
+      UltraDevLog.error('gridAction', err.message);
+    } finally {
+      UltraDevLog.processingState(false, 'gridAction_finally');
+      setIsProcessing(false);
+    }
+  }, [agentCore, conversationId, reloadMessages]);
+
+  // ── Context Bar plan execution ─────────────────────
+  const handleContextPlan = useCallback(async (capability: string, params: Record<string, any>) => {
+    if (!agentCore) return;
+    const plan: ActionPlan = { capability, params, reason: 'Context Bar' };
+    try {
+      UltraDevLog.processingState(true, 'contextAction_start');
+      setIsProcessing(true);
+      const result = await agentCore.getTaskExecutor().runWithPlan(plan, `ctx_${capability}_${Date.now()}`);
+      const msg: ChatMessage = {
+        id: `msg_ctx_${Date.now()}`,
+        role: 'assistant',
+        content: result.summary || `${capability}: ${result.success ? 'Done' : 'Failed'}`,
+        createdAt: Date.now(),
+        source: 'ultra',
+        meta: { capability, mode: 'command' },
+      };
+      if (conversationId) {
+        await agentCore.getConversationManager().addMessage(conversationId, msg);
+        await reloadMessages(agentCore, conversationId);
+      }
+    } catch (err: any) {
+      UltraDevLog.error('contextAction', err.message);
+    } finally {
+      UltraDevLog.processingState(false, 'contextAction_finally');
+      setIsProcessing(false);
+    }
+  }, [agentCore, conversationId, reloadMessages]);
+
+  // ── Task Builder test runner ───────────────────────
+  const handleTestRun = useCallback(async (steps: TaskStep[]): Promise<TaskRunResult> => {
+    const startedAt = Date.now();
+    const results: TaskRunResult['steps'] = [];
+    for (const step of steps) {
+      const stepStart = Date.now();
+      try {
+        if (!agentCore) throw new Error('AgentCore not initialized');
+        const plan = { capability: step.capability, params: step.params, reason: 'TaskBuilder test' };
+        const result = await agentCore.getTaskExecutor().runWithPlan(plan, `test_${step.id}`);
+        results.push({
+          stepId: step.id,
+          success: result.success,
+          result: result.summary || 'Done',
+          durationMs: Date.now() - stepStart,
+        });
+        if (!result.success) break;
+        if (step.delayMs) await new Promise(r => setTimeout(r, step.delayMs));
+      } catch (err: any) {
+        results.push({
+          stepId: step.id,
+          success: false,
+          result: err.message,
+          durationMs: Date.now() - stepStart,
+        });
+        break;
+      }
+    }
+    return {
+      templateId: 'test',
+      startedAt,
+      completedAt: Date.now(),
+      steps: results,
+      overallSuccess: results.every(r => r.success),
+    };
+  }, [agentCore]);
+
+  // ── Task save handler ──────────────────────────────
+  const handleSaveTask = useCallback(async (template: TaskTemplate) => {
+    const updated = [...savedTasks.filter(t => t.id !== template.id), template];
+    setSavedTasks(updated);
+    await AsyncStorage.setItem('task_templates', JSON.stringify(updated)).catch(() => {});
+  }, [savedTasks]);
+
+  // ── Task runner (from Action Grid "My Tasks") ──────
+  const handleRunTask = useCallback(async (template: TaskTemplate) => {
+    if (!agentCore) return;
+    setGridCollapsed(true);
+    for (const step of template.steps) {
+      try {
+        const plan = { capability: step.capability, params: step.params, reason: `Task: ${template.name}` };
+        const result = await agentCore.getTaskExecutor().runWithPlan(plan, `task_${template.id}_${step.id}`);
+        if (!result.success) break;
+        if (step.delayMs) await new Promise(r => setTimeout(r, step.delayMs));
+      } catch { break; }
+    }
+    template.lastUsed = Date.now();
+    template.useCount++;
+    handleSaveTask(template);
+  }, [agentCore, handleSaveTask]);
 
   // ── Misc handlers ──────────────────────────────────
   const openConvList = useCallback(async () => {
@@ -653,7 +796,7 @@ export default function ChatScreen() {
       const isCopied = copiedId === item.id;
 
       // Show quick replies only on the most recent assistant message
-      const showQuickReplies = !isUser && isLatestMessage && !isProcessing && !pendingReplay && item.role !== "system";
+      const showContextBar = !isUser && isLatestMessage && !isProcessing && !pendingReplay && item.role !== "system";
 
       const msgIndex = messages.indexOf(item);
 
@@ -779,13 +922,18 @@ export default function ChatScreen() {
           )}
 
           {/* Contextual quick-reply chips */}
-          {showQuickReplies && (
-            <QuickReplies message={item} onSelect={handleQuickReply} />
+          {showContextBar && (
+            <ContextBar
+              message={item}
+              currentMode={currentMode}
+              onExecutePlan={handleContextPlan}
+              onSendPrompt={(text) => handleSend(text)}
+            />
           )}
         </View>
       );
     },
-    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, handleQuickReply, expandedMsgs]
+    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, expandedMsgs, currentMode, handleContextPlan, handleSend]
   );
 
   // ── Layout values ──────────────────────────────────
@@ -906,6 +1054,16 @@ export default function ChatScreen() {
               <Text style={styles.processingText}>{buildPhase || genomePhase || status}</Text>
             </View>
           )}
+
+          {/* Action Grid */}
+          <ActionGrid
+            collapsed={gridCollapsed}
+            onToggle={() => setGridCollapsed(prev => !prev)}
+            currentMode={currentMode}
+            onExecute={handleGridExecute}
+            onRunTask={handleRunTask}
+            savedTasks={savedTasks}
+          />
 
           {/* Model indicator pill */}
           <View style={styles.modelIndicatorRow}>
@@ -1088,6 +1246,14 @@ export default function ChatScreen() {
           </TouchableWithoutFeedback>
         </Modal>
       )}
+
+      <TaskBuilder
+        visible={taskBuilderVisible}
+        onClose={() => setTaskBuilderVisible(false)}
+        onSave={handleSaveTask}
+        onTestRun={handleTestRun}
+        categories={DEFAULT_CATEGORIES}
+      />
     </View>
   );
 }
