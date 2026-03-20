@@ -118,7 +118,7 @@ export class TaskExecutor {
             DebugLog.error('genome_stage', `Genome staging failed: ${stageErr.message}`);
           }
         }
-      } catch {}
+      } catch (e: any) { DebugLog.error('GenomeInit', e?.message || 'genome staging failed'); }
     }
 
     if (isNative) {
@@ -130,7 +130,7 @@ export class TaskExecutor {
           this.currentGenome = JSON.parse(raw) as Genome;
           return this.currentGenome;
         }
-      } catch {}
+      } catch (e: any) { DebugLog.error('GenomeLoad', e?.message || 'genome.json parse failed'); }
     } else {
       try {
         const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('ultra:genome') : null;
@@ -138,7 +138,7 @@ export class TaskExecutor {
           this.currentGenome = JSON.parse(raw) as Genome;
           return this.currentGenome;
         }
-      } catch {}
+      } catch (e: any) { DebugLog.error('GenomeLoad', e?.message || 'localStorage genome parse failed'); }
     }
     this.currentGenome = createDefaultGenome();
     await this.persistGenome(this.currentGenome);
@@ -304,7 +304,7 @@ export class TaskExecutor {
       try {
         const currentPkg = await AppController.getActivePackage();
         if (currentPkg) await AppController.allowPackage(currentPkg);
-      } catch (_) {}
+      } catch (e: any) { DebugLog.error('ReActNav', e?.message || 'pre-allow package failed'); }
       // Wait for the launched app/settings to render
       await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -1244,7 +1244,7 @@ export class TaskExecutor {
         try {
           const currentFg = await AppController.getActivePackage();
           if (currentFg) await AppController.allowPackage(currentFg);
-        } catch (_) {}
+        } catch (e: any) { DebugLog.error('ReActNav', e?.message || 'foreground allow failed'); }
         await AppController.allowPackage('com.android.systemui');
         const { ReActLoop } = await import('./ReActLoop');
         const reactLoop = new ReActLoop(

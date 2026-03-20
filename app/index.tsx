@@ -167,7 +167,7 @@ export default function ChatScreen() {
   // ── Load saved tasks from storage ──────────────────
   useEffect(() => {
     AsyncStorage.getItem('task_templates').then(raw => {
-      if (raw) setSavedTasks(JSON.parse(raw));
+      if (raw) { try { setSavedTasks(JSON.parse(raw)); } catch (e: any) { DebugLog.uiError('task_templates_parse', e?.message || 'invalid JSON'); } }
     }).catch(() => {});
   }, []);
 
@@ -768,7 +768,7 @@ export default function ChatScreen() {
       await Clipboard.setStringAsync(msg.content);
       setCopiedId(msg.id);
       setTimeout(() => setCopiedId(null), 1500);
-    } catch {}
+    } catch (e: any) { DebugLog.uiError('clipboard_copy', e?.message || 'copy failed'); }
   }, []);
 
   // ── Message style classifier ───────────────────────

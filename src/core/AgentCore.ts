@@ -997,7 +997,7 @@ You are always on. Always capable. Always direct.`;
               try {
                 await this.learner.learnAppAlias(query, chosen.packageName);
                 await this.learner.learnPackage(query, chosen.packageName);
-              } catch {}
+              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed'); }
             } else if (ordinalCandidate) {
               DebugLog.systemEvent('FuzzyConfirmResolve', `User chose ordinal "${ordinalKey}" → "${ordinalCandidate.appName}" for query "${query}"`);
               mode = 'command';
@@ -1011,7 +1011,7 @@ You are always on. Always capable. Always direct.`;
               try {
                 await this.learner.learnAppAlias(query, ordinalCandidate.packageName);
                 await this.learner.learnPackage(query, ordinalCandidate.packageName);
-              } catch {}
+              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed'); }
             } else if (namedCandidate) {
               DebugLog.systemEvent('FuzzyConfirmResolve', `User chose "${namedCandidate.appName}" for query "${query}"`);
               mode = 'command';
@@ -1025,7 +1025,7 @@ You are always on. Always capable. Always direct.`;
               try {
                 await this.learner.learnAppAlias(query, namedCandidate.packageName);
                 await this.learner.learnPackage(query, namedCandidate.packageName);
-              } catch {}
+              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed'); }
             }
           }
 
@@ -1069,7 +1069,7 @@ You are always on. Always capable. Always direct.`;
                   'contact_resolution',
                   `User resolved: ${userInput} → tel:${number}`
                 );
-              } catch {}
+              } catch (e: any) { DebugLog.error('MemoryPromote', e?.message || 'promoteLongterm failed'); }
               // FIX 3: Permanently store the contact preference so
               // future calls/texts to this name skip disambiguation.
               try {
@@ -1079,7 +1079,7 @@ You are always on. Always capable. Always direct.`;
                   await this.memory.rememberContact(contactName, number, 'resolved');
                   DebugLog.systemEvent('AgentCore', `Contact preference stored: "${contactName}" → ${number.slice(0, 6)}****`);
                 }
-              } catch {}
+              } catch (e: any) { DebugLog.error('ContactStore', e?.message || 'rememberContact failed'); }
               // Execute the resolved plan immediately — do not fall through to conversation mode
               try {
                 const disambigResult = await this.executor.runWithPlan(plan, taskId);

@@ -47,7 +47,7 @@ export default function ActionGrid({
   useEffect(() => {
     AsyncStorage.getItem('action_grid_config').then(raw => {
       if (raw) {
-        try { setConfig(JSON.parse(raw)); } catch {}
+        try { setConfig(JSON.parse(raw)); } catch (e: any) { console.warn('[ActionGrid] config parse failed:', e?.message); }
       }
     }).catch(() => {});
   }, []);

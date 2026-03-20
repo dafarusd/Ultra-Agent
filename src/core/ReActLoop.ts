@@ -76,7 +76,7 @@ export class ReActLoop {
         }
         // Re-allow current foreground package — handles app redirects, permission dialogs, mid-loop package changes
         if (currentPkg) await AppController.allowPackage(currentPkg);
-      } catch (_) {}
+      } catch (e: any) { DebugLog.error('ReActLoop', `Safety check failed at iter ${iteration}: ${e?.message}`); }
 
       // DETERMINISTIC: try to match goal to UI elements without LLM first
       const nodes = await this.getNodes();

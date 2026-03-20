@@ -585,7 +585,7 @@ export default function SettingsScreen() {
                                         const vault = await SecureVault.initialize();
                                         await vault.set("api_defaults", JSON.stringify(updated));
                                         DebugLog.settingsDefaultsSave(updated);
-                                      } catch {}
+                                      } catch (e: any) { DebugLog.uiError('defaults_auto_save', e?.message || 'vault write failed'); }
                                     }}
                                     style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}
                                   >
@@ -610,7 +610,7 @@ export default function SettingsScreen() {
                                             const vault = await SecureVault.initialize();
                                             await vault.set("api_defaults", JSON.stringify(updated));
                                             DebugLog.settingsDefaultsSave(updated);
-                                          } catch {}
+                                          } catch (e: any) { DebugLog.uiError('defaults_pick_save', e?.message || 'vault write failed'); }
                                         }}
                                         style={[styles.defaultOption, isActive && styles.defaultOptionActive, isRec && !isActive && styles.recommendedOption]}
                                       >
