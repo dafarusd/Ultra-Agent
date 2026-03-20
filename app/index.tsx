@@ -373,9 +373,9 @@ export default function ChatScreen() {
             }
             DebugLog.uiDefaultsLoaded("focusEffect", parsed);
           }
-        } catch {}
+        } catch (e: any) { DebugLog.uiError("focusEffect_defaults", e?.message || "unknown parse error"); }
       });
-    }, [agentCore, currentMode, activeModelId, sessionModelOverride])
+    }, [agentCore, sessionModelOverride])
   );
 
   // ── Result handler ─────────────────────────────────
