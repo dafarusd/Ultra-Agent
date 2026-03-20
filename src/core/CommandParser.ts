@@ -167,6 +167,26 @@ const rules: ParseRule[] = [
   // REACT NAVIGATE (must come before web_search — more specific patterns)
   // ════════════════════════════════════════════════════
 
+  // FIRST: named popular apps — "search/find/buy/order X on amazon/reddit/youtube/etc."
+  {
+    pattern: /^(?:search|find|look\s*up|buy|order|shop\s+for|watch|play|listen|browse|check|post|read|open)\s+(?:for\s+)?(.+?)\s+(?:on|in|at|using|via|with)\s+(amazon|ebay|etsy|walmart|target|reddit|twitter|x\.com|instagram|facebook|tiktok|youtube|netflix|spotify|pandora|soundcloud|pinterest|linkedin|snapchat|whatsapp|telegram|discord|twitch|github|stackoverflow|medium|quora|yelp|doordash|ubereats|grubhub|instacart|airbnb|booking|expedia|maps|google\s+maps|gmail|google\s+photos|google\s+drive|google\s+docs|google\s+sheets|google\s+translate|google\s+calendar|google\s+pay|venmo|paypal|cashapp|zelle|robinhood|coinbase|yahoo|bing|duckduckgo)\b/i,
+    capability: 'react_navigate',
+    extractParams: (m: RegExpMatchArray) => ({
+      goal: `On ${m[2].trim()}: search for or navigate to "${m[1].trim()}"`,
+      appHint: m[2].trim(),
+    }),
+  },
+
+  // "Open X and search/find/browse/etc. Y" with named popular apps
+  {
+    pattern: /^(?:go\s+to|open|launch|navigate\s+to|use)\s+(amazon|ebay|etsy|walmart|target|reddit|twitter|instagram|facebook|tiktok|youtube|netflix|spotify|pandora|soundcloud|pinterest|linkedin|snapchat|github|stackoverflow|medium|quora|yelp|doordash|ubereats|grubhub|instacart|airbnb|booking|expedia)\s+(?:and\s+)?(.+)$/i,
+    capability: 'react_navigate',
+    extractParams: (m: RegExpMatchArray) => ({
+      goal: m[2].trim(),
+      appHint: m[1].trim(),
+    }),
+  },
+
   // "Search for X on amazon.com/reddit.com/etc." (website URL)
   {
     pattern: /^(?:search|find|look\s*up)\s+(?:for\s+)?(.+?)\s+(?:on|in|at)\s+(\w[\w-]*\.(?:com|org|net|io|co|edu|gov)(?:\.\w{2,})?)/i,

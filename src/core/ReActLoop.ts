@@ -66,10 +66,14 @@ export class ReActLoop {
     let lastTreePrefix = '';
 
     for (let iteration = 1; iteration <= this.maxIterations; iteration++) {
-      // Re-allow current foreground package each iteration — handles app redirects,
-      // permission dialogs, and package changes mid-loop
+      // TASK 2 SAFETY: verify we're NOT looking at our own UI each iteration
       try {
         const currentPkg = await AppController.getActivePackage();
+        if (currentPkg === 'com.agent.ultra') {
+          DebugLog.error('ReActLoop', `SAFETY STOP at iter ${iteration}: foreground package is Agent Ultra — aborting to prevent self-interaction`);
+          return { success: false, steps, finalObservation: 'ReActLoop detected self-interaction — stopped for safety', goalAchieved: false, error: 'self_interaction' };
+        }
+        // Re-allow current foreground package — handles app redirects, permission dialogs, mid-loop package changes
         if (currentPkg) await AppController.allowPackage(currentPkg);
       } catch (_) {}
       const prompt = this.buildPrompt(goal, observation, steps);

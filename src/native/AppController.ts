@@ -29,6 +29,12 @@ export interface AppControllerInterface {
   performQuickSettings(): Promise<boolean>;
   takeScreenshot(): Promise<boolean>;
   toggleQuickSetting(tileLabel: string): Promise<boolean>;
+  setVolume(streamType: string, level: number): Promise<number>;
+  getVolume(streamType: string): Promise<number>;
+  adjustVolume(direction: 'up' | 'down'): Promise<number>;
+  blockPackage(pkg: string): Promise<boolean>;
+  unblockPackage(pkg: string): Promise<boolean>;
+  getBlockedPackages(): Promise<string[]>;
   isAvailable(): boolean;
 }
 
@@ -61,6 +67,12 @@ const noopController: AppControllerInterface = {
   performQuickSettings: async () => false,
   takeScreenshot: async () => false,
   toggleQuickSetting: async () => false,
+  setVolume: async () => 0,
+  getVolume: async () => 0,
+  adjustVolume: async () => 0,
+  blockPackage: async () => false,
+  unblockPackage: async () => false,
+  getBlockedPackages: async () => [],
   isAvailable: () => false,
 };
 
@@ -107,6 +119,12 @@ function createNativeController(): AppControllerInterface {
     performQuickSettings: () => native.performQuickSettings ? native.performQuickSettings() : Promise.resolve(false),
     takeScreenshot: () => native.takeScreenshot ? native.takeScreenshot() : Promise.resolve(false),
     toggleQuickSetting: (tileLabel: string) => native.toggleQuickSetting ? native.toggleQuickSetting(tileLabel) : Promise.resolve(false),
+    setVolume: (streamType: string, level: number) => native.setVolume ? native.setVolume(streamType, level) : Promise.resolve(0),
+    getVolume: (streamType: string) => native.getVolume ? native.getVolume(streamType) : Promise.resolve(0),
+    adjustVolume: (direction: 'up' | 'down') => native.adjustVolume ? native.adjustVolume(direction) : Promise.resolve(0),
+    blockPackage: (pkg: string) => native.blockPackage ? native.blockPackage(pkg) : Promise.resolve(false),
+    unblockPackage: (pkg: string) => native.unblockPackage ? native.unblockPackage(pkg) : Promise.resolve(false),
+    getBlockedPackages: () => native.getBlockedPackages ? native.getBlockedPackages() : Promise.resolve([]),
     isAvailable: () => true,
   };
 }

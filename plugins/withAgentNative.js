@@ -1219,6 +1219,7 @@ public class AgentAccessibilityService extends AccessibilityService {
     private static final Object instanceLock = new Object();
     private String currentPackage = "";
     private static final Set<String> allowedPackages = Collections.synchronizedSet(new HashSet<String>());
+    private static final Set<String> blockedPackages = new java.util.concurrent.ConcurrentSkipListSet<>();
     private static ReactApplicationContext reactContext = null;
 
     public static void setReactContext(ReactApplicationContext ctx) { reactContext = ctx; }
@@ -1231,6 +1232,10 @@ public class AgentAccessibilityService extends AccessibilityService {
     public static void allowPackage(String pkg) { allowedPackages.add(pkg); }
     public static void revokePackage(String pkg) { allowedPackages.remove(pkg); }
     public static boolean isPackageAllowed(String pkg) { return allowedPackages.contains(pkg); }
+    public static void blockPackage(String pkg) { blockedPackages.add(pkg); allowedPackages.remove(pkg); }
+    public static void unblockPackage(String pkg) { blockedPackages.remove(pkg); }
+    public static boolean isPackageBlocked(String pkg) { return blockedPackages.contains(pkg); }
+    public static java.util.List<String> getBlockedPackages() { return new java.util.ArrayList<>(blockedPackages); }
 
     @Override
     public void onServiceConnected() {
@@ -1397,6 +1402,25 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     private boolean checkPackageAllowed() {
+        // SAFETY: Never interact with own UI — prevents self-tap, self-scroll, keyboard hijack
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root != null) {
+            CharSequence pkg = root.getPackageName();
+            if (pkg != null && "com.agent.ultra".contentEquals(pkg)) {
+                Log.w(TAG, "BLOCKED: Attempted interaction with own UI");
+                root.recycle();
+                return false;
+            }
+            root.recycle();
+        }
+
+        // Check user-defined blocked packages list
+        if (isPackageBlocked(currentPackage)) {
+            Log.w(TAG, "BLOCKED: Package is in user blocklist: " + currentPackage);
+            return false;
+        }
+
+        // Existing allowed-package check
         if (!isPackageAllowed(currentPackage)) {
             Log.w(TAG, "Package not allowed: " + currentPackage);
             return false;
@@ -1510,22 +1534,59 @@ public class AgentAccessibilityService extends AccessibilityService {
     public boolean tapQuickSettingsTile(String tileLabel) {
         allowPackage("com.android.systemui");
         try {
-            Thread.sleep(500);
+            Thread.sleep(700);
             android.view.accessibility.AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return false;
-            java.util.List<android.view.accessibility.AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(tileLabel);
-            if (nodes != null && !nodes.isEmpty()) {
-                for (android.view.accessibility.AccessibilityNodeInfo node : nodes) {
-                    android.view.accessibility.AccessibilityNodeInfo current = node;
-                    for (int depth = 0; depth < 5; depth++) {
-                        if (current == null) break;
-                        if (current.isClickable()) {
-                            boolean result = current.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
+
+            // Collect candidates by text match AND content-description match
+            java.util.List<android.view.accessibility.AccessibilityNodeInfo> nodes =
+                root.findAccessibilityNodeInfosByText(tileLabel);
+            if (nodes == null) nodes = new java.util.ArrayList<>();
+            // Also search by content description
+            android.view.accessibility.AccessibilityNodeInfo byDesc = findByContentDesc(root, tileLabel);
+            if (byDesc != null) nodes.add(0, byDesc);
+
+            for (android.view.accessibility.AccessibilityNodeInfo node : nodes) {
+                android.view.accessibility.AccessibilityNodeInfo current = node;
+                for (int depth = 0; depth < 6; depth++) {
+                    if (current == null) break;
+                    if (current.isClickable()) {
+                        // Get bounds and tap center via gesture dispatch (works on Samsung OneUI)
+                        android.graphics.Rect bounds = new android.graphics.Rect();
+                        current.getBoundsInScreen(bounds);
+                        if (bounds.isEmpty()) {
+                            // Fallback: action click
+                            boolean r = current.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
                             root.recycle();
-                            return result;
+                            return r;
                         }
-                        current = current.getParent();
+                        int cx = (bounds.left + bounds.right) / 2;
+                        int cy = (bounds.top + bounds.bottom) / 2;
+                        android.graphics.Path path = new android.graphics.Path();
+                        path.moveTo(cx, cy);
+                        android.accessibilityservice.GestureDescription.Builder builder =
+                            new android.accessibilityservice.GestureDescription.Builder();
+                        builder.addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50));
+                        final boolean[] done = {false};
+                        final boolean[] success = {false};
+                        dispatchGesture(builder.build(), new android.accessibilityservice.AccessibilityService.GestureResultCallback() {
+                            @Override
+                            public void onCompleted(android.accessibilityservice.GestureDescription g) {
+                                success[0] = true; done[0] = true;
+                            }
+                            @Override
+                            public void onCancelled(android.accessibilityservice.GestureDescription g) {
+                                done[0] = true;
+                            }
+                        }, null);
+                        long waitStart = System.currentTimeMillis();
+                        while (!done[0] && System.currentTimeMillis() - waitStart < 1500) {
+                            Thread.sleep(20);
+                        }
+                        root.recycle();
+                        return success[0];
                     }
+                    current = current.getParent();
                 }
             }
             root.recycle();
@@ -1538,13 +1599,15 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     public boolean toggleQuickSetting(String tileLabel) {
         performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
-        try { Thread.sleep(600); } catch (InterruptedException ignored) {}
+        try { Thread.sleep(900); } catch (InterruptedException ignored) {}
         boolean result = tapQuickSettingsTile(tileLabel);
         if (!result) {
+            // Try a second swipe-down to expand full QS panel
             performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
-            try { Thread.sleep(600); } catch (InterruptedException ignored) {}
+            try { Thread.sleep(1200); } catch (InterruptedException ignored) {}
             result = tapQuickSettingsTile(tileLabel);
         }
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
         performGlobalAction(GLOBAL_ACTION_BACK);
         return result;
     }
@@ -1802,6 +1865,87 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
             boolean result = AgentAccessibilityService.getInstance().toggleQuickSetting(tileLabel);
             promise.resolve(result);
         }).start();
+    }
+
+    @ReactMethod
+    public void blockPackage(String pkg, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) { promise.reject("NOT_RUNNING", "Service not running"); return; }
+        AgentAccessibilityService.blockPackage(pkg);
+        promise.resolve(true);
+    }
+
+    @ReactMethod
+    public void unblockPackage(String pkg, Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) { promise.reject("NOT_RUNNING", "Service not running"); return; }
+        AgentAccessibilityService.unblockPackage(pkg);
+        promise.resolve(true);
+    }
+
+    @ReactMethod
+    public void getBlockedPackages(Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) { promise.resolve(new com.facebook.react.bridge.WritableNativeArray()); return; }
+        java.util.List<String> list = AgentAccessibilityService.getBlockedPackages();
+        com.facebook.react.bridge.WritableArray arr = new com.facebook.react.bridge.WritableNativeArray();
+        for (String pkg : list) arr.pushString(pkg);
+        promise.resolve(arr);
+    }
+
+    @ReactMethod
+    public void setVolume(String streamType, int level, Promise promise) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager)
+                getReactApplicationContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+            int stream = android.media.AudioManager.STREAM_MUSIC;
+            if ("ring".equalsIgnoreCase(streamType)) stream = android.media.AudioManager.STREAM_RING;
+            else if ("alarm".equalsIgnoreCase(streamType)) stream = android.media.AudioManager.STREAM_ALARM;
+            else if ("notification".equalsIgnoreCase(streamType)) stream = android.media.AudioManager.STREAM_NOTIFICATION;
+            else if ("voice".equalsIgnoreCase(streamType) || "call".equalsIgnoreCase(streamType)) stream = android.media.AudioManager.STREAM_VOICE_CALL;
+            int maxVol = am.getStreamMaxVolume(stream);
+            int targetVol = (int) Math.round((level / 100.0) * maxVol);
+            targetVol = Math.max(0, Math.min(targetVol, maxVol));
+            am.setStreamVolume(stream, targetVol, android.media.AudioManager.FLAG_SHOW_UI);
+            int actualPct = maxVol > 0 ? (int) Math.round((targetVol * 100.0) / maxVol) : 0;
+            promise.resolve(actualPct);
+        } catch (Exception e) {
+            promise.reject("VOLUME_ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void getVolume(String streamType, Promise promise) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager)
+                getReactApplicationContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+            int stream = android.media.AudioManager.STREAM_MUSIC;
+            if ("ring".equalsIgnoreCase(streamType)) stream = android.media.AudioManager.STREAM_RING;
+            else if ("alarm".equalsIgnoreCase(streamType)) stream = android.media.AudioManager.STREAM_ALARM;
+            else if ("notification".equalsIgnoreCase(streamType)) stream = android.media.AudioManager.STREAM_NOTIFICATION;
+            else if ("voice".equalsIgnoreCase(streamType) || "call".equalsIgnoreCase(streamType)) stream = android.media.AudioManager.STREAM_VOICE_CALL;
+            int cur = am.getStreamVolume(stream);
+            int max = am.getStreamMaxVolume(stream);
+            int percent = max > 0 ? (int) Math.round((cur * 100.0) / max) : 0;
+            promise.resolve(percent);
+        } catch (Exception e) {
+            promise.reject("VOLUME_ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void adjustVolume(String direction, Promise promise) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager)
+                getReactApplicationContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+            int adjust = "up".equalsIgnoreCase(direction)
+                ? android.media.AudioManager.ADJUST_RAISE
+                : android.media.AudioManager.ADJUST_LOWER;
+            am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, adjust, android.media.AudioManager.FLAG_SHOW_UI);
+            int cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC);
+            int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+            int percent = max > 0 ? (int) Math.round((cur * 100.0) / max) : 0;
+            promise.resolve(percent);
+        } catch (Exception e) {
+            promise.reject("VOLUME_ERROR", e.getMessage());
+        }
     }
 }`;
 

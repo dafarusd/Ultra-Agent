@@ -203,7 +203,7 @@ export class AgentCore extends SimpleEmitter {
     }
     const genomePatterns = /^(improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself|replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)\b/i;
     if (genomePatterns.test(t)) return 'command';
-    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|what|how|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map|turn|set|search|google|look|flash|torch|flashlight|mute|unmute|silence|dim|brighten|copy|paste|capture|grab|clip|notify|check|battery|network|storage|ram|memory|disk|space|wifi|bluetooth|system|device|status|info|phone|cpu|temp|weather|remind|wake|alarm|volume|ringer|brightness|screenshot|record|scan|download|upload|install|uninstall|update|sync|pair|connect|disconnect|reset|clear|lock|unlock|enable|disable|activate|deactivate|toggle|browse|visit|go|stop|pause|resume|skip|next|previous|repeat|shuffle|queue|bookmark|save|note|jot|remember|forget|recall|settings|camera|contacts|messages|photos|gallery|apps|calendar|maps|clock|calculator|location|gps|coordinates)\b/i.test(t);
+    const imperative = /^(open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|what'?s?|how|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map|turn|set|search|google|look|flash|torch|flashlight|mute|unmute|silence|dim|brighten|copy|paste|capture|grab|clip|notify|check|battery|network|storage|ram|memory|disk|space|wifi|bluetooth|system|device|status|info|phone|cpu|temp|weather|remind|wake|alarm|volume|ringer|brightness|screenshot|record|scan|download|upload|install|uninstall|update|sync|pair|connect|disconnect|reset|clear|lock|unlock|enable|disable|activate|deactivate|toggle|browse|visit|go|stop|pause|resume|skip|next|previous|repeat|shuffle|queue|bookmark|save|note|jot|remember|forget|recall|settings|camera|contacts|messages|photos|gallery|apps|calendar|maps|clock|calculator|location|gps|coordinates|where'?s)\b/i.test(t);
     if (imperative) return 'command';
     if (/^(gps|my\s+(?:location|coordinates|gps))\b/i.test(t)) return 'command';
     const ultraCommand = /^ultra[\s,]+(?:open|send|read|delete|find|show|create|build|run|execute|launch|call|write|list|take|share|pick|choose|select|where|what|how|get|text|make|start|switch|generate|play|schedule|email|mail|dial|navigate|directions?|timer|map|turn|set|search|google|look|flash|torch|mute|unmute|silence|dim|brighten|copy|paste|capture|grab|check|battery|network|storage|ram|memory|disk|space|wifi|system|device|status|info|weather|remind|wake|alarm|volume|ringer|brightness|screenshot|record|scan|download|upload|install|uninstall|update|sync|pair|connect|disconnect|reset|clear|lock|unlock|enable|disable|activate|deactivate|toggle|browse|visit|go|stop|pause|resume|skip|next|previous|repeat|shuffle|queue|bookmark|save|note|jot|remember|forget|recall)\b/i;
@@ -225,6 +225,16 @@ export class AgentCore extends SimpleEmitter {
 
   getLastSystemContext(): string {
     return this.lastSystemContext;
+  }
+
+  private sanitizeSystemContext(ctx: string): string {
+    return ctx
+      .replace(/\b-?\d{1,3}\.\d{4,}\b/g, '[GPS_REDACTED]')
+      .replace(/lat(?:itude)?:\s*-?\d+\.\d+/gi, 'lat:[GPS_REDACTED]')
+      .replace(/lon(?:gitude)?:\s*-?\d+\.\d+/gi, 'lon:[GPS_REDACTED]')
+      .replace(/coordinates?:?\s*[\d.\-,\s]+/gi, 'coordinates:[GPS_REDACTED]')
+      .replace(/imei:?\s*[\d\s-]+/gi, 'imei:[REDACTED]')
+      .replace(/serial:?\s*[A-Z0-9]+/gi, 'serial:[REDACTED]');
   }
 
   private buildDynamicPrompt(params: {
@@ -272,7 +282,7 @@ You are always on. Always capable. Always direct.`;
       `Mode: ${params.mode}`,
       `Available capabilities: ${params.capabilities.join(', ')}`,
       `Device permissions: ${permReport}`,
-      this.lastSystemContext ? `Current device state: ${this.lastSystemContext}` : '',
+      this.lastSystemContext ? `Current device state: ${this.sanitizeSystemContext(this.lastSystemContext)}` : '',
       params.summary ? `Conversation memory: ${params.summary}` : '',
       behavior,
     ].filter(Boolean).join('\n');
@@ -409,7 +419,6 @@ You are always on. Always capable. Always direct.`;
 
     // === STEP 2: ROUTE ===
     DebugLog.executePhase(taskId, 'ROUTE');
-    await this.refreshSystemContext();
     let mode = this.detectMode(userInput);
     DebugLog.modeDetected(taskId, mode, userInput);
     step('ROUTE', `Detected mode: ${mode}`, true);
@@ -435,21 +444,45 @@ You are always on. Always capable. Always direct.`;
       if (multiSteps.length > 1) {
         const results: string[] = [];
         let allSucceeded = true;
-        for (const stepInput of multiSteps) {
-          DebugLog.systemEvent('AgentCore', `Multi-step executing: "${stepInput}"`);
-          const stepPlan = this.parser.parse(stepInput);
+        let prevCapability: string | null = null;
+        let prevResult: string | null = null;
+        for (let si = 0; si < multiSteps.length; si++) {
+          const stepInput = multiSteps[si];
+          DebugLog.systemEvent('AgentCore', `Multi-step [${si + 1}/${multiSteps.length}] executing: "${stepInput}"`);
+          let stepPlan = this.parser.parse(stepInput);
+          // Task 13: if parser fails and we have context from previous step, try AI routing
+          if (!stepPlan && si > 0 && this.ai.hasApiKey()) {
+            try {
+              await this.refreshSystemContext();
+              const ctxPrompt = this.buildDynamicPrompt({ mode: 'command', userInput: stepInput, summary: prevResult ? `Previous step (${prevCapability}) result: ${prevResult}` : '', capabilities: capList });
+              const stepFinalMessages = [
+                { role: 'system', content: ctxPrompt },
+                { role: 'user', content: stepInput },
+              ];
+              const stepAi = await this.ai.completeWithConversation(stepFinalMessages, { taskId, agentId: 'multistep_planner', maxTokens: 800, temperature: 0.2 });
+              stepPlan = this.parseActionPlan(stepAi.content);
+            } catch (aiErr: any) {
+              DebugLog.error('MultiStep', `AI routing for step ${si + 1} failed: ${aiErr.message}`);
+            }
+          }
           if (stepPlan) {
             try {
               const stepResult = await this.executor.runWithPlan(stepPlan, taskId);
               results.push(stepResult.summary || `${stepInput}: done`);
               if (!stepResult.success) allSucceeded = false;
+              prevCapability = stepPlan.capability;
+              prevResult = stepResult.summary || '';
             } catch (e: any) {
               results.push(`${stepInput}: failed — ${e.message}`);
               allSucceeded = false;
+              prevCapability = null;
+              prevResult = null;
             }
           } else {
             results.push(`${stepInput}: could not parse`);
             allSucceeded = false;
+            prevCapability = null;
+            prevResult = null;
           }
         }
         const summary = results.join(' → ');
@@ -487,6 +520,8 @@ You are always on. Always capable. Always direct.`;
           return { type: 'error', message: errMsg.content, taskId };
         }
         this.emit('log', 'Analyzing command...', 'system');
+        // Task 5: only load device context when we actually need LLM routing
+        await this.refreshSystemContext();
         const systemPrompt = this.buildDynamicPrompt({
           mode,
           userInput,

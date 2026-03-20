@@ -13,6 +13,7 @@ import {
   Modal,
   TouchableWithoutFeedback,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Clipboard from "expo-clipboard";
 import * as Device from 'expo-device';
 import NetInfo from '@react-native-community/netinfo';
@@ -24,6 +25,7 @@ import { SecureVault } from "@/src/security/SecureVault";
 import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
 import { classifyModelType } from "@/src/utils/classifyModelType";
 import { AgentCore, setAgentCoreInstance } from "@/src/core/AgentCore";
+import { BiometricGate } from "@/src/security/BiometricGate";
 import type { ExecuteArgs } from "@/src/core/AgentCore";
 import type { ChatMessage, UltraExecutionResult, ConversationMeta, PromptTrace } from "@/src/types/ultra";
 import ConversationList from "@/components/ConversationList";
@@ -33,6 +35,7 @@ import ModelPickerSheet, { PickerModel } from "@/components/ModelPickerSheet";
 import PlusMenu, { ActionType } from "@/components/PlusMenu";
 import QuickReplies from "@/components/QuickReplies";
 import SystemInfoCard from "@/components/SystemInfoCard";
+import OnboardingScreen from "@/components/OnboardingScreen";
 
 // ── Color Palette (softened green accent) ──────────────
 const ACCENT = "#34d399";       // softer mint green (was #00ff88)
@@ -87,6 +90,11 @@ function getActivityIcon(status: string, buildPhase: string | null, genomePhase:
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+
+  // Onboarding & biometric lock
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [isAppLocked, setIsAppLocked] = useState(false);
+  const biometricGateRef = useRef<BiometricGate | null>(null);
 
   // Core state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -284,6 +292,24 @@ export default function ChatScreen() {
           hasApiKey: core.hasApiKey(),
           status: "Ready",
         });
+
+        // First-launch onboarding
+        const onboardingDone = await AsyncStorage.getItem("onboarding_done").catch(() => null);
+        if (!onboardingDone) setShowOnboarding(true);
+
+        // Biometric gate
+        const gate = new BiometricGate();
+        await gate.init(vault);
+        biometricGateRef.current = gate;
+        const locked = await gate.isLocked();
+        if (locked) {
+          setIsAppLocked(true);
+          const ok = await gate.authenticate();
+          if (ok) {
+            gate.markUnlocked();
+            setIsAppLocked(false);
+          }
+        }
 
         if (!core.hasApiKey()) setStatus("No API key");
       } catch (err: any) {
@@ -769,6 +795,39 @@ export default function ChatScreen() {
   const currentModelName = activeModelId || agentCore?.getDefaultModel() || "No model";
   const shortModelName = currentModelName.length > 18 ? currentModelName.slice(0, 18) + "…" : currentModelName;
 
+  if (showOnboarding) {
+    return (
+      <OnboardingScreen
+        onComplete={async () => {
+          await AsyncStorage.setItem("onboarding_done", "1").catch(() => {});
+          setShowOnboarding(false);
+        }}
+      />
+    );
+  }
+
+  if (isAppLocked) {
+    return (
+      <View style={[lockStyles.root, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
+        <Ionicons name="lock-closed" size={56} color={ACCENT} />
+        <Text style={lockStyles.title}>Agent Ultra Locked</Text>
+        <Text style={lockStyles.sub}>Authenticate to continue</Text>
+        <Pressable
+          style={lockStyles.btn}
+          onPress={async () => {
+            const gate = biometricGateRef.current;
+            if (!gate) return;
+            const ok = await gate.authenticate();
+            if (ok) setIsAppLocked(false);
+          }}
+        >
+          <Ionicons name="finger-print" size={20} color={BG} />
+          <Text style={lockStyles.btnText}>Unlock</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
 
@@ -1123,6 +1182,18 @@ const styles = StyleSheet.create({
   sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, justifyContent: "center", alignItems: "center" },
   sendBtnDisabled: { backgroundColor: SURFACE },
   stopBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#333", justifyContent: "center", alignItems: "center" },
+});
+
+const lockStyles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', gap: 16 },
+  title: { fontSize: 24, fontWeight: '700', color: '#e0e0e0', fontFamily: 'Inter_700Bold' },
+  sub: { fontSize: 14, color: '#666', fontFamily: 'Inter_400Regular', marginBottom: 8 },
+  btn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: ACCENT, borderRadius: 12,
+    paddingVertical: 14, paddingHorizontal: 28,
+  },
+  btnText: { color: BG, fontWeight: '700', fontSize: 16, fontFamily: 'Inter_700Bold' },
 });
 
 const renameStyles = StyleSheet.create({

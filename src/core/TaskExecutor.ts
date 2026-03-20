@@ -1359,8 +1359,20 @@ export class TaskExecutor {
         return { success: true, summary: `Timer set for ${params.duration}` };
       }
       case 'volume_set': {
-        await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
-        return { success: true, summary: 'Opened sound settings' };
+        const level = typeof params.level === 'number' ? params.level : parseInt(String(params.level ?? params.percent ?? params.value ?? 50), 10);
+        const stream = (params.stream || params.type || 'media').toLowerCase().replace('music', 'media');
+        const streamType = stream === 'ring' || stream === 'ringer' ? 'ring'
+          : stream === 'alarm' ? 'alarm'
+          : stream === 'notification' ? 'notification'
+          : 'media';
+        try {
+          const actualPct = await AppController.setVolume(streamType, isNaN(level) ? 50 : Math.max(0, Math.min(100, level)));
+          return { success: true, summary: `${streamType.charAt(0).toUpperCase() + streamType.slice(1)} volume set to ${actualPct}%` };
+        } catch (volErr: any) {
+          this.logger.warn(`Native setVolume failed: ${volErr.message} — opening settings`);
+          await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
+          return { success: true, summary: 'Opened sound settings — adjust volume there' };
+        }
       }
       case 'brightness_set': {
         await IntentLauncher.startActivityAsync('android.settings.DISPLAY_SETTINGS', {});
@@ -1368,27 +1380,27 @@ export class TaskExecutor {
       }
       case 'wifi_toggle': {
         const toggled = await AppController.toggleQuickSetting('Wi-Fi');
-        if (toggled) return { success: true, summary: 'Wi-Fi toggled' };
+        if (toggled) return { success: true, summary: 'Wi-Fi toggle attempted via Quick Settings — check your status bar to confirm the change' };
         await IntentLauncher.startActivityAsync('android.settings.WIFI_SETTINGS', {});
         return { success: true, summary: 'Opened Wi-Fi settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'bluetooth_toggle': {
         const toggled = await AppController.toggleQuickSetting('Bluetooth');
-        if (toggled) return { success: true, summary: 'Bluetooth toggled' };
+        if (toggled) return { success: true, summary: 'Bluetooth toggle attempted via Quick Settings — check your status bar to confirm the change' };
         await IntentLauncher.startActivityAsync('android.settings.BLUETOOTH_SETTINGS', {});
         return { success: true, summary: 'Opened Bluetooth settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'airplane_mode': {
         let toggled = await AppController.toggleQuickSetting('Airplane');
         if (!toggled) toggled = await AppController.toggleQuickSetting('Flight');
-        if (toggled) return { success: true, summary: 'Airplane Mode toggled' };
+        if (toggled) return { success: true, summary: 'Airplane Mode toggle attempted via Quick Settings — check your status bar to confirm the change' };
         await IntentLauncher.startActivityAsync('android.settings.AIRPLANE_MODE_SETTINGS', {});
         return { success: true, summary: 'Opened Airplane Mode settings — tap the toggle', data: { partial: true } };
       }
       case 'do_not_disturb': {
         let toggled = await AppController.toggleQuickSetting('Do not disturb');
         if (!toggled) toggled = await AppController.toggleQuickSetting('DND');
-        if (toggled) return { success: true, summary: 'Do Not Disturb toggled' };
+        if (toggled) return { success: true, summary: 'Do Not Disturb toggle attempted via Quick Settings — check your status bar to confirm the change' };
         await IntentLauncher.startActivityAsync('android.settings.ZEN_MODE_SETTINGS', {});
         return { success: true, summary: 'Opened DND settings — tap the toggle', data: { partial: true } };
       }
@@ -1448,6 +1460,7 @@ export class TaskExecutor {
       }
       case 'screenshot': {
         if (!isNative) return { success: false, summary: 'Screenshot requires Android device' };
+        await new Promise<void>(resolve => setTimeout(resolve, 1000));
         const screenshotTaken = await AppController.takeScreenshot().catch(() => false);
         if (screenshotTaken) {
           return { success: true, summary: 'Screenshot taken — saved to your Screenshots folder' };

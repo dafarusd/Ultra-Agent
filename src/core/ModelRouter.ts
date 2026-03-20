@@ -2,6 +2,7 @@ import { SecureVault } from '../security/SecureVault';
 import { CostTracker } from '../services/CostTracker';
 import { Logger } from '../utils/Logger';
 import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
+import { classifyModelType } from '../utils/classifyModelType';
 import type { UltraModelDef } from '../types/ultra';
 
 export interface ModelDef {
@@ -172,9 +173,12 @@ export class ModelRouter {
         const pricing = spec.pricing || {};
         const validModelTypes: ModelDef['type'][] = ['text', 'image', 'video', 'audio', 'embedding'];
         const rawType = m.type || 'text';
-        const modelType: ModelDef['type'] = validModelTypes.includes(rawType as ModelDef['type'])
-          ? (rawType as ModelDef['type'])
-          : 'text';
+        const classifiedType = classifyModelType(m.id);
+        const modelType: ModelDef['type'] = (classifiedType && validModelTypes.includes(classifiedType as ModelDef['type']))
+          ? (classifiedType as ModelDef['type'])
+          : validModelTypes.includes(rawType as ModelDef['type'])
+            ? (rawType as ModelDef['type'])
+            : 'text';
         const contextWindow = Number(spec.availableContextTokens ?? m.context_length ?? 8192) || 8192;
         const inputPrice = pricing.input?.usd ?? 0.01;
         const outputPrice = pricing.output?.usd ?? 0.01;
@@ -295,21 +299,23 @@ export class ModelRouter {
       const controller = new AbortController();
       this.activeController = controller;
       const timeout = setTimeout(() => controller.abort(), options.timeout || REQUEST_TIMEOUT);
+      const apiPayload = {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt },
+        ],
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens ?? 4000,
+      };
+      DebugLog.systemEvent('ModelRouter.complete', `API_PAYLOAD model=${model} task=${taskId} system_chars=${systemPrompt.length} user_chars=${prompt.length} temp=${apiPayload.temperature} max_tokens=${apiPayload.max_tokens}`);
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt },
-          ],
-          temperature: options.temperature ?? 0.7,
-          max_tokens: options.maxTokens ?? 4000,
-        }),
+        body: JSON.stringify(apiPayload),
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -376,18 +382,20 @@ export class ModelRouter {
       const controller = new AbortController();
       this.activeController = controller;
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+      const convPayload = {
+        model,
+        messages,
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens ?? 4000,
+      };
+      DebugLog.systemEvent('ModelRouter.completeWithConversation', `API_PAYLOAD model=${model} task=${taskId} msg_count=${messages.length} total_chars=${totalChars} temp=${convPayload.temperature} max_tokens=${convPayload.max_tokens}`);
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: options.temperature ?? 0.7,
-          max_tokens: options.maxTokens ?? 4000,
-        }),
+        body: JSON.stringify(convPayload),
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -445,6 +453,16 @@ export class ModelRouter {
 
   getAvailableModels(): ModelDef[] {
     return Array.from(this.models.values());
+  }
+
+  canHandleLocally(taskType: string): boolean {
+    const local = Array.from(this.models.values()).filter(m => m.offline);
+    if (local.length === 0) return false;
+    const t = taskType.toLowerCase();
+    if (t === 'text' || t === 'conversation' || t === 'chat') {
+      return local.some(m => m.type === 'text');
+    }
+    return local.some(m => m.type === t);
   }
 
   async setBaseUrl(url: string): Promise<void> {

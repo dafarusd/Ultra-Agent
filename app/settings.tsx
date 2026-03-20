@@ -25,6 +25,8 @@ import { Logger } from "@/src/utils/Logger";
 import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
 import { classifyModelType } from "@/src/utils/classifyModelType";
 import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
+import BlockedAppsTab from "@/components/BlockedAppsTab";
+import { BiometricGate } from "@/src/security/BiometricGate";
 
 // ── Palette ────────────────────────────────────────────
 const ACCENT = "#34d399";
@@ -56,7 +58,7 @@ interface ApiDefaults {
 }
 
 // Settings tabs
-type SettingsTab = "apis" | "costs" | "logs";
+type SettingsTab = "apis" | "costs" | "logs" | "blocked";
 
 // ── Main Component ─────────────────────────────────────
 export default function SettingsScreen() {
@@ -89,6 +91,8 @@ export default function SettingsScreen() {
   const [defaultsExpanded, setDefaultsExpanded] = useState(false);
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [backupExporting, setBackupExporting] = useState(false);
+  const [biometricGate] = useState(() => new BiometricGate());
+  const [lockTimeout, setLockTimeout] = useState(0);
   const [backupImporting, setBackupImporting] = useState(false);
 
   // ── Draft persistence (survives app switches) ──────
@@ -176,6 +180,10 @@ export default function SettingsScreen() {
       setDailyLimit(dl || "0");
       const tl = await vault.get("task_cost_limit");
       setTaskLimit(tl || "0");
+
+      // Init biometric gate
+      await biometricGate.init(vault);
+      setLockTimeout(biometricGate.getLockTimeout());
 
       try {
         DebugLog.settingsState("loaded", {
@@ -391,7 +399,7 @@ export default function SettingsScreen() {
 
       {/* Tab bar */}
       <View style={styles.tabBar}>
-        {(["apis", "costs", "logs"] as SettingsTab[]).map((t) => (
+        {(["apis", "costs", "logs", "blocked"] as SettingsTab[]).map((t) => (
           <Pressable
             key={t}
             onPress={() => {
@@ -402,7 +410,7 @@ export default function SettingsScreen() {
             style={[styles.tab, tab === t && styles.tabActive]}
           >
             <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-              {t === "apis" ? "API Setup" : t === "costs" ? "Cost Limits" : "Logs"}
+              {t === "apis" ? "API Setup" : t === "costs" ? "Cost Limits" : t === "logs" ? "Logs" : "Blocked"}
             </Text>
           </Pressable>
         ))}
@@ -636,6 +644,33 @@ export default function SettingsScreen() {
 
         {tab === "apis" && (
           <View style={styles.card}>
+            <Text style={styles.cardTitle}>App Lock</Text>
+            <Text style={styles.cardSubtitle}>
+              Require biometric authentication after the app has been in the background for this duration.
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+              {[0, 1, 5, 15, 30, 60].map(mins => {
+                const label = mins === 0 ? 'Never' : mins < 60 ? `${mins}m` : '1h';
+                const active = lockTimeout === mins;
+                return (
+                  <Pressable
+                    key={mins}
+                    style={[styles.btn, active ? styles.primaryBtn : styles.secondaryBtn, { paddingHorizontal: 14 }]}
+                    onPress={async () => {
+                      await biometricGate.setLockTimeout(mins);
+                      setLockTimeout(mins);
+                    }}
+                  >
+                    <Text style={active ? styles.primaryBtnText : styles.secondaryBtnText}>{label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {tab === "apis" && (
+          <View style={styles.card}>
             <Text style={styles.cardTitle}>Preferences Backup</Text>
             <Text style={styles.cardSubtitle}>
               Export your settings, model defaults, and learned patterns to a file. API keys are excluded for security. Import to restore on a new device or after reinstalling.
@@ -791,6 +826,14 @@ export default function SettingsScreen() {
             </View>
           </>
         )}
+
+        {/* ══════════════════════════════════════════
+            TAB: BLOCKED APPS
+            ══════════════════════════════════════════ */}
+        {tab === "blocked" && (
+          <BlockedAppsTab isNative={Platform.OS === "android"} />
+        )}
+
       </ScrollView>
     </View>
   );
