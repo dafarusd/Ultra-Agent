@@ -301,18 +301,20 @@ export default function SettingsScreen() {
     DebugLog.settingsApiDelete(id, true);
     const updated = apis.filter((a) => a.id !== id);
     setApis(updated);
-    const cleanDefaults = { ...defaults };
-    for (const role of Object.keys(cleanDefaults) as DefaultRole[]) {
-      cleanDefaults[role] = "";
-    }
-    setDefaults(cleanDefaults);
 
     try {
       const vault = await SecureVault.initialize();
       await vault.set("saved_apis", JSON.stringify(updated));
-      await vault.set("api_defaults", JSON.stringify(cleanDefaults));
-    } catch {}
-  }, [apis, defaults]);
+      // Only clear defaults if no APIs remain — otherwise preserve them.
+      // Stale defaults pointing to models from the deleted API will fail
+      // gracefully at ModelRouter and fall back to the engine default.
+      if (updated.length === 0) {
+        const cleanDefaults = { chat: "", image: "", code: "", reasoning: "", video: "" };
+        setDefaults(cleanDefaults);
+        await vault.set("api_defaults", JSON.stringify(cleanDefaults));
+      }
+    } catch (e: any) { DebugLog.uiError("deleteApi_vault", e?.message || "unknown"); }
+  }, [apis]);
 
   const saveDefaults = useCallback(async () => {
     UltraDevLog.settingsSaveTap('defaults', { defaults });
