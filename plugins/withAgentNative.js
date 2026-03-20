@@ -1241,7 +1241,8 @@ public class AgentAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         super.onServiceConnected();
         synchronized (instanceLock) { instance = this; }
-        AccessibilityServiceInfo info = new AccessibilityServiceInfo();
+        AccessibilityServiceInfo info = getServiceInfo();
+        if (info == null) info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             | AccessibilityEvent.TYPE_VIEW_CLICKED
@@ -1249,10 +1250,10 @@ public class AgentAccessibilityService extends AccessibilityService {
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
         info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-            | AccessibilityServiceInfo.FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY;
+            | AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
         info.notificationTimeout = 100;
         setServiceInfo(info);
-        Log.i(TAG, "Accessibility service connected");
+        Log.i(TAG, "Accessibility service connected, capabilities=" + info.getCapabilities());
     }
 
     @Override
