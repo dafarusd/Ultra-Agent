@@ -7,7 +7,7 @@ import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
  *   ACCESS_BACKGROUND_LOCATION — Android 11+ throws SecurityException if batched with others; requested separately below.
  *   SCHEDULE_EXACT_ALARM       — Android 12+ special app access, not a dangerous permission; not grantable via requestMultiple().
  */
-const RUNTIME_PERMISSIONS: Array<{ key: string; perm: string; minApi?: number }> = [
+const RUNTIME_PERMISSIONS: Array<{ key: string; perm: string; minApi?: number; maxApi?: number }> = [
   { key: 'READ_CONTACTS',          perm: PermissionsAndroid.PERMISSIONS.READ_CONTACTS },
   { key: 'WRITE_CONTACTS',         perm: PermissionsAndroid.PERMISSIONS.WRITE_CONTACTS },
   { key: 'CALL_PHONE',             perm: PermissionsAndroid.PERMISSIONS.CALL_PHONE },
@@ -19,8 +19,8 @@ const RUNTIME_PERMISSIONS: Array<{ key: string; perm: string; minApi?: number }>
   { key: 'RECORD_AUDIO',           perm: PermissionsAndroid.PERMISSIONS.RECORD_AUDIO },
   { key: 'ACCESS_FINE_LOCATION',   perm: PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION },
   { key: 'ACCESS_COARSE_LOCATION', perm: PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION },
-  { key: 'READ_EXTERNAL_STORAGE',  perm: PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE },
-  { key: 'WRITE_EXTERNAL_STORAGE', perm: PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE },
+  { key: 'READ_EXTERNAL_STORAGE',  perm: PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE, maxApi: 32 },
+  { key: 'WRITE_EXTERNAL_STORAGE', perm: PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE, maxApi: 32 },
   { key: 'READ_CALENDAR',          perm: 'android.permission.READ_CALENDAR' },
   { key: 'WRITE_CALENDAR',         perm: 'android.permission.WRITE_CALENDAR' },
   { key: 'READ_PHONE_STATE',       perm: 'android.permission.READ_PHONE_STATE' },
@@ -52,7 +52,7 @@ export class PermissionBroker {
       : parseInt(String(Platform.Version), 10) || 26;
 
     // Filter permissions applicable to this API level
-    const applicable = RUNTIME_PERMISSIONS.filter(p => !p.minApi || apiLevel >= p.minApi);
+    const applicable = RUNTIME_PERMISSIONS.filter(p => (!p.minApi || apiLevel >= p.minApi) && (!p.maxApi || apiLevel <= p.maxApi));
 
     // First pass: check what's already granted (instant, no UI)
     const needsRequest: string[] = [];

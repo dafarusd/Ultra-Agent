@@ -29,9 +29,14 @@ const STEPS: Step[] = [
     desc: 'Agent Ultra uses the Venice AI API to think and plan. Add your API key in Settings → APIs after setup. You can get a free key at venice.ai.',
   },
   {
+    icon: 'shield-checkmark',
+    title: 'Allow Restricted Settings',
+    desc: 'Android blocks accessibility for sideloaded apps. First: Settings → Apps → Agent Ultra → tap ⋮ menu (top right) → "Allow restricted settings" → verify your identity.',
+  },
+  {
     icon: 'accessibility',
     title: 'Enable Accessibility Service',
-    desc: 'To control other apps, Ultra needs the Accessibility Service enabled. Go to Settings → Accessibility → Installed Services → Agent Ultra and toggle it on.',
+    desc: 'Now go to Settings → Accessibility → Installed Services → Agent Ultra and toggle it on. Grant "Full control" when prompted. This lets Ultra interact with other apps on your behalf.',
   },
 ];
 
