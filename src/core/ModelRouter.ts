@@ -210,6 +210,15 @@ export class ModelRouter {
         this.models.set(m.id, def);
       }
       this.logger.info(`Discovered ${list.length} models`);
+
+      // Log classification breakdown using classifyModelType
+      const breakdown: Record<string, number> = {};
+      for (const [, model] of this.models) {
+        const cat = classifyModelType(model.id, model.name, model.type);
+        breakdown[cat] = (breakdown[cat] || 0) + 1;
+      }
+      DebugLog.modelState('picker_classification', breakdown);
+
       DebugLog.modelDiscoveryResult(list.length, list.map((m: any) => m.id));
       DebugLog.modelState("post_discovery", {
         discoveredCount: this.models.size,

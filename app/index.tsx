@@ -297,19 +297,18 @@ export default function ChatScreen() {
         const onboardingDone = await AsyncStorage.getItem("onboarding_done").catch(() => null);
         if (!onboardingDone) setShowOnboarding(true);
 
-        // Biometric gate
+        // Biometric gate — load biometric_timeout (ms) override if set
         const gate = new BiometricGate();
         await gate.init(vault);
-        biometricGateRef.current = gate;
-        const locked = await gate.isLocked();
-        if (locked) {
-          setIsAppLocked(true);
-          const ok = await gate.authenticate();
-          if (ok) {
-            gate.markUnlocked();
-            setIsAppLocked(false);
-          }
+        const biometricTimeout = await vault.get('biometric_timeout').catch(() => null);
+        if (biometricTimeout !== null) {
+          const timeoutMs = parseInt(biometricTimeout, 10) || 0;
+          const mins = Math.round(timeoutMs / 60000);
+          if (mins !== gate.getLockTimeout()) await gate.setLockTimeout(mins);
         }
+        biometricGateRef.current = gate;
+        const authed = await gate.authenticateIfNeeded('Unlock Agent Ultra');
+        setIsAppLocked(!authed);
 
         if (!core.hasApiKey()) setStatus("No API key");
       } catch (err: any) {

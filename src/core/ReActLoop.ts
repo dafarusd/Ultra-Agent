@@ -64,6 +64,7 @@ export class ReActLoop {
     }
     let stuckCount = 0;
     let lastTreePrefix = '';
+    let deterministicFailCount = 0;
 
     for (let iteration = 1; iteration <= this.maxIterations; iteration++) {
       // TASK 2 SAFETY: verify we're NOT looking at our own UI each iteration
@@ -76,10 +77,44 @@ export class ReActLoop {
         // Re-allow current foreground package — handles app redirects, permission dialogs, mid-loop package changes
         if (currentPkg) await AppController.allowPackage(currentPkg);
       } catch (_) {}
-      const prompt = this.buildPrompt(goal, observation, steps);
+
+      // DETERMINISTIC: try to match goal to UI elements without LLM first
+      const nodes = await this.getNodes();
+      const deterministicAction = nodes.length > 0 ? this.executeDeterministic(this.parseGoal(goal), nodes) : null;
+
+      if (deterministicAction) {
+        DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: DETERMINISTIC action="${deterministicAction}"`);
+        if (/^done$/i.test(deterministicAction.trim())) {
+          steps.push({ iteration, observation, reasoning: 'deterministic:done', action: deterministicAction, actionResult: true, uiChanged: false });
+          return { success: true, steps, finalObservation: observation, goalAchieved: true };
+        }
+        const beforeObs = observation;
+        const actionResult = await this.executeAction(deterministicAction);
+        await this.sleep(this.iterationDelayMs);
+        const newObservation = await this.observe();
+        const uiChanged = newObservation !== beforeObs;
+        steps.push({ iteration, observation, reasoning: 'deterministic', action: deterministicAction, actionResult, uiChanged });
+        DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: det="${deterministicAction}" result=${actionResult} uiChanged=${uiChanged}`);
+        const treePrefix2 = newObservation.slice(0, 80);
+        if (treePrefix2 === lastTreePrefix) {
+          stuckCount++;
+          if (stuckCount >= 2) { await AppController.performScroll('down'); await this.sleep(600); stuckCount = 0; }
+        } else { stuckCount = 0; }
+        lastTreePrefix = treePrefix2;
+        observation = newObservation;
+        continue;
+      } else {
+        deterministicFailCount++;
+      }
+
+      // LLM FALLBACK: only when deterministic matching failed
+      DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: Falling back to LLM (deterministic failed ${deterministicFailCount}x)`);
+
+      const systemPrompt = `You control an Android screen. You see UI elements and choose one action. Respond ONLY: ACTION: tap_index(N), tap(x,y), type("text"), scroll(up|down), back(), done. No explanation.`;
+      const userMessage = `GOAL: ${goal}\n\nSCREEN:\n${observation.slice(0, 2000)}\n\nACTION:`;
       let reasoning: string;
       try {
-        reasoning = await this.aiCall(prompt);
+        reasoning = await this.aiCall(`${systemPrompt}\n\n${userMessage}`);
       } catch (err: any) {
         DebugLog.error('ReActLoop', `AI failed at step ${iteration}: ${err.message}`);
         break;
@@ -272,5 +307,85 @@ ACTION: <single action command>`;
 
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private async getNodes(): Promise<Array<{ i: number; t: string; d: string; c: boolean; e: boolean; s: boolean; x: number; y: number }>> {
+    try {
+      const flat = await getScreenContentFlat();
+      const parsed = JSON.parse(flat) as Array<{ i: number; t: string; d: string; c: boolean; e: boolean; s: boolean; x: number; y: number }>;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private parseGoal(goal: string): { action: string; target: string; value: string } {
+    const g = goal.toLowerCase().trim();
+    const searchMatch = g.match(/^(?:search|find|look\s*up)\s+(?:for\s+)?["']?(.+?)["']?(?:\s+(?:in|on|using|within).*)?$/i);
+    if (searchMatch) return { action: 'search', target: 'search_field', value: searchMatch[1].trim() };
+    const tapMatch = g.match(/^(?:tap|click|press|select|choose)\s+(?:the\s+)?["']?(.+?)["']?(?:\s+button)?$/i);
+    if (tapMatch) return { action: 'tap', target: tapMatch[1].trim(), value: '' };
+    const typeMatch = g.match(/^(?:type|enter|input|fill\s+in)\s+["']?(.+?)["']?(?:\s+(?:in|into|to)\s+(.+))?$/i);
+    if (typeMatch) return { action: 'type', target: typeMatch[2]?.trim() || 'input_field', value: typeMatch[1].trim() };
+    const scrollMatch = g.match(/^scroll\s+(up|down)$/i);
+    if (scrollMatch) return { action: 'scroll', target: scrollMatch[1].toLowerCase(), value: '' };
+    return { action: 'tap', target: g.slice(0, 40), value: '' };
+  }
+
+  private findNodeByText(
+    nodes: Array<{ i: number; t: string; d: string; c: boolean; e: boolean; s: boolean; x: number; y: number }>,
+    text: string
+  ): { i: number; x: number; y: number } | null {
+    const needle = text.toLowerCase().trim();
+    const exact = nodes.find(n => (n.t || n.d || '').toLowerCase().trim() === needle && n.c);
+    if (exact) return exact;
+    const partial = nodes.find(n => (n.t || n.d || '').toLowerCase().includes(needle) && n.c);
+    if (partial) return partial;
+    const loose = nodes.find(n => needle.split(' ').some(word => word.length > 3 && (n.t || n.d || '').toLowerCase().includes(word)) && n.c);
+    return loose || null;
+  }
+
+  private findEditableField(
+    nodes: Array<{ i: number; t: string; d: string; c: boolean; e: boolean; s: boolean; x: number; y: number }>
+  ): { i: number; x: number; y: number } | null {
+    const searchField = nodes.find(n => n.e && /search|query|find|q=/i.test(n.t + n.d));
+    if (searchField) return searchField;
+    const editableField = nodes.find(n => n.e);
+    return editableField || null;
+  }
+
+  private findScrollable(
+    nodes: Array<{ i: number; t: string; d: string; c: boolean; e: boolean; s: boolean; x: number; y: number }>
+  ): { i: number; x: number; y: number } | null {
+    return nodes.find(n => n.s) || null;
+  }
+
+  private executeDeterministic(
+    parsed: { action: string; target: string; value: string },
+    nodes: Array<{ i: number; t: string; d: string; c: boolean; e: boolean; s: boolean; x: number; y: number }>
+  ): string | null {
+    if (parsed.action === 'search') {
+      const field = this.findEditableField(nodes);
+      if (field) return `tap_index(${field.i})`;
+      const searchBtn = this.findNodeByText(nodes, 'search');
+      if (searchBtn) return `tap_index(${searchBtn.i})`;
+      return null;
+    }
+    if (parsed.action === 'tap') {
+      const node = this.findNodeByText(nodes, parsed.target);
+      if (node) return `tap_index(${node.i})`;
+      return null;
+    }
+    if (parsed.action === 'type') {
+      const field = parsed.target !== 'input_field'
+        ? this.findNodeByText(nodes, parsed.target) || this.findEditableField(nodes)
+        : this.findEditableField(nodes);
+      if (field) return `type("${parsed.value}")`;
+      return null;
+    }
+    if (parsed.action === 'scroll') {
+      return `scroll(${parsed.target})`;
+    }
+    return null;
   }
 }

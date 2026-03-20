@@ -167,7 +167,26 @@ const rules: ParseRule[] = [
   // REACT NAVIGATE (must come before web_search — more specific patterns)
   // ════════════════════════════════════════════════════
 
-  // FIRST: named popular apps — "search/find/buy/order X on amazon/reddit/youtube/etc."
+  // ABSOLUTE FIRST: "Search for X on amazon/reddit/youtube" — open app and search within it
+  {
+    pattern: /^(?:search|find|look\s*up)\s+(?:for\s+)?(.+?)\s+(?:on|in|at)\s+(amazon|reddit|youtube|twitter|ebay|etsy|instagram|facebook|netflix|spotify|walmart|target|google\s*maps|tiktok|linkedin|pinterest|yelp)\b/i,
+    capability: 'react_navigate',
+    extractParams: (m: RegExpMatchArray) => ({
+      goal: `Search for "${m[1].trim()}" using the search function`,
+      appHint: m[2].trim().toLowerCase(),
+    }),
+  },
+  // "Search for X on domain.com" — open website and search within it
+  {
+    pattern: /^(?:search|find|look\s*up)\s+(?:for\s+)?(.+?)\s+(?:on|in|at)\s+(\w[\w-]*\.(?:com|org|net|io|co|edu|gov)(?:\.\w{2,})?)\b/i,
+    capability: 'react_navigate',
+    extractParams: (m: RegExpMatchArray) => ({
+      goal: `Navigate to https://${m[2].trim()} and search for "${m[1].trim()}"`,
+      appHint: 'browser',
+    }),
+  },
+
+  // named popular apps — "search/find/buy/order X on amazon/reddit/youtube/etc."
   {
     pattern: /^(?:search|find|look\s*up|buy|order|shop\s+for|watch|play|listen|browse|check|post|read|open)\s+(?:for\s+)?(.+?)\s+(?:on|in|at|using|via|with)\s+(amazon|ebay|etsy|walmart|target|reddit|twitter|x\.com|instagram|facebook|tiktok|youtube|netflix|spotify|pandora|soundcloud|pinterest|linkedin|snapchat|whatsapp|telegram|discord|twitch|github|stackoverflow|medium|quora|yelp|doordash|ubereats|grubhub|instacart|airbnb|booking|expedia|maps|google\s+maps|gmail|google\s+photos|google\s+drive|google\s+docs|google\s+sheets|google\s+translate|google\s+calendar|google\s+pay|venmo|paypal|cashapp|zelle|robinhood|coinbase|yahoo|bing|duckduckgo)\b/i,
     capability: 'react_navigate',

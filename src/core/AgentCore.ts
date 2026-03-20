@@ -242,7 +242,15 @@ export class AgentCore extends SimpleEmitter {
     userInput: string;
     summary: string;
     capabilities: string[];
+    minimal?: boolean;
   }): string {
+    if (params.minimal) {
+      return [
+        'You are Ultra, an autonomous AI agent on an Android device.',
+        `Available capabilities: ${params.capabilities.join(', ')}`,
+        'Return ONLY a JSON action plan: {"capability":"...", "params": {...}, "reason":"..."}. No explanation, no markdown.',
+      ].join('\n');
+    }
     const permReport = this.perms.getStatusReport();
     let behavior: string;
 
@@ -450,6 +458,24 @@ You are always on. Always capable. Always direct.`;
           const stepInput = multiSteps[si];
           DebugLog.systemEvent('AgentCore', `Multi-step [${si + 1}/${multiSteps.length}] executing: "${stepInput}"`);
           let stepPlan = this.parser.parse(stepInput);
+
+          // Context-aware: if previous step launched an app and this step is web_search,
+          // reroute to react_navigate so the search happens inside the app
+          if (stepPlan && stepPlan.capability === 'web_search' && si > 0) {
+            const prevResultStr = results[si - 1];
+            if (prevResultStr && (prevResultStr.includes('launched') || prevResultStr.includes('Opened'))) {
+              DebugLog.systemEvent('AgentCore', `Context-aware: rerouting web_search → react_navigate (prev step launched app)`);
+              stepPlan = {
+                capability: 'react_navigate',
+                params: {
+                  goal: `Search for "${(stepPlan.params as Record<string, unknown>).query || stepInput}"`,
+                  appHint: undefined,
+                },
+                reason: 'Context: previous step opened an app, routing search into it',
+              };
+            }
+          }
+
           // Task 13: if parser fails and we have context from previous step, try AI routing
           if (!stepPlan && si > 0 && this.ai.hasApiKey()) {
             try {

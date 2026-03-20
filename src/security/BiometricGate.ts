@@ -91,4 +91,23 @@ export class BiometricGate {
       return false;
     }
   }
+
+  needsAuth(): boolean {
+    const locked = this.lockTimeoutMinutes <= 0
+      ? this.lastUnlockTime === 0
+      : (Date.now() - this.lastUnlockTime) > this.lockTimeoutMinutes * 60 * 1000;
+    return locked;
+  }
+
+  recordAuth(): void {
+    this.markUnlocked();
+  }
+
+  async authenticateIfNeeded(reason: string = 'Unlock Agent Ultra'): Promise<boolean> {
+    const locked = await this.isLocked();
+    if (!locked && this.lastUnlockTime > 0) return true;
+    const result = await this.authenticate(reason);
+    if (result) this.markUnlocked();
+    return result;
+  }
 }

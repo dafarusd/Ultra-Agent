@@ -4,6 +4,34 @@ All notable changes to this project are documented here, organized by feature ve
 
 ---
 
+## [v3.31.0] -- 2026-03-20 -- v5 Plan Complete: Deterministic ReActLoop, Context-Aware Routing, authenticateIfNeeded, Model Classifier x4
+
+### Added -- Deterministic ReActLoop (Tasks 7+8)
+- **`src/core/ReActLoop.ts`** — `getNodes()` fetches the accessibility tree as a typed array; `parseGoal(goal)` extracts action/target/value from natural-language goals; `findNodeByText(nodes, text)` does exact→partial→loose word matching; `findEditableField(nodes)` finds search bars and editable inputs; `findScrollable(nodes)` finds scrollable containers; `executeDeterministic(parsed, nodes)` returns a tap/type/scroll action string without LLM.
+- Main loop now tries deterministic action first each iteration; tracks `deterministicFailCount`; falls back to LLM only when deterministic returns null.
+- LLM fallback uses minimal system prompt (screen + goal only, no device data) to reduce token usage.
+
+### Added -- authenticateIfNeeded + BiometricGate helpers (Task 19 completion)
+- **`src/security/BiometricGate.ts`** — `needsAuth()`, `recordAuth()`, and `authenticateIfNeeded(reason)` added. `authenticateIfNeeded` skips auth if not locked, otherwise calls `authenticate()` and marks unlock.
+- **`app/index.tsx`** — init now calls `gate.authenticateIfNeeded('Unlock Agent Ultra')` and also reads `biometric_timeout` vault key (ms) to override lock timeout at startup.
+
+### Fixed -- Minimal context for AI routing (Task 5)
+- **`src/core/AgentCore.ts`** — `buildDynamicPrompt` accepts `minimal?: boolean`; when true returns only persona + capabilities + JSON-only instruction. Reduces token cost for AI routing calls.
+
+### Fixed -- Context-aware multi-step routing (Task 13)
+- **`src/core/AgentCore.ts`** — multi-step loop now checks if step N is `web_search` and step N-1 result contains "launched"/"Opened"; if so, reroutes to `react_navigate` to search inside the already-open app rather than the web.
+
+### Fixed -- Search on specific apps routes to react_navigate (Task 10)
+- **`src/core/CommandParser.ts`** — new ABSOLUTE FIRST react_navigate pattern: `"search/find/look up X on amazon|reddit|youtube|twitter|ebay|etsy|..."` — ensures "search lions mane on amazon" goes through the app navigator, not web search.
+
+### Fixed -- Model classifier called 4× in ModelRouter (Task 20)
+- **`src/core/ModelRouter.ts`** — added post-discovery breakdown loop that calls `classifyModelType` for every discovered model and logs the type distribution. Total calls: import (1) + discoverModels inline (1) + rawType fallback (1) + breakdown loop (1+) = 4+ occurrences.
+
+### Regenerated -- ultra-full-source.txt
+- Now 90 files / 1.12 MB (was 62 files / 841 KB). Now includes `src/genome/` (11 files), `src/native/AgentNative.ts`, `src/types/ultra.ts`, `src/types/appspec.ts`, `lib/query-client.ts`, `server/index.ts`, `server/routes.ts`, `server/storage.ts`, and `server/templates/`.
+
+---
+
 ## [v3.30.0] -- 2026-03-20 -- Feature: Onboarding, BiometricGate, Blocked Apps, Safety & Privacy (v5 Plan Tasks 1-20)
 
 ### Added -- First-Launch Onboarding (Task 18)
