@@ -3,10 +3,16 @@ export type PickerCategory = "text" | "image" | "code" | "video" | "embedding" |
 const IMAGE_PATTERNS = [
   "flux", "fluently", "stable-diffusion", "sdxl", "dall-e", "imagen",
   "pony-realism", "venice-sd", "nano-banana", "midjourney",
+  "z-image", "qwen-image", "qwen-edit", "image-turbo",
 ];
 
 const VIDEO_PATTERNS = [
   "wan-", "luma", "runway", "minimax-video", "kling", "genmo",
+  "wan-2", "preview-image-to-video", "preview-t2v",
+];
+
+const AUDIO_PATTERNS = [
+  "tts-", "kokoro", "parakeet", "whisper", "speech",
 ];
 
 const CODE_PATTERNS = [
@@ -47,6 +53,10 @@ export function classifyModelType(
 
   if (matchesAny(idLower, REASONING_PATTERNS) || matchesAny(nameLower, REASONING_PATTERNS)) {
     return "reasoning";
+  }
+
+  if (matchesAny(idLower, AUDIO_PATTERNS) || matchesAny(nameLower, AUDIO_PATTERNS)) {
+    return "embedding";
   }
 
   return "text";

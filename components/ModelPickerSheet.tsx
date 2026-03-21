@@ -10,6 +10,7 @@ import {
   TouchableWithoutFeedback,
   Dimensions,
   Platform,
+  ScrollView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
@@ -177,7 +178,7 @@ export default function ModelPickerSheet({
             </Pressable>
           </View>
 
-          <View style={styles.filterRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={{ gap: 6, paddingHorizontal: 16, paddingBottom: 10 }}>
             {FILTER_TABS.map((tab) => {
               const isActive = filter === tab.key;
               return (
@@ -192,7 +193,7 @@ export default function ModelPickerSheet({
                 </Pressable>
               );
             })}
-          </View>
+          </ScrollView>
 
           <FlatList
             data={filtered}
@@ -240,9 +241,7 @@ const styles = StyleSheet.create({
   },
   filterRow: {
     flexDirection: "row",
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    gap: 6,
+    paddingBottom: 0,
   },
   filterTab: {
     paddingHorizontal: 12,

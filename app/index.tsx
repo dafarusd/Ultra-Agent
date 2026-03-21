@@ -164,6 +164,16 @@ export default function ChatScreen() {
     ).start();
   }, [pulseAnim]);
 
+  // ── Force grid layout reset on v5.1 upgrade ───────
+  useEffect(() => {
+    AsyncStorage.getItem('grid_config_version').then(v => {
+      if (v !== '5.1') {
+        AsyncStorage.removeItem('action_grid_config');
+        AsyncStorage.setItem('grid_config_version', '5.1');
+      }
+    }).catch(() => {});
+  }, []);
+
   // ── Load saved tasks from storage ──────────────────
   useEffect(() => {
     AsyncStorage.getItem('task_templates').then(raw => {
@@ -335,7 +345,22 @@ export default function ChatScreen() {
         const authed = await gate.authenticateIfNeeded('Unlock Agent Ultra');
         setIsAppLocked(!authed);
 
-        if (!core.hasApiKey()) setStatus("No API key");
+        if (!core.hasApiKey()) {
+          setStatus("Add API key in Settings");
+          const existingApis = await vault.get('saved_apis').catch(() => null);
+          if (!existingApis) {
+            const veniceEntry = {
+              id: 'api_venice_builtin',
+              name: 'Venice AI',
+              baseUrl: 'https://api.venice.ai/api/v1',
+              apiKey: '',
+              password: '',
+              isBuiltIn: true,
+            };
+            await vault.set('saved_apis', JSON.stringify([veniceEntry]));
+            await vault.set('api_base_url', 'https://api.venice.ai/api/v1');
+          }
+        }
       } catch (err: any) {
         DebugLog.uiError("init", err?.message ?? "Unknown init error");
         setStatus("Init failed");
@@ -362,6 +387,10 @@ export default function ChatScreen() {
       snapUI("focus_effect");
       agentCore.refreshApiKey().then(() => {
         if (agentCore.hasApiKey()) setStatus("Ready");
+        const engineDefault = agentCore.getDefaultModel();
+        if (engineDefault && !activeModelId) {
+          setActiveModelId(engineDefault);
+        }
       });
       SecureVault.initialize().then(async (v) => {
         try {
@@ -405,6 +434,50 @@ export default function ChatScreen() {
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = (overrideText || input).trim();
     if (!text || isProcessing || !agentCore || !conversationId) return;
+
+    // ── Slash commands: handle locally ──
+    if (text.startsWith('/')) {
+      if (!overrideText) setInput('');
+      const cmd = text.toLowerCase().trim();
+      let response = '';
+      try {
+        if (cmd === '/status') {
+          let hb = { alive: false, foregroundPackage: 'unknown' };
+          try {
+            const AppCtrl = (await import('@/src/native/AppController')).default;
+            hb = await AppCtrl.heartbeatPing();
+          } catch {}
+          response = `System Status\n• A11Y: ${hb.alive ? '✓ Active' : '✗ Inactive'}\n• Foreground: ${hb.foregroundPackage || 'unknown'}\n• Models: ${agentCore.getAvailableModels?.()?.length ?? 0}\n• API Key: ${agentCore.hasApiKey() ? '✓' : '✗'}\n• Default: ${agentCore.getDefaultModel() || 'None'}`;
+        } else if (cmd === '/capabilities') {
+          const caps = agentCore.getCapabilities?.() || [];
+          response = `${caps.length} capabilities:\n${caps.map((c: any) => '• ' + c.id).join('\n')}`;
+        } else if (cmd === '/models') {
+          const models = agentCore.getAvailableModels?.() || [];
+          const byType: Record<string, number> = {};
+          models.forEach((m: any) => { byType[m.type] = (byType[m.type] || 0) + 1; });
+          response = `${models.length} models:\n${Object.entries(byType).map(([t, c]) => '• ' + t + ': ' + c).join('\n')}`;
+        } else if (cmd === '/cost') {
+          const summary = agentCore.getCostSummary?.() || { totalCost: 0, totalCalls: 0 };
+          response = `Usage: $${(summary as any).totalCost?.toFixed(4) || '0'} across ${(summary as any).totalCalls || 0} calls`;
+        } else if (cmd === '/help') {
+          response = 'Commands:\n• /status — System status\n• /capabilities — List capabilities\n• /models — Model counts by type\n• /cost — Usage summary\n• /help — This message';
+        } else {
+          response = 'Unknown: ' + cmd + '. Type /help';
+        }
+      } catch (e: any) { response = 'Error: ' + (e?.message || 'unknown'); }
+      const sysMsg: ChatMessage = {
+        id: `msg_cmd_${Date.now()}`,
+        role: 'assistant',
+        content: response,
+        createdAt: Date.now(),
+        source: 'system' as any,
+        meta: { mode: 'system' },
+      };
+      await agentCore.getConversationManager().addMessage(conversationId, sysMsg);
+      await reloadMessages(agentCore, conversationId);
+      return;
+    }
+
     UltraDevLog.sendAttempt(text, currentMode, activeModelId || '', conversationId, messages.length, isProcessing);
     DebugLog.uiSendMessage(text.length, currentMode, activeModelId, isProcessing);
     snapUI("before_send");
@@ -807,8 +880,9 @@ export default function ChatScreen() {
       const msgIndex = messages.indexOf(item);
 
       return (
-        <View
-          onLayout={(e) => {
+        <>
+          <View
+            onLayout={(e) => {
             const { height, width } = e.nativeEvent.layout;
             UltraDevLog.messageRendered(
               item.id, item.role as 'user' | 'assistant' | 'system', item.content.length,
@@ -932,16 +1006,20 @@ export default function ChatScreen() {
             </View>
           )}
 
-          {/* Contextual quick-reply chips */}
-          {showContextBar && (
+        </View>
+
+        {/* Context chips — OUTSIDE bubble to prevent height/width inflation */}
+        {showContextBar && (
+          <View style={{ alignSelf: 'flex-start', maxWidth: '85%', marginBottom: 8 }}>
             <ContextBar
               message={item}
               currentMode={currentMode}
               onExecutePlan={handleContextPlan}
               onSendPrompt={(text) => handleSend(text)}
             />
-          )}
-        </View>
+          </View>
+        )}
+      </>
       );
     },
     [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, expandedMsgs, currentMode, handleContextPlan, handleSend]
@@ -1038,7 +1116,7 @@ export default function ChatScreen() {
           }}
           scrollEventThrottle={100}
           ListEmptyComponent={
-            <View style={[styles.emptyState, Platform.OS !== "web" && { transform: [{ scaleY: -1 }] }]}>
+            <View style={[styles.emptyState, { transform: [{ scaleY: -1 }] }]}>
               <MaterialCommunityIcons name="robot-outline" size={48} color={SURFACE2} />
               <Text style={styles.emptyText}>
                 Ask me anything. I can manage files, contacts, build apps, and more.

@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ConversationMeta } from "@/src/types/ultra";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const ACCENT = "#34d399";
 const BG = "#000000";
@@ -49,11 +50,9 @@ interface ConversationListProps {
 
 const QUICK_COMMANDS = [
   { id: "status", label: "System Status", icon: "pulse-outline" as const, command: "/status" },
-  { id: "capabilities", label: "Show Capabilities", icon: "list-outline" as const, command: "/capabilities" },
-  { id: "cost", label: "Usage & Costs", icon: "wallet-outline" as const, command: "/cost" },
   { id: "models", label: "List Models", icon: "server-outline" as const, command: "/models" },
+  { id: "cost", label: "Usage & Costs", icon: "wallet-outline" as const, command: "/cost" },
   { id: "help", label: "Help", icon: "help-circle-outline" as const, command: "/help" },
-  { id: "clear_context", label: "Clear Context", icon: "refresh-outline" as const, command: "/clear" },
 ];
 
 // ── Helpers ────────────────────────────────────────────
@@ -148,6 +147,17 @@ export default function ConversationList({
   const [folders, setFolders] = useState<Folder[]>([
     { id: "folder_logs", name: "Logs", isSystem: true },
   ]);
+
+  useEffect(() => {
+    AsyncStorage.getItem('user_folders').then(raw => {
+      if (raw) {
+        try {
+          const saved: Folder[] = JSON.parse(raw);
+          setFolders(prev => [...prev.filter(f => f.isSystem), ...saved]);
+        } catch {}
+      }
+    }).catch(() => {});
+  }, []);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
@@ -165,22 +175,27 @@ export default function ConversationList({
     }
   }, [visible]);
 
-  const handleCreateFolder = useCallback(() => {
+  const handleCreateFolder = useCallback(async () => {
     const name = newFolderName.trim();
     if (!name) return;
     const id = `folder_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    setFolders((prev) => [...prev, { id, name, isSystem: false }]);
+    const newFolder: Folder = { id, name, isSystem: false };
+    const updated = [...folders, newFolder];
+    setFolders(updated);
     setNewFolderName("");
     setShowNewFolder(false);
-    // TODO: Persist folders to storage
-  }, [newFolderName]);
+    try {
+      await AsyncStorage.setItem('user_folders', JSON.stringify(updated.filter(f => !f.isSystem)));
+    } catch {}
+  }, [newFolderName, folders]);
 
   const handleFolderTap = useCallback((folder: Folder) => {
     if (folder.id === "folder_logs") {
       onClose();
       onOpenLogs();
+      return;
     }
-    // TODO: Open folder contents for user-created folders
+    Alert.alert(folder.name, 'Folder view coming in the next update. You can create and organize folders now.');
   }, [onClose, onOpenLogs]);
 
   const renderConversation = useCallback(

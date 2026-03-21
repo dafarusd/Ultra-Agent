@@ -1772,18 +1772,61 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public boolean toggleQuickSetting(String tileLabel) {
-        performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
-        try { Thread.sleep(900); } catch (InterruptedException ignored) {}
+        allowPackage("com.android.systemui");
+        // Samsung OneUI: GLOBAL_ACTION_QUICK_SETTINGS shows compact panel without tiles.
+        // Physical swipe from top of screen reveals the full QS tile grid.
+        android.graphics.Point screenSize = new android.graphics.Point();
+        try {
+            android.view.WindowManager wm = (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+            if (wm != null) wm.getDefaultDisplay().getRealSize(screenSize);
+        } catch (Exception ignored) { screenSize.set(1080, 2340); }
+        int cx = screenSize.x / 2;
+        int h = screenSize.y;
+
+        // Swipe 1: pull down notification shade
+        swipeRaw(cx, 10, cx, h / 2, 300);
+        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+
+        // Swipe 2: expand to full QS tiles
+        swipeRaw(cx, h / 4, cx, h * 3 / 4, 300);
+        try { Thread.sleep(700); } catch (InterruptedException ignored) {}
+
         boolean result = tapQuickSettingsTile(tileLabel);
         if (!result) {
-            // Try a second swipe-down to expand full QS panel
-            performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
-            try { Thread.sleep(1200); } catch (InterruptedException ignored) {}
+            // Scroll QS panel to find hidden tiles
+            swipeRaw(cx, h / 2, cx, h / 4, 200);
+            try { Thread.sleep(400); } catch (InterruptedException ignored) {}
             result = tapQuickSettingsTile(tileLabel);
         }
-        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+
+        try { Thread.sleep(200); } catch (InterruptedException ignored) {}
+        performGlobalAction(GLOBAL_ACTION_BACK);
         performGlobalAction(GLOBAL_ACTION_BACK);
         return result;
+    }
+
+    // Swipe helper that bypasses checkPackageAllowed — needed for system UI swipes
+    private boolean swipeRaw(int x1, int y1, int x2, int y2, int durationMs) {
+        final boolean[] done = {false};
+        final boolean[] success = {false};
+        android.graphics.Path path = new android.graphics.Path();
+        path.moveTo(x1, y1);
+        path.lineTo(x2, y2);
+        android.accessibilityservice.GestureDescription gesture =
+            new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, Math.max(durationMs, 100)))
+                .build();
+        dispatchGesture(gesture, new android.accessibilityservice.AccessibilityService.GestureResultCallback() {
+            @Override
+            public void onCompleted(android.accessibilityservice.GestureDescription g) { success[0] = true; done[0] = true; }
+            @Override
+            public void onCancelled(android.accessibilityservice.GestureDescription g) { done[0] = true; }
+        }, null);
+        long ws = System.currentTimeMillis();
+        while (!done[0] && System.currentTimeMillis() - ws < 3000) {
+            try { Thread.sleep(20); } catch (InterruptedException ignored) {}
+        }
+        return success[0];
     }
 
     private AccessibilityNodeInfo findFocusedEditable(AccessibilityNodeInfo root) {

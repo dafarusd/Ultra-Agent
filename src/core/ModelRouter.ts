@@ -181,7 +181,8 @@ export class ModelRouter {
         const pricing = spec.pricing || {};
         const validModelTypes: ModelDef['type'][] = ['text', 'image', 'video', 'audio', 'embedding'];
         const rawType = m.type || 'text';
-        const classifiedType = classifyModelType(m.id);
+        const rawApiType = m.type || spec.type || '';
+        const classifiedType = classifyModelType(m.id, m.name || m.id, rawApiType);
         const modelType: ModelDef['type'] = (classifiedType && validModelTypes.includes(classifiedType as ModelDef['type']))
           ? (classifiedType as ModelDef['type'])
           : validModelTypes.includes(rawType as ModelDef['type'])

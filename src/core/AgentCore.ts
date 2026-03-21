@@ -485,7 +485,16 @@ You are always on. Always capable. Always direct.`;
           if (!stepPlan && si > 0 && this.ai.hasApiKey()) {
             try {
               await this.refreshSystemContext();
-              const ctxPrompt = this.buildDynamicPrompt({ mode: 'command', userInput: stepInput, summary: prevResult ? `Previous step (${prevCapability}) result: ${prevResult}` : '', capabilities: capList });
+              let screenContext = '';
+              try {
+                const { default: AppCtrl } = require('../native/AppController');
+                const flat = await AppCtrl.getScreenContentFlat();
+                const nodes = JSON.parse(flat);
+                if (nodes.length > 0) {
+                  screenContext = '\nCurrent screen:\n' + nodes.slice(0, 15).map((n: any) => `[${n.i}] "${(n.t || n.d || '').slice(0, 40)}" ${n.c ? '[tappable]' : ''}`).join('\n');
+                }
+              } catch {}
+              const ctxPrompt = this.buildDynamicPrompt({ mode: 'command', userInput: stepInput, summary: (prevResult ? `Previous step (${prevCapability}) result: ${prevResult}` : '') + screenContext, capabilities: capList });
               const stepFinalMessages = [
                 { role: 'system', content: ctxPrompt },
                 { role: 'user', content: stepInput },
@@ -1420,6 +1429,7 @@ You are always on. Always capable. Always direct.`;
   async setDefaultModel(modelId: string) { await this.ai.setDefaultModel(modelId); }
   getModelRouter() { return this.ai; }
   getCostSummary() { return this.costTracker.getSummary(); }
+  getCapabilities() { return this.caps.getAll(); }
   async getStorageBreakdown() { return this.storage.getBreakdown(); }
   getDebugStats() { return this.debugEngine.getStats(); }
   getLearnedPatterns() { return this.learner.getTopPatterns(); }

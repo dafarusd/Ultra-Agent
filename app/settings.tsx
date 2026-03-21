@@ -133,6 +133,10 @@ export default function SettingsScreen() {
     AsyncStorage.getItem("dev_mode_enabled").then((v) => { if (v === "1") setIsDevMode(true); });
   }, []);
 
+  useEffect(() => {
+    if (tab === 'logs' && !isDevMode) setTab('apis');
+  }, [isDevMode]);
+
   // ── Load settings on mount ─────────────────────────
   useEffect(() => {
     loadSettings();
@@ -260,8 +264,8 @@ export default function SettingsScreen() {
   const startNewApi = useCallback(() => {
     const draft: SavedApi = {
       id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: "Venice",
-      baseUrl: "https://api.venice.ai/api/v1",
+      name: "",
+      baseUrl: "",
       apiKey: "",
       password: "",
     };
@@ -512,23 +516,74 @@ export default function SettingsScreen() {
               </View>
             ) : (
               <>
-                {/* Saved APIs list */}
+                {/* ── Built-in Venice (dev mode only) ── */}
+                {isDevMode && apis.filter(a => a.isBuiltIn).length > 0 && (
+                  <>
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>Venice Service</Text>
+                    </View>
+                    <Text style={{ color: DIM, fontSize: 12, marginBottom: 8, paddingHorizontal: 4 }}>
+                      Powers image generation, TTS, video, and agent reasoning.
+                    </Text>
+                    {apis.filter(a => a.isBuiltIn).map((api) => (
+                      <View key={api.id} style={styles.apiCard}>
+                        <View style={styles.apiCardHeader}>
+                          <View style={styles.apiNameRow}>
+                            <MaterialCommunityIcons name="api" size={18} color={ACCENT} />
+                            <Text style={styles.apiName}>{api.name}</Text>
+                          </View>
+                          <View style={styles.apiActions}>
+                            <Pressable onPress={() => startEditApi(api)} hitSlop={8}>
+                              <Ionicons name="create-outline" size={18} color={DIM} />
+                            </Pressable>
+                          </View>
+                        </View>
+                        <Text style={styles.apiUrl} numberOfLines={1}>{api.baseUrl}</Text>
+                        <Text style={styles.apiKeyStatus}>
+                          {api.apiKey ? `Key: ••••${api.apiKey.slice(-4)}` : "No API key — add in edit"}
+                        </Text>
+                      </View>
+                    ))}
+                    {apis.some(a => a.isBuiltIn && a.apiKey) && (
+                      <View style={[styles.card, { marginTop: 8, marginBottom: 12 }]}>
+                        <Text style={[styles.cardTitle, { fontSize: 14 }]}>Available Venice Endpoints</Text>
+                        {[
+                          { name: 'Chat / Reasoning', ep: '/chat/completions' },
+                          { name: 'Image Generation', ep: '/image/generate' },
+                          { name: 'Text-to-Speech', ep: '/audio/speech' },
+                          { name: 'Video Generation', ep: '/video/queue' },
+                          { name: 'Embeddings', ep: '/embeddings' },
+                          { name: 'Image Upscale', ep: '/image/upscale' },
+                          { name: 'Image Edit', ep: '/image/edit' },
+                          { name: 'Transcription', ep: '/audio/transcriptions' },
+                        ].map(svc => (
+                          <View key={svc.ep} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
+                            <Text style={{ color: TEXT, fontSize: 12 }}>{svc.name}</Text>
+                            <Text style={{ color: ACCENT, fontSize: 11 }}>✓</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </>
+                )}
+
+                {/* ── User APIs (always visible) ── */}
                 <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>Saved APIs</Text>
+                  <Text style={styles.sectionTitle}>{isDevMode ? 'User APIs' : 'Your APIs'}</Text>
                   <Pressable onPress={startNewApi} style={styles.addBtn}>
                     <Ionicons name="add" size={18} color={ACCENT} />
                     <Text style={styles.addBtnText}>Add API</Text>
                   </Pressable>
                 </View>
 
-                {visibleApis.length === 0 ? (
+                {apis.filter(a => !a.isBuiltIn).length === 0 ? (
                   <View style={styles.emptyCard}>
                     <MaterialCommunityIcons name="api" size={32} color="#222" />
-                    <Text style={styles.emptyText}>No APIs configured</Text>
-                    <Text style={styles.emptySubtext}>Tap "Add API" to connect your first provider</Text>
+                    <Text style={styles.emptyText}>No APIs added</Text>
+                    <Text style={styles.emptySubtext}>Bring your own OpenAI-compatible API</Text>
                   </View>
                 ) : (
-                  visibleApis.map((api) => (
+                  apis.filter(a => !a.isBuiltIn).map((api) => (
                     <View key={api.id} style={styles.apiCard}>
                       <View style={styles.apiCardHeader}>
                         <View style={styles.apiNameRow}>
