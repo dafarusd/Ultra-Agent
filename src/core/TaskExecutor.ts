@@ -564,22 +564,23 @@ export class TaskExecutor {
       case 'camera_capture': {
         if (!isNative) return { error: 'Camera requires a device' };
         try {
-          const AgentNativeModuleCam = (await import('../native/AgentNative')).default;
-          let launched = await AgentNativeModuleCam.launchApp('com.sec.android.app.camera');
-          if (!launched.success) launched = await AgentNativeModuleCam.launchApp('com.android.camera2');
-          if (!launched.success) launched = await AgentNativeModuleCam.launchApp('com.google.android.GoogleCamera');
-          if (!launched.success) {
-            const camResult = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
-            if (camResult.canceled || !camResult.assets?.length) return { success: false, error: 'Camera capture cancelled' };
-            return { success: true, uri: camResult.assets[0].uri };
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') {
+            return { success: false, error: 'Camera permission not granted. Enable in Settings > Apps > Agent Ultra > Permissions.' };
           }
-          const shutterResult = await this.completeWithReActLoop(
-            'Find the capture/shutter button (usually a large round button at the bottom center) and tap it to take a photo',
-            taskId, launched.packageName, 3
-          );
+          const camResult = await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            quality: 0.85,
+            allowsEditing: false,
+          });
+          if (camResult.canceled || !camResult.assets?.length) {
+            return { success: false, summary: 'Camera capture cancelled by user' };
+          }
+          const asset = camResult.assets[0];
           return {
             success: true,
-            summary: shutterResult.success ? 'Photo captured' : 'Camera opened — tap the shutter button to take a photo',
+            summary: `Photo captured (${asset.width}×${asset.height})`,
+            data: { uri: asset.uri, width: asset.width, height: asset.height, fileSize: asset.fileSize || null },
           };
         } catch (err: any) {
           return { success: false, error: `Camera error: ${err.message}` };

@@ -223,7 +223,8 @@ export class AgentCore extends SimpleEmitter {
       const { SystemInfoService } = await import('../services/SystemInfoService');
       const data = await SystemInfoService.gather();
       this.lastSystemContext = SystemInfoService.toContextString(data);
-    } catch {
+    } catch (e: any) {
+      DebugLog.error('SystemContext', e?.message || 'gather failed');
       this.lastSystemContext = '';
     }
   }

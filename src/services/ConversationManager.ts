@@ -189,7 +189,10 @@ export class ConversationManager {
 
     const MAX_MESSAGES = 200;
     if (conv.messages.length >= MAX_MESSAGES) {
-      conv.messages = conv.messages.slice(-150);
+      const head = conv.messages.slice(0, 5);
+      const tail = conv.messages.slice(-145);
+      conv.messages = [...head, ...tail];
+      DebugLog.systemEvent('ConversationManager', `Trimmed conversation ${conversationId}: ${MAX_MESSAGES} → ${conv.messages.length} messages (kept first 5 + last 145)`);
     }
 
     conv.messages.push(msg);

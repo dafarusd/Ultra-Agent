@@ -40,6 +40,7 @@ export interface AppControllerInterface {
   readCrashLog(): Promise<string>;
   clearCrashLog(): Promise<boolean>;
   heartbeatPing(): Promise<{ alive: boolean; foregroundPackage: string; timestamp: number }>;
+  startBackgroundService(): Promise<boolean>;
   isAvailable(): boolean;
 }
 
@@ -83,6 +84,7 @@ const noopController: AppControllerInterface = {
   readCrashLog: async () => '',
   clearCrashLog: async () => true,
   heartbeatPing: async () => ({ alive: false, foregroundPackage: 'mock', timestamp: 0 }),
+  startBackgroundService: async () => false,
   isAvailable: () => false,
 };
 
@@ -144,6 +146,11 @@ function createNativeController(): AppControllerInterface {
     heartbeatPing: () => native.heartbeatPing
       ? native.heartbeatPing()
       : Promise.resolve({ alive: false, foregroundPackage: 'unknown', timestamp: 0 }),
+    startBackgroundService: () => {
+      const bridge = NativeModules.AppController;
+      if (!bridge?.startBackgroundService) return Promise.resolve(false);
+      return bridge.startBackgroundService();
+    },
     isAvailable: () => true,
   };
 }

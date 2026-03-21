@@ -2096,6 +2096,21 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
+    public void startBackgroundService(Promise promise) {
+        try {
+            Intent intent = new Intent(getReactApplicationContext(), AgentBackgroundService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getReactApplicationContext().startForegroundService(intent);
+            } else {
+                getReactApplicationContext().startService(intent);
+            }
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("BG_SERVICE_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
     public void blockPackage(String pkg, Promise promise) {
         if (!AgentAccessibilityService.isRunning()) { promise.reject("NOT_RUNNING", "Service not running"); return; }
         AgentAccessibilityService.blockPackage(pkg);
@@ -2279,6 +2294,17 @@ public class AgentBackgroundService extends Service {
     public void onDestroy() {
         Log.i(TAG, "Background service destroyed");
         super.onDestroy();
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        Intent restartIntent = new Intent(getApplicationContext(), AgentBackgroundService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getApplicationContext().startForegroundService(restartIntent);
+        } else {
+            getApplicationContext().startService(restartIntent);
+        }
+        super.onTaskRemoved(rootIntent);
     }
 
     private void createNotificationChannel() {
@@ -2466,6 +2492,7 @@ function withAgentNative(config) {
           'android:name': '.AgentAccessibilityService',
           'android:permission': 'android.permission.BIND_ACCESSIBILITY_SERVICE',
           'android:exported': 'false',
+          'android:stopWithTask': 'false',
         },
         'intent-filter': [{
           action: [{
@@ -2491,6 +2518,7 @@ function withAgentNative(config) {
           'android:name': '.AgentBackgroundService',
           'android:exported': 'false',
           'android:foregroundServiceType': 'dataSync',
+          'android:stopWithTask': 'false',
         },
       });
     }
@@ -2557,6 +2585,7 @@ function withAgentNative(config) {
       // System
       'android.permission.FOREGROUND_SERVICE',
       'android.permission.FOREGROUND_SERVICE_LOCATION',
+      'android.permission.FOREGROUND_SERVICE_DATA_SYNC',
       'android.permission.RECEIVE_BOOT_COMPLETED',
       'android.permission.QUERY_ALL_PACKAGES',
       'android.permission.REQUEST_INSTALL_PACKAGES',

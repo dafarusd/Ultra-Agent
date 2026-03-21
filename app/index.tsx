@@ -125,7 +125,8 @@ export default function ChatScreen() {
   // Current mode & replay
   const [currentMode, setCurrentMode] = useState<ActionType>("chat");
   const [savedDefaults, setSavedDefaults] = useState<Record<string, string>>({});
-  const [activeModelId, setActiveModelId] = useState<string>("");
+  const [activeModelId, setActiveModelId] = useState<string | null>(null);
+  const [contextBarDismissed, setContextBarDismissed] = useState(false);
   const [pendingReplay, setPendingReplay] = useState<{
     userInput: string;
     type: "approval" | "model_switch";
@@ -233,17 +234,33 @@ export default function ChatScreen() {
     return () => UltraDevLog.componentUnmount('ChatScreen', compIdRef.current);
   }, []);
 
-  // ── AppState Lifecycle Sensor ─────────────────────
+  // ── AppState Lifecycle Sensor + A11y Health Monitor ─
   useEffect(() => {
     UltraDevLog.installAppStateListener();
     UltraDevLog.startA11yDrain();
     UltraDevLog.startHeartbeat();
+
+    const { AppState } = require('react-native');
+    const healthSub = AppState.addEventListener('change', async (nextState: string) => {
+      if (nextState === 'active' && agentCore) {
+        try {
+          const AppCtrl = (await import('@/src/native/AppController')).default;
+          const alive = await AppCtrl.isServiceEnabled();
+          if (!alive) {
+            DebugLog.error('HealthMonitor', 'Accessibility service died while backgrounded');
+            setStatus('⚠ Accessibility service disabled — tap to re-enable');
+          }
+        } catch {}
+      }
+    });
+
     return () => {
       UltraDevLog.removeAppStateListener();
       UltraDevLog.stopA11yDrain();
       UltraDevLog.stopHeartbeat();
+      healthSub.remove();
     };
-  }, []);
+  }, [agentCore]);
 
   // ── Init ───────────────────────────────────────────
   useEffect(() => {
@@ -279,6 +296,14 @@ export default function ChatScreen() {
         await core.initialize();
         setAgentCore(core);
         setAgentCoreInstance(core);
+        // Start foreground service to prevent process kill
+        try {
+          const AppCtrl = (await import('@/src/native/AppController')).default;
+          await AppCtrl.startBackgroundService();
+          DebugLog.systemEvent('ForegroundService', 'Background service started');
+        } catch (bgErr: any) {
+          DebugLog.error('ForegroundService', `Failed to start: ${bgErr?.message}`);
+        }
         const modelsAvailable = core.getAvailableModels()?.length ?? 0;
         DebugLog.uiInit("agentCore", "AgentCore initialized, default model: " + core.getDefaultModel());
         DebugLog.modelState("post_init", { discoveredCount: modelsAvailable, defaultModel: core.getDefaultModel(), hasApiKey: core.hasApiKey() });
@@ -374,7 +399,7 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!agentCore) return;
-      const deps = { agentCore: !!agentCore, currentMode, activeModelId };
+      const deps = { agentCore: !!agentCore, sessionModelOverride };
       UltraDevLog.focusEffectTriggered(deps, prevFocusDepsRef.current);
       prevFocusDepsRef.current = deps;
       const now = Date.now();
@@ -485,6 +510,7 @@ export default function ChatScreen() {
     snapUI("before_send");
     if (!overrideText) setInput("");
     setIsProcessing(true);
+    setContextBarDismissed(false);
     UltraDevLog.processingState(true, 'handleSend_start');
     setStatus("Processing...");
 
@@ -591,6 +617,7 @@ export default function ChatScreen() {
     snapUI("conv_switch");
     setConversationId(id);
     setPendingReplay(null);
+    setContextBarDismissed(false);
     const conv = await agentCore.getConversationManager().loadConversation(id);
     setConversationStarred(!!conv?.meta?.starred);
     await reloadMessages(agentCore, id);
@@ -878,8 +905,11 @@ export default function ChatScreen() {
       const showPendingButtons = !!pendingReplay && isApprovalOrSwitch && isLatestMessage;
       const isCopied = copiedId === item.id;
 
-      // Show quick replies only on the most recent assistant message
-      const showContextBar = !isUser && isLatestMessage && !isProcessing && !pendingReplay && item.role !== "system";
+      // Show quick replies only on the most recent assistant message (not on failures or errors)
+      const verificationFailed = item.meta?.promptTrace?.verification?.verified === false;
+      const isError = (item.content || '').toLowerCase().includes('error') || (item.content || '').toLowerCase().includes('failed');
+      const showContextBar = !isUser && isLatestMessage && !isProcessing && !pendingReplay
+        && item.role !== 'system' && !verificationFailed && !isError && !item.meta?.isBuildLog;
 
       const msgIndex = messages.indexOf(item);
 
@@ -1013,20 +1043,29 @@ export default function ChatScreen() {
         </View>
 
         {/* Context chips — OUTSIDE bubble to prevent height/width inflation */}
-        {showContextBar && (
-          <View style={{ alignSelf: 'flex-start', maxWidth: '85%', marginBottom: 8 }}>
-            <ContextBar
-              message={item}
-              currentMode={currentMode}
-              onExecutePlan={handleContextPlan}
-              onSendPrompt={(text) => handleSend(text)}
-            />
+        {showContextBar && !contextBarDismissed && (
+          <View style={{ alignSelf: 'flex-start', maxWidth: '90%', marginBottom: 8, flexDirection: 'row', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1 }}>
+              <ContextBar
+                message={item}
+                currentMode={currentMode}
+                onExecutePlan={handleContextPlan}
+                onSendPrompt={(text) => handleSend(text)}
+              />
+            </View>
+            <Pressable
+              onPress={() => setContextBarDismissed(true)}
+              hitSlop={8}
+              style={{ paddingLeft: 6, paddingTop: 10 }}
+            >
+              <Ionicons name="close-circle" size={16} color="#444" />
+            </Pressable>
           </View>
         )}
       </>
       );
     },
-    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, expandedMsgs, currentMode, handleContextPlan, handleSend]
+    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, expandedMsgs, currentMode, handleContextPlan, handleSend, contextBarDismissed]
   );
 
   // ── Layout values ──────────────────────────────────
