@@ -30,7 +30,7 @@ export const DEFAULT_CATEGORIES: GridCategory[] = [
   },
   {
     id: 'system',
-    label: 'System',
+    label: 'System Toggles',
     icon: 'toggle-outline',
     iconFamily: 'ionicons',
     color: '#818cf8',

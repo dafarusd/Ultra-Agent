@@ -130,7 +130,7 @@ export default function SettingsScreen() {
 
   // ── Load dev mode on mount ─────────────────────────
   useEffect(() => {
-    AsyncStorage.getItem("dev_mode").then((v) => { if (v === "1") setIsDevMode(true); });
+    AsyncStorage.getItem("dev_mode_enabled").then((v) => { if (v === "1") setIsDevMode(true); });
   }, []);
 
   // ── Load settings on mount ─────────────────────────
@@ -164,7 +164,7 @@ export default function SettingsScreen() {
       devTapCountRef.current = 0;
       const next = !isDevMode;
       setIsDevMode(next);
-      AsyncStorage.setItem("dev_mode", next ? "1" : "0");
+      AsyncStorage.setItem("dev_mode_enabled", next ? "1" : "0");
       Alert.alert(next ? "Dev Mode ON" : "Dev Mode OFF", next ? "Logs tab and advanced options enabled." : "Dev mode disabled.");
     }
   }, [isDevMode]);
