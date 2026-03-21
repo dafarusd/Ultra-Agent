@@ -26,6 +26,8 @@ export class CapabilityRegistry {
       { id: 'file_organize', name: 'File Organize', description: 'Move and organize files into folders', riskLevel: 'moderate', available: true, permissionsRequired: ['READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE'] },
       { id: 'contacts_read', name: 'Read Contacts', description: 'Read device contacts', riskLevel: 'sensitive', available: true, permissionsRequired: ['READ_CONTACTS'] },
       { id: 'sms_send', name: 'Send SMS', description: 'Send text messages', riskLevel: 'dangerous', available: true, permissionsRequired: ['SEND_SMS'] },
+      { id: 'sms_read', name: 'Read SMS', description: 'Read text messages from the inbox', riskLevel: 'sensitive', available: true, permissionsRequired: ['READ_SMS'] },
+      { id: 'sms_conversation', name: 'SMS Conversation', description: 'Read SMS thread with a specific contact', riskLevel: 'sensitive', available: true, permissionsRequired: ['READ_SMS'] },
       { id: 'camera_capture', name: 'Camera', description: 'Take photos', riskLevel: 'moderate', available: true, permissionsRequired: ['CAMERA'] },
       { id: 'media_access', name: 'Media Library', description: 'Access photos and videos', riskLevel: 'safe', available: true, permissionsRequired: ['READ_EXTERNAL_STORAGE'] },
       { id: 'app_launch', name: 'Launch App', description: 'Open other installed apps', riskLevel: 'safe', available: true, permissionsRequired: [] },

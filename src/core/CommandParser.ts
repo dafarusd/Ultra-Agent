@@ -822,6 +822,21 @@ const rules: ParseRule[] = [
     extractParams: (m) => ({ target: m[1].trim() }),
   },
   {
+    pattern: /^(?:read|show|check|get|view)\s+(?:my\s+)?(?:text|sms|texts|messages|inbox)\s*(?:messages?)?$/i,
+    capability: 'sms_read',
+    extractParams: () => ({ limit: 10 }),
+  },
+  {
+    pattern: /^(?:read|show|check|get|view)\s+(?:my\s+)?(?:last|recent)\s+(\d+)\s+(?:text|sms|texts|messages)/i,
+    capability: 'sms_read',
+    extractParams: (m) => ({ limit: parseInt(m[1]) }),
+  },
+  {
+    pattern: /^(?:read|show|check|get|view)\s+(?:my\s+)?(?:texts?|messages?|sms|conversation)\s+(?:with|from)\s+(.+)$/i,
+    capability: 'sms_conversation',
+    extractParams: (m) => ({ contact: m[1].trim() }),
+  },
+  {
     pattern: /^text\s+(.+?)\s+(?:saying|with)\s+(.+)/i,
     capability: 'sms_send',
     extractParams: (m) => ({ to: m[1].trim(), message: m[2].trim() }),

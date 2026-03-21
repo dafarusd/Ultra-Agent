@@ -38,6 +38,11 @@ const STEPS: Step[] = [
     title: 'Enable Accessibility Service',
     desc: 'Now go to Settings → Accessibility → Installed Services → Agent Ultra and toggle it on. Grant "Full control" when prompted. This lets Ultra interact with other apps on your behalf.',
   },
+  {
+    icon: 'battery-half',
+    title: 'Disable Battery Optimization',
+    desc: 'To keep Agent Ultra running reliably, exclude it from battery optimization. This prevents Android from killing the app while it\'s working in the background.',
+  },
 ];
 
 interface OnboardingScreenProps {
@@ -94,6 +99,29 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           <Pressable style={s.linkBtn} onPress={handleAccessibilitySettings}>
             <Ionicons name="settings-outline" size={16} color={ACCENT} />
             <Text style={s.linkText}>Open Accessibility Settings</Text>
+          </Pressable>
+        )}
+
+        {step === 4 && Platform.OS === 'android' && (
+          <Pressable style={s.linkBtn} onPress={async () => {
+            try {
+              const { startActivityAsync } = await import('expo-intent-launcher');
+              await startActivityAsync(
+                'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
+                { data: 'package:com.agent.ultra' }
+              );
+            } catch {
+              try {
+                const { startActivityAsync, ActivityAction } = await import('expo-intent-launcher');
+                await startActivityAsync(ActivityAction.IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+              } catch {
+                const { Linking } = require('react-native');
+                Linking.openSettings();
+              }
+            }
+          }}>
+            <Ionicons name="battery-half-outline" size={16} color={ACCENT} />
+            <Text style={s.linkText}>Disable Battery Optimization</Text>
           </Pressable>
         )}
       </ScrollView>

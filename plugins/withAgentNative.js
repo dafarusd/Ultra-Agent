@@ -492,6 +492,69 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             promise.reject("SMS_ERROR", e.getMessage(), e);
         }
     }
+
+    @ReactMethod
+    public void readSms(int limit, String filter, Promise promise) {
+        try {
+            android.database.Cursor cursor = ctx.getContentResolver().query(
+                android.net.Uri.parse("content://sms/inbox"),
+                new String[]{"_id", "address", "body", "date", "read"},
+                null, null,
+                "date DESC LIMIT " + Math.min(limit, 50)
+            );
+            if (cursor == null) {
+                promise.reject("SMS_READ_ERROR", "SMS cursor null — permission may be denied");
+                return;
+            }
+            com.facebook.react.bridge.WritableArray result = com.facebook.react.bridge.Arguments.createArray();
+            while (cursor.moveToNext()) {
+                com.facebook.react.bridge.WritableMap msg = com.facebook.react.bridge.Arguments.createMap();
+                msg.putString("id", cursor.getString(0));
+                msg.putString("address", cursor.getString(1));
+                String body = cursor.getString(2);
+                msg.putString("body", body != null && body.length() > 500 ? body.substring(0, 500) + "..." : (body != null ? body : ""));
+                msg.putDouble("date", cursor.getLong(3));
+                msg.putBoolean("read", cursor.getInt(4) == 1);
+                result.pushMap(msg);
+            }
+            cursor.close();
+            promise.resolve(result);
+        } catch (Exception e) {
+            promise.reject("SMS_READ_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void readSmsConversation(String address, int limit, Promise promise) {
+        try {
+            android.database.Cursor cursor = ctx.getContentResolver().query(
+                android.net.Uri.parse("content://sms"),
+                new String[]{"_id", "address", "body", "date", "type"},
+                "address LIKE ?",
+                new String[]{"%" + address.replaceAll("[^0-9+]", "") + "%"},
+                "date DESC LIMIT " + Math.min(limit, 30)
+            );
+            if (cursor == null) {
+                promise.reject("SMS_READ_ERROR", "SMS cursor null");
+                return;
+            }
+            com.facebook.react.bridge.WritableArray result = com.facebook.react.bridge.Arguments.createArray();
+            while (cursor.moveToNext()) {
+                com.facebook.react.bridge.WritableMap msg = com.facebook.react.bridge.Arguments.createMap();
+                msg.putString("id", cursor.getString(0));
+                msg.putString("address", cursor.getString(1));
+                String body = cursor.getString(2);
+                msg.putString("body", body != null && body.length() > 500 ? body.substring(0, 500) + "..." : (body != null ? body : ""));
+                msg.putDouble("date", cursor.getLong(3));
+                msg.putString("direction", cursor.getInt(4) == 1 ? "received" : "sent");
+                result.pushMap(msg);
+            }
+            cursor.close();
+            promise.resolve(result);
+        } catch (Exception e) {
+            promise.reject("SMS_READ_ERROR", e.getMessage(), e);
+        }
+    }
 }`;
 
 const BINARY_MANIFEST_WRITER_JAVA = `package com.agent.ultra;

@@ -12,6 +12,7 @@ import {
   Alert,
   Modal,
   TouchableWithoutFeedback,
+  Image,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Clipboard from "expo-clipboard";
@@ -127,6 +128,7 @@ export default function ChatScreen() {
   const [savedDefaults, setSavedDefaults] = useState<Record<string, string>>({});
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
   const [contextBarDismissed, setContextBarDismissed] = useState(false);
+  const [pendingImage, setPendingImage] = useState<{ uri: string; base64: string; mimeType: string } | null>(null);
   const [pendingReplay, setPendingReplay] = useState<{
     userInput: string;
     type: "approval" | "model_switch";
@@ -357,6 +359,38 @@ export default function ChatScreen() {
         const onboardingDone = await AsyncStorage.getItem("onboarding_done").catch(() => null);
         if (!onboardingDone) setShowOnboarding(true);
 
+        // Samsung-specific: prompt battery optimization exclusion
+        const isSamsung = Device.manufacturer?.toLowerCase().includes('samsung') ?? false;
+        if (isSamsung) {
+          const batteryPromptDone = await AsyncStorage.getItem('battery_optim_prompted').catch(() => null);
+          if (!batteryPromptDone) {
+            setTimeout(() => {
+              Alert.alert(
+                'Samsung Device Detected',
+                'Samsung phones aggressively kill background apps. For Agent Ultra to work reliably, please disable battery optimization for this app.\n\nSettings → Apps → Agent Ultra → Battery → Unrestricted',
+                [
+                  { text: 'Open Settings', onPress: async () => {
+                    try {
+                      const { startActivityAsync } = await import('expo-intent-launcher');
+                      await startActivityAsync(
+                        'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
+                        { data: 'package:com.agent.ultra' }
+                      );
+                    } catch {
+                      const { Linking } = require('react-native');
+                      Linking.openSettings();
+                    }
+                    AsyncStorage.setItem('battery_optim_prompted', '1').catch(() => {});
+                  }},
+                  { text: 'Later', onPress: () => {
+                    AsyncStorage.setItem('battery_optim_prompted', '1').catch(() => {});
+                  }},
+                ]
+              );
+            }, 3000);
+          }
+        }
+
         // Biometric gate — load biometric_timeout (ms) override if set
         const gate = new BiometricGate();
         await gate.init(vault);
@@ -522,7 +556,34 @@ export default function ChatScreen() {
 
     const _sendStart = Date.now();
     try {
-      const result = await agentCore.execute({ conversationId, userInput: text });
+      let result: UltraExecutionResult;
+
+      if (pendingImage) {
+        const imageData = pendingImage;
+        setPendingImage(null);
+        try {
+          const visionResult = await agentCore.getModelRouter().completeWithVision(
+            text || 'What do you see in this image?',
+            imageData.base64,
+            imageData.mimeType,
+            { taskId: `vision_${Date.now().toString(36)}` }
+          );
+          const visionMsg: ChatMessage = {
+            id: `msg_vision_${Date.now()}`,
+            role: 'assistant',
+            content: visionResult.content,
+            createdAt: Date.now(),
+            source: 'ultra',
+            meta: { mode: 'vision', model: visionResult.model, cost: visionResult.cost },
+          };
+          await agentCore.getConversationManager().addMessage(conversationId, visionMsg);
+          result = { type: 'action_result', message: visionResult.content, taskId: `vision_${Date.now().toString(36)}` };
+        } catch (visionErr: any) {
+          result = { type: 'error', message: `Vision failed: ${visionErr.message}`, taskId: '' };
+        }
+      } else {
+        result = await agentCore.execute({ conversationId, userInput: text });
+      }
       UltraDevLog.sendComplete(result?.taskId ?? '(unknown)', result?.success !== false, Date.now() - _sendStart, true, false);
       await handleResult(result, agentCore, conversationId);
     } catch (err: any) {
@@ -1221,13 +1282,48 @@ export default function ChatScreen() {
             </Pressable>
           </View>
 
-          {/* Input row: + button | text input | send button */}
+          {/* Pending image preview */}
+          {pendingImage && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
+              <Image source={{ uri: pendingImage.uri }} style={{ width: 48, height: 48, borderRadius: 8 }} />
+              <Text style={{ color: '#999', fontSize: 12, flex: 1 }}>Image attached — send with your message</Text>
+              <Pressable onPress={() => setPendingImage(null)} hitSlop={8}>
+                <Ionicons name="close-circle" size={18} color="#666" />
+              </Pressable>
+            </View>
+          )}
+
+          {/* Input row: + button | image button | text input | send button */}
           <View style={styles.inputRow}>
             <Pressable
               onPress={() => setPlusMenuVisible(true)}
               style={({ pressed }) => [styles.plusBtn, pressed && styles.plusBtnPressed]}
             >
               <Ionicons name="add" size={22} color={DIM} />
+            </Pressable>
+
+            <Pressable
+              onPress={async () => {
+                try {
+                  const ImagePicker = await import('expo-image-picker');
+                  const result = await ImagePicker.launchImageLibraryAsync({
+                    mediaTypes: ['images'],
+                    quality: 0.7,
+                    base64: true,
+                    allowsEditing: false,
+                  });
+                  if (!result.canceled && result.assets?.[0]?.base64) {
+                    setPendingImage({
+                      uri: result.assets[0].uri,
+                      base64: result.assets[0].base64!,
+                      mimeType: result.assets[0].mimeType || 'image/jpeg',
+                    });
+                  }
+                } catch (e: any) { DebugLog.error('ImagePicker', e?.message || 'unknown'); }
+              }}
+              style={({ pressed }) => [styles.plusBtn, pressed && styles.plusBtnPressed, { marginRight: -4 }]}
+            >
+              <Ionicons name="image-outline" size={20} color={DIM} />
             </Pressable>
 
             <TextInput

@@ -149,20 +149,44 @@ export class TaskExecutor {
           const AgentNativeModule = (await import('../native/AgentNative')).default;
           DebugLog.systemEvent('genome_stage', `Staging genome sources to ${destDir}`);
           try {
-            const bundleBase = (FileSystem.bundleDirectory ?? '').replace(/\/$/, '');
-            const assetSrc = `${bundleBase}/genome_sources`;
-            const srcInfo = await FileSystem.getInfoAsync(assetSrc);
-            if (srcInfo.exists) {
-              await FileSystem.copyAsync({ from: assetSrc, to: destDir });
-              DebugLog.systemEvent('genome_stage', `Staged from bundleDirectory: ${assetSrc}`);
-            } else {
-              const srcAlt = `${bundleBase}/assets/genome_sources`;
-              const altInfo = await FileSystem.getInfoAsync(srcAlt);
-              if (altInfo.exists) {
-                await FileSystem.copyAsync({ from: srcAlt, to: destDir });
-                DebugLog.systemEvent('genome_stage', `Staged from assets fallback: ${srcAlt}`);
+            const candidates = [
+              FileSystem.bundleDirectory ? `${FileSystem.bundleDirectory.replace(/\/$/, '')}/genome_sources` : null,
+              FileSystem.bundleDirectory ? `${FileSystem.bundleDirectory.replace(/\/$/, '')}/assets/genome_sources` : null,
+              `file:///android_asset/genome_sources`,
+            ].filter(Boolean) as string[];
+
+            let staged = false;
+            for (const candidate of candidates) {
+              try {
+                const info = await FileSystem.getInfoAsync(candidate);
+                if (info.exists) {
+                  await FileSystem.copyAsync({ from: candidate, to: destDir });
+                  DebugLog.systemEvent('genome_stage', `Staged from: ${candidate}`);
+                  staged = true;
+                  break;
+                }
+              } catch { }
+            }
+
+            if (!staged) {
+              const fileNames = ['BinaryManifestWriter.java', 'ApkPackager.java', 'ApkSignerV1.java', 'AgentNativeModule.java', 'AgentAccessibilityService.java'];
+              let copiedCount = 0;
+              for (const name of fileNames) {
+                try {
+                  const assetUri = `file:///android_asset/genome_sources/${name}`;
+                  const destFile = `${destDir}${name}`;
+                  const fileInfo = await FileSystem.getInfoAsync(assetUri);
+                  if (fileInfo.exists) {
+                    await FileSystem.copyAsync({ from: assetUri, to: destFile });
+                    copiedCount++;
+                  }
+                } catch { }
+              }
+              if (copiedCount > 0) {
+                DebugLog.systemEvent('genome_stage', `Staged ${copiedCount}/${fileNames.length} files individually`);
+                staged = true;
               } else {
-                DebugLog.error('genome_stage', `genome_sources not found at ${assetSrc} or ${srcAlt}`);
+                DebugLog.error('genome_stage', `genome_sources not found in any candidate path: ${candidates.join(', ')}`);
               }
             }
           } catch (stageErr: any) {
@@ -443,6 +467,65 @@ export class TaskExecutor {
       case 'contacts_read': {
         const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
         return { success: true, contacts: data.length, sample: data.slice(0, 10).map((c) => c.name) };
+      }
+      case 'sms_read': {
+        if (!isNative) return { error: 'SMS reading requires Android device' };
+        try {
+          const AgentNativeModule = (await import('../native/AgentNative')).default;
+          if (!AgentNativeModule?.readSms) return { error: 'SMS reading not available on this device' };
+          const limit = params.limit || 10;
+          const messages = await AgentNativeModule.readSms(limit, params.filter || '');
+          if (!messages || messages.length === 0) {
+            return { success: true, summary: 'No messages in inbox', data: { messages: [] } };
+          }
+          const formatted = messages.map((m: any) => {
+            const date = new Date(m.date);
+            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            return `[${dateStr} ${timeStr}] ${m.address}: ${m.body}`;
+          }).join('\n');
+          return {
+            success: true,
+            summary: `${messages.length} recent messages:\n${formatted}`,
+            data: { messages, count: messages.length },
+          };
+        } catch (err: any) {
+          return { success: false, error: `SMS read error: ${err.message}` };
+        }
+      }
+      case 'sms_conversation': {
+        if (!isNative) return { error: 'SMS reading requires Android device' };
+        try {
+          const AgentNativeModule = (await import('../native/AgentNative')).default;
+          if (!AgentNativeModule?.readSmsConversation) return { error: 'SMS conversation reading not available' };
+          const address = params.address || params.contact || '';
+          if (!address) return { error: 'No contact or phone number specified' };
+          let resolvedAddress = address;
+          if (!/^\+?[\d\s\-\(\)]{7,}$/.test(address)) {
+            try {
+              const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers], name: address });
+              const match = data.find((c: any) => c.phoneNumbers && c.phoneNumbers.length > 0);
+              if (match?.phoneNumbers?.[0]?.number) resolvedAddress = match.phoneNumbers[0].number;
+            } catch {}
+          }
+          const messages = await AgentNativeModule.readSmsConversation(resolvedAddress, params.limit || 15);
+          if (!messages || messages.length === 0) {
+            return { success: true, summary: `No messages found with ${address}`, data: { messages: [] } };
+          }
+          const formatted = messages.map((m: any) => {
+            const date = new Date(m.date);
+            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const dir = m.direction === 'sent' ? 'You' : m.address;
+            return `[${timeStr}] ${dir}: ${m.body}`;
+          }).join('\n');
+          return {
+            success: true,
+            summary: `Conversation with ${address} (${messages.length} messages):\n${formatted}`,
+            data: { messages, count: messages.length, contact: address },
+          };
+        } catch (err: any) {
+          return { success: false, error: `SMS conversation error: ${err.message}` };
+        }
       }
       case 'sms_send': {
         DebugLog.executorEnter(taskId, 'sms_send');

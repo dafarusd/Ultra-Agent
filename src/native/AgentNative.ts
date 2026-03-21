@@ -38,6 +38,8 @@ export interface AgentNativeInterface {
   setFlashlight(on: boolean): Promise<boolean>;
   sendMediaKey(keyCode: number): Promise<boolean>;
   sendSms(phoneNumber: string, message: string): Promise<boolean>;
+  readSms(limit: number, filter: string): Promise<Array<{ id: string; address: string; body: string; date: number; read: boolean }>>;
+  readSmsConversation(address: string, limit: number): Promise<Array<{ id: string; address: string; body: string; date: number; direction: string }>>;
 }
 
 const ALLOWED_COMMANDS = ['dalvikvm', 'keytool', 'ls', 'mkdir', 'cp', 'cat', 'chmod', 'find'];

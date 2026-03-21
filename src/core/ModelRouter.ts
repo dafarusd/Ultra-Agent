@@ -484,6 +484,79 @@ export class ModelRouter {
     this.logger.info(`Default model set to: ${modelId}`);
   }
 
+  async completeWithVision(
+    textPrompt: string,
+    imageBase64: string,
+    mimeType: string = 'image/jpeg',
+    options: {
+      model?: string;
+      maxTokens?: number;
+      taskId?: string;
+      agentId?: string;
+    } = {}
+  ): Promise<CompletionResult> {
+    if (!this.apiKey) throw new Error('Venice API key not configured.');
+
+    let model = options.model || '';
+    if (!model) {
+      const visionModels = [...this.models.values()].filter(m => m.capabilities.supportsVision && m.type === 'text');
+      if (visionModels.length > 0) {
+        model = visionModels[0].id;
+      } else {
+        model = this.defaultModel;
+      }
+    }
+
+    const taskId = options.taskId || 'vision';
+    const agentId = options.agentId || 'vision';
+    DebugLog.systemEvent('ModelRouter', `Vision request: model=${model} imageSize=${imageBase64.length} prompt="${textPrompt.slice(0, 80)}"`);
+
+    const messages = [
+      { role: 'system', content: 'You are Agent Ultra, an autonomous AI agent. Analyze the image and respond to the user\'s request precisely and concisely.' },
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+          { type: 'text', text: textPrompt || 'What do you see in this image?' },
+        ],
+      },
+    ];
+
+    const callStart = Date.now();
+    try {
+      const controller = new AbortController();
+      this.activeController = controller;
+      const timeout = setTimeout(() => controller.abort(), 90000);
+      const payload = {
+        model,
+        messages,
+        temperature: 0.4,
+        max_tokens: options.maxTokens ?? 2000,
+      };
+      const resp = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      this.activeController = null;
+      if (!resp.ok) throw new Error(`Venice vision API error: HTTP ${resp.status}`);
+      const data = await resp.json();
+      const content = data.choices[0].message.content;
+      const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
+      const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
+      DebugLog.modelApiResponse(model, taskId, usage.prompt_tokens, usage.completion_tokens, cost, Date.now() - callStart);
+      return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
+    } catch (error: any) {
+      DebugLog.modelApiError(model, taskId, error.message, Date.now() - callStart);
+      throw new Error('Vision request failed: ' + error.message);
+    }
+  }
+
   getAvailableModels(): ModelDef[] {
     return Array.from(this.models.values());
   }
