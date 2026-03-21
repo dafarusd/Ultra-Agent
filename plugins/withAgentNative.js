@@ -1237,6 +1237,29 @@ public class AgentAccessibilityService extends AccessibilityService {
     public static boolean isPackageBlocked(String pkg) { return blockedPackages.contains(pkg); }
     public static java.util.List<String> getBlockedPackages() { return new java.util.ArrayList<>(blockedPackages); }
 
+    // === UltraDevLog v4: A11y Event Stream ===
+    private long lastContentChangedLog = 0;
+    private static final long CONTENT_THROTTLE_MS = 2000;
+    private String lastLoggedWindowPkg = "";
+    private String lastLoggedWindowCls = "";
+    private static final java.util.concurrent.ConcurrentLinkedQueue<String> pendingA11yLogs =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    private void emitA11yLog(String category, String jsonData) {
+        long ts = System.currentTimeMillis();
+        pendingA11yLogs.add("{\\"cat\\":\\"" + category + "\\",\\"t\\":" + ts + ",\\"data\\":" + jsonData + "}");
+        while (pendingA11yLogs.size() > 500) { pendingA11yLogs.poll(); }
+    }
+
+    public static java.util.List<String> drainPendingLogs() {
+        java.util.List<String> result = new java.util.ArrayList<>();
+        String entry;
+        while ((entry = pendingA11yLogs.poll()) != null) { result.add(entry); }
+        return result;
+    }
+
+    public String getCurrentPackage() { return currentPackage; }
+
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
@@ -1246,7 +1269,8 @@ public class AgentAccessibilityService extends AccessibilityService {
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             | AccessibilityEvent.TYPE_VIEW_CLICKED
-            | AccessibilityEvent.TYPE_VIEW_SCROLLED;
+            | AccessibilityEvent.TYPE_VIEW_SCROLLED
+            | AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
         info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
@@ -1254,10 +1278,36 @@ public class AgentAccessibilityService extends AccessibilityService {
         info.notificationTimeout = 100;
         setServiceInfo(info);
         Log.i(TAG, "Accessibility service connected, capabilities=" + info.getCapabilities());
+        // === UltraDevLog v4: Crash survival ===
+        final Thread.UncaughtExceptionHandler prevHandler = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(e.toString()).append("\\n");
+                    for (StackTraceElement el : e.getStackTrace()) { sb.append("  ").append(el.toString()).append("\\n"); }
+                    Throwable cause = e.getCause();
+                    if (cause != null) {
+                        sb.append("Caused by: ").append(cause.toString()).append("\\n");
+                        for (StackTraceElement el : cause.getStackTrace()) { sb.append("  ").append(el.toString()).append("\\n"); }
+                    }
+                    java.io.File f = new java.io.File(getFilesDir(), "ultra_crash.log");
+                    java.io.FileWriter fw = new java.io.FileWriter(f, true);
+                    fw.write("\\n=== CRASH " + new java.util.Date().toString() + " thread=" + t.getName() + " ===\\n");
+                    fw.write(sb.toString());
+                    fw.close();
+                    emitA11yLog("CRASH_NATIVE", "{\\"thread\\":\\"" + t.getName() + "\\",\\"error\\":\\"" +
+                        e.toString().replace("\\"", "'").replace("\\n", " ").replace("\\\\", "") + "\\"}");
+                } catch (Exception ignored) { }
+                if (prevHandler != null) { prevHandler.uncaughtException(t, e); }
+            }
+        });
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null) return;
         if (event.getPackageName() != null) {
             currentPackage = event.getPackageName().toString();
         }
@@ -1266,6 +1316,51 @@ public class AgentAccessibilityService extends AccessibilityService {
                 || type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
             emitUiTreeChanged();
         }
+        // === UltraDevLog v4: Event stream ===
+        try {
+            switch (type) {
+                case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED: {
+                    String pkg = currentPackage;
+                    String cls = event.getClassName() != null ? event.getClassName().toString() : "null";
+                    if (!pkg.equals(lastLoggedWindowPkg) || !cls.equals(lastLoggedWindowCls)) {
+                        lastLoggedWindowPkg = pkg;
+                        lastLoggedWindowCls = cls;
+                        emitA11yLog("A11Y_WINDOW", "{\\"pkg\\":\\"" + pkg + "\\",\\"cls\\":\\"" + cls + "\\"}");
+                    }
+                    break;
+                }
+                case AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED: {
+                    String pkg = currentPackage;
+                    java.util.List<CharSequence> tl = event.getText();
+                    String txt = (tl != null && !tl.isEmpty()) ? tl.get(0).toString() : "";
+                    if (txt.length() > 100) txt = txt.substring(0, 100);
+                    txt = txt.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", " ");
+                    emitA11yLog("A11Y_NOTIF", "{\\"pkg\\":\\"" + pkg + "\\",\\"text\\":\\"" + txt + "\\"}");
+                    break;
+                }
+                case AccessibilityEvent.TYPE_VIEW_CLICKED: {
+                    String pkg = currentPackage;
+                    String cls = event.getClassName() != null ? event.getClassName().toString() : "null";
+                    java.util.List<CharSequence> tl = event.getText();
+                    String txt = (tl != null && !tl.isEmpty()) ? tl.get(0).toString() : "";
+                    if (txt.length() > 50) txt = txt.substring(0, 50);
+                    txt = txt.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", " ");
+                    String desc = event.getContentDescription() != null ? event.getContentDescription().toString() : "";
+                    if (desc.length() > 50) desc = desc.substring(0, 50);
+                    desc = desc.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", " ");
+                    emitA11yLog("A11Y_CLICK", "{\\"pkg\\":\\"" + pkg + "\\",\\"cls\\":\\"" + cls + "\\",\\"text\\":\\"" + txt + "\\",\\"desc\\":\\"" + desc + "\\"}");
+                    break;
+                }
+                case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED: {
+                    long now = System.currentTimeMillis();
+                    if (now - lastContentChangedLog > CONTENT_THROTTLE_MS) {
+                        lastContentChangedLog = now;
+                        emitA11yLog("A11Y_CONTENT", "{\\"pkg\\":\\"" + currentPackage + "\\"}");
+                    }
+                    break;
+                }
+            }
+        } catch (Exception ignored) { }
     }
 
     private void emitUiTreeChanged() {
@@ -1530,6 +1625,60 @@ public class AgentAccessibilityService extends AccessibilityService {
             return performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT);
         }
         return false;
+    }
+
+    // === UltraDevLog v4: System State Snapshot ===
+    public String getSystemStateSnapshot() {
+        try {
+            org.json.JSONObject state = new org.json.JSONObject();
+            // DND
+            android.app.NotificationManager nm = (android.app.NotificationManager)
+                getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                int filter = nm.getCurrentInterruptionFilter();
+                String dndLabel;
+                switch (filter) {
+                    case 1: dndLabel = "ALL"; break;
+                    case 2: dndLabel = "PRIORITY"; break;
+                    case 3: dndLabel = "NONE"; break;
+                    case 4: dndLabel = "ALARMS"; break;
+                    default: dndLabel = "UNKNOWN"; break;
+                }
+                state.put("dnd", dndLabel);
+                state.put("dnd_raw", filter);
+            }
+            // Wi-Fi
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+            if (wm != null) { state.put("wifi", wm.isWifiEnabled()); }
+            // Bluetooth
+            android.bluetooth.BluetoothAdapter bt = android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+            if (bt != null) {
+                int s = bt.getState();
+                state.put("bluetooth", s == 12 ? "ON" : s == 10 ? "OFF" : s == 11 ? "TURNING_ON" : s == 13 ? "TURNING_OFF" : "UNKNOWN");
+            }
+            // Power saver
+            android.os.PowerManager pm = (android.os.PowerManager)
+                getSystemService(android.content.Context.POWER_SERVICE);
+            if (pm != null) { state.put("powerSaver", pm.isPowerSaveMode()); }
+            // Ringer
+            android.media.AudioManager am = (android.media.AudioManager)
+                getSystemService(android.content.Context.AUDIO_SERVICE);
+            if (am != null) {
+                int r = am.getRingerMode();
+                state.put("ringer", r == 0 ? "SILENT" : r == 1 ? "VIBRATE" : r == 2 ? "NORMAL" : "UNKNOWN");
+                state.put("vol_media", am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC));
+                state.put("vol_ring", am.getStreamVolume(android.media.AudioManager.STREAM_RING));
+            }
+            // Brightness
+            try {
+                state.put("brightness", android.provider.Settings.System.getInt(
+                    getContentResolver(), android.provider.Settings.System.SCREEN_BRIGHTNESS));
+            } catch (Exception ignored) { state.put("brightness", -1); }
+            return state.toString();
+        } catch (Exception e) {
+            return "{\\"error\\":\\"" + e.getMessage() + "\\"}";
+        }
     }
 
     public boolean tapQuickSettingsTile(String tileLabel) {
@@ -1947,6 +2096,62 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
         } catch (Exception e) {
             promise.reject("VOLUME_ERROR", e.getMessage());
         }
+    }
+
+    @ReactMethod
+    public void getSystemStateSnapshot(Promise promise) {
+        AgentAccessibilityService svc = AgentAccessibilityService.getInstance();
+        if (svc != null) {
+            promise.resolve(svc.getSystemStateSnapshot());
+        } else {
+            promise.resolve("{\\"error\\":\\"service_not_running\\"}");
+        }
+    }
+
+    @ReactMethod
+    public void drainAccessibilityLogs(Promise promise) {
+        java.util.List<String> logs = AgentAccessibilityService.drainPendingLogs();
+        WritableArray arr = Arguments.createArray();
+        for (String log : logs) { arr.pushString(log); }
+        promise.resolve(arr);
+    }
+
+    @ReactMethod
+    public void readCrashLog(Promise promise) {
+        try {
+            java.io.File f = new java.io.File(getReactApplicationContext().getFilesDir(), "ultra_crash.log");
+            if (!f.exists()) { promise.resolve(""); return; }
+            java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(f));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) { sb.append(line).append("\\n"); }
+            br.close();
+            promise.resolve(sb.toString());
+        } catch (Exception e) { promise.resolve("read_error: " + e.getMessage()); }
+    }
+
+    @ReactMethod
+    public void clearCrashLog(Promise promise) {
+        try {
+            java.io.File f = new java.io.File(getReactApplicationContext().getFilesDir(), "ultra_crash.log");
+            if (f.exists()) f.delete();
+            promise.resolve(true);
+        } catch (Exception e) { promise.resolve(false); }
+    }
+
+    @ReactMethod
+    public void heartbeatPing(Promise promise) {
+        boolean alive = AgentAccessibilityService.isRunning();
+        AgentAccessibilityService svc = AgentAccessibilityService.getInstance();
+        String pkg = "unknown";
+        if (svc != null) {
+            try { pkg = svc.getCurrentPackage(); } catch (Exception ignored) {}
+        }
+        WritableMap map = Arguments.createMap();
+        map.putBoolean("alive", alive);
+        map.putString("foregroundPackage", pkg != null ? pkg : "null");
+        map.putDouble("timestamp", System.currentTimeMillis());
+        promise.resolve(map);
     }
 }`;
 

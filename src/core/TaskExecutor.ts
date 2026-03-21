@@ -35,6 +35,51 @@ const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
 const isNative = Platform.OS !== 'web';
 
+async function captureStateDelta(taskId: string, capability: string, toggleFn: () => Promise<boolean>): Promise<{ toggled: boolean; before: any; after: any; changed: Record<string, { from: any; to: any }> }> {
+  let before: any = {};
+  try {
+    const raw = await AppController.getSystemStateSnapshot();
+    before = JSON.parse(raw);
+  } catch { before = { parseError: true }; }
+  DebugLog.push('STATE_BEFORE', { taskId, capability, state: before });
+
+  const toggled = await toggleFn();
+
+  await new Promise(r => setTimeout(r, 500));
+
+  let after: any = {};
+  try {
+    const raw = await AppController.getSystemStateSnapshot();
+    after = JSON.parse(raw);
+  } catch { after = { parseError: true }; }
+  DebugLog.push('STATE_AFTER', { taskId, capability, state: after });
+
+  const changed: Record<string, { from: any; to: any }> = {};
+  for (const key of Object.keys(after)) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      changed[key] = { from: before[key], to: after[key] };
+    }
+  }
+  DebugLog.push('STATE_DELTA', { taskId, capability, changed, nothingChanged: Object.keys(changed).length === 0 });
+
+  return { toggled, before, after, changed };
+}
+
+async function logUiSnapshot(taskId: string, capability: string): Promise<void> {
+  try {
+    const pkg = await AppController.getActivePackage();
+    const flat = await AppController.getScreenContentFlat();
+    const nodes = JSON.parse(flat);
+    const summary = {
+      package: pkg,
+      nodeCount: Array.isArray(nodes) ? nodes.length : 0,
+      clickable: Array.isArray(nodes) ? nodes.filter((n: any) => n.k).length : 0,
+      topText: Array.isArray(nodes) ? nodes.filter((n: any) => n.t).slice(0, 8).map((n: any) => (n.t || '').slice(0, 40)) : [],
+    };
+    DebugLog.push('UI_SNAPSHOT', { taskId, capability, ...summary });
+  } catch { }
+}
+
 export interface TaskResult {
   success: boolean;
   summary: string;
@@ -975,6 +1020,7 @@ export class TaskExecutor {
           }
         }
 
+        await logUiSnapshot(taskId, 'app_launch');
         DebugLog.executorExit(taskId, 'app_launch', true, 'simple_launch_success');
         return launchResult;
       }
@@ -1379,28 +1425,38 @@ export class TaskExecutor {
         return { success: true, summary: 'Opened display settings for brightness' };
       }
       case 'wifi_toggle': {
-        const toggled = await AppController.toggleQuickSetting('Wi-Fi');
-        if (toggled) return { success: true, summary: 'Wi-Fi toggle attempted via Quick Settings — check your status bar to confirm the change' };
+        const wifiDelta = await captureStateDelta(taskId, 'wifi_toggle', () => AppController.toggleQuickSetting('Wi-Fi'));
+        await logUiSnapshot(taskId, 'wifi_toggle');
+        if (wifiDelta.toggled) return { success: true, summary: 'Wi-Fi toggle attempted via Quick Settings — check your status bar to confirm the change', data: { delta: wifiDelta.changed } };
         await IntentLauncher.startActivityAsync('android.settings.WIFI_SETTINGS', {});
         return { success: true, summary: 'Opened Wi-Fi settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'bluetooth_toggle': {
-        const toggled = await AppController.toggleQuickSetting('Bluetooth');
-        if (toggled) return { success: true, summary: 'Bluetooth toggle attempted via Quick Settings — check your status bar to confirm the change' };
+        const btDelta = await captureStateDelta(taskId, 'bluetooth_toggle', () => AppController.toggleQuickSetting('Bluetooth'));
+        await logUiSnapshot(taskId, 'bluetooth_toggle');
+        if (btDelta.toggled) return { success: true, summary: 'Bluetooth toggle attempted via Quick Settings — check your status bar to confirm the change', data: { delta: btDelta.changed } };
         await IntentLauncher.startActivityAsync('android.settings.BLUETOOTH_SETTINGS', {});
         return { success: true, summary: 'Opened Bluetooth settings — tap the toggle to enable/disable', data: { partial: true } };
       }
       case 'airplane_mode': {
-        let toggled = await AppController.toggleQuickSetting('Airplane');
-        if (!toggled) toggled = await AppController.toggleQuickSetting('Flight');
-        if (toggled) return { success: true, summary: 'Airplane Mode toggle attempted via Quick Settings — check your status bar to confirm the change' };
+        const apDelta = await captureStateDelta(taskId, 'airplane_mode', async () => {
+          let r = await AppController.toggleQuickSetting('Airplane');
+          if (!r) r = await AppController.toggleQuickSetting('Flight');
+          return r;
+        });
+        await logUiSnapshot(taskId, 'airplane_mode');
+        if (apDelta.toggled) return { success: true, summary: 'Airplane Mode toggle attempted via Quick Settings — check your status bar to confirm the change', data: { delta: apDelta.changed } };
         await IntentLauncher.startActivityAsync('android.settings.AIRPLANE_MODE_SETTINGS', {});
         return { success: true, summary: 'Opened Airplane Mode settings — tap the toggle', data: { partial: true } };
       }
       case 'do_not_disturb': {
-        let toggled = await AppController.toggleQuickSetting('Do not disturb');
-        if (!toggled) toggled = await AppController.toggleQuickSetting('DND');
-        if (toggled) return { success: true, summary: 'Do Not Disturb toggle attempted via Quick Settings — check your status bar to confirm the change' };
+        const dndDelta = await captureStateDelta(taskId, 'do_not_disturb', async () => {
+          let r = await AppController.toggleQuickSetting('Do not disturb');
+          if (!r) r = await AppController.toggleQuickSetting('DND');
+          return r;
+        });
+        await logUiSnapshot(taskId, 'do_not_disturb');
+        if (dndDelta.toggled) return { success: true, summary: 'Do Not Disturb toggle attempted via Quick Settings — check your status bar to confirm the change', data: { delta: dndDelta.changed } };
         await IntentLauncher.startActivityAsync('android.settings.ZEN_MODE_SETTINGS', {});
         return { success: true, summary: 'Opened DND settings — tap the toggle', data: { partial: true } };
       }

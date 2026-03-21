@@ -226,7 +226,13 @@ export default function ChatScreen() {
   // ── AppState Lifecycle Sensor ─────────────────────
   useEffect(() => {
     UltraDevLog.installAppStateListener();
-    return () => UltraDevLog.removeAppStateListener();
+    UltraDevLog.startA11yDrain();
+    UltraDevLog.startHeartbeat();
+    return () => {
+      UltraDevLog.removeAppStateListener();
+      UltraDevLog.stopA11yDrain();
+      UltraDevLog.stopHeartbeat();
+    };
   }, []);
 
   // ── Init ───────────────────────────────────────────

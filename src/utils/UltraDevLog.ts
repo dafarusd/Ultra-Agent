@@ -67,7 +67,10 @@ export type UltraLogCat =
   | 'SYSTEM_ACTION'
   | 'SYSTEM_INFO'
   | 'PREFERENCE_BACKUP'
-  | 'LEARN_PACKAGE';
+  | 'LEARN_PACKAGE'
+  | 'A11Y_WINDOW' | 'A11Y_NOTIF' | 'A11Y_CLICK' | 'A11Y_CONTENT'
+  | 'STATE_BEFORE' | 'STATE_AFTER' | 'STATE_DELTA'
+  | 'A11Y_HEARTBEAT' | 'CRASH_NATIVE' | 'NET_DETAIL' | 'UI_SNAPSHOT';
 
 interface UltraLogEntry {
   ts: string;
@@ -442,6 +445,50 @@ export class UltraDevLog {
     if (UltraDevLog.appStateListener) { UltraDevLog.appStateListener.remove(); UltraDevLog.appStateListener = null; }
   }
 
+  private static a11yDrainTimer: ReturnType<typeof setInterval> | null = null;
+  private static heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  static startA11yDrain(intervalMs = 3000): void {
+    if (UltraDevLog.a11yDrainTimer) return;
+    const { default: AppController } = require('../native/AppController');
+    UltraDevLog.a11yDrainTimer = setInterval(async () => {
+      try {
+        const logs: string[] = await AppController.drainAccessibilityLogs();
+        for (const raw of logs) {
+          try {
+            const parsed = JSON.parse(raw);
+            const cat = parsed.cat as UltraLogCat;
+            UltraDevLog.push(cat, parsed.data ?? parsed);
+          } catch { UltraDevLog.push('A11Y_CONTENT', { raw: raw.slice(0, 200) }); }
+        }
+      } catch {}
+    }, intervalMs);
+  }
+
+  static stopA11yDrain(): void {
+    if (UltraDevLog.a11yDrainTimer) { clearInterval(UltraDevLog.a11yDrainTimer); UltraDevLog.a11yDrainTimer = null; }
+  }
+
+  static startHeartbeat(intervalMs = 10000): void {
+    if (UltraDevLog.heartbeatTimer) return;
+    const { default: AppController } = require('../native/AppController');
+    UltraDevLog.heartbeatTimer = setInterval(async () => {
+      try {
+        const hb = await AppController.heartbeatPing();
+        UltraDevLog.push('A11Y_HEARTBEAT', hb);
+        const crash = await AppController.readCrashLog();
+        if (crash && crash.length > 0) {
+          UltraDevLog.push('CRASH_NATIVE', { log: crash.slice(0, 2000) });
+          await AppController.clearCrashLog();
+        }
+      } catch {}
+    }, intervalMs);
+  }
+
+  static stopHeartbeat(): void {
+    if (UltraDevLog.heartbeatTimer) { clearInterval(UltraDevLog.heartbeatTimer); UltraDevLog.heartbeatTimer = null; }
+  }
+
   // ─── v3 NEW SENSORS ────────────────────────────────────────────────────────
 
   static componentMount(componentName: string, props?: Record<string, unknown>): string {
@@ -732,7 +779,7 @@ export class UltraDevLog {
 
   static vaultGet(key: string, found: boolean, valuePreview?: string): void { UltraDevLog.vaultRead(key, found, valuePreview); }
   static vaultSet(key: string, success: boolean, valuePreview?: string): void { UltraDevLog.vaultWrite(key, success, valuePreview); }
-  static vaultDelete(key: string, success: boolean): void { UltraDevLog.push('SYSTEM', { event: 'vault_delete', key, success }); }
+  static vaultDelete(key: string, success?: boolean): void { UltraDevLog.push('SYSTEM', { event: 'vault_delete', key, success: success ?? true }); }
   static vaultError(operation: string, key: string, error: string): void { UltraDevLog.push('SYSTEM', { event: 'vault_error', operation, key, error }); }
 
   // ─── Format & Export ───────────────────────────────────────────────────────
@@ -753,7 +800,7 @@ export class UltraDevLog {
 
     switch (e.cat) {
       case 'USER_MSG': return `${t} [USER    ]${c} "${d.content}"`;
-      case 'AI_RESPONSE': return `${t} [AI      ]${c} model=${d.model} cost=$${d.cost} | ${(d.content as string).slice(0, 200)}`;
+      case 'AI_RESPONSE': return `${t} [AI      ]${c} model=${d.model} cost=$${d.cost} | ${(d.content as string).slice(0, 500)}`;
       case 'AGENT_STEP':
         if (d.event === 'execute_start') return `${t} [EXEC_ST ]${c} task=${d.taskId} len=${d.inputLength} replay=${d.isReplay}`;
         return `${t} [STEP    ]${c} [${d.phase}] ${d.success ? 'OK' : 'FAIL'} ${d.detail}`;
@@ -836,6 +883,17 @@ export class UltraDevLog {
       case 'SYSTEM_INFO': return `${t} [SYS_INFO ]${c} bat=${d.batteryPct ?? '?'}% ram=${d.ramUsedMB ?? '?'}/${d.ramTotalMB ?? '?'}MB storage=${d.storageFreeGB ?? '?'}/${d.storageTotalGB ?? '?'}GB temp=${d.cpuTempC ?? '?'}°C${d.failedReads?.length ? ' WARN:failed=' + d.failedReads : ''}`;
       case 'PREFERENCE_BACKUP': return `${t} [PREF_BAK ]${c} ${d.operation} ${d.success ? 'OK' : 'FAIL'} keys=${d.keysCount}${d.error ? ' err=' + d.error : ''}`;
       case 'LEARN_PACKAGE': return `${t} [LEARN_PKG]${c} "${d.trigger}" → ${d.packageName} update=${d.wasUpdate}`;
+      case 'A11Y_WINDOW': return `${t} [A11Y_WIN]${c} pkg=${d.pkg} cls=${d.cls}`;
+      case 'A11Y_NOTIF': return `${t} [A11Y_NTF]${c} pkg=${d.pkg} "${d.text}"`;
+      case 'A11Y_CLICK': return `${t} [A11Y_CLK]${c} pkg=${d.pkg} cls=${d.cls} "${d.text}" desc="${d.desc}"`;
+      case 'A11Y_CONTENT': return `${t} [A11Y_CT ]${c} pkg=${d.pkg}`;
+      case 'STATE_BEFORE': return `${t} [STATE<  ]${c} ${d.capability} ${JSON.stringify(d.state).slice(0, 200)}`;
+      case 'STATE_AFTER': return `${t} [STATE>  ]${c} ${d.capability} ${JSON.stringify(d.state).slice(0, 200)}`;
+      case 'STATE_DELTA': return `${t} [DELTA   ]${c} ${d.capability} changed=${JSON.stringify(d.changed).slice(0, 200)} nothing=${d.nothingChanged}`;
+      case 'A11Y_HEARTBEAT': return `${t} [HEART   ] alive=${d.alive} fg=${d.foregroundPackage}`;
+      case 'CRASH_NATIVE': return `${t} [CRASH!! ] thread=${d.thread} ${d.error}`;
+      case 'NET_DETAIL': return `${t} [NET     ]${c} ${d.method} ${d.status} ${d.durationMs}ms bytes=${d.bodyBytes} model=${d.model}`;
+      case 'UI_SNAPSHOT': return `${t} [UISNAP ]${c} ${d.capability} pkg=${d.package} nodes=${d.nodeCount} click=${d.clickable}`;
       default: return `${t} [${e.cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }

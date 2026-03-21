@@ -35,6 +35,11 @@ export interface AppControllerInterface {
   blockPackage(pkg: string): Promise<boolean>;
   unblockPackage(pkg: string): Promise<boolean>;
   getBlockedPackages(): Promise<string[]>;
+  getSystemStateSnapshot(): Promise<string>;
+  drainAccessibilityLogs(): Promise<string[]>;
+  readCrashLog(): Promise<string>;
+  clearCrashLog(): Promise<boolean>;
+  heartbeatPing(): Promise<{ alive: boolean; foregroundPackage: string; timestamp: number }>;
   isAvailable(): boolean;
 }
 
@@ -73,6 +78,11 @@ const noopController: AppControllerInterface = {
   blockPackage: async () => false,
   unblockPackage: async () => false,
   getBlockedPackages: async () => [],
+  getSystemStateSnapshot: async () => '{"error":"mock"}',
+  drainAccessibilityLogs: async () => [],
+  readCrashLog: async () => '',
+  clearCrashLog: async () => true,
+  heartbeatPing: async () => ({ alive: false, foregroundPackage: 'mock', timestamp: 0 }),
   isAvailable: () => false,
 };
 
@@ -125,6 +135,15 @@ function createNativeController(): AppControllerInterface {
     blockPackage: (pkg: string) => native.blockPackage ? native.blockPackage(pkg) : Promise.resolve(false),
     unblockPackage: (pkg: string) => native.unblockPackage ? native.unblockPackage(pkg) : Promise.resolve(false),
     getBlockedPackages: () => native.getBlockedPackages ? native.getBlockedPackages() : Promise.resolve([]),
+    getSystemStateSnapshot: () => native.getSystemStateSnapshot
+      ? native.getSystemStateSnapshot()
+      : Promise.resolve('{"error":"not_available"}'),
+    drainAccessibilityLogs: () => native.drainAccessibilityLogs ? native.drainAccessibilityLogs() : Promise.resolve([]),
+    readCrashLog: () => native.readCrashLog ? native.readCrashLog() : Promise.resolve(''),
+    clearCrashLog: () => native.clearCrashLog ? native.clearCrashLog() : Promise.resolve(true),
+    heartbeatPing: () => native.heartbeatPing
+      ? native.heartbeatPing()
+      : Promise.resolve({ alive: false, foregroundPackage: 'unknown', timestamp: 0 }),
     isAvailable: () => true,
   };
 }

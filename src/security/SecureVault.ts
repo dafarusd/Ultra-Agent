@@ -67,7 +67,9 @@ export class SecureVault {
     try {
       await storeSet(`vu_${key}`, value);
       this.cache.set(key, value);
-      DebugLog.vaultSet(key, true);
+      const SENSITIVE = ['api_key', 'venice_api_key', 'biometric', 'password', 'secret', 'token'];
+      const isSensitive = SENSITIVE.some(s => key.toLowerCase().includes(s));
+      DebugLog.vaultSet(key, true, isSensitive ? `[REDACTED ${value.length}ch]` : value.slice(0, 200));
     } catch (error: any) {
       this.cache.set(key, value);
       DebugLog.vaultError('SET', key, error.message);
@@ -79,13 +81,17 @@ export class SecureVault {
     if (!this.initialized) throw new Error('Vault not initialized');
     if (this.cache.has(key)) {
       const cached = this.cache.get(key)!;
-      DebugLog.vaultGet(key, true, cached.slice(0, 80));
+      const SENSITIVE_GET = ['api_key', 'venice_api_key', 'biometric', 'password', 'secret', 'token'];
+      const isSensitiveGet = SENSITIVE_GET.some(s => key.toLowerCase().includes(s));
+      DebugLog.vaultGet(key, true, isSensitiveGet ? `[REDACTED ${cached.length}ch]` : cached.slice(0, 80));
       return cached;
     }
     try {
       const value = await storeGet(`vu_${key}`);
       if (value) this.cache.set(key, value);
-      DebugLog.vaultGet(key, !!value, value ? value.slice(0, 80) : undefined);
+      const SENSITIVE_STORE = ['api_key', 'venice_api_key', 'biometric', 'password', 'secret', 'token'];
+      const isSensitiveStore = SENSITIVE_STORE.some(s => key.toLowerCase().includes(s));
+      DebugLog.vaultGet(key, !!value, value ? (isSensitiveStore ? `[REDACTED ${value.length}ch]` : value.slice(0, 80)) : undefined);
       return value;
     } catch (error: any) {
       DebugLog.vaultError('GET', key, error.message);

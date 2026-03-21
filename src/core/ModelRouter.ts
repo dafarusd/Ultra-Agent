@@ -318,6 +318,7 @@ export class ModelRouter {
         max_tokens: options.maxTokens ?? 4000,
       };
       DebugLog.systemEvent('ModelRouter.complete', `API_PAYLOAD model=${model} task=${taskId} system_chars=${systemPrompt.length} user_chars=${prompt.length} temp=${apiPayload.temperature} max_tokens=${apiPayload.max_tokens}`);
+      const fetchStartMs = Date.now();
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -339,7 +340,9 @@ export class ModelRouter {
       const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
       const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
       const durationMs = Date.now() - startTime;
+      const fetchDurationMs = Date.now() - fetchStartMs;
       DebugLog.modelApiResponse(model, taskId, usage.prompt_tokens, usage.completion_tokens, cost, durationMs);
+      DebugLog.push('NET_DETAIL', { method: 'POST', url: '/chat/completions', status: resp.status, durationMs: fetchDurationMs, bodyBytes: JSON.stringify(apiPayload).length, model, taskId });
       this.logger.info(`${model} responded in ${durationMs}ms, cost: $${cost.toFixed(6)}`);
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
@@ -398,6 +401,7 @@ export class ModelRouter {
         max_tokens: options.maxTokens ?? 4000,
       };
       DebugLog.systemEvent('ModelRouter.completeWithConversation', `API_PAYLOAD model=${model} task=${taskId} msg_count=${messages.length} total_chars=${totalChars} temp=${convPayload.temperature} max_tokens=${convPayload.max_tokens}`);
+      const convFetchStartMs = Date.now();
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -415,7 +419,9 @@ export class ModelRouter {
       const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
       const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
       const durationMs = Date.now() - callStart;
+      const convFetchDurationMs = Date.now() - convFetchStartMs;
       DebugLog.modelApiResponse(model, taskId, usage.prompt_tokens, usage.completion_tokens, cost, durationMs);
+      DebugLog.push('NET_DETAIL', { method: 'POST', url: '/chat/completions', status: resp.status, durationMs: convFetchDurationMs, bodyBytes: JSON.stringify(convPayload).length, model, taskId });
       return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
       const durationMs = Date.now() - callStart;
