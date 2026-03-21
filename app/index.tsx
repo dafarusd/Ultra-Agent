@@ -438,6 +438,7 @@ export default function ChatScreen() {
     // ── Slash commands: handle locally ──
     if (text.startsWith('/')) {
       if (!overrideText) setInput('');
+      const slashStart = Date.now();
       const cmd = text.toLowerCase().trim();
       let response = '';
       try {
@@ -465,6 +466,7 @@ export default function ChatScreen() {
           response = 'Unknown: ' + cmd + '. Type /help';
         }
       } catch (e: any) { response = 'Error: ' + (e?.message || 'unknown'); }
+      UltraDevLog.slashCommand(cmd, response, Date.now() - slashStart);
       const sysMsg: ChatMessage = {
         id: `msg_cmd_${Date.now()}`,
         role: 'assistant',
@@ -717,6 +719,7 @@ export default function ChatScreen() {
     setGridCollapsed(true);
     const plan: ActionPlan = { capability, params, reason: 'Action Grid' };
     try {
+      UltraDevLog.gridTap(capability, params);
       UltraDevLog.processingState(true, 'gridAction_start');
       setIsProcessing(true);
       const result = await agentCore.getTaskExecutor().runWithPlan(plan, `grid_${capability}_${Date.now()}`);
@@ -745,6 +748,7 @@ export default function ChatScreen() {
     if (!agentCore) return;
     const plan: ActionPlan = { capability, params, reason: 'Context Bar' };
     try {
+      UltraDevLog.contextTap(capability, params);
       UltraDevLog.processingState(true, 'contextAction_start');
       setIsProcessing(true);
       const result = await agentCore.getTaskExecutor().runWithPlan(plan, `ctx_${capability}_${Date.now()}`);

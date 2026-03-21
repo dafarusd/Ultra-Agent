@@ -516,60 +516,134 @@ export default function SettingsScreen() {
               </View>
             ) : (
               <>
-                {/* ── Built-in Venice (dev mode only) ── */}
-                {isDevMode && apis.filter(a => a.isBuiltIn).length > 0 && (
+                {/* ── Venice AI Engine (always visible) ── */}
+                {apis.filter(a => a.isBuiltIn).length > 0 && (
                   <>
                     <View style={styles.sectionHeader}>
-                      <Text style={styles.sectionTitle}>Venice Service</Text>
+                      <Text style={styles.sectionTitle}>Venice AI Engine</Text>
                     </View>
-                    <Text style={{ color: DIM, fontSize: 12, marginBottom: 8, paddingHorizontal: 4 }}>
-                      Powers image generation, TTS, video, and agent reasoning.
-                    </Text>
-                    {apis.filter(a => a.isBuiltIn).map((api) => (
-                      <View key={api.id} style={styles.apiCard}>
-                        <View style={styles.apiCardHeader}>
-                          <View style={styles.apiNameRow}>
-                            <MaterialCommunityIcons name="api" size={18} color={ACCENT} />
-                            <Text style={styles.apiName}>{api.name}</Text>
+
+                    {apis.filter(a => a.isBuiltIn).map((api) => {
+                      const hasKey = !!api.apiKey;
+                      return (
+                        <View key={api.id} style={[styles.card, { borderColor: hasKey ? '#1a3a2a' : '#1e1e1e' }]}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                            <View style={{
+                              width: 8, height: 8, borderRadius: 4, marginRight: 8,
+                              backgroundColor: hasKey ? '#34d399' : '#666',
+                            }} />
+                            <Text style={{ color: hasKey ? '#34d399' : '#999', fontSize: 13, fontFamily: 'Inter_500Medium' }}>
+                              {hasKey ? 'Connected' : 'Not Connected'}
+                            </Text>
                           </View>
-                          <View style={styles.apiActions}>
-                            <Pressable onPress={() => startEditApi(api)} hitSlop={8}>
-                              <Ionicons name="create-outline" size={18} color={DIM} />
-                            </Pressable>
-                          </View>
+
+                          <Text style={styles.fieldLabel}>Venice API Key</Text>
+                          <TextInput
+                            value={api.apiKey}
+                            onChangeText={(t) => {
+                              const updated = apis.map(a => a.id === api.id ? { ...a, apiKey: t } : a);
+                              setApis(updated);
+                            }}
+                            placeholder="Paste your Venice API key"
+                            placeholderTextColor="#444"
+                            style={styles.textInput}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            secureTextEntry
+                          />
+                          <Text style={{ color: '#444', fontSize: 11, marginTop: 4, fontFamily: 'Inter_400Regular' }}>
+                            Get your key at venice.ai — powers all AI features
+                          </Text>
+
+                          <Pressable
+                            onPress={async () => {
+                              const updated = apis.map(a => a.id === api.id ? { ...a } : a);
+                              setApis(updated);
+                              try {
+                                const vault = await SecureVault.initialize();
+                                await vault.set('saved_apis', JSON.stringify(updated));
+                                const primary = updated[0];
+                                if (primary) {
+                                  await vault.set('venice_api_key', primary.apiKey || '');
+                                  await vault.set('api_base_url', primary.baseUrl);
+                                  const core = getAgentCoreInstance();
+                                  if (core) {
+                                    await core.refreshApiKey();
+                                    await core.setApiBaseUrl(primary.baseUrl);
+                                  }
+                                }
+                                setSavedFeedback('venice');
+                                setTimeout(() => setSavedFeedback(null), 2000);
+                              } catch (err: any) {
+                                Alert.alert('Error', err.message);
+                              }
+                            }}
+                            style={[styles.btn, savedFeedback === 'venice' ? styles.savedBtn : styles.primaryBtn, { marginTop: 12 }]}
+                          >
+                            <Ionicons name={savedFeedback === 'venice' ? 'checkmark' : 'save-outline'} size={16} color={savedFeedback === 'venice' ? '#fff' : BG} />
+                            <Text style={savedFeedback === 'venice' ? styles.savedBtnText : styles.primaryBtnText}>
+                              {savedFeedback === 'venice' ? 'Saved' : 'Save Key'}
+                            </Text>
+                          </Pressable>
+
+                          {hasKey && (
+                            <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#222' }}>
+                              <Text style={{ color: TEXT, fontSize: 13, fontFamily: 'Inter_600SemiBold', marginBottom: 8 }}>
+                                Available Capabilities
+                              </Text>
+                              {[
+                                { icon: 'chatbox-ellipses', label: 'Chat & Reasoning', desc: '60+ AI models' },
+                                { icon: 'image', label: 'Image Generation', desc: 'Create images from text' },
+                                { icon: 'mic', label: 'Text-to-Speech', desc: 'Convert text to audio' },
+                                { icon: 'videocam', label: 'Video Generation', desc: 'Create short videos' },
+                              ].map(cap => (
+                                <View key={cap.label} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5 }}>
+                                  <Ionicons name={cap.icon as any} size={16} color={ACCENT} style={{ width: 24 }} />
+                                  <View style={{ flex: 1, marginLeft: 8 }}>
+                                    <Text style={{ color: TEXT, fontSize: 12, fontFamily: 'Inter_500Medium' }}>{cap.label}</Text>
+                                    <Text style={{ color: DIM, fontSize: 11, fontFamily: 'Inter_400Regular' }}>{cap.desc}</Text>
+                                  </View>
+                                  <Ionicons name="checkmark-circle" size={16} color={ACCENT} />
+                                </View>
+                              ))}
+                            </View>
+                          )}
+
+                          {isDevMode && (
+                            <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#222' }}>
+                              <Text style={{ color: '#666', fontSize: 11, fontFamily: 'Inter_500Medium', marginBottom: 6 }}>Developer Config</Text>
+                              <Text style={styles.apiUrl} numberOfLines={1}>Base: {api.baseUrl}</Text>
+                              <Pressable onPress={() => startEditApi(api)} style={{ marginTop: 6 }}>
+                                <Text style={{ color: ACCENT, fontSize: 12, fontFamily: 'Inter_500Medium' }}>Edit Raw Config →</Text>
+                              </Pressable>
+                              <View style={{ marginTop: 8 }}>
+                                {[
+                                  { name: 'Chat', ep: '/chat/completions' },
+                                  { name: 'Image', ep: '/image/generate' },
+                                  { name: 'TTS', ep: '/audio/speech' },
+                                  { name: 'Video', ep: '/video/queue' },
+                                  { name: 'Embeddings', ep: '/embeddings' },
+                                  { name: 'Upscale', ep: '/image/upscale' },
+                                  { name: 'Edit', ep: '/image/edit' },
+                                  { name: 'Transcribe', ep: '/audio/transcriptions' },
+                                ].map(svc => (
+                                  <View key={svc.ep} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 }}>
+                                    <Text style={{ color: DIM, fontSize: 11 }}>{svc.name}</Text>
+                                    <Text style={{ color: '#444', fontSize: 10 }}>{svc.ep}</Text>
+                                  </View>
+                                ))}
+                              </View>
+                            </View>
+                          )}
                         </View>
-                        <Text style={styles.apiUrl} numberOfLines={1}>{api.baseUrl}</Text>
-                        <Text style={styles.apiKeyStatus}>
-                          {api.apiKey ? `Key: ••••${api.apiKey.slice(-4)}` : "No API key — add in edit"}
-                        </Text>
-                      </View>
-                    ))}
-                    {apis.some(a => a.isBuiltIn && a.apiKey) && (
-                      <View style={[styles.card, { marginTop: 8, marginBottom: 12 }]}>
-                        <Text style={[styles.cardTitle, { fontSize: 14 }]}>Available Venice Endpoints</Text>
-                        {[
-                          { name: 'Chat / Reasoning', ep: '/chat/completions' },
-                          { name: 'Image Generation', ep: '/image/generate' },
-                          { name: 'Text-to-Speech', ep: '/audio/speech' },
-                          { name: 'Video Generation', ep: '/video/queue' },
-                          { name: 'Embeddings', ep: '/embeddings' },
-                          { name: 'Image Upscale', ep: '/image/upscale' },
-                          { name: 'Image Edit', ep: '/image/edit' },
-                          { name: 'Transcription', ep: '/audio/transcriptions' },
-                        ].map(svc => (
-                          <View key={svc.ep} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>
-                            <Text style={{ color: TEXT, fontSize: 12 }}>{svc.name}</Text>
-                            <Text style={{ color: ACCENT, fontSize: 11 }}>✓</Text>
-                          </View>
-                        ))}
-                      </View>
-                    )}
+                      );
+                    })}
                   </>
                 )}
 
                 {/* ── User APIs (always visible) ── */}
                 <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>{isDevMode ? 'User APIs' : 'Your APIs'}</Text>
+                  <Text style={styles.sectionTitle}>Additional APIs</Text>
                   <Pressable onPress={startNewApi} style={styles.addBtn}>
                     <Ionicons name="add" size={18} color={ACCENT} />
                     <Text style={styles.addBtnText}>Add API</Text>
@@ -580,7 +654,7 @@ export default function SettingsScreen() {
                   <View style={styles.emptyCard}>
                     <MaterialCommunityIcons name="api" size={32} color="#222" />
                     <Text style={styles.emptyText}>No APIs added</Text>
-                    <Text style={styles.emptySubtext}>Bring your own OpenAI-compatible API</Text>
+                    <Text style={styles.emptySubtext}>Connect any OpenAI-compatible API for more models</Text>
                   </View>
                 ) : (
                   apis.filter(a => !a.isBuiltIn).map((api) => (

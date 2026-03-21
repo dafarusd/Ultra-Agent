@@ -71,7 +71,9 @@ export type UltraLogCat =
   | 'A11Y_WINDOW' | 'A11Y_NOTIF' | 'A11Y_CLICK' | 'A11Y_CONTENT'
   | 'STATE_BEFORE' | 'STATE_AFTER' | 'STATE_DELTA'
   | 'A11Y_HEARTBEAT' | 'CRASH_NATIVE' | 'NET_DETAIL' | 'UI_SNAPSHOT'
-  | 'BUBBLE_DIAG';
+  | 'BUBBLE_DIAG'
+  | 'A11Y_QS_TRACE'
+  | 'GRID_TAP' | 'CONTEXT_TAP' | 'SLASH_CMD';
 
 interface UltraLogEntry {
   ts: string;
@@ -182,6 +184,18 @@ export class UltraDevLog {
 
   static conversationDeleted(conversationId: string): void {
     UltraDevLog.push('CONV_DEL', { conversationId });
+  }
+
+  static gridTap(capability: string, params: Record<string, unknown>): void {
+    UltraDevLog.push('GRID_TAP', { capability, params });
+  }
+
+  static contextTap(capability: string, params: Record<string, unknown>): void {
+    UltraDevLog.push('CONTEXT_TAP', { capability, params });
+  }
+
+  static slashCommand(command: string, result: string, durationMs: number): void {
+    UltraDevLog.push('SLASH_CMD', { command, resultPreview: result.slice(0, 200), durationMs });
   }
 
   static modalEvent(modalName: string, action: 'open' | 'close', extra?: Record<string, unknown>): void {
@@ -913,6 +927,10 @@ export class UltraDevLog {
       case 'NET_DETAIL': return `${t} [NET     ]${c} ${d.method} ${d.status} ${d.durationMs}ms bytes=${d.bodyBytes} model=${d.model}`;
       case 'UI_SNAPSHOT': return `${t} [UISNAP ]${c} ${d.capability} pkg=${d.package} nodes=${d.nodeCount} click=${d.clickable}`;
       case 'BUBBLE_DIAG': return `${t} [BUBBLE  ]${c} id=${String(d.messageId).slice(-8)} role=${d.role} h=${d.height}px w=${d.width}px len=${d.textLength} idx=${d.msgIndex} style=${d.msgStyle}`;
+      case 'A11Y_QS_TRACE': return `${t} [QS_TRACE]${c} step=${d.step} tile=${d.tile} ${d.found !== undefined ? 'found=' + d.found : ''} ${d.bounds || ''} ${d.error || ''}`;
+      case 'GRID_TAP': return `${t} [GRID_TAP]${c} cap=${d.capability} params=${JSON.stringify(d.params).slice(0, 100)}`;
+      case 'CONTEXT_TAP': return `${t} [CTX_TAP ]${c} cap=${d.capability} params=${JSON.stringify(d.params).slice(0, 100)}`;
+      case 'SLASH_CMD': return `${t} [SLASH   ]${c} ${d.command} ${d.durationMs}ms result=${d.resultPreview}`;
       default: return `${t} [${e.cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }

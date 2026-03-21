@@ -1696,13 +1696,17 @@ public class AgentAccessibilityService extends AccessibilityService {
         try {
             Thread.sleep(700);
             android.view.accessibility.AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) return false;
+            if (root == null) {
+                emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"no_root\\",\\"tile\\":\\"" + tileLabel + "\\"}");
+                return false;
+            }
 
             java.util.List<android.view.accessibility.AccessibilityNodeInfo> nodes =
                 root.findAccessibilityNodeInfosByText(tileLabel);
             if (nodes == null) nodes = new java.util.ArrayList<>();
             android.view.accessibility.AccessibilityNodeInfo byDesc = findByContentDesc(root, tileLabel);
             if (byDesc != null) nodes.add(0, byDesc);
+            emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"search\\",\\"tile\\":\\"" + tileLabel + "\\",\\"found\\":" + nodes.size() + "}");
 
             for (android.view.accessibility.AccessibilityNodeInfo node : nodes) {
                 // Strategy 1: walk up to clickable ancestor and tap its center
@@ -1734,6 +1738,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                     );
                 }
             }
+            emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"no_match\\",\\"tile\\":\\"" + tileLabel + "\\"}");
             root.recycle();
             return false;
         } catch (Exception e) {
@@ -1785,13 +1790,16 @@ public class AgentAccessibilityService extends AccessibilityService {
 
         // Swipe 1: pull down notification shade
         swipeRaw(cx, 10, cx, h / 2, 300);
+        emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"swipe_shade\\",\\"tile\\":\\"" + tileLabel + "\\"}");
         try { Thread.sleep(500); } catch (InterruptedException ignored) {}
 
         // Swipe 2: expand to full QS tiles
         swipeRaw(cx, h / 4, cx, h * 3 / 4, 300);
+        emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"swipe_expand\\",\\"tile\\":\\"" + tileLabel + "\\"}");
         try { Thread.sleep(700); } catch (InterruptedException ignored) {}
 
         boolean result = tapQuickSettingsTile(tileLabel);
+        emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"result\\",\\"tile\\":\\"" + tileLabel + "\\",\\"success\\":" + result + "}");
         if (!result) {
             // Scroll QS panel to find hidden tiles
             swipeRaw(cx, h / 2, cx, h / 4, 200);

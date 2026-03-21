@@ -1,5 +1,6 @@
 import { SecureVault } from '../security/SecureVault';
 import { Logger } from '../utils/Logger';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 const VENICE_BASE = 'https://api.venice.ai/api/v1';
 
@@ -53,6 +54,7 @@ export class VeniceService {
   ): Promise<VeniceImageResult> {
     const t0 = Date.now();
     const model = opts.model || 'z-image-turbo';
+    UltraDevLog.push('SYSTEM', { event: 'venice_image_start', model, prompt: prompt.slice(0, 100), width: opts.width ?? 1024, height: opts.height ?? 1024 });
     const body = {
       prompt,
       model,
@@ -71,12 +73,14 @@ export class VeniceService {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      UltraDevLog.push('SYSTEM', { event: 'venice_image_error', model, status: res.status, error: text.slice(0, 100) });
       throw new Error(`Venice image: ${res.status} ${text.slice(0, 120)}`);
     }
     const json = await res.json();
     const images: string[] = (json.images ?? []).map((img: any) =>
       typeof img === 'string' ? img : img.b64_json ?? img.url ?? ''
     );
+    UltraDevLog.push('SYSTEM', { event: 'venice_image_done', model, imageCount: images.length, timingMs: Date.now() - t0 });
     return { images, model, timingMs: Date.now() - t0 };
   }
 
@@ -85,6 +89,7 @@ export class VeniceService {
     opts: { voice?: string; speed?: number } = {}
   ): Promise<VeniceTtsResult> {
     const t0 = Date.now();
+    UltraDevLog.push('SYSTEM', { event: 'venice_tts_start', textLen: text.length, voice: opts.voice ?? 'af_sky' });
     const body = {
       model: 'tts-kokoro',
       input: text.slice(0, 4096),
@@ -102,6 +107,7 @@ export class VeniceService {
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
+      UltraDevLog.push('SYSTEM', { event: 'venice_tts_error', status: res.status, error: errText.slice(0, 100) });
       throw new Error(`Venice TTS: ${res.status} ${errText.slice(0, 120)}`);
     }
     const buf = await res.arrayBuffer();
@@ -109,6 +115,7 @@ export class VeniceService {
     let binary = '';
     for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
     const audioBase64 = btoa(binary);
+    UltraDevLog.push('SYSTEM', { event: 'venice_tts_done', audioBytes: bytes.byteLength, timingMs: Date.now() - t0 });
     return { audioBase64, timingMs: Date.now() - t0 };
   }
 
@@ -123,6 +130,7 @@ export class VeniceService {
       aspect_ratio: opts.aspectRatio ?? '16:9',
       resolution: opts.resolution ?? '480p',
     };
+    UltraDevLog.push('SYSTEM', { event: 'venice_video_start', model: opts.model ?? 'wan-2.5-preview-image-to-video', prompt: prompt.slice(0, 100) });
     const res = await fetch(`${VENICE_BASE}/video/queue`, {
       method: 'POST',
       headers: {
@@ -136,11 +144,13 @@ export class VeniceService {
       throw new Error(`Venice video: ${res.status} ${text.slice(0, 120)}`);
     }
     const json = await res.json();
+    UltraDevLog.push('SYSTEM', { event: 'venice_video_queued', jobId: json.queue_id, model: opts.model ?? 'wan-2.5-preview-image-to-video' });
     return { jobId: json.queue_id ?? '', model: opts.model ?? 'wan-2.5-preview-image-to-video' };
   }
 
   async pollVideoJob(jobId: string, maxWaitMs: number = 90_000): Promise<{ videoBase64: string }> {
     const deadline = Date.now() + maxWaitMs;
+    UltraDevLog.push('SYSTEM', { event: 'venice_video_poll_start', jobId, maxWaitMs });
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 4000));
       const res = await fetch(`${VENICE_BASE}/video/retrieve`, {
@@ -154,6 +164,7 @@ export class VeniceService {
       if (!res.ok) continue;
       const json = await res.json();
       if (json.status === 'completed' || json.status === 'succeeded') {
+        UltraDevLog.push('SYSTEM', { event: 'venice_video_complete', jobId, timingMs: Date.now() - (deadline - maxWaitMs) });
         const videoUrl: string = json.video_url ?? json.url ?? '';
         if (!videoUrl) throw new Error('Venice video: job completed but no URL');
         const vidRes = await fetch(videoUrl);
@@ -164,6 +175,7 @@ export class VeniceService {
         return { videoBase64: btoa(binary) };
       }
       if (json.status === 'failed' || json.status === 'error') {
+        UltraDevLog.push('SYSTEM', { event: 'venice_video_failed', jobId, error: json.error ?? json.message ?? 'unknown' });
         throw new Error(`Venice video job failed: ${json.error ?? json.message ?? 'unknown'}`);
       }
     }
