@@ -244,3 +244,10 @@ Defined in `plugins/withAgentNative.js` via Expo config plugin (inline Java stri
 - Task 20: Model classification wired into `discoverModels()` — DONE
 
 **Remaining:** Tasks 7 & 8 (deterministic ReActLoop execution path)
+
+### PHASE 2: TIER SYSTEM — COMPLETE
+- Created `src/services/TierService.ts`: UserTier (free/byo/pro/dev), AGENT_ONLY_CAPABILITIES, AI_REQUIRED_CAPABILITIES, filterModelsForTier, canSendMessage, canUseCapability, recordMessage, addCredits, daily usage tracking
+- Created `src/services/BackendService.ts`: stub methods for verifySubscription, proxyCompletion, reportUsage, verifyPurchase with commented-out real implementations ready to activate
+- AgentCore.ts: TierService+BackendService integrated (private fields, constructor init, Promise.all, public getTierService/getBackendService), tier gate after ROUTE step, AI gate before apiKey check, capability tier check before EXECUTE, usage recording after ADAPT
+- settings.tsx: BYO auto-detect on API save (free→byo promotion), DevBackendCard component with URL/token fields + tier override buttons (dev mode only)
+- index.tsx: models filtered by tier in getPickerModels, tier indicator row (shows pro/byo/free + msg count), upgrade button on needsUpgrade messages

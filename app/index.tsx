@@ -783,10 +783,12 @@ export default function ChatScreen() {
         isSelected: m.id === currentModel,
       };
     });
+    const tierService = agentCore?.getTierService();
+    const tierFiltered = tierService ? tierService.filterModelsForTier(result) : result;
     const counts: Record<string, number> = {};
-    result.forEach((m) => { counts[m.type] = (counts[m.type] || 0) + 1; });
+    tierFiltered.forEach((m) => { counts[m.type] = (counts[m.type] || 0) + 1; });
     UltraDevLog.modelState("picker_classification", counts);
-    return result;
+    return tierFiltered;
   }, [agentCore, activeModelId]);
 
   const handleModelSelect = useCallback(async (modelId: string) => {
@@ -1073,6 +1075,19 @@ export default function ChatScreen() {
             <SystemInfoCard data={item.meta.data.systemInfoData} />
           )}
 
+          {/* Upgrade button on tier-blocked messages */}
+          {item.meta?.needsUpgrade && (
+            <Pressable
+              onPress={() => router.push('/settings')}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8,
+                       paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#1a3a2a',
+                       borderRadius: 10, alignSelf: 'flex-start' }}
+            >
+              <Ionicons name="arrow-up-circle" size={16} color={ACCENT} />
+              <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600' }}>Add API Key or Upgrade</Text>
+            </Pressable>
+          )}
+
           {/* Message action row: copy + prompt trace */}
           <View style={styles.msgActions}>
             <Pressable onPress={() => handleCopyMessage(item)} hitSlop={8} style={styles.copyBtn}>
@@ -1258,6 +1273,18 @@ export default function ChatScreen() {
             onRunTask={handleRunTask}
             savedTasks={savedTasks}
           />
+
+          {/* Tier indicator */}
+          {agentCore && agentCore.getTierService().getTier() !== 'dev' && (
+            <View style={{ flexDirection: 'row', justifyContent: 'center', paddingBottom: 2 }}>
+              <Text style={{ color: '#444', fontSize: 10 }}>
+                {agentCore.getTierService().getTier() === 'pro' ? '⭐ Pro'
+                  : agentCore.getTierService().getTier() === 'byo' ? '🔑 BYO API'
+                  : '🆓 Free (Agent Only)'}
+                {' • '}{agentCore.getTierService().getUsage().messageCount} msgs today
+              </Text>
+            </View>
+          )}
 
           {/* Model indicator pill */}
           <View style={styles.modelIndicatorRow}>

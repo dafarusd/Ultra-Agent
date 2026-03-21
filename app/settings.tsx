@@ -62,6 +62,52 @@ interface ApiDefaults {
 // Settings tabs
 type SettingsTab = "apis" | "costs" | "logs" | "blocked";
 
+// ── Dev Backend Config Card ─────────────────────────────
+function DevBackendCard() {
+  const [backendUrl, setBackendUrl] = React.useState('');
+  const [authToken, setAuthToken] = React.useState('');
+  React.useEffect(() => {
+    SecureVault.initialize().then(async v => {
+      setBackendUrl(await v.get('backend_url') || '');
+      setAuthToken(await v.get('backend_auth_token') || '');
+    });
+  }, []);
+  const save = async (urlVal: string, tokenVal: string) => {
+    const v = await SecureVault.initialize();
+    await v.set('backend_url', urlVal.trim());
+    await v.set('backend_auth_token', tokenVal.trim());
+    const core = getAgentCoreInstance();
+    if (core) await core.getBackendService().setConfig(urlVal.trim(), tokenVal.trim());
+  };
+  return (
+    <View style={{ backgroundColor: '#0d0d0d', borderRadius: 14, padding: 16, marginHorizontal: 16, marginBottom: 14, borderWidth: 1, borderColor: '#222' }}>
+      <Text style={{ color: '#e0e0e0', fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 4 }}>Backend Config</Text>
+      <Text style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>Cloud backend for Pro subscription proxy. Leave blank for local/BYO mode.</Text>
+      <Text style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>Backend URL</Text>
+      <TextInput value={backendUrl} onChangeText={setBackendUrl} placeholder="https://api.yourdomain.com"
+        placeholderTextColor="#444" autoCapitalize="none"
+        style={{ backgroundColor: '#111', borderWidth: 1, borderColor: '#333', borderRadius: 8, padding: 10, color: '#e0e0e0', fontSize: 13, marginBottom: 10 }}
+        onBlur={() => save(backendUrl, authToken)} />
+      <Text style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>Auth Token</Text>
+      <TextInput value={authToken} onChangeText={setAuthToken} placeholder="Bearer token…"
+        placeholderTextColor="#444" secureTextEntry autoCapitalize="none"
+        style={{ backgroundColor: '#111', borderWidth: 1, borderColor: '#333', borderRadius: 8, padding: 10, color: '#e0e0e0', fontSize: 13, marginBottom: 14 }}
+        onBlur={() => save(backendUrl, authToken)} />
+      <Text style={{ color: '#666', fontSize: 12, marginBottom: 8 }}>Tier Override</Text>
+      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        {(['free', 'byo', 'pro', 'dev'] as const).map(t => (
+          <Pressable key={t} onPress={async () => {
+            const core = getAgentCoreInstance();
+            if (core) { await core.getTierService().setTier(t); Alert.alert('Tier set', `Now: ${t}`); }
+          }} style={{ paddingVertical: 6, paddingHorizontal: 12, backgroundColor: '#1a1a1a', borderRadius: 8, borderWidth: 1, borderColor: '#333' }}>
+            <Text style={{ color: '#34d399', fontSize: 12 }}>{t.toUpperCase()}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -315,6 +361,13 @@ export default function SettingsScreen() {
         if (core) {
           await core.refreshApiKey();
           await core.setApiBaseUrl(primary.baseUrl);
+          if (primary.apiKey) {
+            const tier = core.getTierService();
+            if (tier && tier.getTier() === 'free') {
+              await tier.setTier('byo');
+              DebugLog.systemEvent('Settings', 'Auto-promoted to BYO tier');
+            }
+          }
         }
       } else {
         await vault.set("venice_api_key", "");
@@ -872,7 +925,10 @@ export default function SettingsScreen() {
               </Pressable>
             </View>
           </View>
+
         )}
+
+        {tab === "apis" && isDevMode && <DevBackendCard />}
 
         {/* ══════════════════════════════════════════
             TAB: COST LIMITS

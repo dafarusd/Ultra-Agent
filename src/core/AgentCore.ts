@@ -20,6 +20,8 @@ import { Logger } from '../utils/Logger';
 import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import { MemoryManager } from './MemoryManager';
 import { EventMonitor } from '../services/EventMonitor';
+import { TierService } from '../services/TierService';
+import { BackendService } from '../services/BackendService';
 import type {
   ChatMessage,
   UltraExecutionResult,
@@ -87,6 +89,8 @@ export class AgentCore extends SimpleEmitter {
   private safety: SafetyChecker;
   private parser: CommandParser;
   private memory: MemoryManager;
+  private tierService: TierService;
+  private backendService: BackendService;
   private eventMonitor: EventMonitor | null = null;
   private venice: VeniceService;
   private logger: Logger;
@@ -117,6 +121,8 @@ export class AgentCore extends SimpleEmitter {
     this.safety = new SafetyChecker();
     this.parser = new CommandParser();
     this.memory = new MemoryManager(vault);
+    this.tierService = new TierService(vault);
+    this.backendService = new BackendService(vault);
     this.ready = false;
     this.on('log', cb);
   }
@@ -159,6 +165,8 @@ export class AgentCore extends SimpleEmitter {
       safeInit('Learner', () => this.learner.initialize()),
       safeInit('Ledger', () => this.ledger.initialize()),
       safeInit('MemoryManager', () => this.memory.initialize()),
+      safeInit('TierService', () => this.tierService.initialize()),
+      safeInit('BackendService', () => this.backendService.initialize()),
       safeInit('CapabilityProbe', () => this.probe.probe().then(() => {})),
       safeInit('VeniceService', () => this.venice.initialize()),
     ]);
@@ -437,6 +445,20 @@ You are always on. Always capable. Always direct.`;
     DebugLog.modeDetected(taskId, mode, userInput);
     step('ROUTE', `Detected mode: ${mode}`, true);
 
+    // Tier gate: conversation/AI mode needs AI access
+    if (mode === 'conversation' || mode === 'ai_instruction') {
+      const aiCheck = this.tierService.canSendMessage(true);
+      if (!aiCheck.allowed) {
+        const tierMsg: ChatMessage = {
+          id: uid('msg'), role: 'assistant', content: aiCheck.reason,
+          createdAt: Date.now(), source: 'system',
+          meta: { mode, tierBlocked: true, needsUpgrade: aiCheck.needsUpgrade },
+        };
+        await this.conversations.addMessage(conversationId, tierMsg);
+        return { type: 'blocked', message: aiCheck.reason, taskId };
+      }
+    }
+
     // === STEP 3: PLAN ===
     DebugLog.executePhase(taskId, 'PLAN');
     const capList = this.caps.getAll().map(c => c.id);
@@ -547,6 +569,19 @@ You are always on. Always capable. Always direct.`;
       if (plan) planFromParser = true;
 
       if (!plan) {
+        // Deterministic parse failed — need AI routing — check tier
+        const aiRouteCheck = this.tierService.canSendMessage(true);
+        if (!aiRouteCheck.allowed) {
+          step('PLAN', 'Parse failed, no AI access', false);
+          const tierMsg: ChatMessage = {
+            id: uid('msg'), role: 'assistant',
+            content: `I couldn't match that to a command.\n\n${aiRouteCheck.reason}`,
+            createdAt: Date.now(), source: 'system',
+            meta: { mode: 'command', tierBlocked: true, needsUpgrade: aiRouteCheck.needsUpgrade },
+          };
+          await this.conversations.addMessage(conversationId, tierMsg);
+          return { type: 'blocked', message: tierMsg.content, taskId };
+        }
         if (!this.ai.hasApiKey()) {
           step('PLAN', 'No deterministic match and no API key configured', false);
           const errMsg: ChatMessage = {
@@ -752,6 +787,18 @@ You are always on. Always capable. Always direct.`;
         }
       }
 
+      // Capability tier check
+      const capTierCheck = this.tierService.canUseCapability(plan.capability);
+      if (!capTierCheck.allowed) {
+        const tierMsg: ChatMessage = {
+          id: uid('msg'), role: 'assistant', content: capTierCheck.reason,
+          createdAt: Date.now(), source: 'ultra',
+          meta: { mode: 'command', capability: plan.capability, tierBlocked: true, needsUpgrade: capTierCheck.needsUpgrade },
+        };
+        await this.conversations.addMessage(conversationId, tierMsg);
+        return { type: 'blocked', message: capTierCheck.reason, taskId };
+      }
+
       // === STEP 6: EXECUTE ===
       DebugLog.executePhase(taskId, 'EXECUTE');
       const REPEATABLE_CAPABILITIES = new Set([
@@ -947,6 +994,14 @@ You are always on. Always capable. Always direct.`;
         DebugLog.error('ADAPT', adaptErr.message);
         step('ADAPT', `Learned with error: ${adaptErr.message}`, false);
       }
+
+      // Record usage for tier tracking
+      try {
+        const modelUsed = this.ai.getDefaultModel();
+        const wasAi = !planFromParser;
+        const creditCost = this.tierService.doesModelRequireCredits(modelUsed) ? 1 : 0;
+        await this.tierService.recordMessage(modelUsed, wasAi, creditCost);
+      } catch (tierErr: any) { DebugLog.error('TierService', tierErr.message); }
 
       await this.ledger.logEvent({
         phase: 'LEARN',
@@ -1429,6 +1484,8 @@ You are always on. Always capable. Always direct.`;
   getDefaultModel() { return this.ai.getDefaultModel(); }
   async setDefaultModel(modelId: string) { await this.ai.setDefaultModel(modelId); }
   getModelRouter() { return this.ai; }
+  getTierService(): TierService { return this.tierService; }
+  getBackendService(): BackendService { return this.backendService; }
   getCostSummary() { return this.costTracker.getSummary(); }
   getCapabilities() { return this.caps.getAll(); }
   async getStorageBreakdown() { return this.storage.getBreakdown(); }
