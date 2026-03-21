@@ -52,7 +52,7 @@ export class VeniceService {
     opts: { model?: string; width?: number; height?: number } = {}
   ): Promise<VeniceImageResult> {
     const t0 = Date.now();
-    const model = opts.model || 'fluently-xl';
+    const model = opts.model || 'z-image-turbo';
     const body = {
       prompt,
       model,
@@ -114,16 +114,16 @@ export class VeniceService {
 
   async generateVideo(
     prompt: string,
-    opts: { model?: string; width?: number; height?: number; seconds?: number } = {}
+    opts: { model?: string; duration?: number; aspectRatio?: string; resolution?: string } = {}
   ): Promise<VeniceVideoJob> {
     const body = {
       prompt,
-      model: opts.model ?? 'wan-2.1-t2v-480p',
-      width: opts.width ?? 848,
-      height: opts.height ?? 480,
-      seconds: opts.seconds ?? 5,
+      model: opts.model ?? 'wan-2.5-preview-image-to-video',
+      duration: opts.duration ? `${opts.duration}s` : '5s',
+      aspect_ratio: opts.aspectRatio ?? '16:9',
+      resolution: opts.resolution ?? '480p',
     };
-    const res = await fetch(`${VENICE_BASE}/video/generate`, {
+    const res = await fetch(`${VENICE_BASE}/video/queue`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -136,15 +136,20 @@ export class VeniceService {
       throw new Error(`Venice video: ${res.status} ${text.slice(0, 120)}`);
     }
     const json = await res.json();
-    return { jobId: json.id ?? json.job_id ?? '', model: opts.model ?? 'wan-2.1-t2v-480p' };
+    return { jobId: json.queue_id ?? '', model: opts.model ?? 'wan-2.5-preview-image-to-video' };
   }
 
   async pollVideoJob(jobId: string, maxWaitMs: number = 90_000): Promise<{ videoBase64: string }> {
     const deadline = Date.now() + maxWaitMs;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 4000));
-      const res = await fetch(`${VENICE_BASE}/video/status/${jobId}`, {
-        headers: { Authorization: `Bearer ${this.getKey()}` },
+      const res = await fetch(`${VENICE_BASE}/video/retrieve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.getKey()}`,
+        },
+        body: JSON.stringify({ queue_id: jobId }),
       });
       if (!res.ok) continue;
       const json = await res.json();
