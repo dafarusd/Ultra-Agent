@@ -22,6 +22,19 @@ export const DEFAULT_CATEGORIES: GridCategory[] = [
     iconFamily: 'ionicons',
     color: '#60a5fa',
     actions: [
+      { id: 'screenshot', label: 'Screenshot', icon: 'camera-outline', iconFamily: 'ionicons', capability: 'screenshot', params: {} },
+      { id: 'device_info', label: 'Status', icon: 'information-circle-outline', iconFamily: 'ionicons', capability: 'device_info', params: {} },
+      { id: 'gps', label: 'GPS', icon: 'location-outline', iconFamily: 'ionicons', capability: 'device_location', params: {} },
+      { id: 'battery', label: 'Battery', icon: 'battery-half-outline', iconFamily: 'ionicons', capability: 'system_info', params: { focus: 'battery' } },
+    ],
+  },
+  {
+    id: 'system',
+    label: 'System',
+    icon: 'toggle-outline',
+    iconFamily: 'ionicons',
+    color: '#818cf8',
+    actions: [
       { id: 'wifi', label: 'WiFi', icon: 'wifi', iconFamily: 'ionicons', capability: 'wifi_toggle', params: {} },
       { id: 'bluetooth', label: 'Bluetooth', icon: 'bluetooth', iconFamily: 'ionicons', capability: 'bluetooth_toggle', params: {} },
       { id: 'dnd', label: 'DND', icon: 'moon-outline', iconFamily: 'ionicons', capability: 'do_not_disturb', params: {} },
@@ -30,10 +43,6 @@ export const DEFAULT_CATEGORIES: GridCategory[] = [
       { id: 'volume_up', label: 'Vol +', icon: 'volume-high-outline', iconFamily: 'ionicons', capability: 'volume_set', params: { direction: 'up' } },
       { id: 'volume_down', label: 'Vol -', icon: 'volume-low-outline', iconFamily: 'ionicons', capability: 'volume_set', params: { direction: 'down' } },
       { id: 'brightness', label: 'Brightness', icon: 'sunny-outline', iconFamily: 'ionicons', capability: 'brightness_set', params: {} },
-      { id: 'screenshot', label: 'Screenshot', icon: 'camera-outline', iconFamily: 'ionicons', capability: 'screenshot', params: {} },
-      { id: 'device_info', label: 'Status', icon: 'information-circle-outline', iconFamily: 'ionicons', capability: 'device_info', params: {} },
-      { id: 'gps', label: 'GPS', icon: 'location-outline', iconFamily: 'ionicons', capability: 'device_location', params: {} },
-      { id: 'battery', label: 'Battery', icon: 'battery-half-outline', iconFamily: 'ionicons', capability: 'system_info', params: { focus: 'battery' } },
     ],
   },
   {
@@ -130,7 +139,7 @@ export const DEFAULT_CATEGORIES: GridCategory[] = [
 ];
 
 export const DEFAULT_GRID_CONFIG: GridConfig = {
-  categoryOrder: ['device', 'comms', 'apps', 'search', 'media', 'files', 'navigate', 'schedule', 'quick'],
+  categoryOrder: ['device', 'system', 'comms', 'apps', 'search', 'media', 'files', 'navigate', 'schedule', 'quick'],
   hiddenCategories: [],
   favorites: ['wifi', 'dnd', 'flashlight', 'screenshot', 'gps'],
   customActions: [],

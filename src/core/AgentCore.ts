@@ -6,6 +6,7 @@ import { PermissionBroker } from './PermissionBroker';
 import { DebugEngine } from './DebugEngine';
 import { BuildSystem } from './BuildSystem';
 import { TaskExecutor } from './TaskExecutor';
+import { VeniceService } from './VeniceService';
 import { Orchestrator } from './Orchestrator';
 import { PreferenceLearner } from '../utils/PreferenceLearner';
 import { CostTracker } from '../services/CostTracker';
@@ -87,6 +88,7 @@ export class AgentCore extends SimpleEmitter {
   private parser: CommandParser;
   private memory: MemoryManager;
   private eventMonitor: EventMonitor | null = null;
+  private venice: VeniceService;
   private logger: Logger;
   private ready: boolean;
   private instanceId: string;
@@ -105,8 +107,10 @@ export class AgentCore extends SimpleEmitter {
     this.learner = new PreferenceLearner(vault);
     this.debugEngine = new DebugEngine(this.ai, this.learner);
     this.buildSystem = new BuildSystem(this.ai, this.debugEngine, this.storage);
+    this.venice = new VeniceService(vault);
     this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai, this.probe);
     this.executor.setPreferenceLearner(this.learner);
+    this.executor.setVeniceService(this.venice);
     this.orchestrator = new Orchestrator(this.ai, this.costTracker);
     this.conversations = new ConversationManager();
     this.ledger = new ExecutionLedger();
@@ -156,6 +160,7 @@ export class AgentCore extends SimpleEmitter {
       safeInit('Ledger', () => this.ledger.initialize()),
       safeInit('MemoryManager', () => this.memory.initialize()),
       safeInit('CapabilityProbe', () => this.probe.probe().then(() => {})),
+      safeInit('VeniceService', () => this.venice.initialize()),
     ]);
 
     await safeInit('ModelRouter', () => this.ai.initialize());

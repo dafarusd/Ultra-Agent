@@ -8,6 +8,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import * as MediaLibrary from 'expo-media-library';
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { BuildSystem } from './BuildSystem';
+import { VeniceService } from './VeniceService';
 import { DebugEngine } from './DebugEngine';
 import { CapabilityRegistry } from './CapabilityRegistry';
 import { CapabilityProbe } from './CapabilityProbe';
@@ -101,6 +102,7 @@ export class TaskExecutor {
   private currentGenome: Genome | null = null;
   private onGenomeProgress: ((phase: string, message: string) => void) | null = null;
   private learner: PreferenceLearner | null = null;
+  private venice: VeniceService | null = null;
 
   constructor(build: BuildSystem, debug: DebugEngine, caps: CapabilityRegistry, perms: PermissionBroker, ai: ModelRouter, probe?: CapabilityProbe) {
     this.build = build;
@@ -117,6 +119,10 @@ export class TaskExecutor {
 
   setPreferenceLearner(learner: PreferenceLearner): void {
     this.learner = learner;
+  }
+
+  setVeniceService(venice: VeniceService): void {
+    this.venice = venice;
   }
 
   setGenomeProgressCallback(cb: ((phase: string, message: string) => void) | null): void {
@@ -1676,9 +1682,15 @@ export class TaskExecutor {
         const prompt = request;
         if (!prompt) return { error: 'No image prompt specified' };
         try {
-          // FIXED: Guard + force image default model from api_defaults. Prevents "undefined is not a function" when chat model is active.
-          const imageModel = this.ai.getDefaultModelForMode ? this.ai.getDefaultModelForMode('image') : 'venice-uncensored';
-          const result = await this.ai.generateImage(prompt, { taskId, model: imageModel });
+          const imageModel = (params as any).model ||
+            (this.ai.getDefaultModelForMode ? this.ai.getDefaultModelForMode('image') : undefined) ||
+            'fluently-xl';
+          let result: { images: string[]; model: string };
+          if (this.venice) {
+            result = await this.venice.generateImage(prompt, { model: imageModel });
+          } else {
+            result = await this.ai.generateImage(prompt, { taskId, model: imageModel });
+          }
           if (result.images.length === 0) return { error: 'No images generated' };
           const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
           const imagePath = `${docDirSlash}generated_${Date.now()}.png`;
@@ -1696,6 +1708,60 @@ export class TaskExecutor {
           };
         } catch (err: any) {
           return { error: `Image generation failed: ${err.message}` };
+        }
+      }
+
+      case 'tts': {
+        const text = (params as any).text || request;
+        if (!text) return { error: 'No text specified for speech' };
+        if (!this.venice) return { error: 'VeniceService not available for TTS' };
+        try {
+          const voice = (params as any).voice as string | undefined;
+          const speed = (params as any).speed as number | undefined;
+          const result = await this.venice.textToSpeech(text, { voice, speed });
+          const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
+          const audioPath = `${docDirSlash}tts_${Date.now()}.mp3`;
+          if (isNative && FileSystem) {
+            await FileSystem.writeAsStringAsync(audioPath, result.audioBase64, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+          }
+          return {
+            success: true,
+            path: isNative ? audioPath : undefined,
+            timingMs: result.timingMs,
+            summary: `Audio generated (${result.timingMs}ms)`,
+          };
+        } catch (err: any) {
+          return { error: `TTS failed: ${err.message}` };
+        }
+      }
+
+      case 'video_generate': {
+        const prompt = (params as any).prompt || request;
+        if (!prompt) return { error: 'No prompt specified for video generation' };
+        if (!this.venice) return { error: 'VeniceService not available for video generation' };
+        try {
+          const model = (params as any).model as string | undefined;
+          const seconds = (params as any).seconds as number | undefined;
+          const job = await this.venice.generateVideo(prompt, { model, seconds });
+          const { videoBase64 } = await this.venice.pollVideoJob(job.jobId);
+          const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
+          const videoPath = `${docDirSlash}video_${Date.now()}.mp4`;
+          if (isNative && FileSystem) {
+            await FileSystem.writeAsStringAsync(videoPath, videoBase64, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+          }
+          return {
+            success: true,
+            jobId: job.jobId,
+            model: job.model,
+            path: isNative ? videoPath : undefined,
+            summary: `Video generated with model ${job.model}`,
+          };
+        } catch (err: any) {
+          return { error: `Video generation failed: ${err.message}` };
         }
       }
       case 'system_info': {

@@ -463,6 +463,28 @@ const schemas: CapabilitySchema[] = [
     },
     optionalParams: {},
   },
+  {
+    capabilityId: 'tts',
+    version: 1,
+    requiredParams: {
+      text: { type: 'string', description: 'Text to convert to speech' },
+    },
+    optionalParams: {
+      voice: { type: 'string', description: 'Voice ID (e.g. af_sky)' },
+      speed: { type: 'number', description: 'Speed multiplier (default 1.0)' },
+    },
+  },
+  {
+    capabilityId: 'video_generate',
+    version: 1,
+    requiredParams: {
+      prompt: { type: 'string', description: 'Description of the video to generate' },
+    },
+    optionalParams: {
+      model: { type: 'string', description: 'Venice video model ID' },
+      seconds: { type: 'number', description: 'Duration in seconds (default 5)' },
+    },
+  },
 ];
 
 const schemaMap = new Map<string, CapabilitySchema>();

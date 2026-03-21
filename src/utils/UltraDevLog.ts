@@ -70,7 +70,8 @@ export type UltraLogCat =
   | 'LEARN_PACKAGE'
   | 'A11Y_WINDOW' | 'A11Y_NOTIF' | 'A11Y_CLICK' | 'A11Y_CONTENT'
   | 'STATE_BEFORE' | 'STATE_AFTER' | 'STATE_DELTA'
-  | 'A11Y_HEARTBEAT' | 'CRASH_NATIVE' | 'NET_DETAIL' | 'UI_SNAPSHOT';
+  | 'A11Y_HEARTBEAT' | 'CRASH_NATIVE' | 'NET_DETAIL' | 'UI_SNAPSHOT'
+  | 'BUBBLE_DIAG';
 
 interface UltraLogEntry {
   ts: string;
@@ -792,6 +793,23 @@ export class UltraDevLog {
     return UltraDevLog.entries.slice(-limit).map(e => UltraDevLog.formatEntry(e)).join('\n');
   }
 
+  static getEntries(limit?: number): UltraLogEntry[] {
+    if (limit !== undefined) return UltraDevLog.entries.slice(-limit);
+    return [...UltraDevLog.entries];
+  }
+
+  static bubbleDiag(
+    messageId: string,
+    role: string,
+    height: number,
+    width: number,
+    textLength: number,
+    msgIndex: number,
+    msgStyle: string,
+  ): void {
+    UltraDevLog.push('BUBBLE_DIAG', { messageId, role, height, width, textLength, msgIndex, msgStyle });
+  }
+
   private static formatEntry(e: UltraLogEntry): string {
     const t = e.ts.slice(11, 23);
     const d = e.data;
@@ -894,6 +912,7 @@ export class UltraDevLog {
       case 'CRASH_NATIVE': return `${t} [CRASH!! ] thread=${d.thread} ${d.error}`;
       case 'NET_DETAIL': return `${t} [NET     ]${c} ${d.method} ${d.status} ${d.durationMs}ms bytes=${d.bodyBytes} model=${d.model}`;
       case 'UI_SNAPSHOT': return `${t} [UISNAP ]${c} ${d.capability} pkg=${d.package} nodes=${d.nodeCount} click=${d.clickable}`;
+      case 'BUBBLE_DIAG': return `${t} [BUBBLE  ]${c} id=${String(d.messageId).slice(-8)} role=${d.role} h=${d.height}px w=${d.width}px len=${d.textLength} idx=${d.msgIndex} style=${d.msgStyle}`;
       default: return `${t} [${e.cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }

@@ -53,7 +53,7 @@ export class ModelRouter {
     this.costTracker = costTracker;
     this.logger = new Logger('ModelRouter');
     this.models = new Map();
-    this.defaultModel = 'llama-3.3-70b';
+    this.defaultModel = '';
     this.baseUrl = VENICE_BASE_URL;
     this.registerModel({
       id: 'llama-3.3-70b',
@@ -139,6 +139,14 @@ export class ModelRouter {
         this.defaultModel = savedModel;
         DebugLog.modelSetDefault(savedModel, prev, 'vault_restore_undiscovered');
         this.logger.info(`Using saved model (not yet discovered): ${savedModel}`);
+      }
+    }
+    if (!this.defaultModel && this.hasDiscoveredModels) {
+      const textModels = [...this.models.values()].filter(m => m.type === 'text');
+      if (textModels.length > 0) {
+        this.defaultModel = textModels[0].id;
+        DebugLog.modelSetDefault(textModels[0].id, '', 'auto_pick_first');
+        this.logger.info(`Auto-picked default model: ${textModels[0].id}`);
       }
     }
   }
@@ -278,6 +286,15 @@ export class ModelRouter {
   ): Promise<CompletionResult> {
     if (!this.apiKey) {
       throw new Error('Venice API key not configured. Open Settings to add it.');
+    }
+    if (!options.model && !this.defaultModel) {
+      const textModels = [...this.models.values()].filter(m => m.type === 'text');
+      if (textModels.length > 0) {
+        this.defaultModel = textModels[0].id;
+        DebugLog.modelSetDefault(textModels[0].id, '', 'auto_pick_complete');
+      } else {
+        throw new Error('No model selected. Open Settings > API Setup to configure a model.');
+      }
     }
     const model = options.model || this.defaultModel;
     const taskId = options.taskId || 'default';

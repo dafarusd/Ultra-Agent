@@ -809,11 +809,16 @@ export default function ChatScreen() {
       return (
         <View
           onLayout={(e) => {
+            const { height, width } = e.nativeEvent.layout;
             UltraDevLog.messageRendered(
               item.id, item.role as 'user' | 'assistant' | 'system', item.content.length,
-              e.nativeEvent.layout.height,
+              height,
               msgIndex >= 0 ? msgIndex : 0,
               scrollOffsetRef.current, listHeightRef.current,
+            );
+            UltraDevLog.bubbleDiag(
+              item.id, item.role, height, width, item.content.length,
+              msgIndex >= 0 ? msgIndex : 0, msgStyle,
             );
           }}
           style={[

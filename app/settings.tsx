@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   View,
   Text,
@@ -45,6 +46,7 @@ interface SavedApi {
   baseUrl: string;
   apiKey: string;
   password: string; // optional auth token/password
+  isBuiltIn?: boolean; // hidden from non-dev UI
 }
 
 type DefaultRole = "chat" | "image" | "code" | "reasoning" | "video";
@@ -82,6 +84,11 @@ export default function SettingsScreen() {
   const [totalCost, setTotalCost] = useState(0);
   const [totalCalls, setTotalCalls] = useState(0);
   const [modelUsages, setModelUsages] = useState<ModelUsage[]>([]);
+
+  // ── Dev mode state ─────────────────────────────────
+  const [isDevMode, setIsDevMode] = useState<boolean>(false);
+  const devTapCountRef = useRef<number>(0);
+  const devTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Logs state ─────────────────────────────────────
   const [logFiles, setLogFiles] = useState<LogFile[]>([]);
@@ -121,6 +128,11 @@ export default function SettingsScreen() {
     } catch {}
   }, []);
 
+  // ── Load dev mode on mount ─────────────────────────
+  useEffect(() => {
+    AsyncStorage.getItem("dev_mode").then((v) => { if (v === "1") setIsDevMode(true); });
+  }, []);
+
   // ── Load settings on mount ─────────────────────────
   useEffect(() => {
     loadSettings();
@@ -143,6 +155,21 @@ export default function SettingsScreen() {
       });
     }
   }, [defaultsExpanded]);
+
+  const handleVersionTap = useCallback(() => {
+    devTapCountRef.current += 1;
+    if (devTapTimerRef.current) clearTimeout(devTapTimerRef.current);
+    devTapTimerRef.current = setTimeout(() => { devTapCountRef.current = 0; }, 2000);
+    if (devTapCountRef.current >= 7) {
+      devTapCountRef.current = 0;
+      const next = !isDevMode;
+      setIsDevMode(next);
+      AsyncStorage.setItem("dev_mode", next ? "1" : "0");
+      Alert.alert(next ? "Dev Mode ON" : "Dev Mode OFF", next ? "Logs tab and advanced options enabled." : "Dev mode disabled.");
+    }
+  }, [isDevMode]);
+
+  const visibleApis = isDevMode ? apis : apis.filter((a) => !a.isBuiltIn);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -401,7 +428,7 @@ export default function SettingsScreen() {
 
       {/* Tab bar */}
       <View style={styles.tabBar}>
-        {(["apis", "costs", "logs", "blocked"] as SettingsTab[]).map((t) => (
+        {(["apis", "costs", "logs", "blocked"] as SettingsTab[]).filter((t) => t !== "logs" || isDevMode).map((t) => (
           <Pressable
             key={t}
             onPress={() => {
@@ -494,14 +521,14 @@ export default function SettingsScreen() {
                   </Pressable>
                 </View>
 
-                {apis.length === 0 ? (
+                {visibleApis.length === 0 ? (
                   <View style={styles.emptyCard}>
                     <MaterialCommunityIcons name="api" size={32} color="#222" />
                     <Text style={styles.emptyText}>No APIs configured</Text>
                     <Text style={styles.emptySubtext}>Tap "Add API" to connect your first provider</Text>
                   </View>
                 ) : (
-                  apis.map((api) => (
+                  visibleApis.map((api) => (
                     <View key={api.id} style={styles.apiCard}>
                       <View style={styles.apiCardHeader}>
                         <View style={styles.apiNameRow}>
@@ -836,6 +863,11 @@ export default function SettingsScreen() {
           <BlockedAppsTab isNative={Platform.OS === "android"} />
         )}
 
+        {/* Version tap area — tap 7 times within 2s to toggle dev mode */}
+        <Pressable onPress={handleVersionTap} style={styles.versionTap}>
+          <Text style={styles.versionText}>Agent Ultra{isDevMode ? "  [DEV]" : ""}</Text>
+        </Pressable>
+
       </ScrollView>
     </View>
   );
@@ -959,5 +991,11 @@ const styles = StyleSheet.create({
   debugHint: {
     color: DIM, fontSize: 11, fontFamily: "Inter_400Regular",
     marginBottom: 8, lineHeight: 15,
+  },
+  versionTap: {
+    alignItems: "center" as const, paddingVertical: 20, marginTop: 8,
+  },
+  versionText: {
+    color: "#333", fontSize: 11, fontFamily: "Inter_400Regular",
   },
 });

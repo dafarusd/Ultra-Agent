@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { LogFolder } from '@/src/services/LogFolder';
+import { UltraDevLog } from './UltraDevLog';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
@@ -405,22 +406,33 @@ export class DebugLog {
   }
 
   static async exportAll(): Promise<string> {
+    const ultraEntries = UltraDevLog.getEntries().map(e => JSON.stringify({ _src: 'ultra', ...e })).join('\n');
+
     if (Platform.OS === 'web') {
-      return DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
+      const base = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
+      return ultraEntries ? base + '\n' + ultraEntries : base;
     }
     try {
       const filePath = DebugLog.getFilePath();
-      if (!filePath) return DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
-      const info = await FileSystem.getInfoAsync(filePath);
-      if (info.exists) {
-        const content = await FileSystem.readAsStringAsync(filePath);
-        await LogFolder.writeLog(`raw-export.jsonl`, content);
-        return content;
+      if (!filePath) {
+        const base = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
+        return ultraEntries ? base + '\n' + ultraEntries : base;
       }
+      const info = await FileSystem.getInfoAsync(filePath);
+      let content = '';
+      if (info.exists) {
+        content = await FileSystem.readAsStringAsync(filePath);
+      } else {
+        content = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
+      }
+      if (ultraEntries) content = content + '\n' + ultraEntries;
+      await LogFolder.writeLog(`raw-export.jsonl`, content);
+      return content;
     } catch {}
-    const content = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
-    await LogFolder.writeLog(`raw-export.jsonl`, content);
-    return content;
+    const base = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
+    const combined = ultraEntries ? base + '\n' + ultraEntries : base;
+    await LogFolder.writeLog(`raw-export.jsonl`, combined);
+    return combined;
   }
 
   static async listLogFiles(): Promise<string[]> {

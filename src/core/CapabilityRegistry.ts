@@ -75,6 +75,8 @@ export class CapabilityRegistry {
       { id: 'memory_recall', name: 'Memory Recall', description: 'Recall stored memory about a topic', riskLevel: 'safe', available: true, permissionsRequired: [] },
       { id: 'event_trigger_remove', name: 'Remove Trigger', description: 'Remove an active event trigger by ID', riskLevel: 'moderate', available: true, permissionsRequired: [] },
       { id: 'multi_step', name: 'Multi-Step Task', description: 'Execute a sequence of capability steps', riskLevel: 'moderate', available: true, permissionsRequired: [] },
+      { id: 'tts', name: 'Text to Speech', description: 'Convert text to audio using Venice TTS', riskLevel: 'safe', available: true, permissionsRequired: [] },
+      { id: 'video_generate', name: 'Video Generate', description: 'Generate a short video from a text prompt via Venice AI', riskLevel: 'safe', available: true, permissionsRequired: [] },
     ];
     for (const c of caps) this.capabilities.set(c.id, c);
     this.logger.info(`Registered ${this.capabilities.size} capabilities`);

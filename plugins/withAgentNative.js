@@ -1334,21 +1334,31 @@ public class AgentAccessibilityService extends AccessibilityService {
                     java.util.List<CharSequence> tl = event.getText();
                     String txt = (tl != null && !tl.isEmpty()) ? tl.get(0).toString() : "";
                     if (txt.length() > 100) txt = txt.substring(0, 100);
+                    if (txt.matches(".*[A-Za-z0-9_-]{20,}.*")) { txt = "[REDACTED_TOKEN]"; }
                     txt = txt.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", " ");
                     emitA11yLog("A11Y_NOTIF", "{\\"pkg\\":\\"" + pkg + "\\",\\"text\\":\\"" + txt + "\\"}");
                     break;
                 }
                 case AccessibilityEvent.TYPE_VIEW_CLICKED: {
                     String pkg = currentPackage;
+                    boolean isOwnApp = "com.agent.ultra".equals(pkg);
+                    boolean isSystemUi = "com.android.systemui".equals(pkg);
+                    boolean isAllowed = isOwnApp || isSystemUi || isPackageAllowed(pkg);
                     String cls = event.getClassName() != null ? event.getClassName().toString() : "null";
-                    java.util.List<CharSequence> tl = event.getText();
-                    String txt = (tl != null && !tl.isEmpty()) ? tl.get(0).toString() : "";
-                    if (txt.length() > 50) txt = txt.substring(0, 50);
-                    txt = txt.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", " ");
-                    String desc = event.getContentDescription() != null ? event.getContentDescription().toString() : "";
-                    if (desc.length() > 50) desc = desc.substring(0, 50);
-                    desc = desc.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", " ");
-                    emitA11yLog("A11Y_CLICK", "{\\"pkg\\":\\"" + pkg + "\\",\\"cls\\":\\"" + cls + "\\",\\"text\\":\\"" + txt + "\\",\\"desc\\":\\"" + desc + "\\"}");
+                    if (isAllowed) {
+                        java.util.List<CharSequence> tl = event.getText();
+                        String txt = (tl != null && !tl.isEmpty()) ? tl.get(0).toString() : "";
+                        if (txt.length() > 50) txt = txt.substring(0, 50);
+                        if (txt.matches(".*[A-Za-z0-9_-]{20,}.*")) { txt = "[REDACTED_LONG_TOKEN]"; }
+                        txt = txt.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", " ");
+                        String desc = event.getContentDescription() != null ? event.getContentDescription().toString() : "";
+                        if (desc.length() > 50) desc = desc.substring(0, 50);
+                        if (desc.matches(".*[A-Za-z0-9_-]{20,}.*")) { desc = "[REDACTED]"; }
+                        desc = desc.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\"").replace("\\n", " ");
+                        emitA11yLog("A11Y_CLICK", "{\\"pkg\\":\\"" + pkg + "\\",\\"cls\\":\\"" + cls + "\\",\\"text\\":\\"" + txt + "\\",\\"desc\\":\\"" + desc + "\\"}");
+                    } else {
+                        emitA11yLog("A11Y_CLICK", "{\\"pkg\\":\\"" + pkg + "\\",\\"cls\\":\\"" + cls + "\\",\\"text\\":\\"[external]\\",\\"desc\\":\\"[external]\\"}");
+                    }
                     break;
                 }
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED: {
@@ -1688,55 +1698,40 @@ public class AgentAccessibilityService extends AccessibilityService {
             android.view.accessibility.AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return false;
 
-            // Collect candidates by text match AND content-description match
             java.util.List<android.view.accessibility.AccessibilityNodeInfo> nodes =
                 root.findAccessibilityNodeInfosByText(tileLabel);
             if (nodes == null) nodes = new java.util.ArrayList<>();
-            // Also search by content description
             android.view.accessibility.AccessibilityNodeInfo byDesc = findByContentDesc(root, tileLabel);
             if (byDesc != null) nodes.add(0, byDesc);
 
             for (android.view.accessibility.AccessibilityNodeInfo node : nodes) {
+                // Strategy 1: walk up to clickable ancestor and tap its center
                 android.view.accessibility.AccessibilityNodeInfo current = node;
                 for (int depth = 0; depth < 6; depth++) {
                     if (current == null) break;
                     if (current.isClickable()) {
-                        // Get bounds and tap center via gesture dispatch (works on Samsung OneUI)
                         android.graphics.Rect bounds = new android.graphics.Rect();
                         current.getBoundsInScreen(bounds);
-                        if (bounds.isEmpty()) {
-                            // Fallback: action click
-                            boolean r = current.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
+                        if (!bounds.isEmpty()) {
                             root.recycle();
-                            return r;
+                            return tapAtCenter(bounds);
                         }
-                        int cx = (bounds.left + bounds.right) / 2;
-                        int cy = (bounds.top + bounds.bottom) / 2;
-                        android.graphics.Path path = new android.graphics.Path();
-                        path.moveTo(cx, cy);
-                        android.accessibilityservice.GestureDescription.Builder builder =
-                            new android.accessibilityservice.GestureDescription.Builder();
-                        builder.addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50));
-                        final boolean[] done = {false};
-                        final boolean[] success = {false};
-                        dispatchGesture(builder.build(), new android.accessibilityservice.AccessibilityService.GestureResultCallback() {
-                            @Override
-                            public void onCompleted(android.accessibilityservice.GestureDescription g) {
-                                success[0] = true; done[0] = true;
-                            }
-                            @Override
-                            public void onCancelled(android.accessibilityservice.GestureDescription g) {
-                                done[0] = true;
-                            }
-                        }, null);
-                        long waitStart = System.currentTimeMillis();
-                        while (!done[0] && System.currentTimeMillis() - waitStart < 1500) {
-                            Thread.sleep(20);
-                        }
+                        boolean r = current.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
                         root.recycle();
-                        return success[0];
+                        return r;
                     }
                     current = current.getParent();
+                }
+                // Strategy 2: no clickable ancestor (Samsung OneUI row layout).
+                // Tap the top-third of the text node's own bounds.
+                android.graphics.Rect nb = new android.graphics.Rect();
+                node.getBoundsInScreen(nb);
+                if (!nb.isEmpty()) {
+                    root.recycle();
+                    return tapAtPoint(
+                        (nb.left + nb.right) / 2,
+                        nb.top + (nb.height() / 3)
+                    );
                 }
             }
             root.recycle();
@@ -1745,6 +1740,35 @@ public class AgentAccessibilityService extends AccessibilityService {
             android.util.Log.e(TAG, "tapQuickSettingsTile error: " + e.getMessage());
             return false;
         }
+    }
+
+    private boolean tapAtCenter(android.graphics.Rect bounds) {
+        return tapAtPoint((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+    }
+
+    private boolean tapAtPoint(int x, int y) {
+        android.graphics.Path path = new android.graphics.Path();
+        path.moveTo(x, y);
+        android.accessibilityservice.GestureDescription.Builder builder =
+            new android.accessibilityservice.GestureDescription.Builder();
+        builder.addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50));
+        final boolean[] done = {false};
+        final boolean[] success = {false};
+        dispatchGesture(builder.build(), new android.accessibilityservice.AccessibilityService.GestureResultCallback() {
+            @Override
+            public void onCompleted(android.accessibilityservice.GestureDescription g) {
+                success[0] = true; done[0] = true;
+            }
+            @Override
+            public void onCancelled(android.accessibilityservice.GestureDescription g) {
+                done[0] = true;
+            }
+        }, null);
+        long waitStart = System.currentTimeMillis();
+        while (!done[0] && System.currentTimeMillis() - waitStart < 1500) {
+            try { Thread.sleep(20); } catch (InterruptedException ignored) {}
+        }
+        return success[0];
     }
 
     public boolean toggleQuickSetting(String tileLabel) {

@@ -951,6 +951,16 @@ const rules: ParseRule[] = [
     extractParams: (m) => ({ prompt: m[1].trim() }),
   },
   {
+    pattern: /^(?:say|speak|read\s+(?:out\s+)?(?:loud)?)\s+(.+)/i,
+    capability: 'tts',
+    extractParams: (m) => ({ text: m[1].trim() }),
+  },
+  {
+    pattern: /^generate\s+(?:a\s+)?(?:an?\s+)?video\s+(?:of\s+)?(.+)/i,
+    capability: 'video_generate',
+    extractParams: (m) => ({ prompt: m[1].trim() }),
+  },
+  {
     pattern: /^(?:improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself)(?:\s+(.+))?$/i,
     capability: 'self_modify',
     extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
