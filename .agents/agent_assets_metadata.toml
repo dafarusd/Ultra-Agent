@@ -30,3 +30,9 @@ id = "XZ1SyTRTCoUzA-bedVzlb"
 uri = "file://ultra-full-source.txt"
 type = "text"
 title = "ultra-full-source.txt"
+
+[[outputs]]
+id = "r5n-RII6NZ3bHJPw5bbX-"
+uri = "file://ultra-full-source-dump.txt"
+type = "text"
+title = "ultra-full-source-dump.txt"
