@@ -489,7 +489,7 @@ export default function ChatScreen() {
               snapshot[key] = val ? (val.length > 100 ? val.slice(0, 100) + '...' : val) : '(null)';
             } catch { snapshot[key] = '(error)'; }
           }
-          const vaultKeys = ['venice_api_key', 'api_base_url', 'user_tier', 'backend_url'];
+          const vaultKeys = ['venice_api_key', 'api_base_url', 'user_tier'];
           for (const key of vaultKeys) {
             try {
               const val = await vault.get(key);

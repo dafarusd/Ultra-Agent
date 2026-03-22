@@ -41,7 +41,7 @@ const TEXT = "#e0e0e0";
 const DANGER = "#ef4444";
 
 // ── Types ──────────────────────────────────────────────
-type DefaultRole = "chat" | "image" | "code" | "reasoning" | "video";
+type DefaultRole = "chat" | "image" | "code" | "reasoning" | "video" | "audio";
 
 interface ApiDefaults {
   chat: string;
@@ -49,6 +49,7 @@ interface ApiDefaults {
   code: string;
   reasoning: string;
   video: string;
+  audio: string;
 }
 
 // Settings tabs
@@ -67,7 +68,7 @@ export default function SettingsScreen() {
   const [editingApi, setEditingApi] = useState<ApiProvider | null>(null);
   const [isNewApi, setIsNewApi] = useState(false);
   const [defaults, setDefaults] = useState<ApiDefaults>({
-    chat: "", image: "", code: "", reasoning: "", video: "",
+    chat: "", image: "", code: "", reasoning: "", video: "", audio: "",
   });
 
   // ── Cost state ─────────────────────────────────────
@@ -358,7 +359,7 @@ export default function SettingsScreen() {
       await refreshPrimaryEngine(updated);
       // Only clear defaults if no APIs remain — otherwise preserve them.
       if (updated.length === 0) {
-        const cleanDefaults = { chat: "", image: "", code: "", reasoning: "", video: "" };
+        const cleanDefaults = { chat: "", image: "", code: "", reasoning: "", video: "", audio: "" };
         setDefaults(cleanDefaults);
         await vault.set("api_defaults", JSON.stringify(cleanDefaults));
       }
@@ -716,7 +717,7 @@ export default function SettingsScreen() {
                         Choose which model handles each type of request. Models come from your active providers.
                       </Text>
 
-                      {(['chat', 'image', 'code', 'reasoning', 'video'] as DefaultRole[]).map(role => {
+                      {(['chat', 'image', 'code', 'reasoning', 'video', 'audio'] as DefaultRole[]).map(role => {
                         const allModels = availableModels || [];
                         return (
                           <View key={role} style={styles.defaultRow}>
