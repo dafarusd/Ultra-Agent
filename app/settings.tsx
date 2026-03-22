@@ -684,8 +684,8 @@ export default function SettingsScreen() {
                           { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1', cats: ['text', 'code', 'reasoning'] as ApiCategory[] },
                           { name: 'OpenAI', url: 'https://api.openai.com/v1', cats: ['text', 'image', 'code', 'reasoning'] as ApiCategory[] },
                           { name: 'Anthropic', url: 'https://api.anthropic.com/v1', cats: ['text', 'code', 'reasoning'] as ApiCategory[] },
-                          { name: 'Local (Ollama)', url: 'http://localhost:11434/v1', cats: ['text', 'code'] as ApiCategory[] },
-                          { name: 'Local (LM Studio)', url: 'http://localhost:1234/v1', cats: ['text', 'code'] as ApiCategory[] },
+                          { name: 'Local Ollama', url: 'http://localhost:11434/v1', cats: ['text', 'code'] as ApiCategory[] },
+                          { name: 'Local LM Studio', url: 'http://localhost:1234/v1', cats: ['text', 'code'] as ApiCategory[] },
                         ].map(preset => (
                           <Pressable
                             key={preset.name}

@@ -1375,10 +1375,11 @@ export default function ChatScreen() {
           />
 
           {/* Tier indicator */}
-          {agentCore && agentCore.getTierService().getTier() !== 'dev' && (
+          {agentCore && (
             <View style={{ flexDirection: 'row', justifyContent: 'center', paddingBottom: 2 }}>
               <Text style={{ color: '#444', fontSize: 10 }}>
-                {agentCore.getTierService().getTier() === 'pro' ? '⭐ Pro'
+                {agentCore.getTierService().getTier() === 'dev' ? '🛠 Dev'
+                  : agentCore.getTierService().getTier() === 'pro' ? '⭐ Pro'
                   : agentCore.getTierService().getTier() === 'no_ads' ? '🚫 No Ads'
                   : '🆓 Free (Agent Only)'}
                 {' • '}{agentCore.getTierService().getUsage().messageCount} msgs today
