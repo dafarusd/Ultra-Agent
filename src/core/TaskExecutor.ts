@@ -1502,14 +1502,19 @@ export class TaskExecutor {
           : stream === 'alarm' ? 'alarm'
           : stream === 'notification' ? 'notification'
           : 'media';
+        const { DeviceDiagnostics: DD } = await import('../services/DeviceDiagnostics');
+        await DD.logAudioBeforeAfter('before_volume');
+        let volumeResult: { success: boolean; summary: string };
         try {
           const actualPct = await AppController.setVolume(streamType, isNaN(level) ? 50 : Math.max(0, Math.min(100, level)));
-          return { success: true, summary: `${streamType.charAt(0).toUpperCase() + streamType.slice(1)} volume set to ${actualPct}%` };
+          volumeResult = { success: true, summary: `${streamType.charAt(0).toUpperCase() + streamType.slice(1)} volume set to ${actualPct}%` };
         } catch (volErr: any) {
           this.logger.warn(`Native setVolume failed: ${volErr.message} — opening settings`);
           await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
-          return { success: true, summary: 'Opened sound settings — adjust volume there' };
+          volumeResult = { success: true, summary: 'Opened sound settings — adjust volume there' };
         }
+        await DD.logAudioBeforeAfter('after_volume');
+        return volumeResult;
       }
       case 'brightness_set': {
         await IntentLauncher.startActivityAsync('android.settings.DISPLAY_SETTINGS', {});
@@ -1581,29 +1586,44 @@ export class TaskExecutor {
       case 'media_play': {
         const action = params.action?.toLowerCase();
         const keyCode = action === 'pause' ? 127 : 85;
+        const { DeviceDiagnostics: DDMedia } = await import('../services/DeviceDiagnostics');
+        await DDMedia.logAudioBeforeAfter('before_media');
+        let mediaPlayResult: { success: boolean; summary: string };
         try {
           const AgentNativeModule = (await import('../native/AgentNative')).default;
           if (AgentNativeModule?.sendMediaKey) {
             await AgentNativeModule.sendMediaKey(keyCode);
-            return { success: true, summary: `Media ${action || 'play/pause'} triggered` };
+            mediaPlayResult = { success: true, summary: `Media ${action || 'play/pause'} triggered` };
+          } else {
+            await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
+            mediaPlayResult = { success: true, summary: 'Opened media controls (native key injection unavailable)' };
           }
         } catch (mediaErr: any) {
           this.logger.warn(`Media play key injection failed: ${mediaErr.message}`);
+          await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
+          mediaPlayResult = { success: true, summary: 'Opened media controls (native key injection unavailable)' };
         }
-        await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
-        return { success: true, summary: 'Opened media controls (native key injection unavailable)' };
+        await DDMedia.logAudioBeforeAfter('after_media');
+        return mediaPlayResult;
       }
       case 'media_next': {
+        const { DeviceDiagnostics: DDNext } = await import('../services/DeviceDiagnostics');
+        await DDNext.logAudioBeforeAfter('before_media');
+        let mediaNextResult: { success: boolean; summary: string };
         try {
           const AgentNativeModule = (await import('../native/AgentNative')).default;
           if (AgentNativeModule?.sendMediaKey) {
             await AgentNativeModule.sendMediaKey(87);
-            return { success: true, summary: 'Skipped to next track' };
+            mediaNextResult = { success: true, summary: 'Skipped to next track' };
+          } else {
+            mediaNextResult = { success: false, summary: 'Media next requires native module (sendMediaKey)' };
           }
         } catch (nextErr: any) {
           this.logger.warn(`Media next key injection failed: ${nextErr.message}`);
+          mediaNextResult = { success: false, summary: 'Media next requires native module (sendMediaKey)' };
         }
-        return { success: false, summary: 'Media next requires native module (sendMediaKey)' };
+        await DDNext.logAudioBeforeAfter('after_media');
+        return mediaNextResult;
       }
       case 'screenshot': {
         if (!isNative) return { success: false, summary: 'Screenshot requires Android device' };

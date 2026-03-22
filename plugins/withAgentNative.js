@@ -1341,6 +1341,15 @@ public class AgentAccessibilityService extends AccessibilityService {
         info.notificationTimeout = 100;
         setServiceInfo(info);
         Log.i(TAG, "Accessibility service connected, capabilities=" + info.getCapabilities());
+        try {
+            getSharedPreferences("ultra_a11y", MODE_PRIVATE)
+                .edit()
+                .putString("state", "connected")
+                .putLong("connected_at", System.currentTimeMillis())
+                .putLong("last_event", System.currentTimeMillis())
+                .apply();
+        } catch (Exception e) {}
+        android.util.Log.i("AgentA11y", "SERVICE_CONNECTED");
         // === UltraDevLog v4: Crash survival ===
         final Thread.UncaughtExceptionHandler prevHandler = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
@@ -1371,6 +1380,13 @@ public class AgentAccessibilityService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) return;
+        try {
+            getSharedPreferences("ultra_a11y", MODE_PRIVATE)
+                .edit()
+                .putLong("last_event", System.currentTimeMillis())
+                .putString("last_event_pkg", event.getPackageName() != null ? event.getPackageName().toString() : "")
+                .apply();
+        } catch (Exception e) {}
         if (event.getPackageName() != null) {
             currentPackage = event.getPackageName().toString();
         }
@@ -1449,11 +1465,29 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     @Override
-    public void onInterrupt() { Log.w(TAG, "Interrupted"); }
+    public void onInterrupt() {
+        Log.w(TAG, "Interrupted");
+        try {
+            getSharedPreferences("ultra_a11y", MODE_PRIVATE)
+                .edit()
+                .putString("state", "interrupted")
+                .putLong("interrupted_at", System.currentTimeMillis())
+                .apply();
+        } catch (Exception e) {}
+        android.util.Log.w("AgentA11y", "SERVICE_INTERRUPTED");
+    }
 
     @Override
     public void onDestroy() {
         synchronized (instanceLock) { instance = null; }
+        try {
+            getSharedPreferences("ultra_a11y", MODE_PRIVATE)
+                .edit()
+                .putString("state", "destroyed")
+                .putLong("destroyed_at", System.currentTimeMillis())
+                .apply();
+        } catch (Exception e) {}
+        android.util.Log.w("AgentA11y", "SERVICE_DESTROYED");
         super.onDestroy();
     }
 
@@ -2309,6 +2343,27 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
         map.putString("foregroundPackage", pkg != null ? pkg : "null");
         map.putDouble("timestamp", System.currentTimeMillis());
         promise.resolve(map);
+    }
+
+    @ReactMethod
+    public void getA11yServiceState(Promise promise) {
+        try {
+            android.content.SharedPreferences prefs =
+                reactContext.getSharedPreferences("ultra_a11y", android.content.Context.MODE_PRIVATE);
+            WritableMap map = Arguments.createMap();
+            map.putString("state", prefs.getString("state", "unknown"));
+            map.putDouble("connectedAt", prefs.getLong("connected_at", 0));
+            map.putDouble("interruptedAt", prefs.getLong("interrupted_at", 0));
+            map.putDouble("destroyedAt", prefs.getLong("destroyed_at", 0));
+            map.putDouble("lastEvent", prefs.getLong("last_event", 0));
+            map.putString("lastEventPkg", prefs.getString("last_event_pkg", ""));
+            long now = System.currentTimeMillis();
+            long lastEvent = prefs.getLong("last_event", 0);
+            map.putDouble("eventAgeSec", lastEvent > 0 ? (now - lastEvent) / 1000.0 : -1);
+            promise.resolve(map);
+        } catch (Exception e) {
+            promise.reject("A11Y_STATE_ERROR", e.getMessage(), e);
+        }
     }
 }`;
 

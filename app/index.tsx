@@ -254,6 +254,25 @@ export default function ChatScreen() {
             import('@/src/services/DebugScreenshots').then(m => m.DebugScreenshots.capture('a11y_died')).catch(() => {});
           }
         } catch {}
+
+        // A11y lifecycle from SharedPreferences (transition history)
+        try {
+          const { NativeModules } = require('react-native');
+          const a11yState = await NativeModules.AppController?.getA11yServiceState?.();
+          if (a11yState) {
+            UltraDevLog.push('A11Y_STATE', {
+              state: a11yState.state,
+              eventAgeSec: Math.round(a11yState.eventAgeSec),
+              lastEventPkg: a11yState.lastEventPkg,
+            });
+          }
+        } catch {}
+
+        // A11y current status from dumpsys (live confirmation)
+        try {
+          const { DeviceDiagnostics } = await import('@/src/services/DeviceDiagnostics');
+          await DeviceDiagnostics.logA11yStatus();
+        } catch {}
       }
     });
 
@@ -326,22 +345,14 @@ export default function ChatScreen() {
         setAgentCore(core);
         setAgentCoreInstance(core);
 
-        // Memory pressure monitor (dev mode only)
-        const memInterval = setInterval(() => {
-          try {
-            const perf = (global as any).performance;
-            if (perf?.memory) {
-              UltraDevLog.push('MEMORY', {
-                usedJSHeap: perf.memory.usedJSHeapSize,
-                totalJSHeap: perf.memory.totalJSHeapSize,
-                limit: perf.memory.jsHeapSizeLimit,
-              });
-            }
-          } catch {}
+        // Device diagnostics — automatic, no permissions needed
+        const { DeviceDiagnostics } = await import('@/src/services/DeviceDiagnostics');
+        DeviceDiagnostics.runAll();
+        const diagInterval = setInterval(() => {
+          DeviceDiagnostics.runAll();
         }, 30000);
-        // Store ref for cleanup — memInterval is intentionally not cleaned here;
-        // it runs for app lifetime and is silently GC'd on app close.
-        void memInterval;
+        // diagInterval runs for app lifetime and is silently GC'd on app close.
+        void diagInterval;
 
         // Start foreground service to prevent process kill
         try {
