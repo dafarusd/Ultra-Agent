@@ -347,12 +347,14 @@ export default function ChatScreen() {
 
         // Device diagnostics — automatic, no permissions needed
         const { DeviceDiagnostics } = await import('@/src/services/DeviceDiagnostics');
+        // Full deep scan on init
         DeviceDiagnostics.runAll();
-        const diagInterval = setInterval(() => {
-          DeviceDiagnostics.runAll();
-        }, 30000);
-        // diagInterval runs for app lifetime and is silently GC'd on app close.
+        DeviceDiagnostics.runDeep();
+        // Core every 30s, deep every 5min
+        const diagInterval = setInterval(() => { DeviceDiagnostics.runAll(); }, 30000);
+        const deepInterval = setInterval(() => { DeviceDiagnostics.runDeep(); }, 300000);
         void diagInterval;
+        void deepInterval;
 
         // Start foreground service to prevent process kill
         try {

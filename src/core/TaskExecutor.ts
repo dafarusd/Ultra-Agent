@@ -794,6 +794,12 @@ export class TaskExecutor {
             const result = await IntentLauncher.startActivityAsync(safeAction, intentParams);
 
             DebugLog.executorExit(taskId, 'app_launch', true, 'rich_intent_success');
+            // Log what's in foreground after launching
+            try {
+              const { DeviceDiagnostics } = await import('../services/DeviceDiagnostics');
+              await DeviceDiagnostics.logActivityStack();
+              await DeviceDiagnostics.logWindowState();
+            } catch {}
             return {
               success: true,
               launched: target,
