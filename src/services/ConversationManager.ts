@@ -77,7 +77,8 @@ export class ConversationManager {
         await FileSystem.writeAsStringAsync(tmpPath, JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
         try {
           await FileSystem.moveAsync({ from: tmpPath, to: finalPath });
-        } catch {
+        } catch (e: any) {
+          DebugLog.error('ConvManager', `Atomic move failed, direct write: ${e?.message}`, e?.stack);
           await FileSystem.writeAsStringAsync(finalPath, JSON.stringify(conv), { encoding: FileSystem.EncodingType.UTF8 });
           try { await FileSystem.deleteAsync(tmpPath, { idempotent: true }); } catch {}
         }
@@ -137,7 +138,8 @@ export class ConversationManager {
         try {
           const raw = await FileSystem.readAsStringAsync(`${this.dir}/${f}`, { encoding: FileSystem.EncodingType.UTF8 });
           return JSON.parse(raw) as Conversation;
-        } catch {
+        } catch (e: any) {
+          DebugLog.error('ConvManager', `Failed to load conversation ${f}: ${e?.message}`, e?.stack);
           return null;
         }
       }));

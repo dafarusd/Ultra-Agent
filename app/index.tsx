@@ -625,7 +625,8 @@ export default function ChatScreen() {
       else if (replay.type === "model_switch") args.approvedModel = replay.recommendedModel;
       const result = await agentCore.execute(args);
       await handleResult(result, agentCore, conversationId);
-    } catch {
+    } catch (e: any) {
+      UltraDevLog.error('handleApprove', e?.message || 'approval execute failed', e?.stack);
       await reloadMessages(agentCore, conversationId);
     }
     setIsProcessing(false);

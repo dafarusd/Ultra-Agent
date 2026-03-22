@@ -15,6 +15,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
+import { UltraDevLog } from '@/src/utils/UltraDevLog';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -52,6 +53,52 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
+
+  // Global JS error capture — catches everything React ErrorBoundary misses
+  useEffect(() => {
+    // Unhandled promise rejections (the #1 source of silent failures)
+    const rejectionHandler = (event: any) => {
+      const error = event?.reason;
+      const message = error?.message || error?.toString?.() || 'Unknown rejection';
+      const stack = error?.stack || '';
+      UltraDevLog.error('UNHANDLED_REJECTION', message, stack);
+      console.error('[Ultra] Unhandled rejection:', message);
+    };
+
+    // Uncaught synchronous errors (rare in React Native but possible)
+    const errorHandler = (event: any) => {
+      const error = event?.error || event;
+      const message = error?.message || error?.toString?.() || 'Unknown error';
+      const stack = error?.stack || '';
+      UltraDevLog.error('UNCAUGHT_ERROR', message, stack);
+      console.error('[Ultra] Uncaught error:', message);
+    };
+
+    // React Native's global error handler
+    const prevHandler = (global as any).ErrorUtils?.getGlobalHandler?.();
+    (global as any).ErrorUtils?.setGlobalHandler?.((error: Error, isFatal?: boolean) => {
+      try {
+        UltraDevLog.error(
+          isFatal ? 'FATAL_JS_ERROR' : 'JS_ERROR',
+          error?.message || 'Unknown',
+          error?.stack || ''
+        );
+        UltraDevLog.flushToFile();
+      } catch { /* don't recurse */ }
+      if (prevHandler) prevHandler(error, isFatal);
+    });
+
+    // Web-style handlers (some RN environments support these)
+    if (typeof global !== 'undefined') {
+      (global as any).onunhandledrejection = rejectionHandler;
+    }
+
+    return () => {
+      if (prevHandler) {
+        (global as any).ErrorUtils?.setGlobalHandler?.(prevHandler);
+      }
+    };
+  }, []);
 
   if (!fontsLoaded && !fontError) return null;
 

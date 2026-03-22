@@ -78,7 +78,7 @@ async function logUiSnapshot(taskId: string, capability: string): Promise<void> 
       topText: Array.isArray(nodes) ? nodes.filter((n: any) => n.t).slice(0, 8).map((n: any) => (n.t || '').slice(0, 40)) : [],
     };
     DebugLog.push('UI_SNAPSHOT', { taskId, capability, ...summary });
-  } catch { }
+  } catch (e: any) { DebugLog.error('UISnapshot', e?.message || 'snapshot failed', e?.stack); }
 }
 
 export interface TaskResult {
@@ -190,10 +190,10 @@ export class TaskExecutor {
               }
             }
           } catch (stageErr: any) {
-            DebugLog.error('genome_stage', `Genome staging failed: ${stageErr.message}`);
+            DebugLog.error('genome_stage', `Genome staging failed: ${stageErr.message}`, stageErr.stack);
           }
         }
-      } catch (e: any) { DebugLog.error('GenomeInit', e?.message || 'genome staging failed'); }
+      } catch (e: any) { DebugLog.error('GenomeInit', e?.message || 'genome staging failed', e?.stack); }
     }
 
     if (isNative) {
@@ -205,7 +205,7 @@ export class TaskExecutor {
           this.currentGenome = JSON.parse(raw) as Genome;
           return this.currentGenome;
         }
-      } catch (e: any) { DebugLog.error('GenomeLoad', e?.message || 'genome.json parse failed'); }
+      } catch (e: any) { DebugLog.error('GenomeLoad', e?.message || 'genome.json parse failed', e?.stack); }
     } else {
       try {
         const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('ultra:genome') : null;
@@ -213,7 +213,7 @@ export class TaskExecutor {
           this.currentGenome = JSON.parse(raw) as Genome;
           return this.currentGenome;
         }
-      } catch (e: any) { DebugLog.error('GenomeLoad', e?.message || 'localStorage genome parse failed'); }
+      } catch (e: any) { DebugLog.error('GenomeLoad', e?.message || 'localStorage genome parse failed', e?.stack); }
     }
     this.currentGenome = createDefaultGenome();
     await this.persistGenome(this.currentGenome);
@@ -379,7 +379,7 @@ export class TaskExecutor {
       try {
         const currentPkg = await AppController.getActivePackage();
         if (currentPkg) await AppController.allowPackage(currentPkg);
-      } catch (e: any) { DebugLog.error('ReActNav', e?.message || 'pre-allow package failed'); }
+      } catch (e: any) { DebugLog.error('ReActNav', e?.message || 'pre-allow package failed', e?.stack); }
       // Wait for the launched app/settings to render
       await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -859,7 +859,7 @@ export class TaskExecutor {
                     DebugLog.executorExit(taskId, 'app_launch', true, 'browser_fallback');
                     return { success: true, summary: `App not installed — opened ${url} in browser instead.`, fallback: 'browser' };
                   } catch (browserErr: any) {
-                    DebugLog.error('app_launch_browser_fallback', browserErr.message);
+                    DebugLog.error('app_launch_browser_fallback', browserErr.message, browserErr.stack);
                   }
                 }
                 return { success: false, error: `Failed to launch ${target}: ${err.message} (fallback also failed: ${err2.message})` };
@@ -940,7 +940,8 @@ export class TaskExecutor {
             });
             DebugLog.executorExit(taskId, 'app_launch', true, 'messages_intent');
             return { success: true, launched: 'Messages' };
-          } catch {
+          } catch (e: any) {
+            DebugLog.error('AppLaunch', `Messages intent failed: ${e?.message}`, e?.stack);
             try {
               await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
                 data: 'sms:',
@@ -1380,7 +1381,7 @@ export class TaskExecutor {
         try {
           const currentFg = await AppController.getActivePackage();
           if (currentFg) await AppController.allowPackage(currentFg);
-        } catch (e: any) { DebugLog.error('ReActNav', e?.message || 'foreground allow failed'); }
+        } catch (e: any) { DebugLog.error('ReActNav', e?.message || 'foreground allow failed', e?.stack); }
         await AppController.allowPackage('com.android.systemui');
         const { ReActLoop } = await import('./ReActLoop');
         const reactLoop = new ReActLoop(
@@ -1624,7 +1625,8 @@ export class TaskExecutor {
             packageName: 'com.android.systemui',
             className: 'com.android.systemui.screenrecord.ScreenRecordDialog',
           });
-        } catch {
+        } catch (e: any) {
+          DebugLog.error('ScreenRecord', `Direct dialog failed: ${e?.message}`, e?.stack);
           await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.SETTINGS, {});
         }
         return { success: true, summary: 'Screen recording initiated' };

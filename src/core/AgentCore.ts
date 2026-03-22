@@ -191,7 +191,7 @@ export class AgentCore extends SimpleEmitter {
         DebugLog.systemEvent('AgentCore', 'No cost limit configured — using default $2.00/session');
       }
     } catch (costErr: any) {
-      DebugLog.error('AgentCore', `Failed to load cost limits from vault: ${costErr.message}`);
+      DebugLog.error('AgentCore', `Failed to load cost limits from vault: ${costErr.message}`, costErr.stack);
     }
     await safeInit('CostCleanup', () => this.costTracker.cleanup(30));
     DebugLog.agentInitComplete(Date.now() - initStart);
@@ -203,7 +203,7 @@ export class AgentCore extends SimpleEmitter {
       await this.eventMonitor.start();
       DebugLog.systemEvent('AgentCore', 'EventMonitor started');
     } catch (evErr: any) {
-      DebugLog.error('EventMonitor', `Failed to start: ${evErr.message}`);
+      DebugLog.error('EventMonitor', `Failed to start: ${evErr.message}`, evErr.stack);
     }
 
     this.emit('log', 'All systems online', 'agent');
@@ -232,7 +232,7 @@ export class AgentCore extends SimpleEmitter {
       const data = await SystemInfoService.gather();
       this.lastSystemContext = SystemInfoService.toContextString(data);
     } catch (e: any) {
-      DebugLog.error('SystemContext', e?.message || 'gather failed');
+      DebugLog.error('SystemContext', e?.message || 'gather failed', e?.stack);
       this.lastSystemContext = '';
     }
   }
@@ -516,7 +516,7 @@ You are always on. Always capable. Always direct.`;
                 if (nodes.length > 0) {
                   screenContext = '\nCurrent screen:\n' + nodes.slice(0, 15).map((n: any) => `[${n.i}] "${(n.t || n.d || '').slice(0, 40)}" ${n.c ? '[tappable]' : ''}`).join('\n');
                 }
-              } catch {}
+              } catch (e: any) { DebugLog.error('MultiStepScreen', e?.message || 'screen read failed', e?.stack); }
               const ctxPrompt = this.buildDynamicPrompt({ mode: 'command', userInput: stepInput, summary: (prevResult ? `Previous step (${prevCapability}) result: ${prevResult}` : '') + screenContext, capabilities: capList });
               const stepFinalMessages = [
                 { role: 'system', content: ctxPrompt },
@@ -525,7 +525,7 @@ You are always on. Always capable. Always direct.`;
               const stepAi = await this.ai.completeWithConversation(stepFinalMessages, { taskId, agentId: 'multistep_planner', maxTokens: 800, temperature: 0.2 });
               stepPlan = this.parseActionPlan(stepAi.content);
             } catch (aiErr: any) {
-              DebugLog.error('MultiStep', `AI routing for step ${si + 1} failed: ${aiErr.message}`);
+              DebugLog.error('MultiStep', `AI routing for step ${si + 1} failed: ${aiErr.message}`, aiErr.stack);
             }
           }
           if (stepPlan) {
@@ -991,7 +991,7 @@ You are always on. Always capable. Always direct.`;
         }
         step('ADAPT', `Learned from execution: verified=${verification.verified}`, true);
       } catch (adaptErr: any) {
-        DebugLog.error('ADAPT', adaptErr.message);
+        DebugLog.error('ADAPT', adaptErr.message, adaptErr.stack);
         step('ADAPT', `Learned with error: ${adaptErr.message}`, false);
       }
 
@@ -1001,7 +1001,7 @@ You are always on. Always capable. Always direct.`;
         const wasAi = !planFromParser;
         const creditCost = this.tierService.doesModelRequireCredits(modelUsed) ? 1 : 0;
         await this.tierService.recordMessage(modelUsed, wasAi, creditCost);
-      } catch (tierErr: any) { DebugLog.error('TierService', tierErr.message); }
+      } catch (tierErr: any) { DebugLog.error('TierService', tierErr.message, tierErr.stack); }
 
       await this.ledger.logEvent({
         phase: 'LEARN',
@@ -1067,7 +1067,7 @@ You are always on. Always capable. Always direct.`;
               try {
                 await this.learner.learnAppAlias(query, chosen.packageName);
                 await this.learner.learnPackage(query, chosen.packageName);
-              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed'); }
+              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed', e?.stack); }
             } else if (ordinalCandidate) {
               DebugLog.systemEvent('FuzzyConfirmResolve', `User chose ordinal "${ordinalKey}" → "${ordinalCandidate.appName}" for query "${query}"`);
               mode = 'command';
@@ -1081,7 +1081,7 @@ You are always on. Always capable. Always direct.`;
               try {
                 await this.learner.learnAppAlias(query, ordinalCandidate.packageName);
                 await this.learner.learnPackage(query, ordinalCandidate.packageName);
-              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed'); }
+              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed', e?.stack); }
             } else if (namedCandidate) {
               DebugLog.systemEvent('FuzzyConfirmResolve', `User chose "${namedCandidate.appName}" for query "${query}"`);
               mode = 'command';
@@ -1095,7 +1095,7 @@ You are always on. Always capable. Always direct.`;
               try {
                 await this.learner.learnAppAlias(query, namedCandidate.packageName);
                 await this.learner.learnPackage(query, namedCandidate.packageName);
-              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed'); }
+              } catch (e: any) { DebugLog.error('FuzzyLearn', e?.message || 'learn alias/package failed', e?.stack); }
             }
           }
 
@@ -1139,7 +1139,7 @@ You are always on. Always capable. Always direct.`;
                   'contact_resolution',
                   `User resolved: ${userInput} → tel:${number}`
                 );
-              } catch (e: any) { DebugLog.error('MemoryPromote', e?.message || 'promoteLongterm failed'); }
+              } catch (e: any) { DebugLog.error('MemoryPromote', e?.message || 'promoteLongterm failed', e?.stack); }
               // FIX 3: Permanently store the contact preference so
               // future calls/texts to this name skip disambiguation.
               try {
@@ -1149,7 +1149,7 @@ You are always on. Always capable. Always direct.`;
                   await this.memory.rememberContact(contactName, number, 'resolved');
                   DebugLog.systemEvent('AgentCore', `Contact preference stored: "${contactName}" → ${number.slice(0, 6)}****`);
                 }
-              } catch (e: any) { DebugLog.error('ContactStore', e?.message || 'rememberContact failed'); }
+              } catch (e: any) { DebugLog.error('ContactStore', e?.message || 'rememberContact failed', e?.stack); }
               // Execute the resolved plan immediately — do not fall through to conversation mode
               try {
                 const disambigResult = await this.executor.runWithPlan(plan, taskId);
@@ -1165,14 +1165,14 @@ You are always on. Always capable. Always direct.`;
                 await this.conversations.addMessage(conversationId, disambigMsg);
                 return { type: 'action_result', message: disambigSummary, taskId };
               } catch (disambigErr: any) {
-                DebugLog.error('DisambiguationExecute', disambigErr.message);
+                DebugLog.error('DisambiguationExecute', disambigErr.message, disambigErr.stack);
                 return { type: 'error', message: `Failed to execute resolved action: ${disambigErr.message}`, taskId };
               }
             }
           }
         }
       } catch (e: any) {
-        DebugLog.error('DisambiguationCheck', e.message);
+        DebugLog.error('DisambiguationCheck', e.message, e.stack);
       }
     }
 
@@ -1469,7 +1469,8 @@ You are always on. Always capable. Always direct.`;
         }
       );
       return aiSummary.content || `Done. ${raw.slice(0, 500)}`;
-    } catch {
+    } catch (e: any) {
+      DebugLog.error('Summarizer', e?.message || 'summarization failed', e?.stack);
       const raw = typeof result === 'object' ? JSON.stringify(result) : String(result);
       return `Done. ${raw.slice(0, 500)}`;
     }
