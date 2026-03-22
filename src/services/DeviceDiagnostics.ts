@@ -4,7 +4,7 @@ import { UltraDevLog } from '../utils/UltraDevLog';
 const exec = async (cmd: string): Promise<string> => {
   try {
     if (Platform.OS !== 'android') return '';
-    const result = await NativeModules.AgentNative?.exec?.(cmd);
+    const result = await NativeModules.AgentNative?.exec?.(cmd, '');
     return typeof result === 'string' ? result : '';
   } catch { return ''; }
 };
