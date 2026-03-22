@@ -145,7 +145,7 @@ export default function TaskBuilder({
       presentationStyle="fullScreen"
       onRequestClose={handleClose}
     >
-      <View style={styles.container}>
+      <View style={styles.container} testID="TaskBuilder">
         {/* Header */}
         <View style={styles.header}>
           <Pressable onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>

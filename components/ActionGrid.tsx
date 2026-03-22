@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { UltraDevLog } from '@/src/utils/UltraDevLog';
 import type { GridCategory, GridAction, GridConfig, TaskTemplate } from '@/src/types/actionGrid';
 import { DEFAULT_CATEGORIES, DEFAULT_GRID_CONFIG, getGridForMode } from '@/src/data/defaultGrid';
 
@@ -47,7 +48,16 @@ export default function ActionGrid({
   useEffect(() => {
     AsyncStorage.getItem('action_grid_config').then(raw => {
       if (raw) {
-        try { setConfig(JSON.parse(raw)); } catch (e: any) { console.warn('[ActionGrid] config parse failed:', e?.message); }
+        try {
+          const parsed = JSON.parse(raw);
+          setConfig(parsed);
+          UltraDevLog.push('GRID_LOAD', { favCount: parsed.favorites?.length ?? 0, hiddenCount: parsed.hiddenCategories?.length ?? 0, source: 'storage' });
+        } catch (e: any) {
+          console.warn('[ActionGrid] config parse failed:', e?.message);
+          UltraDevLog.push('GRID_LOAD', { favCount: DEFAULT_GRID_CONFIG.favorites.length, hiddenCount: 0, source: 'default' });
+        }
+      } else {
+        UltraDevLog.push('GRID_LOAD', { favCount: DEFAULT_GRID_CONFIG.favorites.length, hiddenCount: 0, source: 'default' });
       }
     }).catch(() => {});
   }, []);
@@ -63,6 +73,7 @@ export default function ActionGrid({
   const saveConfig = useCallback(async (newConfig: GridConfig) => {
     setConfig(newConfig);
     await AsyncStorage.setItem('action_grid_config', JSON.stringify(newConfig)).catch(() => {});
+    UltraDevLog.push('GRID_SAVE', { favCount: newConfig.favorites.length, hiddenCount: newConfig.hiddenCategories.length });
   }, []);
 
   const allCategories = getGridForMode(currentMode, DEFAULT_CATEGORIES.map(c => {
@@ -99,6 +110,7 @@ export default function ActionGrid({
     .filter(Boolean) as GridAction[];
 
   const handleActionPress = useCallback((action: GridAction) => {
+    UltraDevLog.push('GRID_TAP', { actionId: action.id, capability: action.capability, label: action.label, requiresInput: !!action.requiresInput });
     if (action.capability === '__task__') {
       const template = savedTasks.find(t => t.id === action.params.templateId);
       if (template) onRunTask(template);
@@ -126,6 +138,7 @@ export default function ActionGrid({
     const newFavs = isFav
       ? config.favorites.filter(f => f !== actionId)
       : [...config.favorites, actionId];
+    UltraDevLog.push('GRID_FAV_TOGGLE', { actionId, added: !isFav, totalFavs: newFavs.length });
     saveConfig({ ...config, favorites: newFavs });
   }, [config, saveConfig]);
 
@@ -148,7 +161,7 @@ export default function ActionGrid({
   });
 
   return (
-    <View style={styles.wrapper}>
+    <View style={styles.wrapper} testID="ActionGrid">
       {/* ── Collapsed: favorites row ── */}
       <View style={styles.favRow}>
         <ScrollView
@@ -160,6 +173,7 @@ export default function ActionGrid({
           {favoriteActions.map(action => (
             <Pressable
               key={action.id}
+              testID={`fav_${action.id}`}
               onPress={() => handleActionPress(action)}
               style={({ pressed }) => [styles.favBtn, pressed && styles.favBtnPressed]}
             >
@@ -242,6 +256,7 @@ export default function ActionGrid({
                 {cat.actions.map(action => (
                   <View key={action.id} style={styles.actionCell}>
                     <Pressable
+                      testID={`action_${action.id}`}
                       onPress={() => {
                         if (editMode) return;
                         handleActionPress(action);

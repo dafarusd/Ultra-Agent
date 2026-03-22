@@ -251,6 +251,7 @@ export default function ChatScreen() {
           if (!alive) {
             DebugLog.error('HealthMonitor', 'Accessibility service died while backgrounded');
             setStatus('⚠ Accessibility service disabled — tap to re-enable');
+            import('@/src/services/DebugScreenshots').then(m => m.DebugScreenshots.capture('a11y_died')).catch(() => {});
           }
         } catch {}
       }
@@ -263,6 +264,32 @@ export default function ChatScreen() {
       healthSub.remove();
     };
   }, [agentCore]);
+
+  // ── Render performance monitor ─────────────────────
+  useEffect(() => {
+    let frameCount = 0;
+    let lastCheck = Date.now();
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - lastCheck;
+      if (elapsed > 0) {
+        const fps = Math.round((frameCount / elapsed) * 1000);
+        if (fps < 30) {
+          UltraDevLog.push('RENDER_PERF', { fps, frameCount, elapsed, warning: 'low_fps' });
+        }
+      }
+      frameCount = 0;
+      lastCheck = now;
+    }, 5000);
+
+    const frameCallback = () => {
+      frameCount++;
+      requestAnimationFrame(frameCallback);
+    };
+    requestAnimationFrame(frameCallback);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // ── Init ───────────────────────────────────────────
   useEffect(() => {
@@ -298,6 +325,24 @@ export default function ChatScreen() {
         await core.initialize();
         setAgentCore(core);
         setAgentCoreInstance(core);
+
+        // Memory pressure monitor (dev mode only)
+        const memInterval = setInterval(() => {
+          try {
+            const perf = (global as any).performance;
+            if (perf?.memory) {
+              UltraDevLog.push('MEMORY', {
+                usedJSHeap: perf.memory.usedJSHeapSize,
+                totalJSHeap: perf.memory.totalJSHeapSize,
+                limit: perf.memory.jsHeapSizeLimit,
+              });
+            }
+          } catch {}
+        }, 30000);
+        // Store ref for cleanup — memInterval is intentionally not cleaned here;
+        // it runs for app lifetime and is silently GC'd on app close.
+        void memInterval;
+
         // Start foreground service to prevent process kill
         try {
           const AppCtrl = (await import('@/src/native/AppController')).default;
@@ -420,6 +465,27 @@ export default function ChatScreen() {
             await vault.set('api_base_url', 'https://api.venice.ai/api/v1');
           }
         }
+
+        // Storage snapshot for debugging
+        try {
+          const keys = ['api_defaults', 'saved_apis', 'action_grid_config', 'user_tier', 'tier_usage_today', 'preferred_model', 'dev_mode_enabled', 'onboarding_done', 'battery_optim_prompted'];
+          const snapshot: Record<string, string> = {};
+          for (const key of keys) {
+            try {
+              const val = await AsyncStorage.getItem(key);
+              snapshot[key] = val ? (val.length > 100 ? val.slice(0, 100) + '...' : val) : '(null)';
+            } catch { snapshot[key] = '(error)'; }
+          }
+          const vaultKeys = ['venice_api_key', 'api_base_url', 'user_tier', 'backend_url'];
+          for (const key of vaultKeys) {
+            try {
+              const val = await vault.get(key);
+              snapshot[`vault:${key}`] = val ? (key.includes('key') ? '***set***' : (val.length > 60 ? val.slice(0, 60) + '...' : val)) : '(null)';
+            } catch { snapshot[`vault:${key}`] = '(error)'; }
+          }
+          UltraDevLog.push('STORAGE_SNAPSHOT', snapshot);
+        } catch {}
+
       } catch (err: any) {
         DebugLog.uiError("init", err?.message ?? "Unknown init error");
         setStatus("Init failed");
@@ -507,7 +573,29 @@ export default function ChatScreen() {
             const AppCtrl = (await import('@/src/native/AppController')).default;
             hb = await AppCtrl.heartbeatPing();
           } catch {}
-          response = `System Status\n• A11Y: ${hb.alive ? '✓ Active' : '✗ Inactive'}\n• Foreground: ${hb.foregroundPackage || 'unknown'}\n• Models: ${agentCore.getAvailableModels?.()?.length ?? 0}\n• API Key: ${agentCore.hasApiKey() ? '✓' : '✗'}\n• Default: ${agentCore.getDefaultModel() || 'None'}`;
+          const tier = agentCore.getTierService();
+          const usage = tier.getUsage();
+          const credits = tier.getCredits();
+          const models = agentCore.getAvailableModels?.() || [];
+          const costSummary = agentCore.getCostSummary?.() || { totalCost: 0, totalCalls: 0 };
+          const now = new Date();
+          response = [
+            `━━ Agent Ultra Status ━━`,
+            `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`,
+            ``,
+            `Accessibility: ${hb.alive ? '✓ Active' : '✗ OFF — enable in Settings'}`,
+            `Foreground App: ${hb.foregroundPackage || 'unknown'}`,
+            ``,
+            `Tier: ${tier.getTier().toUpperCase()}`,
+            `Messages Today: ${usage.messageCount} (${usage.aiCallCount} AI)`,
+            `Credits: ${credits.included + credits.purchased} remaining`,
+            `Session Spend: $${(costSummary as any).totalCost?.toFixed(4) || '0'}`,
+            `Total Calls: ${(costSummary as any).totalCalls || 0}`,
+            ``,
+            `Models: ${models.length} available`,
+            `Active: ${agentCore.getDefaultModel() || 'None'}`,
+            `API: ${agentCore.hasApiKey() ? '✓ Connected' : '✗ No key'}`,
+          ].join('\n');
         } else if (cmd === '/capabilities') {
           const caps = agentCore.getCapabilities?.() || [];
           response = `${caps.length} capabilities:\n${caps.map((c: any) => '• ' + c.id).join('\n')}`;
@@ -1185,7 +1273,7 @@ export default function ChatScreen() {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + webTopInset }]}>
+    <View style={[styles.container, { paddingTop: insets.top + webTopInset }]} testID="ChatScreen">
 
       {/* ══════════════════════════════════════════════
           HEADER BAR
@@ -1409,6 +1497,7 @@ export default function ChatScreen() {
           router.push("/settings?tab=logs");
         }}
         onQuickCommand={(cmd) => handleSend(cmd)}
+        onExecuteToggle={handleGridExecute}
       />
 
       <PromptViewer

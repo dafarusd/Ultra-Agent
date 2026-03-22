@@ -24,6 +24,7 @@ export default function ContextBar({ message, currentMode, onExecutePlan, onSend
       showsHorizontalScrollIndicator={false}
       style={styles.container}
       contentContainerStyle={styles.content}
+      testID="ContextBar"
     >
       {actions.map(action => (
         <Pressable

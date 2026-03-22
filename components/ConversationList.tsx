@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ConversationMeta } from "@/src/types/ultra";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { UltraDevLog } from "@/src/utils/UltraDevLog";
 
 const ACCENT = "#34d399";
 const BG = "#000000";
@@ -46,13 +47,35 @@ interface ConversationListProps {
   onOpenSettings: () => void;
   onOpenLogs: () => void;
   onQuickCommand?: (command: string) => void;
+  onExecuteToggle?: (capability: string, params: Record<string, any>) => void;
 }
 
 const QUICK_COMMANDS = [
   { id: "status", label: "System Status", icon: "pulse-outline" as const, command: "/status" },
-  { id: "models", label: "List Models", icon: "server-outline" as const, command: "/models" },
   { id: "cost", label: "Usage & Costs", icon: "wallet-outline" as const, command: "/cost" },
-  { id: "help", label: "Help", icon: "help-circle-outline" as const, command: "/help" },
+];
+
+interface ToggleItem {
+  id: string;
+  label: string;
+  icon: string;
+  capability: string;
+  params: Record<string, any>;
+}
+
+const TOGGLE_TREE: ToggleItem[] = [
+  { id: 'toggle_dnd', label: 'Do Not Disturb', icon: 'moon-outline', capability: 'do_not_disturb', params: {} },
+  { id: 'toggle_wifi', label: 'WiFi', icon: 'wifi', capability: 'wifi_toggle', params: {} },
+  { id: 'toggle_bt', label: 'Bluetooth', icon: 'bluetooth', capability: 'bluetooth_toggle', params: {} },
+  { id: 'toggle_flash', label: 'Flashlight', icon: 'flashlight-outline', capability: 'flashlight_toggle', params: {} },
+  { id: 'toggle_airplane', label: 'Airplane', icon: 'airplane-outline', capability: 'airplane_mode', params: {} },
+  { id: 'toggle_hotspot', label: 'Hotspot', icon: 'cellular-outline', capability: 'open_settings', params: { target: 'tethering settings' } },
+  { id: 'toggle_location', label: 'Location', icon: 'location-outline', capability: 'device_location', params: {} },
+  { id: 'toggle_rotate', label: 'Auto-Rotate', icon: 'phone-landscape-outline', capability: 'screen_rotate', params: {} },
+  { id: 'toggle_vol_up', label: 'Vol +', icon: 'volume-high-outline', capability: 'volume_set', params: { direction: 'up' } },
+  { id: 'toggle_vol_down', label: 'Vol -', icon: 'volume-low-outline', capability: 'volume_set', params: { direction: 'down' } },
+  { id: 'toggle_mute', label: 'Mute', icon: 'volume-mute-outline', capability: 'volume_set', params: { level: 0 } },
+  { id: 'toggle_screenshot', label: 'Screenshot', icon: 'camera-outline', capability: 'screenshot', params: {} },
 ];
 
 // ── Helpers ────────────────────────────────────────────
@@ -136,6 +159,7 @@ export default function ConversationList({
   onOpenSettings,
   onOpenLogs,
   onQuickCommand,
+  onExecuteToggle,
 }: ConversationListProps) {
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
@@ -160,6 +184,7 @@ export default function ConversationList({
   }, []);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [toggleTreeOpen, setToggleTreeOpen] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -167,6 +192,7 @@ export default function ConversationList({
         Animated.spring(slideAnim, { toValue: 0, tension: 65, friction: 11, useNativeDriver: true }),
         Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
+      UltraDevLog.push('SIDEBAR_OPEN', { convCount: conversations.length, folderCount: folders.length });
     } else {
       Animated.parallel([
         Animated.timing(slideAnim, { toValue: -DRAWER_WIDTH, duration: 200, useNativeDriver: true }),
@@ -198,16 +224,21 @@ export default function ConversationList({
     Alert.alert(folder.name, 'Folder view coming in the next update. You can create and organize folders now.');
   }, [onClose, onOpenLogs]);
 
+  const handleConvSelect = useCallback((id: string) => {
+    UltraDevLog.push('SIDEBAR_CONV_SELECT', { convId: id });
+    onSelect(id);
+  }, [onSelect]);
+
   const renderConversation = useCallback(
     ({ item }: { item: ConversationMeta }) => (
       <ConversationItem
         item={item}
         isCurrent={item.id === currentConversationId}
-        onSelect={onSelect}
+        onSelect={handleConvSelect}
         onDelete={onDelete}
       />
     ),
-    [currentConversationId, onSelect, onDelete]
+    [currentConversationId, handleConvSelect, onDelete]
   );
 
   return (
@@ -218,6 +249,7 @@ export default function ConversationList({
         </TouchableWithoutFeedback>
 
         <Animated.View
+          testID="ConversationList"
           style={[
             styles.drawer,
             {
@@ -242,6 +274,7 @@ export default function ConversationList({
 
           {/* ── New Chat (plain row, no green bg) ──────── */}
           <Pressable
+            testID="sidebar_new_chat"
             onPress={() => { onNewChat(); onClose(); }}
             style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]}
           >
@@ -251,12 +284,43 @@ export default function ConversationList({
 
           {/* ── Settings (gear moved here) ─────────────── */}
           <Pressable
+            testID="sidebar_settings"
             onPress={() => { onClose(); onOpenSettings(); }}
             style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]}
           >
             <Ionicons name="settings-outline" size={20} color={TEXT} />
             <Text style={styles.menuRowText}>Settings</Text>
           </Pressable>
+
+          {/* ── Toggle Tree ──────────────────────────────── */}
+          <Pressable
+            onPress={() => setToggleTreeOpen(prev => !prev)}
+            style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]}
+            testID="toggle_tree_root"
+          >
+            <Ionicons name="git-branch-outline" size={20} color={toggleTreeOpen ? ACCENT : TEXT} />
+            <Text style={[styles.menuRowText, toggleTreeOpen && { color: ACCENT }]}>Quick Toggles</Text>
+            <Ionicons name={toggleTreeOpen ? 'chevron-up' : 'chevron-down'} size={14} color={DIM} style={{ marginLeft: 'auto' }} />
+          </Pressable>
+
+          {toggleTreeOpen && (
+            <View style={styles.toggleGrid}>
+              {TOGGLE_TREE.map(toggle => (
+                <Pressable
+                  key={toggle.id}
+                  testID={toggle.id}
+                  onPress={() => {
+                    UltraDevLog.push('TOGGLE_TAP', { id: toggle.id, capability: toggle.capability });
+                    onExecuteToggle?.(toggle.capability, toggle.params);
+                  }}
+                  style={({ pressed }) => [styles.toggleBtn, pressed && styles.toggleBtnPressed]}
+                >
+                  <Ionicons name={toggle.icon as any} size={18} color={TEXT_DIM} />
+                  <Text style={styles.toggleLabel} numberOfLines={1}>{toggle.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
 
           {/* ── Divider ─────────────────────────────────── */}
           <View style={styles.divider} />
@@ -269,7 +333,8 @@ export default function ConversationList({
             {QUICK_COMMANDS.map((cmd) => (
               <Pressable
                 key={cmd.id}
-                onPress={() => { onClose(); onQuickCommand?.(cmd.command); }}
+                testID={`quick_${cmd.id}`}
+                onPress={() => { UltraDevLog.push('SIDEBAR_QUICK', { command: cmd.command }); onClose(); onQuickCommand?.(cmd.command); }}
                 style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
               >
                 <Ionicons name={cmd.icon} size={16} color={TEXT_DIM} />
@@ -565,6 +630,19 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: "Inter_400Regular",
   },
+
+  // Toggle tree
+  toggleGrid: {
+    flexDirection: 'row', flexWrap: 'wrap',
+    paddingHorizontal: 8, paddingBottom: 8, gap: 6,
+  },
+  toggleBtn: {
+    width: '30%', flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 8, paddingHorizontal: 8,
+    backgroundColor: SURFACE2, borderRadius: 8,
+  },
+  toggleBtnPressed: { backgroundColor: SURFACE3 },
+  toggleLabel: { color: TEXT_DIM, fontSize: 11, flex: 1 },
 
   // Empty
   emptyState: {

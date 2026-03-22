@@ -52,7 +52,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
   });
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
+    <View style={[styles.container, { backgroundColor: theme.background }]} testID="ErrorFallback">
       {__DEV__ ? (
         <Pressable
           onPress={() => setIsModalVisible(true)}

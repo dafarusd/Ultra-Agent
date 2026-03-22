@@ -128,7 +128,7 @@ export default function QuickReplies({ message, onSelect }: QuickRepliesProps) {
   if (replies.length === 0) return null;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID="QuickReplies">
       {replies.map((reply) => (
         <Pressable
           key={reply.id}

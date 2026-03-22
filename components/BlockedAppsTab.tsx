@@ -131,7 +131,7 @@ export default function BlockedAppsTab({ isNative }: BlockedAppsTabProps) {
   };
 
   return (
-    <View style={s.container}>
+    <View style={s.container} testID="BlockedAppsTab">
       <View style={s.noticeBox}>
         <Ionicons name="warning-outline" size={14} color="#fbbf24" />
         <Text style={s.noticeText}>

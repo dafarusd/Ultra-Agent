@@ -14,6 +14,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import TouchInterceptor from "@/components/TouchInterceptor";
 import { queryClient } from "@/lib/query-client";
 import { UltraDevLog } from '@/src/utils/UltraDevLog';
 
@@ -84,6 +85,9 @@ export default function RootLayout() {
           error?.stack || ''
         );
         UltraDevLog.flushToFile();
+        if (isFatal) {
+          import('../src/services/DebugScreenshots').then(m => m.DebugScreenshots.capture('fatal_error')).catch(() => {});
+        }
       } catch { /* don't recurse */ }
       if (prevHandler) prevHandler(error, isFatal);
     });
@@ -104,6 +108,7 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
+      <TouchInterceptor>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
@@ -114,6 +119,7 @@ export default function RootLayout() {
           </GestureHandlerRootView>
         </QueryClientProvider>
       </ErrorBoundary>
+      </TouchInterceptor>
     </SafeAreaProvider>
   );
 }

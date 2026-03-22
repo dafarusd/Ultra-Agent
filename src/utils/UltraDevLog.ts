@@ -1026,6 +1026,20 @@ export class UltraDevLog {
     lines.push(''); lines.push(`-- PICKER TRACE (last ${picker.length}) -------------------`);
     picker.length === 0 ? lines.push('  None.') : picker.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
 
+    const shots = entries.filter(e => e.cat === 'DEBUG_SCREENSHOT' || e.cat === 'DEBUG_SCREENSHOT_FAIL').slice(-10);
+    if (shots.length > 0) {
+      lines.push(''); lines.push(`-- DEBUG SCREENSHOTS (${shots.length}) -----------------------`);
+      shots.forEach(e => {
+        const tag = e.cat === 'DEBUG_SCREENSHOT_FAIL' ? '[FAIL]' : '[OK]';
+        lines.push(`  ${tag} reason=${e.data.reason} ts=${e.data.timestamp ?? ''} path=${e.data.filepath ?? e.data.error ?? ''}`);
+      });
+      const screenshotDir = entries.find(e => e.cat === 'DEBUG_SCREENSHOT')?.data.filepath;
+      if (screenshotDir) {
+        const dir = String(screenshotDir).split('/').slice(0, -1).join('/');
+        lines.push(`  Screenshots dir: ${dir}/`);
+      }
+    }
+
     lines.push(''); lines.push(hr); lines.push(`END -- paste to Replit`); lines.push(hr);
     return lines.join('\n');
   }

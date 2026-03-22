@@ -70,7 +70,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
   };
 
   return (
-    <View style={[s.root, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
+    <View style={[s.root, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]} testID="OnboardingScreen">
       <View style={s.dotsRow}>
         {STEPS.map((_, i) => (
           <View key={i} style={[s.dot, i === step && s.dotActive]} />

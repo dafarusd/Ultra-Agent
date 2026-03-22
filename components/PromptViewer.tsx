@@ -175,7 +175,7 @@ export default function PromptViewer({ visible, trace, onClose }: PromptViewerPr
   return (
     <Modal visible={visible} animationType="slide" transparent statusBarTranslucent>
       <View style={styles.overlay}>
-        <View style={styles.surface}>
+        <View style={styles.surface} testID="PromptViewer">
           <View style={styles.header}>
             <Text style={styles.title}>Execution Trace</Text>
             <Pressable onPress={onClose} hitSlop={12}>

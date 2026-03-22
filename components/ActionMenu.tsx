@@ -57,7 +57,7 @@ export default function ActionMenu({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.backdrop}>
+        <View style={styles.backdrop} testID="ActionMenu">
           <TouchableWithoutFeedback>
             <View style={[styles.menu, { right: anchorRight, top: anchorTop }]}>
               {items.map((item, index) => {

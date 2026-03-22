@@ -488,7 +488,9 @@ export default function SettingsScreen() {
         {(["apis", "costs", "logs", "blocked"] as SettingsTab[]).filter((t) => t !== "logs" || isDevMode).map((t) => (
           <Pressable
             key={t}
+            testID={`SettingsTab-${t}`}
             onPress={() => {
+              UltraDevLog.push('SETTINGS_TAB_SWITCH', { from: tab, to: t });
               setTab(t);
               if (t === "logs") { loadLogs(); }
               if (t === "costs") loadCostData();

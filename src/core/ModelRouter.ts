@@ -174,6 +174,16 @@ export class ModelRouter {
       clearTimeout(timeout);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
+      const sample = (Array.isArray(data?.data) ? data.data : []).slice(0, 3).map((m: any) => ({
+        id: m.id,
+        type: m.type,
+        object: m.object,
+        specType: m.model_spec?.type,
+        specName: m.model_spec?.name,
+        caps: m.model_spec?.capabilities ? Object.fromEntries(Object.entries(m.model_spec.capabilities).filter(([_, v]) => v === true)) : null,
+        pricing: m.model_spec?.pricing,
+      }));
+      DebugLog.push('NET_MODELS_RAW', { totalCount: (data?.data || []).length, sample });
       const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
       for (const m of list) {
         const spec = m.model_spec || {};
@@ -182,7 +192,7 @@ export class ModelRouter {
         const validModelTypes: ModelDef['type'][] = ['text', 'image', 'video', 'audio', 'embedding'];
         const rawType = m.type || 'text';
         const rawApiType = m.type || spec.type || '';
-        const classifiedType = classifyModelType(m.id, m.name || m.id, rawApiType);
+        const classifiedType = classifyModelType(m.id, m.name || m.id, rawApiType, caps);
         const modelType: ModelDef['type'] = (classifiedType && validModelTypes.includes(classifiedType as ModelDef['type']))
           ? (classifiedType as ModelDef['type'])
           : validModelTypes.includes(rawType as ModelDef['type'])
@@ -220,10 +230,22 @@ export class ModelRouter {
       }
       this.logger.info(`Discovered ${list.length} models`);
 
+      // Log per-model classification detail
+      const classificationLog: Array<{ id: string; apiType: string; classified: string; caps: string }> = [];
+      for (const [modelId, model] of this.models) {
+        classificationLog.push({
+          id: modelId,
+          apiType: model.type,
+          classified: classifyModelType(modelId, model.name, model.type, model.capabilities),
+          caps: Object.entries(model.capabilities).filter(([_, v]) => v === true).map(([k]) => k).join(','),
+        });
+      }
+      DebugLog.push('MODEL_DISCOVERY_DETAIL', { models: classificationLog });
+
       // Log classification breakdown using classifyModelType
       const breakdown: Record<string, number> = {};
       for (const [, model] of this.models) {
-        const cat = classifyModelType(model.id, model.name, model.type);
+        const cat = classifyModelType(model.id, model.name, model.type, model.capabilities);
         breakdown[cat] = (breakdown[cat] || 0) + 1;
       }
       DebugLog.modelState('picker_classification', breakdown);

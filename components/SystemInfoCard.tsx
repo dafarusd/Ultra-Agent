@@ -95,7 +95,7 @@ export default function SystemInfoCard({ data }: Props) {
   const storageColor = statusColor(100 - data.storage.usedPercent, false);
 
   return (
-    <View style={styles.card}>
+    <View style={styles.card} testID="SystemInfoCard">
       <View style={styles.header}>
         <MaterialCommunityIcons name="monitor-dashboard" size={16} color={ACCENT} />
         <Text style={styles.title}>System Info</Text>
