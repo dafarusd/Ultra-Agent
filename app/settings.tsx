@@ -136,21 +136,14 @@ export default function SettingsScreen() {
     loadCostData();
   }, []);
 
-  // ── Load models when defaults section expands ─────
+  // ── Load models when API tab is shown ─────
   useEffect(() => {
-    if (defaultsExpanded) {
+    if (tab === 'apis') {
       const core = getAgentCoreInstance();
       const models = core ? core.getAvailableModels() || [] : [];
       setAvailableModels(models);
-      DebugLog.settingsState("defaults_expanded", {
-        tab,
-        defaults,
-        apiCount: apis.length,
-        availableModelsCount: models.length,
-        defaultsExpanded: true,
-      });
     }
-  }, [defaultsExpanded]);
+  }, [tab, apis.length]);
 
   const handleVersionTap = useCallback(() => {
     devTapCountRef.current += 1;
@@ -174,7 +167,20 @@ export default function SettingsScreen() {
       // Load saved APIs
       const savedApis = await vault.get("saved_apis");
       if (savedApis) {
-        try { setApis(JSON.parse(savedApis)); } catch {}
+        try {
+          const parsed: ApiProvider[] = JSON.parse(savedApis);
+          // Migration: ensure all providers have categories and isActive fields
+          const migrated = parsed.map((a) => ({
+            ...a,
+            categories: a.categories && a.categories.length > 0 ? a.categories : ['text' as ApiCategory],
+            isActive: a.isActive !== undefined ? a.isActive : true,
+          }));
+          const needsWrite = migrated.some((a, i) => a.categories !== parsed[i]?.categories || a.isActive !== parsed[i]?.isActive);
+          setApis(migrated);
+          if (needsWrite) {
+            await vault.set('saved_apis', JSON.stringify(migrated));
+          }
+        } catch {}
       } else {
         // Migration: if there's an existing Venice API key, create a saved API entry for it
         const legacyKey = await vault.get("venice_api_key");
