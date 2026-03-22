@@ -657,6 +657,30 @@ export class TaskExecutor {
             allowsEditing: false,
           });
           if (camResult.canceled || !camResult.assets?.length) {
+            // Camera may have returned "cancelled" due to the app going to background
+            // during the camera session (common on Samsung). Check if a photo was
+            // actually taken in the last 30 seconds.
+            try {
+              const recent = await MediaLibrary.getAssetsAsync({
+                first: 1,
+                sortBy: [MediaLibrary.SortBy.creationTime],
+                mediaType: [MediaLibrary.MediaType.photo],
+              });
+              if (recent.assets.length > 0) {
+                const recovered = recent.assets[0];
+                const ageMs = Date.now() - recovered.creationTime;
+                if (ageMs < 30000) {
+                  DebugLog.push('CAMERA_RECOVERY', { ageMs, uri: recovered.uri.slice(0, 60) });
+                  return {
+                    success: true,
+                    summary: `Photo captured: ${recovered.filename}`,
+                    data: { uri: recovered.uri, width: recovered.width, height: recovered.height, filename: recovered.filename },
+                  };
+                }
+              }
+            } catch (recoveryErr: any) {
+              DebugLog.error('CameraRecovery', recoveryErr?.message || 'recovery failed', recoveryErr?.stack);
+            }
             return { success: false, summary: 'Camera capture cancelled by user' };
           }
           const asset = camResult.assets[0];

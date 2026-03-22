@@ -16,7 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ConversationMeta } from "@/src/types/ultra";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AppStorage } from "@/src/utils/AppStorage";
 import { UltraDevLog } from "@/src/utils/UltraDevLog";
 
 const ACCENT = "#34d399";
@@ -173,7 +173,7 @@ export default function ConversationList({
   ]);
 
   useEffect(() => {
-    AsyncStorage.getItem('user_folders').then(raw => {
+    AppStorage.get('user_folders').then(raw => {
       if (raw) {
         try {
           const saved: Folder[] = JSON.parse(raw);
@@ -211,7 +211,7 @@ export default function ConversationList({
     setNewFolderName("");
     setShowNewFolder(false);
     try {
-      await AsyncStorage.setItem('user_folders', JSON.stringify(updated.filter(f => !f.isSystem)));
+      await AppStorage.set('user_folders', JSON.stringify(updated.filter(f => !f.isSystem)));
     } catch {}
   }, [newFolderName, folders]);
 

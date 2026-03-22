@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AppStorage } from "@/src/utils/AppStorage";
 import {
   View,
   Text,
@@ -123,7 +124,7 @@ export default function SettingsScreen() {
 
   // ── Load dev mode on mount ─────────────────────────
   useEffect(() => {
-    AsyncStorage.getItem("dev_mode_enabled").then((v) => { if (v === "1") setIsDevMode(true); });
+    AppStorage.get("dev_mode_enabled").then((v) => { if (v === "1") setIsDevMode(true); });
   }, []);
 
   useEffect(() => {
@@ -154,7 +155,7 @@ export default function SettingsScreen() {
       devTapCountRef.current = 0;
       const next = !isDevMode;
       setIsDevMode(next);
-      AsyncStorage.setItem("dev_mode_enabled", next ? "1" : "0");
+      AppStorage.set("dev_mode_enabled", next ? "1" : "0");
       Alert.alert(next ? "Dev Mode ON" : "Dev Mode OFF", next ? "Logs tab and advanced options enabled." : "Dev mode disabled.");
     }
   }, [isDevMode]);

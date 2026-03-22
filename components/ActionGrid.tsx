@@ -4,7 +4,7 @@ import {
   Animated, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppStorage } from '@/src/utils/AppStorage';
 import { UltraDevLog } from '@/src/utils/UltraDevLog';
 import type { GridCategory, GridAction, GridConfig, TaskTemplate } from '@/src/types/actionGrid';
 import { DEFAULT_CATEGORIES, DEFAULT_GRID_CONFIG, getGridForMode } from '@/src/data/defaultGrid';
@@ -46,7 +46,7 @@ export default function ActionGrid({
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem('action_grid_config').then(raw => {
+    AppStorage.get('action_grid_config').then(raw => {
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
@@ -72,7 +72,7 @@ export default function ActionGrid({
 
   const saveConfig = useCallback(async (newConfig: GridConfig) => {
     setConfig(newConfig);
-    await AsyncStorage.setItem('action_grid_config', JSON.stringify(newConfig)).catch(() => {});
+    await AppStorage.set('action_grid_config', JSON.stringify(newConfig));
     UltraDevLog.push('GRID_SAVE', { favCount: newConfig.favorites.length, hiddenCount: newConfig.hiddenCategories.length });
   }, []);
 

@@ -2395,6 +2395,8 @@ public class AgentBackgroundService extends Service {
             .setSmallIcon(android.R.drawable.ic_menu_manage)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
+            .setNumber(0)
+            .setBadgeIconType(android.app.Notification.BADGE_ICON_NONE)
             .build();
         startForeground(NOTIFICATION_ID, notification);
         Log.i(TAG, "Background service started");
@@ -2434,6 +2436,8 @@ public class AgentBackgroundService extends Service {
                 NotificationManager.IMPORTANCE_LOW
             );
             channel.setDescription("Keeps Agent Ultra running in the background");
+            channel.setShowBadge(false);
+            channel.setSound(null, null);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }

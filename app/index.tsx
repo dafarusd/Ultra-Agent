@@ -15,6 +15,7 @@ import {
   Image,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AppStorage } from "@/src/utils/AppStorage";
 import * as Clipboard from "expo-clipboard";
 import * as Device from 'expo-device';
 import NetInfo from '@react-native-community/netinfo';
@@ -169,19 +170,19 @@ export default function ChatScreen() {
 
   // ── Force grid layout reset on v5.1 upgrade ───────
   useEffect(() => {
-    AsyncStorage.getItem('grid_config_version').then(v => {
+    AppStorage.get('grid_config_version').then(v => {
       if (v !== '5.1') {
-        AsyncStorage.removeItem('action_grid_config');
-        AsyncStorage.setItem('grid_config_version', '5.1');
+        AppStorage.remove('action_grid_config');
+        AppStorage.set('grid_config_version', '5.1');
       }
-    }).catch(() => {});
+    });
   }, []);
 
   // ── Load saved tasks from storage ──────────────────
   useEffect(() => {
-    AsyncStorage.getItem('task_templates').then(raw => {
+    AppStorage.get('task_templates').then(raw => {
       if (raw) { try { setSavedTasks(JSON.parse(raw)); } catch (e: any) { DebugLog.uiError('task_templates_parse', e?.message || 'invalid JSON'); } }
-    }).catch(() => {});
+    });
   }, []);
 
   // ── Data loaders ───────────────────────────────────
@@ -247,26 +248,45 @@ export default function ChatScreen() {
       if (nextState === 'active' && agentCore) {
         try {
           const AppCtrl = (await import('@/src/native/AppController')).default;
-          const alive = await AppCtrl.isServiceEnabled();
-          if (!alive) {
-            DebugLog.error('HealthMonitor', 'Accessibility service died while backgrounded');
-            setStatus('⚠ Accessibility service disabled — tap to re-enable');
-            import('@/src/services/DebugScreenshots').then(m => m.DebugScreenshots.capture('a11y_died')).catch(() => {});
+          const { NativeModules: NM } = require('react-native');
+
+          // Detailed a11y health check: distinguish frozen vs actually dead
+          let a11yStatus = 'unknown';
+          let a11yDetail = '';
+          try {
+            const isEnabled = await AppCtrl.isServiceEnabled();
+            const a11yState = await NM.AppController?.getA11yServiceState?.();
+
+            if (!isEnabled) {
+              a11yStatus = 'disabled';
+              a11yDetail = 'Accessibility service is disabled — re-enable in Settings';
+              DebugLog.error('HealthMonitor', 'Accessibility service disabled');
+            } else if (a11yState && a11yState.eventAgeSec > 120) {
+              a11yStatus = 'frozen';
+              a11yDetail = `Accessibility service frozen — no events for ${Math.round(a11yState.eventAgeSec)}s. Toggle it off/on in Settings.`;
+              DebugLog.error('HealthMonitor', `Accessibility service frozen: eventAge=${Math.round(a11yState.eventAgeSec)}s lastPkg=${a11yState.lastEventPkg}`);
+            } else {
+              a11yStatus = 'active';
+            }
+
+            UltraDevLog.push('A11Y_STATE', {
+              state: a11yState?.state || 'unknown',
+              eventAgeSec: Math.round(a11yState?.eventAgeSec || -1),
+              lastEventPkg: a11yState?.lastEventPkg || '',
+              healthStatus: a11yStatus,
+            });
+          } catch {}
+
+          if (a11yStatus === 'disabled' || a11yStatus === 'frozen') {
+            setStatus(`⚠ ${a11yDetail}`);
+            try {
+              const { DebugScreenshots } = await import('@/src/services/DebugScreenshots');
+              await DebugScreenshots.capture(a11yStatus === 'frozen' ? 'a11y_frozen' : 'a11y_disabled');
+            } catch {}
           }
         } catch {}
 
-        // A11y lifecycle from SharedPreferences (transition history)
-        try {
-          const { NativeModules } = require('react-native');
-          const a11yState = await NativeModules.AppController?.getA11yServiceState?.();
-          if (a11yState) {
-            UltraDevLog.push('A11Y_STATE', {
-              state: a11yState.state,
-              eventAgeSec: Math.round(a11yState.eventAgeSec),
-              lastEventPkg: a11yState.lastEventPkg,
-            });
-          }
-        } catch {}
+        // A11y lifecycle: logged above in detailed health check block
 
         // A11y current status from dumpsys (live confirmation)
         try {
@@ -336,6 +356,28 @@ export default function ChatScreen() {
       try {
         const vault = await SecureVault.initialize();
         DebugLog.uiInit("vault", "SecureVault initialized");
+
+        // ── Migrate AsyncStorage → Vault (one-time per session) ──
+        // AsyncStorage doesn't survive process kills on Samsung.
+        // SecureVault (Expo SecureStore) does. Move critical keys.
+        const MIGRATE_KEYS = [
+          'api_defaults', 'saved_apis', 'action_grid_config',
+          'preferred_model', 'dev_mode_enabled', 'onboarding_done',
+          'battery_optim_prompted', 'user_folders', 'task_templates',
+          'grid_config_version',
+        ];
+        for (const key of MIGRATE_KEYS) {
+          try {
+            const vaultVal = await vault.get(key);
+            if (vaultVal) continue;
+            const asVal = await AsyncStorage.getItem(key);
+            if (asVal) {
+              await vault.set(key, asVal);
+              UltraDevLog.push('STORAGE_MIGRATE', { key, from: 'async', to: 'vault', size: asVal.length });
+            }
+          } catch {}
+        }
+
         const core = new AgentCore(vault, (msg: string, type: string) => {
           setStatus(msg);
           if (type === "build_progress") setBuildPhase(msg);
@@ -414,13 +456,13 @@ export default function ChatScreen() {
         });
 
         // First-launch onboarding
-        const onboardingDone = await AsyncStorage.getItem("onboarding_done").catch(() => null);
+        const onboardingDone = await AppStorage.get("onboarding_done");
         if (!onboardingDone) setShowOnboarding(true);
 
         // Samsung-specific: prompt battery optimization exclusion
         const isSamsung = Device.manufacturer?.toLowerCase().includes('samsung') ?? false;
         if (isSamsung) {
-          const batteryPromptDone = await AsyncStorage.getItem('battery_optim_prompted').catch(() => null);
+          const batteryPromptDone = await AppStorage.get('battery_optim_prompted');
           if (!batteryPromptDone) {
             setTimeout(() => {
               Alert.alert(
@@ -438,10 +480,10 @@ export default function ChatScreen() {
                       const { Linking } = require('react-native');
                       Linking.openSettings();
                     }
-                    AsyncStorage.setItem('battery_optim_prompted', '1').catch(() => {});
+                    AppStorage.set('battery_optim_prompted', '1');
                   }},
                   { text: 'Later', onPress: () => {
-                    AsyncStorage.setItem('battery_optim_prompted', '1').catch(() => {});
+                    AppStorage.set('battery_optim_prompted', '1');
                   }},
                 ]
               );
@@ -1003,7 +1045,7 @@ export default function ChatScreen() {
   const handleSaveTask = useCallback(async (template: TaskTemplate) => {
     const updated = [...savedTasks.filter(t => t.id !== template.id), template];
     setSavedTasks(updated);
-    await AsyncStorage.setItem('task_templates', JSON.stringify(updated)).catch(() => {});
+    await AppStorage.set('task_templates', JSON.stringify(updated));
   }, [savedTasks]);
 
   // ── Task runner (from Action Grid "My Tasks") ──────
@@ -1254,7 +1296,7 @@ export default function ChatScreen() {
     return (
       <OnboardingScreen
         onComplete={async () => {
-          await AsyncStorage.setItem("onboarding_done", "1").catch(() => {});
+          await AppStorage.set("onboarding_done", "1");
           setShowOnboarding(false);
         }}
       />
