@@ -327,6 +327,26 @@ export default function SettingsScreen() {
     }
   }, [editingApi, isNewApi, apis]);
 
+  // Recompute + apply the primary engine key/URL from the current provider list
+  const refreshPrimaryEngine = useCallback(async (providers: ApiProvider[]) => {
+    try {
+      const vault = await SecureVault.initialize();
+      const primary = providers.find((a) => a.isActive && a.apiKey && (a.categories || []).includes('text'));
+      if (primary) {
+        await vault.set('venice_api_key', primary.apiKey);
+        await vault.set('api_base_url', primary.baseUrl);
+        const core = getAgentCoreInstance();
+        if (core) {
+          await core.refreshApiKey();
+          await core.setApiBaseUrl(primary.baseUrl);
+        }
+      } else {
+        await vault.set('venice_api_key', '');
+        await vault.set('api_base_url', '');
+      }
+    } catch {}
+  }, []);
+
   const deleteApi = useCallback(async (id: string) => {
     DebugLog.settingsApiDelete(id, true);
     const updated = apis.filter((a) => a.id !== id);
@@ -335,16 +355,15 @@ export default function SettingsScreen() {
     try {
       const vault = await SecureVault.initialize();
       await vault.set("saved_apis", JSON.stringify(updated));
+      await refreshPrimaryEngine(updated);
       // Only clear defaults if no APIs remain — otherwise preserve them.
-      // Stale defaults pointing to models from the deleted API will fail
-      // gracefully at ModelRouter and fall back to the engine default.
       if (updated.length === 0) {
         const cleanDefaults = { chat: "", image: "", code: "", reasoning: "", video: "" };
         setDefaults(cleanDefaults);
         await vault.set("api_defaults", JSON.stringify(cleanDefaults));
       }
     } catch (e: any) { DebugLog.uiError("deleteApi_vault", e?.message || "unknown"); }
-  }, [apis]);
+  }, [apis, refreshPrimaryEngine]);
 
   const saveDefaults = useCallback(async () => {
     UltraDevLog.settingsSaveTap('defaults', { defaults });
@@ -631,6 +650,7 @@ export default function SettingsScreen() {
                               try {
                                 const vault = await SecureVault.initialize();
                                 await vault.set('saved_apis', JSON.stringify(updated));
+                                await refreshPrimaryEngine(updated);
                               } catch {}
                             }}
                             style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
