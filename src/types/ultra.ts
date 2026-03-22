@@ -1,3 +1,16 @@
+export type ApiCategory = 'text' | 'image' | 'video' | 'audio' | 'code' | 'reasoning';
+
+export interface ApiProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  password?: string;
+  categories: ApiCategory[];
+  isBuiltIn?: boolean;
+  isActive: boolean;
+}
+
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 export type MessageSource = 'ultra' | 'model' | 'system';
 

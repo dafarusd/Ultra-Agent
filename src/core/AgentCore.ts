@@ -21,7 +21,6 @@ import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import { MemoryManager } from './MemoryManager';
 import { EventMonitor } from '../services/EventMonitor';
 import { TierService } from '../services/TierService';
-import { BackendService } from '../services/BackendService';
 import type {
   ChatMessage,
   UltraExecutionResult,
@@ -90,7 +89,6 @@ export class AgentCore extends SimpleEmitter {
   private parser: CommandParser;
   private memory: MemoryManager;
   private tierService: TierService;
-  private backendService: BackendService;
   private eventMonitor: EventMonitor | null = null;
   private venice: VeniceService;
   private logger: Logger;
@@ -122,7 +120,6 @@ export class AgentCore extends SimpleEmitter {
     this.parser = new CommandParser();
     this.memory = new MemoryManager(vault);
     this.tierService = new TierService(vault);
-    this.backendService = new BackendService(vault);
     this.ready = false;
     this.on('log', cb);
   }
@@ -166,7 +163,6 @@ export class AgentCore extends SimpleEmitter {
       safeInit('Ledger', () => this.ledger.initialize()),
       safeInit('MemoryManager', () => this.memory.initialize()),
       safeInit('TierService', () => this.tierService.initialize()),
-      safeInit('BackendService', () => this.backendService.initialize()),
       safeInit('CapabilityProbe', () => this.probe.probe().then(() => {})),
       safeInit('VeniceService', () => this.venice.initialize()),
     ]);
@@ -999,8 +995,7 @@ You are always on. Always capable. Always direct.`;
       try {
         const modelUsed = this.ai.getDefaultModel();
         const wasAi = !planFromParser;
-        const creditCost = this.tierService.doesModelRequireCredits(modelUsed) ? 1 : 0;
-        await this.tierService.recordMessage(modelUsed, wasAi, creditCost);
+        await this.tierService.recordMessage(modelUsed, wasAi);
       } catch (tierErr: any) { DebugLog.error('TierService', tierErr.message, tierErr.stack); }
 
       await this.ledger.logEvent({
@@ -1486,7 +1481,6 @@ You are always on. Always capable. Always direct.`;
   async setDefaultModel(modelId: string) { await this.ai.setDefaultModel(modelId); }
   getModelRouter() { return this.ai; }
   getTierService(): TierService { return this.tierService; }
-  getBackendService(): BackendService { return this.backendService; }
   getCostSummary() { return this.costTracker.getSummary(); }
   getCapabilities() { return this.caps.getAll(); }
   async getStorageBreakdown() { return this.storage.getBreakdown(); }

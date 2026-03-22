@@ -588,7 +588,6 @@ export default function ChatScreen() {
           } catch {}
           const tier = agentCore.getTierService();
           const usage = tier.getUsage();
-          const credits = tier.getCredits();
           const models = agentCore.getAvailableModels?.() || [];
           const costSummary = agentCore.getCostSummary?.() || { totalCost: 0, totalCalls: 0 };
           const now = new Date();
@@ -601,7 +600,6 @@ export default function ChatScreen() {
             ``,
             `Tier: ${tier.getTier().toUpperCase()}`,
             `Messages Today: ${usage.messageCount} (${usage.aiCallCount} AI)`,
-            `Credits: ${credits.included + credits.purchased} remaining`,
             `Session Spend: $${(costSummary as any).totalCost?.toFixed(4) || '0'}`,
             `Total Calls: ${(costSummary as any).totalCalls || 0}`,
             ``,
@@ -1381,7 +1379,7 @@ export default function ChatScreen() {
             <View style={{ flexDirection: 'row', justifyContent: 'center', paddingBottom: 2 }}>
               <Text style={{ color: '#444', fontSize: 10 }}>
                 {agentCore.getTierService().getTier() === 'pro' ? '⭐ Pro'
-                  : agentCore.getTierService().getTier() === 'byo' ? '🔑 BYO API'
+                  : agentCore.getTierService().getTier() === 'no_ads' ? '🚫 No Ads'
                   : '🆓 Free (Agent Only)'}
                 {' • '}{agentCore.getTierService().getUsage().messageCount} msgs today
               </Text>

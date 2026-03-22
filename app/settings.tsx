@@ -28,6 +28,7 @@ import { classifyModelType } from "@/src/utils/classifyModelType";
 import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
 import BlockedAppsTab from "@/components/BlockedAppsTab";
 import { BiometricGate } from "@/src/security/BiometricGate";
+import type { ApiCategory, ApiProvider } from "@/src/types/ultra";
 
 // ── Palette ────────────────────────────────────────────
 const ACCENT = "#34d399";
@@ -40,19 +41,10 @@ const TEXT = "#e0e0e0";
 const DANGER = "#ef4444";
 
 // ── Types ──────────────────────────────────────────────
-interface SavedApi {
-  id: string;
-  name: string;
-  baseUrl: string;
-  apiKey: string;
-  password: string; // optional auth token/password
-  isBuiltIn?: boolean; // hidden from non-dev UI
-}
-
 type DefaultRole = "chat" | "image" | "code" | "reasoning" | "video";
 
 interface ApiDefaults {
-  chat: string;       // model id
+  chat: string;
   image: string;
   code: string;
   reasoning: string;
@@ -61,52 +53,6 @@ interface ApiDefaults {
 
 // Settings tabs
 type SettingsTab = "apis" | "costs" | "logs" | "blocked";
-
-// ── Dev Backend Config Card ─────────────────────────────
-function DevBackendCard() {
-  const [backendUrl, setBackendUrl] = React.useState('');
-  const [authToken, setAuthToken] = React.useState('');
-  React.useEffect(() => {
-    SecureVault.initialize().then(async v => {
-      setBackendUrl(await v.get('backend_url') || '');
-      setAuthToken(await v.get('backend_auth_token') || '');
-    });
-  }, []);
-  const save = async (urlVal: string, tokenVal: string) => {
-    const v = await SecureVault.initialize();
-    await v.set('backend_url', urlVal.trim());
-    await v.set('backend_auth_token', tokenVal.trim());
-    const core = getAgentCoreInstance();
-    if (core) await core.getBackendService().setConfig(urlVal.trim(), tokenVal.trim());
-  };
-  return (
-    <View style={{ backgroundColor: '#0d0d0d', borderRadius: 14, padding: 16, marginHorizontal: 16, marginBottom: 14, borderWidth: 1, borderColor: '#222' }}>
-      <Text style={{ color: '#e0e0e0', fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 4 }}>Backend Config</Text>
-      <Text style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>Cloud backend for Pro subscription proxy. Leave blank for local/BYO mode.</Text>
-      <Text style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>Backend URL</Text>
-      <TextInput value={backendUrl} onChangeText={setBackendUrl} placeholder="https://api.yourdomain.com"
-        placeholderTextColor="#444" autoCapitalize="none"
-        style={{ backgroundColor: '#111', borderWidth: 1, borderColor: '#333', borderRadius: 8, padding: 10, color: '#e0e0e0', fontSize: 13, marginBottom: 10 }}
-        onBlur={() => save(backendUrl, authToken)} />
-      <Text style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>Auth Token</Text>
-      <TextInput value={authToken} onChangeText={setAuthToken} placeholder="Bearer token…"
-        placeholderTextColor="#444" secureTextEntry autoCapitalize="none"
-        style={{ backgroundColor: '#111', borderWidth: 1, borderColor: '#333', borderRadius: 8, padding: 10, color: '#e0e0e0', fontSize: 13, marginBottom: 14 }}
-        onBlur={() => save(backendUrl, authToken)} />
-      <Text style={{ color: '#666', fontSize: 12, marginBottom: 8 }}>Tier Override</Text>
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-        {(['free', 'byo', 'pro', 'dev'] as const).map(t => (
-          <Pressable key={t} onPress={async () => {
-            const core = getAgentCoreInstance();
-            if (core) { await core.getTierService().setTier(t); Alert.alert('Tier set', `Now: ${t}`); }
-          }} style={{ paddingVertical: 6, paddingHorizontal: 12, backgroundColor: '#1a1a1a', borderRadius: 8, borderWidth: 1, borderColor: '#333' }}>
-            <Text style={{ color: '#34d399', fontSize: 12 }}>{t.toUpperCase()}</Text>
-          </Pressable>
-        ))}
-      </View>
-    </View>
-  );
-}
 
 // ── Main Component ─────────────────────────────────────
 export default function SettingsScreen() {
@@ -117,8 +63,8 @@ export default function SettingsScreen() {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
 
   // ── API state ──────────────────────────────────────
-  const [apis, setApis] = useState<SavedApi[]>([]);
-  const [editingApi, setEditingApi] = useState<SavedApi | null>(null);
+  const [apis, setApis] = useState<ApiProvider[]>([]);
+  const [editingApi, setEditingApi] = useState<ApiProvider | null>(null);
   const [isNewApi, setIsNewApi] = useState(false);
   const [defaults, setDefaults] = useState<ApiDefaults>({
     chat: "", image: "", code: "", reasoning: "", video: "",
@@ -149,7 +95,7 @@ export default function SettingsScreen() {
   const [backupImporting, setBackupImporting] = useState(false);
 
   // ── Draft persistence (survives app switches) ──────
-  const saveDraft = useCallback(async (draft: SavedApi | null, isNew: boolean) => {
+  const saveDraft = useCallback(async (draft: ApiProvider | null, isNew: boolean) => {
     try {
       const vault = await SecureVault.initialize();
       if (draft) {
@@ -234,12 +180,14 @@ export default function SettingsScreen() {
         const legacyKey = await vault.get("venice_api_key");
         const legacyUrl = await vault.get("api_base_url");
         if (legacyKey) {
-          const migratedApi: SavedApi = {
+          const migratedApi: ApiProvider = {
             id: `api_${Date.now()}`,
             name: "Venice",
             baseUrl: legacyUrl || "https://api.venice.ai/api/v1",
             apiKey: legacyKey,
             password: "",
+            categories: ['text', 'image', 'video', 'audio', 'code', 'reasoning'],
+            isActive: true,
           };
           setApis([migratedApi]);
           await vault.set("saved_apis", JSON.stringify([migratedApi]));
@@ -308,76 +256,68 @@ export default function SettingsScreen() {
 
   // ── API CRUD ───────────────────────────────────────
   const startNewApi = useCallback(() => {
-    const draft: SavedApi = {
+    const draft: ApiProvider = {
       id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: "",
       baseUrl: "",
       apiKey: "",
       password: "",
+      categories: ['text'],
+      isActive: true,
     };
     setEditingApi(draft);
     setIsNewApi(true);
   }, []);
 
-  const startEditApi = useCallback((api: SavedApi) => {
+  const startEditApi = useCallback((api: ApiProvider) => {
     setEditingApi({ ...api });
     setIsNewApi(false);
   }, []);
 
   const saveApi = useCallback(async () => {
-    if (!editingApi) return;
-    if (!editingApi.name.trim()) {
-      Alert.alert("Required", "API name is required");
-      return;
-    }
-    if (!editingApi.baseUrl.trim()) {
-      Alert.alert("Required", "Base URL is required");
+    if (!editingApi?.name || !editingApi?.baseUrl) {
+      Alert.alert('Error', 'Name and Base URL are required.');
       return;
     }
 
-    let updated: SavedApi[];
-    if (isNewApi) {
-      updated = [...apis, editingApi];
-    } else {
-      updated = apis.map((a) => a.id === editingApi.id ? editingApi : a);
-    }
+    UltraDevLog.push('UI_TAP', { component: 'settings', target: 'save_api', provider: editingApi.name });
+
+    const updated: ApiProvider[] = isNewApi
+      ? [...apis, editingApi]
+      : apis.map((a) => a.id === editingApi.id ? editingApi : a);
 
     setApis(updated);
     setEditingApi(null);
     setIsNewApi(false);
     saveDraft(null, false);
 
-    UltraDevLog.settingsSaveTap('api', { count: updated.length, primaryId: updated[0]?.id });
     try {
       const vault = await SecureVault.initialize();
-      await vault.set("saved_apis", JSON.stringify(updated));
+      await vault.set('saved_apis', JSON.stringify(updated));
 
-      const primary = updated[0];
+      // Set the first active provider with a key as the engine's primary
+      const primary = updated.find((a) => a.isActive && a.apiKey && (a.categories || []).includes('text'));
       if (primary) {
-        await vault.set("venice_api_key", primary.apiKey || "");
-        await vault.set("api_base_url", primary.baseUrl);
+        await vault.set('venice_api_key', primary.apiKey);
+        await vault.set('api_base_url', primary.baseUrl);
         DebugLog.settingsApiSave(primary.id, true);
         const core = getAgentCoreInstance();
         if (core) {
           await core.refreshApiKey();
           await core.setApiBaseUrl(primary.baseUrl);
-          if (primary.apiKey) {
-            const tier = core.getTierService();
-            if (tier && tier.getTier() === 'free') {
-              await tier.setTier('byo');
-              DebugLog.systemEvent('Settings', 'Auto-promoted to BYO tier');
-            }
-          }
         }
       } else {
-        await vault.set("venice_api_key", "");
-        await vault.set("api_base_url", "");
+        await vault.set('venice_api_key', '');
+        await vault.set('api_base_url', '');
       }
+
       UltraDevLog.settingsSaveResult('api', true, ['saved_apis', 'venice_api_key', 'api_base_url']);
+      setSavedFeedback('api');
+      setTimeout(() => setSavedFeedback(null), 2000);
     } catch (err: any) {
       UltraDevLog.settingsSaveResult('api', false, [], err.message);
-      DebugLog.uiError("settings_saveApi", err.message);
-      Alert.alert("Error", err.message);
+      DebugLog.uiError('settings_saveApi', err.message);
+      Alert.alert('Error', err.message);
     }
   }, [editingApi, isNewApi, apis]);
 
@@ -511,344 +451,295 @@ export default function SettingsScreen() {
             ══════════════════════════════════════════ */}
         {tab === "apis" && (
           <>
-            {/* Editing form (shown when adding/editing an API) */}
-            {editingApi ? (
+            {/* ── Tier gate: API locked for free/no_ads ── */}
+            {!getAgentCoreInstance()?.getTierService()?.isApiUnlocked() && getAgentCoreInstance()?.getTierService()?.getTier() !== 'dev' && (
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>{isNewApi ? "Add API" : "Edit API"}</Text>
-
-                <Text style={styles.fieldLabel}>Name *</Text>
-                <TextInput
-                  value={editingApi.name}
-                  onChangeText={(t) => setEditingApi({ ...editingApi, name: t })}
-                  placeholder='e.g., "Venice", "OpenAI", "Local"'
-                  placeholderTextColor="#444"
-                  style={styles.textInput}
-                />
-
-                <Text style={styles.fieldLabel}>Base URL *</Text>
-                <TextInput
-                  value={editingApi.baseUrl}
-                  onChangeText={(t) => setEditingApi({ ...editingApi, baseUrl: t })}
-                  placeholder="https://api.example.com/v1"
-                  placeholderTextColor="#444"
-                  style={styles.textInput}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                />
-
-                <Text style={styles.fieldLabel}>API Key (optional)</Text>
-                <TextInput
-                  value={editingApi.apiKey}
-                  onChangeText={(t) => setEditingApi({ ...editingApi, apiKey: t })}
-                  placeholder="Leave blank if not required"
-                  placeholderTextColor="#444"
-                  style={styles.textInput}
-                  autoCapitalize="none"
-                  secureTextEntry
-                />
-
-                <Text style={styles.fieldLabel}>Password / Auth Token (optional)</Text>
-                <TextInput
-                  value={editingApi.password}
-                  onChangeText={(t) => setEditingApi({ ...editingApi, password: t })}
-                  placeholder="Leave blank if not required"
-                  placeholderTextColor="#444"
-                  style={styles.textInput}
-                  autoCapitalize="none"
-                  secureTextEntry
-                />
-
-                <View style={styles.btnRow}>
-                  <Pressable onPress={saveApi} style={[styles.btn, styles.primaryBtn]}>
-                    <Ionicons name="save-outline" size={16} color={BG} />
-                    <Text style={styles.primaryBtnText}>Save API</Text>
-                  </Pressable>
-                  <Pressable onPress={() => { setEditingApi(null); setIsNewApi(false); saveDraft(null, false); }} style={[styles.btn, styles.secondaryBtn]}>
-                    <Text style={styles.secondaryBtnText}>Cancel</Text>
-                  </Pressable>
-                </View>
+                <Ionicons name="lock-closed" size={32} color="#666" style={{ alignSelf: 'center', marginBottom: 8 }} />
+                <Text style={[styles.cardTitle, { textAlign: 'center' }]}>API Setup — Pro Feature</Text>
+                <Text style={[styles.cardSubtitle, { textAlign: 'center' }]}>
+                  Upgrade to Pro ($9.99/mo) to connect your own AI providers.{'\n'}
+                  The agent works without AI — try "Open camera" or "Toggle flashlight".
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    Alert.alert('Coming Soon', 'Subscription will be available on Google Play.');
+                  }}
+                  style={[styles.btn, styles.primaryBtn, { marginTop: 12, alignSelf: 'center' }]}
+                >
+                  <Ionicons name="arrow-up-circle" size={16} color={BG} />
+                  <Text style={styles.primaryBtnText}>Upgrade to Pro</Text>
+                </Pressable>
               </View>
-            ) : (
+            )}
+
+            {/* ── API Management (Pro/Dev only) ── */}
+            {(getAgentCoreInstance()?.getTierService()?.isApiUnlocked() || getAgentCoreInstance()?.getTierService()?.getTier() === 'dev') && (
               <>
-                {/* ── Venice AI Engine (always visible) ── */}
-                {apis.filter(a => a.isBuiltIn).length > 0 && (
-                  <>
-                    <View style={styles.sectionHeader}>
-                      <Text style={styles.sectionTitle}>Venice AI Engine</Text>
+                {/* Editing form */}
+                {editingApi ? (
+                  <View style={styles.card}>
+                    <Text style={styles.cardTitle}>{isNewApi ? "Add API Provider" : "Edit Provider"}</Text>
+
+                    <Text style={styles.fieldLabel}>Provider Name *</Text>
+                    <TextInput
+                      value={editingApi.name}
+                      onChangeText={(t) => setEditingApi({ ...editingApi, name: t })}
+                      placeholder='e.g., "Venice AI", "OpenRouter", "Local LLM"'
+                      placeholderTextColor="#444"
+                      style={styles.textInput}
+                    />
+
+                    <Text style={styles.fieldLabel}>Base URL *</Text>
+                    <TextInput
+                      value={editingApi.baseUrl}
+                      onChangeText={(t) => setEditingApi({ ...editingApi, baseUrl: t })}
+                      placeholder="https://api.venice.ai/api/v1"
+                      placeholderTextColor="#444"
+                      style={styles.textInput}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                    />
+
+                    <Text style={styles.fieldLabel}>API Key</Text>
+                    <TextInput
+                      value={editingApi.apiKey}
+                      onChangeText={(t) => setEditingApi({ ...editingApi, apiKey: t })}
+                      placeholder="Your provider's API key"
+                      placeholderTextColor="#444"
+                      style={styles.textInput}
+                      autoCapitalize="none"
+                      secureTextEntry
+                    />
+
+                    <Text style={styles.fieldLabel}>Auth Token (optional)</Text>
+                    <TextInput
+                      value={editingApi.password || ''}
+                      onChangeText={(t) => setEditingApi({ ...editingApi, password: t })}
+                      placeholder="Bearer token if required"
+                      placeholderTextColor="#444"
+                      style={styles.textInput}
+                      autoCapitalize="none"
+                      secureTextEntry
+                    />
+
+                    <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Use For (select all that apply)</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                      {(['text', 'image', 'video', 'audio', 'code', 'reasoning'] as ApiCategory[]).map(cat => {
+                        const active = (editingApi.categories || []).includes(cat);
+                        return (
+                          <Pressable
+                            key={cat}
+                            onPress={() => {
+                              const cats = editingApi.categories || [];
+                              const updated = active ? cats.filter((c) => c !== cat) : [...cats, cat];
+                              setEditingApi({ ...editingApi, categories: updated });
+                            }}
+                            style={[styles.btn, active ? styles.primaryBtn : styles.secondaryBtn, { paddingHorizontal: 14 }]}
+                          >
+                            <Text style={active ? styles.primaryBtnText : styles.secondaryBtnText}>
+                              {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
                     </View>
 
-                    {apis.filter(a => a.isBuiltIn).map((api) => {
+                    <View style={[styles.btnRow, { marginTop: 14 }]}>
+                      <Pressable onPress={saveApi} style={[styles.btn, styles.primaryBtn]}>
+                        <Ionicons name="save-outline" size={16} color={BG} />
+                        <Text style={styles.primaryBtnText}>Save Provider</Text>
+                      </Pressable>
+                      <Pressable onPress={() => { setEditingApi(null); setIsNewApi(false); saveDraft(null, false); }} style={[styles.btn, styles.secondaryBtn]}>
+                        <Text style={styles.secondaryBtnText}>Cancel</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    {/* ── Provider list ── */}
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>API Providers</Text>
+                    </View>
+
+                    {apis.length === 0 && (
+                      <View style={styles.card}>
+                        <Text style={{ color: '#666', textAlign: 'center', fontSize: 13 }}>
+                          No providers configured.{'\n'}Add one to unlock AI features.
+                        </Text>
+                      </View>
+                    )}
+
+                    {apis.map((api) => {
                       const hasKey = !!api.apiKey;
                       return (
-                        <View key={api.id} style={[styles.card, { borderColor: hasKey ? '#1a3a2a' : '#1e1e1e' }]}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                            <View style={{
-                              width: 8, height: 8, borderRadius: 4, marginRight: 8,
-                              backgroundColor: hasKey ? '#34d399' : '#666',
-                            }} />
-                            <Text style={{ color: hasKey ? '#34d399' : '#999', fontSize: 13, fontFamily: 'Inter_500Medium' }}>
-                              {hasKey ? 'Connected' : 'Not Connected'}
-                            </Text>
+                        <View key={api.id} style={[styles.card, { borderColor: hasKey && api.isActive ? '#1a3a2a' : '#1e1e1e' }]}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                              <View style={{
+                                width: 8, height: 8, borderRadius: 4, marginRight: 8,
+                                backgroundColor: hasKey && api.isActive ? '#34d399' : '#666',
+                              }} />
+                              <Text style={{ color: TEXT, fontSize: 14, fontFamily: 'Inter_600SemiBold' }} numberOfLines={1}>
+                                {api.name}
+                              </Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', gap: 8 }}>
+                              <Pressable onPress={() => startEditApi(api)}>
+                                <Ionicons name="pencil-outline" size={16} color={DIM} />
+                              </Pressable>
+                              {!api.isBuiltIn && (
+                                <Pressable onPress={() => {
+                                  Alert.alert('Delete Provider', `Remove ${api.name}?`, [
+                                    { text: 'Cancel', style: 'cancel' },
+                                    { text: 'Delete', style: 'destructive', onPress: () => deleteApi(api.id) },
+                                  ]);
+                                }}>
+                                  <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                                </Pressable>
+                              )}
+                            </View>
                           </View>
 
-                          <Text style={styles.fieldLabel}>Venice API Key</Text>
-                          <TextInput
-                            value={api.apiKey}
-                            onChangeText={(t) => {
-                              const updated = apis.map(a => a.id === api.id ? { ...a, apiKey: t } : a);
-                              setApis(updated);
-                            }}
-                            placeholder="Paste your Venice API key"
-                            placeholderTextColor="#444"
-                            style={styles.textInput}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            secureTextEntry
-                          />
-                          <Text style={{ color: '#444', fontSize: 11, marginTop: 4, fontFamily: 'Inter_400Regular' }}>
-                            Get your key at venice.ai — powers all AI features
+                          <Text style={{ color: '#444', fontSize: 11, marginTop: 4 }} numberOfLines={1}>
+                            {api.baseUrl}
                           </Text>
 
+                          {/* Category badges */}
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                            {(api.categories || []).map((cat) => (
+                              <View key={cat} style={{ paddingHorizontal: 8, paddingVertical: 2, backgroundColor: '#1a1a1a', borderRadius: 4 }}>
+                                <Text style={{ color: '#888', fontSize: 10 }}>{cat}</Text>
+                              </View>
+                            ))}
+                            {(!api.categories || api.categories.length === 0) && (
+                              <Text style={{ color: '#444', fontSize: 10, fontStyle: 'italic' }}>No categories assigned</Text>
+                            )}
+                          </View>
+
+                          {/* Active toggle */}
                           <Pressable
                             onPress={async () => {
-                              const updated = apis.map(a => a.id === api.id ? { ...a } : a);
+                              const updated = apis.map((a) => a.id === api.id ? { ...a, isActive: !a.isActive } : a);
                               setApis(updated);
                               try {
                                 const vault = await SecureVault.initialize();
                                 await vault.set('saved_apis', JSON.stringify(updated));
-                                const primary = updated[0];
-                                if (primary) {
-                                  await vault.set('venice_api_key', primary.apiKey || '');
-                                  await vault.set('api_base_url', primary.baseUrl);
-                                  const core = getAgentCoreInstance();
-                                  if (core) {
-                                    await core.refreshApiKey();
-                                    await core.setApiBaseUrl(primary.baseUrl);
-                                  }
-                                }
-                                setSavedFeedback('venice');
-                                setTimeout(() => setSavedFeedback(null), 2000);
-                              } catch (err: any) {
-                                Alert.alert('Error', err.message);
-                              }
+                              } catch {}
                             }}
-                            style={[styles.btn, savedFeedback === 'venice' ? styles.savedBtn : styles.primaryBtn, { marginTop: 12 }]}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
                           >
-                            <Ionicons name={savedFeedback === 'venice' ? 'checkmark' : 'save-outline'} size={16} color={savedFeedback === 'venice' ? '#fff' : BG} />
-                            <Text style={savedFeedback === 'venice' ? styles.savedBtnText : styles.primaryBtnText}>
-                              {savedFeedback === 'venice' ? 'Saved' : 'Save Key'}
+                            <Ionicons name={api.isActive ? 'checkmark-circle' : 'ellipse-outline'} size={16} color={api.isActive ? ACCENT : DIM} />
+                            <Text style={{ color: api.isActive ? ACCENT : DIM, fontSize: 12 }}>
+                              {api.isActive ? 'Active' : 'Disabled'}
                             </Text>
                           </Pressable>
-
-                          {hasKey && (
-                            <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#222' }}>
-                              <Text style={{ color: TEXT, fontSize: 13, fontFamily: 'Inter_600SemiBold', marginBottom: 8 }}>
-                                Available Capabilities
-                              </Text>
-                              {[
-                                { icon: 'chatbox-ellipses', label: 'Chat & Reasoning', desc: '60+ AI models' },
-                                { icon: 'image', label: 'Image Generation', desc: 'Create images from text' },
-                                { icon: 'mic', label: 'Text-to-Speech', desc: 'Convert text to audio' },
-                                { icon: 'videocam', label: 'Video Generation', desc: 'Create short videos' },
-                              ].map(cap => (
-                                <View key={cap.label} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5 }}>
-                                  <Ionicons name={cap.icon as any} size={16} color={ACCENT} style={{ width: 24 }} />
-                                  <View style={{ flex: 1, marginLeft: 8 }}>
-                                    <Text style={{ color: TEXT, fontSize: 12, fontFamily: 'Inter_500Medium' }}>{cap.label}</Text>
-                                    <Text style={{ color: DIM, fontSize: 11, fontFamily: 'Inter_400Regular' }}>{cap.desc}</Text>
-                                  </View>
-                                  <Ionicons name="checkmark-circle" size={16} color={ACCENT} />
-                                </View>
-                              ))}
-                            </View>
-                          )}
-
-                          {isDevMode && (
-                            <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#222' }}>
-                              <Text style={{ color: '#666', fontSize: 11, fontFamily: 'Inter_500Medium', marginBottom: 6 }}>Developer Config</Text>
-                              <Text style={styles.apiUrl} numberOfLines={1}>Base: {api.baseUrl}</Text>
-                              <Pressable onPress={() => startEditApi(api)} style={{ marginTop: 6 }}>
-                                <Text style={{ color: ACCENT, fontSize: 12, fontFamily: 'Inter_500Medium' }}>Edit Raw Config →</Text>
-                              </Pressable>
-                              <View style={{ marginTop: 8 }}>
-                                {[
-                                  { name: 'Chat', ep: '/chat/completions' },
-                                  { name: 'Image', ep: '/image/generate' },
-                                  { name: 'TTS', ep: '/audio/speech' },
-                                  { name: 'Video', ep: '/video/queue' },
-                                  { name: 'Embeddings', ep: '/embeddings' },
-                                  { name: 'Upscale', ep: '/image/upscale' },
-                                  { name: 'Edit', ep: '/image/edit' },
-                                  { name: 'Transcribe', ep: '/audio/transcriptions' },
-                                ].map(svc => (
-                                  <View key={svc.ep} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 }}>
-                                    <Text style={{ color: DIM, fontSize: 11 }}>{svc.name}</Text>
-                                    <Text style={{ color: '#444', fontSize: 10 }}>{svc.ep}</Text>
-                                  </View>
-                                ))}
-                              </View>
-                            </View>
-                          )}
                         </View>
                       );
                     })}
-                  </>
-                )}
 
-                {/* ── User APIs (always visible) ── */}
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>Additional APIs</Text>
-                  <Pressable onPress={startNewApi} style={styles.addBtn}>
-                    <Ionicons name="add" size={18} color={ACCENT} />
-                    <Text style={styles.addBtnText}>Add API</Text>
-                  </Pressable>
-                </View>
-
-                {apis.filter(a => !a.isBuiltIn).length === 0 ? (
-                  <View style={styles.emptyCard}>
-                    <MaterialCommunityIcons name="api" size={32} color="#222" />
-                    <Text style={styles.emptyText}>No APIs added</Text>
-                    <Text style={styles.emptySubtext}>Connect any OpenAI-compatible API for more models</Text>
-                  </View>
-                ) : (
-                  apis.filter(a => !a.isBuiltIn).map((api) => (
-                    <View key={api.id} style={styles.apiCard}>
-                      <View style={styles.apiCardHeader}>
-                        <View style={styles.apiNameRow}>
-                          <MaterialCommunityIcons name="api" size={18} color={ACCENT} />
-                          <Text style={styles.apiName}>{api.name}</Text>
-                        </View>
-                        <View style={styles.apiActions}>
-                          <Pressable onPress={() => startEditApi(api)} hitSlop={8}>
-                            <Ionicons name="create-outline" size={18} color={DIM} />
-                          </Pressable>
-                          <Pressable
-                            onPress={() => {
-                              Alert.alert("Delete API", `Remove "${api.name}"?`, [
-                                { text: "Cancel", style: "cancel" },
-                                { text: "Delete", style: "destructive", onPress: () => deleteApi(api.id) },
-                              ]);
-                            }}
-                            hitSlop={8}
-                          >
-                            <Ionicons name="trash-outline" size={18} color={DANGER} />
-                          </Pressable>
-                        </View>
-                      </View>
-                      <Text style={styles.apiUrl} numberOfLines={1}>{api.baseUrl}</Text>
-                      <Text style={styles.apiKeyStatus}>
-                        {api.apiKey ? `Key: ••••${api.apiKey.slice(-4)}` : "No API key"}
-                        {api.password ? " | Auth: ••••" : ""}
-                      </Text>
-                    </View>
-                  ))
-                )}
-
-                {/* Model Defaults by Mode (collapsible) */}
-                {apis.length > 0 && (
-                  <View style={styles.card}>
+                    {/* Add Provider button */}
                     <Pressable
-                      onPress={() => setDefaultsExpanded(!defaultsExpanded)}
-                      style={styles.collapsibleHeader}
+                      onPress={startNewApi}
+                      style={[styles.btn, styles.secondaryBtn, { alignSelf: 'stretch', justifyContent: 'center', marginTop: 8 }]}
                     >
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.cardTitle}>Default Models by Mode</Text>
-                        {!defaultsExpanded && (
-                          <Text style={[styles.cardSubtitle, { marginBottom: 0 }]}>
-                            Tap to configure
-                          </Text>
-                        )}
-                      </View>
-                      <Ionicons
-                        name={defaultsExpanded ? "chevron-up" : "chevron-down"}
-                        size={20}
-                        color={DIM}
-                      />
+                      <Ionicons name="add-circle-outline" size={16} color={ACCENT} />
+                      <Text style={[styles.secondaryBtnText, { color: ACCENT }]}>Add Provider</Text>
                     </Pressable>
 
-                    {defaultsExpanded && (
-                      <>
-                        <Text style={[styles.cardSubtitle, { marginTop: 10 }]}>
-                          Pick a preferred model for each mode. Used when you tap "+" in chat.
-                        </Text>
+                    {/* ── Quick presets ── */}
+                    <View style={[styles.card, { marginTop: 12 }]}>
+                      <Text style={styles.cardTitle}>Quick Setup</Text>
+                      <Text style={[styles.cardSubtitle, { marginBottom: 8 }]}>Tap to auto-fill a provider. You still need your own API key.</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                        {[
+                          { name: 'Venice AI', url: 'https://api.venice.ai/api/v1', cats: ['text', 'image', 'video', 'audio', 'code', 'reasoning'] as ApiCategory[] },
+                          { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1', cats: ['text', 'code', 'reasoning'] as ApiCategory[] },
+                          { name: 'OpenAI', url: 'https://api.openai.com/v1', cats: ['text', 'image', 'code', 'reasoning'] as ApiCategory[] },
+                          { name: 'Anthropic', url: 'https://api.anthropic.com/v1', cats: ['text', 'code', 'reasoning'] as ApiCategory[] },
+                          { name: 'Local (Ollama)', url: 'http://localhost:11434/v1', cats: ['text', 'code'] as ApiCategory[] },
+                          { name: 'Local (LM Studio)', url: 'http://localhost:1234/v1', cats: ['text', 'code'] as ApiCategory[] },
+                        ].map(preset => (
+                          <Pressable
+                            key={preset.name}
+                            onPress={() => {
+                              setEditingApi({
+                                id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                                name: preset.name,
+                                baseUrl: preset.url,
+                                apiKey: '',
+                                password: '',
+                                categories: preset.cats,
+                                isBuiltIn: false,
+                                isActive: true,
+                              });
+                              setIsNewApi(true);
+                            }}
+                            style={[styles.btn, styles.secondaryBtn]}
+                          >
+                            <Text style={styles.secondaryBtnText}>{preset.name}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View>
 
-                        {(["chat", "image", "code", "reasoning", "video"] as DefaultRole[]).map((role) => {
-                          const allModels = availableModels;
-                          const isRecommended = (m: any): boolean => {
-                            const classified = classifyModelType(m.id, m.name || m.id, m.type);
-                            return classified === role;
-                          };
-                          const recommended = allModels.filter(isRecommended);
-                          const others = allModels.filter((m: any) => !isRecommended(m));
-                          const sortedModels = [...recommended, ...others];
+                    {/* ── Default Model Per Category ── */}
+                    <View style={styles.card}>
+                      <Text style={styles.cardTitle}>Default Model Per Category</Text>
+                      <Text style={[styles.cardSubtitle, { marginBottom: 8 }]}>
+                        Choose which model handles each type of request. Models come from your active providers.
+                      </Text>
 
-                          return (
-                            <View key={role} style={styles.defaultRow}>
-                              <Text style={styles.defaultLabel}>
-                                {role.charAt(0).toUpperCase() + role.slice(1)}
-                              </Text>
-                              <View style={styles.defaultPicker}>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
-                                  <Pressable
-                                    onPress={async () => {
-                                      const updated = { ...defaults, [role]: "" };
-                                      setDefaults(updated);
-                                      try {
-                                        const vault = await SecureVault.initialize();
-                                        await vault.set("api_defaults", JSON.stringify(updated));
-                                        DebugLog.settingsDefaultsSave(updated);
-                                      } catch (e: any) { DebugLog.uiError('defaults_auto_save', e?.message || 'vault write failed'); }
-                                    }}
-                                    style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}
-                                  >
-                                    <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>Auto</Text>
-                                  </Pressable>
-                                  {sortedModels.map((m: any) => {
-                                    const isRec = isRecommended(m);
-                                    const isActive = defaults[role] === m.id;
-                                    return (
-                                      <Pressable
-                                        key={m.id}
-                                        onPress={async () => {
-                                          const updated = { ...defaults, [role]: m.id };
-                                          DebugLog.settingsDefaultPick(role, m.id);
-                                          DebugLog.settingsState("default_pick", {
-                                            defaults: updated,
-                                            availableModelsCount: availableModels.length,
-                                            defaultsExpanded,
-                                          });
-                                          setDefaults(updated);
-                                          try {
-                                            const vault = await SecureVault.initialize();
-                                            await vault.set("api_defaults", JSON.stringify(updated));
-                                            DebugLog.settingsDefaultsSave(updated);
-                                          } catch (e: any) { DebugLog.uiError('defaults_pick_save', e?.message || 'vault write failed'); }
-                                        }}
-                                        style={[styles.defaultOption, isActive && styles.defaultOptionActive, isRec && !isActive && styles.recommendedOption]}
-                                      >
-                                        {isRec && <Ionicons name="star" size={10} color={isActive ? BG : "#f59e0b"} style={{ marginRight: 2 }} />}
-                                        <Text style={[styles.defaultOptionText, isActive && styles.defaultOptionTextActive]} numberOfLines={1}>
-                                          {(m.name || m.id).replace(/^(Venice|v1)\s*/i, "").slice(0, 20)}
-                                        </Text>
-                                      </Pressable>
-                                    );
-                                  })}
-                                </ScrollView>
-                              </View>
+                      {(['chat', 'image', 'code', 'reasoning', 'video'] as DefaultRole[]).map(role => {
+                        const allModels = availableModels || [];
+                        return (
+                          <View key={role} style={styles.defaultRow}>
+                            <Text style={styles.defaultLabel}>
+                              {role.charAt(0).toUpperCase() + role.slice(1)}
+                            </Text>
+                            <View style={styles.defaultPicker}>
+                              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
+                                <Pressable
+                                  onPress={async () => {
+                                    const updated = { ...defaults, [role]: "" };
+                                    setDefaults(updated);
+                                    try {
+                                      const vault = await SecureVault.initialize();
+                                      await vault.set("api_defaults", JSON.stringify(updated));
+                                    } catch {}
+                                  }}
+                                  style={[styles.defaultOption, !defaults[role] && styles.defaultOptionActive]}
+                                >
+                                  <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>Auto</Text>
+                                </Pressable>
+                                {allModels.map((m: any) => {
+                                  const isActive = defaults[role] === m.id;
+                                  return (
+                                    <Pressable
+                                      key={m.id}
+                                      onPress={async () => {
+                                        const updated = { ...defaults, [role]: m.id };
+                                        setDefaults(updated);
+                                        try {
+                                          const vault = await SecureVault.initialize();
+                                          await vault.set("api_defaults", JSON.stringify(updated));
+                                        } catch {}
+                                      }}
+                                      style={[styles.defaultOption, isActive && styles.defaultOptionActive]}
+                                    >
+                                      <Text style={[styles.defaultOptionText, isActive && styles.defaultOptionTextActive]} numberOfLines={1}>
+                                        {(m.name || m.id).slice(0, 22)}
+                                      </Text>
+                                    </Pressable>
+                                  );
+                                })}
+                              </ScrollView>
                             </View>
-                          );
-                        })}
-
-                        <Pressable onPress={saveDefaults} style={[styles.btn, savedFeedback === "defaults" ? styles.savedBtn : styles.primaryBtn, { marginTop: 12 }]}>
-                          <Ionicons name={savedFeedback === "defaults" ? "checkmark-circle" : "save-outline"} size={16} color={savedFeedback === "defaults" ? "#fff" : BG} />
-                          <Text style={savedFeedback === "defaults" ? styles.savedBtnText : styles.primaryBtnText}>
-                            {savedFeedback === "defaults" ? "Saved!" : "Save Defaults"}
-                          </Text>
-                        </Pressable>
-                      </>
-                    )}
-                  </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </>
                 )}
               </>
             )}
@@ -930,7 +821,36 @@ export default function SettingsScreen() {
 
         )}
 
-        {tab === "apis" && isDevMode && <DevBackendCard />}
+        {tab === "apis" && isDevMode && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Dev Tier Override</Text>
+            <Text style={[styles.cardSubtitle, { marginBottom: 10 }]}>
+              Force a specific tier for testing. Resets on next full load.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              {(['free', 'no_ads', 'pro', 'dev'] as const).map(t => {
+                const current = getAgentCoreInstance()?.getTierService()?.getTier();
+                const isActive = current === t;
+                return (
+                  <Pressable
+                    key={t}
+                    onPress={async () => {
+                      const core = getAgentCoreInstance();
+                      if (core?.getTierService()) {
+                        await core.getTierService()!.setTier(t);
+                      }
+                    }}
+                    style={[styles.btn, isActive ? styles.primaryBtn : styles.secondaryBtn]}
+                  >
+                    <Text style={isActive ? styles.primaryBtnText : styles.secondaryBtnText}>
+                      {t}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         {/* ══════════════════════════════════════════
             TAB: COST LIMITS
