@@ -67,7 +67,15 @@ export class ConversationManager {
     return conv;
   }
 
+  private saveQueue = Promise.resolve();
+
   async saveConversation(conv: Conversation): Promise<void> {
+    // Serialize writes to prevent concurrent file operations
+    this.saveQueue = this.saveQueue.then(() => this._doSave(conv)).catch(() => this._doSave(conv));
+    return this.saveQueue;
+  }
+
+  private async _doSave(conv: Conversation): Promise<void> {
     conv.updatedAt = now();
     if (this.mode === 'native') {
       try {

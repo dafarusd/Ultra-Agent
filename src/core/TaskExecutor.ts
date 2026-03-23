@@ -46,7 +46,7 @@ async function captureStateDelta(taskId: string, capability: string, toggleFn: (
 
   const toggled = await toggleFn();
 
-  await new Promise(r => setTimeout(r, 500));
+  await new Promise(r => setTimeout(r, 1500));
 
   let after: any = {};
   try {
@@ -1526,20 +1526,27 @@ export class TaskExecutor {
         return { success: true, summary: `Timer set for ${params.duration}` };
       }
       case 'volume_set': {
-        const level = typeof params.level === 'number' ? params.level : parseInt(String(params.level ?? params.percent ?? params.value ?? 50), 10);
-        const stream = (params.stream || params.type || 'media').toLowerCase().replace('music', 'media');
-        const streamType = stream === 'ring' || stream === 'ringer' ? 'ring'
-          : stream === 'alarm' ? 'alarm'
-          : stream === 'notification' ? 'notification'
-          : 'media';
         const { DeviceDiagnostics: DD } = await import('../services/DeviceDiagnostics');
         await DD.logAudioBeforeAfter('before_volume');
         let volumeResult: { success: boolean; summary: string };
         try {
-          const actualPct = await AppController.setVolume(streamType, isNaN(level) ? 50 : Math.max(0, Math.min(100, level)));
-          volumeResult = { success: true, summary: `${streamType.charAt(0).toUpperCase() + streamType.slice(1)} volume set to ${actualPct}%` };
+          // Direction-based stepping uses adjustVolume (ADJUST_RAISE/LOWER)
+          if (params.direction === 'up' || params.direction === 'down') {
+            const actualPct = await AppController.adjustVolume(params.direction);
+            volumeResult = { success: true, summary: `Media volume ${params.direction === 'up' ? 'raised' : 'lowered'} to ${actualPct}%` };
+          } else {
+            // Absolute level set
+            const level = typeof params.level === 'number' ? params.level : parseInt(String(params.level ?? params.percent ?? params.value ?? 50), 10);
+            const stream = (params.stream || params.type || 'media').toLowerCase().replace('music', 'media');
+            const streamType = stream === 'ring' || stream === 'ringer' ? 'ring'
+              : stream === 'alarm' ? 'alarm'
+              : stream === 'notification' ? 'notification'
+              : 'media';
+            const actualPct = await AppController.setVolume(streamType, isNaN(level) ? 50 : Math.max(0, Math.min(100, level)));
+            volumeResult = { success: true, summary: `${streamType.charAt(0).toUpperCase() + streamType.slice(1)} volume set to ${actualPct}%` };
+          }
         } catch (volErr: any) {
-          this.logger.warn(`Native setVolume failed: ${volErr.message} — opening settings`);
+          this.logger.warn(`Native volume failed: ${volErr.message} — opening settings`);
           await IntentLauncher.startActivityAsync('android.settings.SOUND_SETTINGS', {});
           volumeResult = { success: true, summary: 'Opened sound settings — adjust volume there' };
         }

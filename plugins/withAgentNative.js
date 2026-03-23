@@ -1806,33 +1806,43 @@ public class AgentAccessibilityService extends AccessibilityService {
             emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"search\\",\\"tile\\":\\"" + tileLabel + "\\",\\"found\\":" + nodes.size() + "}");
 
             for (android.view.accessibility.AccessibilityNodeInfo node : nodes) {
-                // Strategy 1: walk up to clickable ancestor and tap its center
+                // Strategy 1: walk up to clickable ancestor, try ACTION_CLICK first (works on Samsung QS)
                 android.view.accessibility.AccessibilityNodeInfo current = node;
                 for (int depth = 0; depth < 6; depth++) {
                     if (current == null) break;
                     if (current.isClickable()) {
                         android.graphics.Rect bounds = new android.graphics.Rect();
                         current.getBoundsInScreen(bounds);
-                        if (!bounds.isEmpty()) {
-                            root.recycle();
-                            return tapAtCenter(bounds);
-                        }
+                        int cx = (bounds.left + bounds.right) / 2;
+                        int cy = (bounds.top + bounds.bottom) / 2;
+                        emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"click\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"ACTION_CLICK\\",\\"x\\":" + cx + ",\\"y\\":" + cy + ",\\"bounds\\":\\"" + bounds.toShortString() + "\\"}");
                         boolean r = current.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
+                        if (r) { root.recycle(); return true; }
+                        // ACTION_CLICK failed — fall back to gesture tap
+                        if (!bounds.isEmpty()) {
+                            emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"click_fallback\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"gesture_tap\\",\\"x\\":" + cx + ",\\"y\\":" + cy + "}");
+                            boolean g = tapAtCenter(bounds);
+                            root.recycle();
+                            return g;
+                        }
                         root.recycle();
-                        return r;
+                        return false;
                     }
                     current = current.getParent();
                 }
                 // Strategy 2: no clickable ancestor (Samsung OneUI row layout).
-                // Tap the top-third of the text node's own bounds.
+                // Try ACTION_CLICK on the node itself first, then gesture tap.
                 android.graphics.Rect nb = new android.graphics.Rect();
                 node.getBoundsInScreen(nb);
                 if (!nb.isEmpty()) {
+                    int nx = (nb.left + nb.right) / 2;
+                    int ny = nb.top + (nb.height() / 3);
+                    emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"click\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"node_click\\",\\"x\\":" + nx + ",\\"y\\":" + ny + "}");
+                    boolean nr = node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
+                    if (nr) { root.recycle(); return true; }
+                    emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"click_fallback\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"gesture_tap\\",\\"x\\":" + nx + ",\\"y\\":" + ny + "}");
                     root.recycle();
-                    return tapAtPoint(
-                        (nb.left + nb.right) / 2,
-                        nb.top + (nb.height() / 3)
-                    );
+                    return tapAtPoint(nx, ny);
                 }
             }
             emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"no_match\\",\\"tile\\":\\"" + tileLabel + "\\"}");
@@ -1853,7 +1863,7 @@ public class AgentAccessibilityService extends AccessibilityService {
         path.moveTo(x, y);
         android.accessibilityservice.GestureDescription.Builder builder =
             new android.accessibilityservice.GestureDescription.Builder();
-        builder.addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 50));
+        builder.addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150));
         final boolean[] done = {false};
         final boolean[] success = {false};
         dispatchGesture(builder.build(), new android.accessibilityservice.AccessibilityService.GestureResultCallback() {

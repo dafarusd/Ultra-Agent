@@ -344,12 +344,14 @@ export default function ChatScreen() {
       DebugLog.uiInit("start", "Beginning app initialization");
 
       try {
+        const { Dimensions: Dims } = require('react-native');
+        const win = Dims.get('window');
         UltraDevLog.deviceInfo({
           os: Platform.OS,
           osVersion: String(Platform.Version),
           model: Device.modelName ?? 'unknown',
-          screenWidth: Math.round(require('react-native').Dimensions.get('window').width),
-          screenHeight: Math.round(require('react-native').Dimensions.get('window').height),
+          screenWidth: Math.round(win.width),
+          screenHeight: Math.round(win.height),
           totalMemory: Device.totalMemory ?? undefined,
         });
       } catch (diErr: any) {

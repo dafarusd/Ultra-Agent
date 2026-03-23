@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, TextInput,
-  Animated, Platform,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AppStorage } from '@/src/utils/AppStorage';
@@ -42,7 +42,6 @@ export default function ActionGrid({
   const [config, setConfig] = useState<GridConfig>(DEFAULT_GRID_CONFIG);
   const [editMode, setEditMode] = useState(false);
   const [inputState, setInputState] = useState<InputState | null>(null);
-  const expandAnim = useRef(new Animated.Value(collapsed ? 0 : 1)).current;
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -62,13 +61,7 @@ export default function ActionGrid({
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    Animated.timing(expandAnim, {
-      toValue: collapsed ? 0 : 1,
-      duration: 220,
-      useNativeDriver: false,
-    }).start();
-  }, [collapsed, expandAnim]);
+  // expandAnim removed — using conditional render
 
   const saveConfig = useCallback(async (newConfig: GridConfig) => {
     setConfig(newConfig);
@@ -172,10 +165,8 @@ export default function ActionGrid({
     setEditMode(false);
   }, [saveConfig, config]);
 
-  const expandedHeight = expandAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 280],
-  });
+  // Animation removed — using conditional render for reliable layout
+  const expandedHeight = 280;
 
   return (
     <View style={styles.wrapper} testID="ActionGrid">
@@ -226,8 +217,8 @@ export default function ActionGrid({
       </View>
 
       {/* ── Expanded: full category grid ── */}
-      <Animated.View
-        style={[styles.expandedContainer, { maxHeight: expandedHeight }]}
+      {!collapsed && (<View
+        style={[styles.expandedContainer, { height: expandedHeight }]}
         onLayout={(e) => {
           const h = Math.round(e.nativeEvent.layout.height);
           UltraDevLog.push('EFFECT', {
@@ -235,11 +226,9 @@ export default function ActionGrid({
             action: 'chevron_expand',
             measuredHeight: h,
             collapsed,
-            expected: collapsed ? 0 : 280,
-            match: collapsed ? h < 5 : h > 20,
-            note: collapsed
-              ? (h < 5 ? 'ok — collapsed' : `BUG: collapsed but height=${h}px`)
-              : (h > 20 ? `ok — expanded ${h}px` : `BUG: expanded but height=${h}px`),
+            expected: 280,
+            match: h > 20,
+            note: h > 20 ? `ok — expanded ${h}px` : `BUG: expanded but height=${h}px`,
           });
         }}
       >
@@ -336,7 +325,7 @@ export default function ActionGrid({
             </View>
           ))}
         </ScrollView>
-      </Animated.View>
+      </View>)}
     </View>
   );
 }
