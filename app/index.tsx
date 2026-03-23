@@ -362,6 +362,41 @@ export default function ChatScreen() {
         const vault = await SecureVault.initialize();
         DebugLog.uiInit("vault", "SecureVault initialized");
 
+        // ── Version-based SecureStore reset ──
+        // Expo SecureStore persists across uninstalls on Android.
+        // When the app versionCode changes, clear stale state so a
+        // fresh install or upgrade behaves like a true first launch.
+        try {
+          const Constants = require('expo-constants').default;
+          const currentVersionCode = String(Constants.expoConfig?.android?.versionCode || '0');
+          const storedVersionCode = await vault.get('installed_version_code');
+          if (storedVersionCode !== currentVersionCode) {
+            const RESET_ON_UPGRADE = [
+              'onboarding_done',
+              'battery_optim_prompted',
+              'dev_mode_enabled',
+              'user_tier',
+              'tier_usage_today',
+              'grid_config_version',
+            ];
+            for (const key of RESET_ON_UPGRADE) {
+              try { await vault.set(key, ''); } catch {}
+            }
+            for (const key of RESET_ON_UPGRADE) {
+              try { await AsyncStorage.removeItem(key); } catch {}
+            }
+            await vault.set('installed_version_code', currentVersionCode);
+            UltraDevLog.push('VERSION_RESET', {
+              previous: storedVersionCode || '(none)',
+              current: currentVersionCode,
+              clearedKeys: RESET_ON_UPGRADE,
+              note: 'Stale SecureStore keys cleared for fresh-install experience',
+            });
+          }
+        } catch (vErr: any) {
+          UltraDevLog.push('VERSION_RESET', { error: vErr?.message, note: 'WARN: version check failed' });
+        }
+
         // ── Migrate AsyncStorage → Vault (one-time per session) ──
         // AsyncStorage doesn't survive process kills on Samsung.
         // SecureVault (Expo SecureStore) does. Move critical keys.

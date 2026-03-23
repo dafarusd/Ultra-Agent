@@ -163,13 +163,14 @@ export default function SettingsScreen() {
       setIsDevMode(next);
       UltraDevLog.push('CHAIN', { component: 'Settings', action: 'version_tap_dev_mode', trigger: {}, state: { wasDevMode: isDevMode }, data: { taps: 7 }, outcome: next ? 'dev_mode_enabled' : 'dev_mode_disabled' });
       AppStorage.set("dev_mode_enabled", next ? "1" : "0");
-      // Also set TierService directly so it takes effect immediately
-      if (next) {
-        const core = getAgentCoreInstance();
-        if (core?.getTierService()) {
-          core.getTierService()!.setTier('dev');
-          setTierVersion(v => v + 1);
-        }
+      // Set TierService directly so it takes effect immediately without restart
+      const core = getAgentCoreInstance();
+      if (next && core?.getTierService()) {
+        core.getTierService()!.setTier('dev');
+        setTierVersion(v => v + 1);
+      } else if (!next && core?.getTierService()) {
+        core.getTierService()!.setTier('free');
+        setTierVersion(v => v + 1);
       }
       Alert.alert(next ? "Dev Mode ON" : "Dev Mode OFF", next ? "Logs tab and advanced options enabled." : "Dev mode disabled.");
     }
