@@ -342,6 +342,9 @@ export default function ChatScreen() {
       _agentCoreInitialized = true;
       UltraDevLog.checkProcessRestart();
       DebugLog.uiInit("start", "Beginning app initialization");
+
+      try { UltraDevLog.push('INIT_CHECKPOINT', { point: 'device_info_start' }); } catch {}
+
       // Device info sensor
       UltraDevLog.deviceInfo({
         os: Platform.OS,
@@ -351,6 +354,8 @@ export default function ChatScreen() {
         screenHeight: Math.round(require('react-native').Dimensions.get('window').height),
         totalMemory: Device.totalMemory ?? undefined,
       });
+
+      try { UltraDevLog.push('INIT_CHECKPOINT', { point: 'device_info_done' }); } catch {}
       // Network status sensor
       NetInfo.fetch().then(state => {
         UltraDevLog.networkStatus(!!state.isConnected, state.type);
@@ -582,8 +587,9 @@ export default function ChatScreen() {
         } catch {}
 
       } catch (err: any) {
+        UltraDevLog.push('INIT_FATAL', { message: err?.message ?? 'Unknown', stack: (err?.stack ?? '').slice(0, 500) });
         DebugLog.uiError("init", err?.message ?? "Unknown init error");
-        setStatus("Init failed");
+        setStatus("Init failed: " + (err?.message ?? "unknown"));
       }
     }
     init();
