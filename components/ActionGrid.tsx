@@ -124,7 +124,13 @@ export default function ActionGrid({
       return;
     }
     UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'action_press', trigger: { actionId: action.id }, state: {}, data: { capability: action.capability }, outcome: 'execute' });
-    onExecute(action.capability, action.params);
+    const execStart = Date.now();
+    try {
+      onExecute(action.capability, action.params);
+      UltraDevLog.push('EFFECT', { component: 'ActionGrid', action: 'action_execute_dispatched', capability: action.capability, durationMs: Date.now() - execStart, dispatched: true });
+    } catch (execErr: any) {
+      UltraDevLog.push('EFFECT', { component: 'ActionGrid', action: 'action_execute_dispatched', capability: action.capability, durationMs: Date.now() - execStart, dispatched: false, error: execErr?.message });
+    }
   }, [savedTasks, onRunTask, onExecute]);
 
   const handleInputSubmit = useCallback(() => {
@@ -220,7 +226,23 @@ export default function ActionGrid({
       </View>
 
       {/* ── Expanded: full category grid ── */}
-      <Animated.View style={[styles.expandedContainer, { maxHeight: expandedHeight }]}>
+      <Animated.View
+        style={[styles.expandedContainer, { maxHeight: expandedHeight }]}
+        onLayout={(e) => {
+          const h = Math.round(e.nativeEvent.layout.height);
+          UltraDevLog.push('EFFECT', {
+            component: 'ActionGrid',
+            action: 'chevron_expand',
+            measuredHeight: h,
+            collapsed,
+            expected: collapsed ? 0 : 280,
+            match: collapsed ? h < 5 : h > 20,
+            note: collapsed
+              ? (h < 5 ? 'ok — collapsed' : `BUG: collapsed but height=${h}px`)
+              : (h > 20 ? `ok — expanded ${h}px` : `BUG: expanded but height=${h}px`),
+          });
+        }}
+      >
         <ScrollView
           style={styles.expandedScroll}
           showsVerticalScrollIndicator={false}

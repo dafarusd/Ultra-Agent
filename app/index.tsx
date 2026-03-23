@@ -1011,6 +1011,13 @@ export default function ChatScreen() {
     await agentCore.setDefaultModel(modelId);
     setActiveModelId(modelId);
     setSessionModelOverride(true);
+    const confirmed = agentCore.getDefaultModel();
+    UltraDevLog.push('EFFECT', {
+      component: 'ChatScreen', action: 'model_select_result',
+      requested: modelId, previous: prev,
+      confirmed, match: confirmed === modelId,
+      note: confirmed === modelId ? 'ok' : `BUG: requested ${modelId} but engine has ${confirmed}`,
+    });
   }, [agentCore, activeModelId, snapUI]);
 
   // ── Action Grid execution ──────────────────────────
@@ -1024,6 +1031,12 @@ export default function ChatScreen() {
       UltraDevLog.processingState(true, 'gridAction_start');
       setIsProcessing(true);
       const result = await agentCore.getTaskExecutor().runWithPlan(plan, `grid_${capability}_${Date.now()}`);
+      UltraDevLog.push('EFFECT', {
+        component: 'ChatScreen', action: 'grid_execute_result', capability,
+        success: result.success !== false,
+        summary: (result.summary || '').slice(0, 200),
+        hasData: !!result.data,
+      });
       const msg: ChatMessage = {
         id: `msg_grid_${Date.now()}`,
         role: 'assistant',
@@ -1038,6 +1051,7 @@ export default function ChatScreen() {
       }
     } catch (err: any) {
       UltraDevLog.error('gridAction', err.message);
+      UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'grid_execute_result', capability, success: false, error: err?.message });
     } finally {
       UltraDevLog.processingState(false, 'gridAction_finally');
       setIsProcessing(false);
@@ -1053,6 +1067,12 @@ export default function ChatScreen() {
       UltraDevLog.processingState(true, 'contextAction_start');
       setIsProcessing(true);
       const result = await agentCore.getTaskExecutor().runWithPlan(plan, `ctx_${capability}_${Date.now()}`);
+      UltraDevLog.push('EFFECT', {
+        component: 'ChatScreen', action: 'context_execute_result', capability,
+        success: result.success !== false,
+        summary: (result.summary || '').slice(0, 200),
+        hasData: !!result.data,
+      });
       const msg: ChatMessage = {
         id: `msg_ctx_${Date.now()}`,
         role: 'assistant',
@@ -1067,6 +1087,7 @@ export default function ChatScreen() {
       }
     } catch (err: any) {
       UltraDevLog.error('contextAction', err.message);
+      UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'context_execute_result', capability, success: false, error: err?.message });
     } finally {
       UltraDevLog.processingState(false, 'contextAction_finally');
       setIsProcessing(false);

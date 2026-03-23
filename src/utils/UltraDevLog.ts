@@ -613,13 +613,23 @@ export class UltraDevLog {
     if (UltraDevLog.a11yDrainTimer) { clearInterval(UltraDevLog.a11yDrainTimer); UltraDevLog.a11yDrainTimer = null; }
   }
 
+  private static lastHeartbeatAlive: boolean | null = null;
+  private static lastHeartbeatLoggedAt = 0;
+
   static startHeartbeat(intervalMs = 10000): void {
     if (UltraDevLog.heartbeatTimer) return;
     const { default: AppController } = require('../native/AppController');
     UltraDevLog.heartbeatTimer = setInterval(async () => {
       try {
         const hb = await AppController.heartbeatPing();
-        UltraDevLog.push('A11Y_HEARTBEAT', hb);
+        const now = Date.now();
+        const stateChanged = UltraDevLog.lastHeartbeatAlive !== hb.alive;
+        const minuteElapsed = (now - UltraDevLog.lastHeartbeatLoggedAt) >= 60000;
+        if (stateChanged || minuteElapsed) {
+          UltraDevLog.push('A11Y_HEARTBEAT', { ...hb, stateChanged, minuteLog: minuteElapsed && !stateChanged });
+          UltraDevLog.lastHeartbeatAlive = hb.alive;
+          UltraDevLog.lastHeartbeatLoggedAt = now;
+        }
         const crash = await AppController.readCrashLog();
         if (crash && crash.length > 0) {
           UltraDevLog.push('CRASH_NATIVE', { log: crash.slice(0, 2000) });
@@ -941,6 +951,8 @@ export class UltraDevLog {
     return [...UltraDevLog.entries];
   }
 
+  private static bubbleDiagState = new Map<string, { count: number; lastHeight: number }>();
+
   static bubbleDiag(
     messageId: string,
     role: string,
@@ -950,6 +962,19 @@ export class UltraDevLog {
     msgIndex: number,
     msgStyle: string,
   ): void {
+    const prev = UltraDevLog.bubbleDiagState.get(messageId);
+    if (prev) {
+      prev.count++;
+      const delta = Math.abs(height - prev.lastHeight);
+      if (prev.count % 10 !== 0 && delta < 50) return;
+      prev.lastHeight = height;
+    } else {
+      UltraDevLog.bubbleDiagState.set(messageId, { count: 1, lastHeight: height });
+    }
+    if (UltraDevLog.bubbleDiagState.size > 100) {
+      const first = UltraDevLog.bubbleDiagState.keys().next().value;
+      if (first) UltraDevLog.bubbleDiagState.delete(first);
+    }
     UltraDevLog.push('BUBBLE_DIAG', { messageId, role, height, width, textLength, msgIndex, msgStyle });
   }
 
@@ -1300,6 +1325,9 @@ export class UltraDevLog {
     UltraDevLog.lastVaultReadTs.clear();
     UltraDevLog.processingStartedAt = 0;
     UltraDevLog.lastRenderedHeights.clear();
+    UltraDevLog.bubbleDiagState.clear();
+    UltraDevLog.lastHeartbeatAlive = null;
+    UltraDevLog.lastHeartbeatLoggedAt = 0;
     for (const e of UltraDevLog.watchdogs.values()) clearTimeout(e.timeoutHandle);
     UltraDevLog.watchdogs.clear();
   }
