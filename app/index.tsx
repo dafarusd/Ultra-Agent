@@ -343,26 +343,30 @@ export default function ChatScreen() {
       UltraDevLog.checkProcessRestart();
       DebugLog.uiInit("start", "Beginning app initialization");
 
-      try { UltraDevLog.push('INIT_CHECKPOINT', { point: 'device_info_start' }); } catch {}
+      try {
+        UltraDevLog.deviceInfo({
+          os: Platform.OS,
+          osVersion: String(Platform.Version),
+          model: Device.modelName ?? 'unknown',
+          screenWidth: Math.round(require('react-native').Dimensions.get('window').width),
+          screenHeight: Math.round(require('react-native').Dimensions.get('window').height),
+          totalMemory: Device.totalMemory ?? undefined,
+        });
+      } catch (diErr: any) {
+        UltraDevLog.push('INIT_CHECKPOINT', { point: 'device_info_failed', error: diErr?.message });
+      }
 
-      // Device info sensor
-      UltraDevLog.deviceInfo({
-        os: Platform.OS,
-        osVersion: String(Platform.Version),
-        model: Device.modelName ?? 'unknown',
-        screenWidth: Math.round(require('react-native').Dimensions.get('window').width),
-        screenHeight: Math.round(require('react-native').Dimensions.get('window').height),
-        totalMemory: Device.totalMemory ?? undefined,
-      });
+      try {
+        NetInfo.fetch().then(state => {
+          UltraDevLog.networkStatus(!!state.isConnected, state.type);
+        }).catch(() => {});
+        NetInfo.addEventListener(state => {
+          UltraDevLog.networkStatus(!!state.isConnected, state.type, state.isConnected ? undefined : 'WARN: went offline');
+        });
+      } catch (netErr: any) {
+        UltraDevLog.push('INIT_CHECKPOINT', { point: 'netinfo_failed', error: netErr?.message });
+      }
 
-      try { UltraDevLog.push('INIT_CHECKPOINT', { point: 'device_info_done' }); } catch {}
-      // Network status sensor
-      NetInfo.fetch().then(state => {
-        UltraDevLog.networkStatus(!!state.isConnected, state.type);
-      }).catch(() => {});
-      NetInfo.addEventListener(state => {
-        UltraDevLog.networkStatus(!!state.isConnected, state.type, state.isConnected ? undefined : 'WARN: went offline');
-      });
       try {
         const vault = await SecureVault.initialize();
         DebugLog.uiInit("vault", "SecureVault initialized");
