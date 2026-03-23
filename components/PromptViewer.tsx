@@ -1,6 +1,7 @@
 import { Modal, View, Text, ScrollView, Pressable, StyleSheet, Platform, Share, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import { UltraDevLog } from '@/src/utils/UltraDevLog';
 // FileSystem and Sharing removed — copy to clipboard only
 import type { PromptTrace, MessageRole } from '@/src/types/ultra';
 
@@ -163,11 +164,14 @@ export default function PromptViewer({ visible, trace, onClose }: PromptViewerPr
   if (!trace) return null;
 
   const handleDownload = async () => {
+    UltraDevLog.push('CHAIN', { component: 'PromptViewer', action: 'copy_trace', trigger: {}, state: { model: trace.model }, data: { hasSteps: !!(trace.executionSteps?.length) }, outcome: 'copying' });
     try {
       const text = formatTraceToText(trace);
       await Clipboard.setStringAsync(text);
+      UltraDevLog.push('CHAIN', { component: 'PromptViewer', action: 'copy_trace', trigger: {}, state: {}, data: { chars: text.length }, outcome: 'copied_ok' });
       Alert.alert('Copied', `Trace copied to clipboard (${text.length} chars).`);
     } catch (err: any) {
+      UltraDevLog.push('CHAIN', { component: 'PromptViewer', action: 'copy_trace', trigger: {}, state: {}, data: { error: err?.message }, outcome: 'FAIL:copy_error' });
       Alert.alert('Copy Failed', err.message || 'Unknown error');
     }
   };
@@ -178,7 +182,7 @@ export default function PromptViewer({ visible, trace, onClose }: PromptViewerPr
         <View style={styles.surface} testID="PromptViewer">
           <View style={styles.header}>
             <Text style={styles.title}>Execution Trace</Text>
-            <Pressable onPress={onClose} hitSlop={12}>
+            <Pressable onPress={() => { UltraDevLog.push('CHAIN', { component: 'PromptViewer', action: 'close', trigger: {}, state: { model: trace.model }, data: {}, outcome: 'dismissed' }); onClose(); }} hitSlop={12}>
               <Ionicons name="close" size={24} color="#fff" />
             </Pressable>
           </View>

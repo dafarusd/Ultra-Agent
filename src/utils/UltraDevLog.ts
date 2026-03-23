@@ -73,7 +73,8 @@ export type UltraLogCat =
   | 'A11Y_HEARTBEAT' | 'CRASH_NATIVE' | 'NET_DETAIL' | 'UI_SNAPSHOT'
   | 'BUBBLE_DIAG'
   | 'A11Y_QS_TRACE'
-  | 'GRID_TAP' | 'CONTEXT_TAP' | 'SLASH_CMD';
+  | 'GRID_TAP' | 'CONTEXT_TAP' | 'SLASH_CMD'
+  | 'CHAIN';
 
 interface UltraLogEntry {
   ts: string;
@@ -931,6 +932,7 @@ export class UltraDevLog {
       case 'GRID_TAP': return `${t} [GRID_TAP]${c} cap=${d.capability} params=${JSON.stringify(d.params).slice(0, 100)}`;
       case 'CONTEXT_TAP': return `${t} [CTX_TAP ]${c} cap=${d.capability} params=${JSON.stringify(d.params).slice(0, 100)}`;
       case 'SLASH_CMD': return `${t} [SLASH   ]${c} ${d.command} ${d.durationMs}ms result=${d.resultPreview}`;
+      case 'CHAIN': return `${t} [CHAIN   ]${c} ${d.component}.${d.action} → ${d.outcome}`;
       default: return `${t} [${e.cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }
@@ -1015,6 +1017,12 @@ export class UltraDevLog {
 
     const errs = entries.filter(e => e.cat === 'ERROR').slice(-5);
     if (errs.length > 0) { lines.push(''); lines.push('-- ERRORS --------------------------------------------'); errs.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e))); }
+
+    const chainFails = entries.filter(e => e.cat === 'CHAIN' && ((e.data.outcome as string)?.startsWith('FAIL') || (e.data.outcome as string)?.startsWith('EMPTY')));
+    if (chainFails.length > 0) {
+      lines.push(''); lines.push(`-- CHAIN FAILURES (${chainFails.length}) -----------------------`);
+      chainFails.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+    }
 
     const vf = entries.filter(e => e.cat === 'VAULT_WRITE' && e.data.success === false).slice(-5);
     if (vf.length > 0) { lines.push(''); lines.push(`-- VAULT WRITE FAILURES (${vf.length}) --------------------`); vf.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e))); }

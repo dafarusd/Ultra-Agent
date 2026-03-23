@@ -113,22 +113,30 @@ export default function ActionGrid({
     UltraDevLog.push('GRID_TAP', { actionId: action.id, capability: action.capability, label: action.label, requiresInput: !!action.requiresInput });
     if (action.capability === '__task__') {
       const template = savedTasks.find(t => t.id === action.params.templateId);
+      UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'action_press', trigger: { actionId: action.id }, state: {}, data: { capability: '__task__' }, outcome: template ? 'run_task' : 'FAIL:task_template_missing' });
       if (template) onRunTask(template);
       return;
     }
     if (action.requiresInput && action.inputKey) {
+      UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'action_press', trigger: { actionId: action.id }, state: {}, data: { capability: action.capability }, outcome: 'show_input' });
       setInputState({ actionId: action.id, value: '', action });
       setTimeout(() => inputRef.current?.focus(), 80);
       return;
     }
+    UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'action_press', trigger: { actionId: action.id }, state: {}, data: { capability: action.capability }, outcome: 'execute' });
     onExecute(action.capability, action.params);
   }, [savedTasks, onRunTask, onExecute]);
 
   const handleInputSubmit = useCallback(() => {
     if (!inputState) return;
     const { action, value } = inputState;
-    if (!value.trim()) { setInputState(null); return; }
+    if (!value.trim()) {
+      UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'input_submit', trigger: { actionId: inputState.actionId }, state: {}, data: { value: '' }, outcome: 'EMPTY:no_input_dismissed' });
+      setInputState(null);
+      return;
+    }
     const params = { ...action.params, [action.inputKey!]: value.trim() };
+    UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'input_submit', trigger: { actionId: action.id }, state: {}, data: { capability: action.capability }, outcome: 'execute_with_input' });
     onExecute(action.capability, params);
     setInputState(null);
   }, [inputState, onExecute]);
@@ -139,6 +147,7 @@ export default function ActionGrid({
       ? config.favorites.filter(f => f !== actionId)
       : [...config.favorites, actionId];
     UltraDevLog.push('GRID_FAV_TOGGLE', { actionId, added: !isFav, totalFavs: newFavs.length });
+    UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'toggleFavorite', trigger: { actionId }, state: { wasFav: isFav }, data: { newTotal: newFavs.length }, outcome: isFav ? 'removed_favorite' : 'added_favorite' });
     saveConfig({ ...config, favorites: newFavs });
   }, [config, saveConfig]);
 
@@ -147,13 +156,15 @@ export default function ActionGrid({
     const newHidden = isHidden
       ? config.hiddenCategories.filter(h => h !== catId)
       : [...config.hiddenCategories, catId];
+    UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'toggleHideCategory', trigger: { catId }, state: { wasHidden: isHidden }, data: { newHiddenCount: newHidden.length }, outcome: isHidden ? 'category_shown' : 'category_hidden' });
     saveConfig({ ...config, hiddenCategories: newHidden });
   }, [config, saveConfig]);
 
   const resetDefaults = useCallback(() => {
+    UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'reset_defaults', trigger: {}, state: { favCount: config.favorites.length, hiddenCount: config.hiddenCategories.length }, data: {}, outcome: 'reset_to_defaults' });
     saveConfig(DEFAULT_GRID_CONFIG);
     setEditMode(false);
-  }, [saveConfig]);
+  }, [saveConfig, config]);
 
   const expandedHeight = expandAnim.interpolate({
     inputRange: [0, 1],
@@ -196,7 +207,7 @@ export default function ActionGrid({
           ))}
         </ScrollView>
         <Pressable
-          onPress={onToggle}
+          onPress={() => { UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'chevron_toggle', trigger: {}, state: { collapsed }, data: {}, outcome: collapsed ? 'expanding' : 'collapsing' }); onToggle(); }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.chevronBtn}
         >
@@ -225,7 +236,7 @@ export default function ActionGrid({
                 </Pressable>
               )}
               <Pressable
-                onPress={() => setEditMode(e => !e)}
+                onPress={() => { const next = !editMode; UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'edit_mode_toggle', trigger: {}, state: { wasEditing: editMode }, data: {}, outcome: next ? 'edit_mode_on' : 'edit_mode_off' }); setEditMode(next); }}
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               >
                 <Ionicons name={editMode ? 'checkmark' : 'pencil'} size={16} color={editMode ? ACCENT : DIM} />

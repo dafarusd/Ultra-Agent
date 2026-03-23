@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ChatMessage } from "@/src/types/ultra";
+import { UltraDevLog } from "@/src/utils/UltraDevLog";
 
 const ACCENT = "#34d399";
 const SURFACE2 = "#1a1a1a";
@@ -132,7 +133,10 @@ export default function QuickReplies({ message, onSelect }: QuickRepliesProps) {
       {replies.map((reply) => (
         <Pressable
           key={reply.id}
-          onPress={() => onSelect(reply.prompt, message.content)}
+          onPress={() => {
+            UltraDevLog.push('CHAIN', { component: 'QuickReplies', action: 'chip_select', trigger: { replyId: reply.id }, state: { prompt: reply.prompt.slice(0, 40) }, data: { label: reply.label }, outcome: reply.prompt === '__COPY_ERROR__' ? 'copy_error' : 'send_prompt' });
+            onSelect(reply.prompt, message.content);
+          }}
           style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
         >
           {reply.iconFamily === "material" ? (

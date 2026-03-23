@@ -155,6 +155,7 @@ export default function SettingsScreen() {
       devTapCountRef.current = 0;
       const next = !isDevMode;
       setIsDevMode(next);
+      UltraDevLog.push('CHAIN', { component: 'Settings', action: 'version_tap_dev_mode', trigger: {}, state: { wasDevMode: isDevMode }, data: { taps: 7 }, outcome: next ? 'dev_mode_enabled' : 'dev_mode_disabled' });
       AppStorage.set("dev_mode_enabled", next ? "1" : "0");
       Alert.alert(next ? "Dev Mode ON" : "Dev Mode OFF", next ? "Logs tab and advanced options enabled." : "Dev mode disabled.");
     }
@@ -264,6 +265,7 @@ export default function SettingsScreen() {
 
   // ── API CRUD ───────────────────────────────────────
   const startNewApi = useCallback(() => {
+    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'start_new_api', trigger: {}, state: { apiCount: apis.length }, data: {}, outcome: 'new_api_draft_created' });
     const draft: ApiProvider = {
       id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: "",
@@ -275,20 +277,23 @@ export default function SettingsScreen() {
     };
     setEditingApi(draft);
     setIsNewApi(true);
-  }, []);
+  }, [apis.length]);
 
   const startEditApi = useCallback((api: ApiProvider) => {
+    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'start_edit_api', trigger: { apiId: api.id }, state: {}, data: { name: api.name }, outcome: 'edit_form_opened' });
     setEditingApi({ ...api });
     setIsNewApi(false);
   }, []);
 
   const saveApi = useCallback(async () => {
     if (!editingApi?.name || !editingApi?.baseUrl) {
+      UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { hasName: !!editingApi?.name, hasUrl: !!editingApi?.baseUrl }, outcome: 'EMPTY:validation_failed' });
       Alert.alert('Error', 'Name and Base URL are required.');
       return;
     }
 
     UltraDevLog.push('UI_TAP', { component: 'settings', target: 'save_api', provider: editingApi.name });
+    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { name: editingApi.name }, outcome: 'saving' });
 
     const updated: ApiProvider[] = isNewApi
       ? [...apis, editingApi]
@@ -350,6 +355,7 @@ export default function SettingsScreen() {
   }, []);
 
   const deleteApi = useCallback(async (id: string) => {
+    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'delete_api', trigger: { apiId: id }, state: { apiCount: apis.length }, data: {}, outcome: 'deleting' });
     DebugLog.settingsApiDelete(id, true);
     const updated = apis.filter((a) => a.id !== id);
     setApis(updated);
@@ -368,6 +374,7 @@ export default function SettingsScreen() {
   }, [apis, refreshPrimaryEngine]);
 
   const saveDefaults = useCallback(async () => {
+    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_defaults', trigger: {}, state: { tab }, data: { defaults }, outcome: 'saving' });
     UltraDevLog.settingsSaveTap('defaults', { defaults });
     try {
       const vault = await SecureVault.initialize();
@@ -392,6 +399,7 @@ export default function SettingsScreen() {
 
   // ── Cost limit save ────────────────────────────────
   const saveLimits = useCallback(async () => {
+    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_limits', trigger: {}, state: {}, data: { dailyLimit, taskLimit }, outcome: 'saving' });
     UltraDevLog.settingsSaveTap('limits', { dailyLimit, taskLimit });
     try {
       const vault = await SecureVault.initialize();
@@ -458,6 +466,7 @@ export default function SettingsScreen() {
             testID={`SettingsTab-${t}`}
             onPress={() => {
               UltraDevLog.push('SETTINGS_TAB_SWITCH', { from: tab, to: t });
+              UltraDevLog.push('CHAIN', { component: 'Settings', action: 'tab_switch', trigger: {}, state: { from: tab }, data: { to: t }, outcome: `switched_to_${t}` });
               setTab(t);
               if (t === "logs") { loadLogs(); }
               if (t === "costs") loadCostData();

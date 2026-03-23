@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ChatMessage } from '@/src/types/ultra';
 import { getContextActions } from '@/src/data/contextRules';
+import { UltraDevLog } from '@/src/utils/UltraDevLog';
 
 interface ContextBarProps {
   message: ChatMessage;
@@ -31,8 +32,10 @@ export default function ContextBar({ message, currentMode, onExecutePlan, onSend
           key={action.id}
           onPress={() => {
             if (action.execute.type === 'plan') {
+              UltraDevLog.push('CHAIN', { component: 'ContextBar', action: 'chip_tap', trigger: { actionId: action.id }, state: { type: 'plan' }, data: { capability: action.execute.capability }, outcome: 'execute_plan' });
               onExecutePlan(action.execute.capability, action.execute.params);
             } else {
+              UltraDevLog.push('CHAIN', { component: 'ContextBar', action: 'chip_tap', trigger: { actionId: action.id }, state: { type: 'prompt' }, data: { text: action.execute.text.slice(0, 40) }, outcome: 'send_prompt' });
               onSendPrompt(action.execute.text);
             }
           }}

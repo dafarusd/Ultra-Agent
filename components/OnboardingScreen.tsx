@@ -3,6 +3,7 @@ import { View, Text, TextInput, Pressable, StyleSheet, Platform, ScrollView, Lin
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AppController from '@/src/native/AppController';
+import { UltraDevLog } from '@/src/utils/UltraDevLog';
 
 const ACCENT = '#34d399';
 const BG = '#000000';
@@ -57,13 +58,16 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
   const handleNext = () => {
     if (isLast) {
+      UltraDevLog.push('CHAIN', { component: 'OnboardingScreen', action: 'next', trigger: {}, state: { step, total: STEPS.length }, data: {}, outcome: 'onboarding_complete' });
       onComplete();
     } else {
+      UltraDevLog.push('CHAIN', { component: 'OnboardingScreen', action: 'next', trigger: {}, state: { step }, data: { nextStep: step + 1 }, outcome: `advance_to_step_${step + 1}` });
       setStep(prev => prev + 1);
     }
   };
 
   const handleAccessibilitySettings = () => {
+    UltraDevLog.push('CHAIN', { component: 'OnboardingScreen', action: 'open_accessibility', trigger: {}, state: { step }, data: {}, outcome: Platform.OS === 'android' ? 'opening_settings' : 'EMPTY:not_android' });
     if (Platform.OS === 'android') {
       AppController.openAccessibilitySettings().catch(() => {});
     }
@@ -88,7 +92,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
         {step === 1 && (
           <Pressable
             style={s.linkBtn}
-            onPress={() => Linking.openURL('https://venice.ai').catch(() => {})}
+            onPress={() => { UltraDevLog.push('CHAIN', { component: 'OnboardingScreen', action: 'open_venice_link', trigger: {}, state: { step }, data: {}, outcome: 'browser_opened' }); Linking.openURL('https://venice.ai').catch(() => {}); }}
           >
             <Ionicons name="open-outline" size={16} color={ACCENT} />
             <Text style={s.linkText}>Get API key at venice.ai</Text>
@@ -104,6 +108,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
         {step === 4 && Platform.OS === 'android' && (
           <Pressable style={s.linkBtn} onPress={async () => {
+            UltraDevLog.push('CHAIN', { component: 'OnboardingScreen', action: 'open_battery_settings', trigger: {}, state: { step }, data: {}, outcome: 'opening_battery_settings' });
             try {
               const { startActivityAsync } = await import('expo-intent-launcher');
               await startActivityAsync(
@@ -128,7 +133,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
       <View style={s.footer}>
         {step > 0 ? (
-          <Pressable style={s.backBtn} onPress={() => setStep(prev => prev - 1)}>
+          <Pressable style={s.backBtn} onPress={() => { UltraDevLog.push('CHAIN', { component: 'OnboardingScreen', action: 'back', trigger: {}, state: { step }, data: { prevStep: step - 1 }, outcome: `back_to_step_${step - 1}` }); setStep(prev => prev - 1); }}>
             <Ionicons name="arrow-back" size={20} color={DIM} />
           </Pressable>
         ) : (

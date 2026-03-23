@@ -203,13 +203,17 @@ export default function ConversationList({
 
   const handleCreateFolder = useCallback(async () => {
     const name = newFolderName.trim();
-    if (!name) return;
+    if (!name) {
+      UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'create_folder', trigger: {}, state: { folderCount: folders.length }, data: { name: '' }, outcome: 'EMPTY:no_name_cancelled' });
+      return;
+    }
     const id = `folder_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const newFolder: Folder = { id, name, isSystem: false };
     const updated = [...folders, newFolder];
     setFolders(updated);
     setNewFolderName("");
     setShowNewFolder(false);
+    UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'create_folder', trigger: {}, state: { folderCount: folders.length }, data: { name, id }, outcome: 'folder_created' });
     try {
       await AppStorage.set('user_folders', JSON.stringify(updated.filter(f => !f.isSystem)));
     } catch {}
@@ -217,17 +221,20 @@ export default function ConversationList({
 
   const handleFolderTap = useCallback((folder: Folder) => {
     if (folder.id === "folder_logs") {
+      UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'folder_tap', trigger: { folderId: folder.id }, state: {}, data: { name: folder.name }, outcome: 'open_logs' });
       onClose();
       onOpenLogs();
       return;
     }
+    UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'folder_tap', trigger: { folderId: folder.id }, state: {}, data: { name: folder.name }, outcome: 'folder_preview_alert' });
     Alert.alert(folder.name, 'Folder view coming in the next update. You can create and organize folders now.');
   }, [onClose, onOpenLogs]);
 
   const handleConvSelect = useCallback((id: string) => {
     UltraDevLog.push('SIDEBAR_CONV_SELECT', { convId: id });
+    UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'conv_select', trigger: { convId: id }, state: { total: conversations.length }, data: {}, outcome: 'conversation_switched' });
     onSelect(id);
-  }, [onSelect]);
+  }, [onSelect, conversations.length]);
 
   const renderConversation = useCallback(
     ({ item }: { item: ConversationMeta }) => (
@@ -267,7 +274,7 @@ export default function ConversationList({
               </View>
               <Text style={styles.drawerBrand}>Agent Ultra</Text>
             </View>
-            <Pressable onPress={onClose} style={styles.closeBtn}>
+            <Pressable onPress={() => { UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'close', trigger: {}, state: { convCount: conversations.length }, data: {}, outcome: 'drawer_closed' }); onClose(); }} style={styles.closeBtn}>
               <Ionicons name="close" size={20} color={DIM} />
             </Pressable>
           </View>
@@ -275,7 +282,7 @@ export default function ConversationList({
           {/* ── New Chat (plain row, no green bg) ──────── */}
           <Pressable
             testID="sidebar_new_chat"
-            onPress={() => { onNewChat(); onClose(); }}
+            onPress={() => { UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'new_chat', trigger: {}, state: { convCount: conversations.length }, data: {}, outcome: 'new_conversation_started' }); onNewChat(); onClose(); }}
             style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]}
           >
             <Ionicons name="add-outline" size={20} color={TEXT} />
@@ -285,7 +292,7 @@ export default function ConversationList({
           {/* ── Settings (gear moved here) ─────────────── */}
           <Pressable
             testID="sidebar_settings"
-            onPress={() => { onClose(); onOpenSettings(); }}
+            onPress={() => { UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'open_settings', trigger: {}, state: {}, data: {}, outcome: 'settings_opened' }); onClose(); onOpenSettings(); }}
             style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]}
           >
             <Ionicons name="settings-outline" size={20} color={TEXT} />
@@ -294,7 +301,7 @@ export default function ConversationList({
 
           {/* ── Toggle Tree ──────────────────────────────── */}
           <Pressable
-            onPress={() => setToggleTreeOpen(prev => !prev)}
+            onPress={() => { const next = !toggleTreeOpen; UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'toggle_tree', trigger: {}, state: { wasOpen: toggleTreeOpen }, data: {}, outcome: next ? 'toggles_expanded' : 'toggles_collapsed' }); setToggleTreeOpen(next); }}
             style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]}
             testID="toggle_tree_root"
           >
@@ -311,6 +318,7 @@ export default function ConversationList({
                   testID={toggle.id}
                   onPress={() => {
                     UltraDevLog.push('TOGGLE_TAP', { id: toggle.id, capability: toggle.capability });
+                    UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'execute_toggle', trigger: { id: toggle.id }, state: {}, data: { capability: toggle.capability }, outcome: onExecuteToggle ? 'toggle_executed' : 'FAIL:no_handler' });
                     onExecuteToggle?.(toggle.capability, toggle.params);
                   }}
                   style={({ pressed }) => [styles.toggleBtn, pressed && styles.toggleBtnPressed]}
@@ -394,7 +402,7 @@ export default function ConversationList({
               <Pressable onPress={handleCreateFolder} style={styles.newFolderSave}>
                 <Ionicons name="checkmark" size={16} color={ACCENT} />
               </Pressable>
-              <Pressable onPress={() => { setShowNewFolder(false); setNewFolderName(""); }} style={styles.newFolderCancel}>
+              <Pressable onPress={() => { UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'cancel_new_folder', trigger: {}, state: {}, data: {}, outcome: 'cancelled' }); setShowNewFolder(false); setNewFolderName(""); }} style={styles.newFolderCancel}>
                 <Ionicons name="close" size={16} color={DIM} />
               </Pressable>
             </View>

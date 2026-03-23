@@ -613,7 +613,11 @@ export default function ChatScreen() {
   // ── Send message ───────────────────────────────────
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = (overrideText || input).trim();
-    if (!text || isProcessing || !agentCore || !conversationId) return;
+    if (!text || isProcessing || !agentCore || !conversationId) {
+      UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'send', trigger: {}, state: { hasText: !!text, isProcessing, hasCore: !!agentCore }, data: {}, outcome: 'EMPTY:guard_failed' });
+      return;
+    }
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'send', trigger: {}, state: { isSlash: text.startsWith('/'), textLen: text.length }, data: {}, outcome: 'sending' });
 
     // ── Slash commands: handle locally ──
     if (text.startsWith('/')) {
@@ -754,7 +758,11 @@ export default function ChatScreen() {
 
   // ── Approval handlers ──────────────────────────────
   const handleApprove = useCallback(async () => {
-    if (!agentCore || !conversationId || !pendingReplay) return;
+    if (!agentCore || !conversationId || !pendingReplay) {
+      UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'approve', trigger: {}, state: { hasReplay: !!pendingReplay }, data: {}, outcome: 'FAIL:guard_failed' });
+      return;
+    }
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'approve', trigger: {}, state: { replayType: pendingReplay.type }, data: {}, outcome: 'executing' });
     const replay = pendingReplay;
     setPendingReplay(null);
     setIsProcessing(true);
@@ -776,7 +784,11 @@ export default function ChatScreen() {
   }, [agentCore, conversationId, pendingReplay, handleResult, reloadMessages]);
 
   const handleDeny = useCallback(async () => {
-    if (!agentCore || !conversationId || !pendingReplay) return;
+    if (!agentCore || !conversationId || !pendingReplay) {
+      UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'deny', trigger: {}, state: { hasReplay: !!pendingReplay }, data: {}, outcome: 'FAIL:guard_failed' });
+      return;
+    }
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'deny', trigger: {}, state: { replayType: pendingReplay.type }, data: {}, outcome: 'denied' });
     const replay = pendingReplay;
     setPendingReplay(null);
     if (replay.type === "model_switch") {
@@ -802,6 +814,7 @@ export default function ChatScreen() {
   // ── Conversation management ────────────────────────
   const handleNewChat = useCallback(async () => {
     if (!agentCore) return;
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'new_chat', trigger: {}, state: { prevConvId: conversationId ?? 'none' }, data: {}, outcome: 'creating_conversation' });
     const cm = agentCore.getConversationManager();
     const conv = await cm.createConversation();
     setConversationId(conv.id);
@@ -816,6 +829,7 @@ export default function ChatScreen() {
 
   const handleSelectConversation = useCallback(async (id: string) => {
     if (!agentCore) return;
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'select_conversation', trigger: { convId: id }, state: { prevConvId: conversationId ?? 'none' }, data: {}, outcome: 'loading_conversation' });
     DebugLog.uiConvSwitch(conversationId ?? "none", id);
     snapUI("conv_switch");
     setConversationId(id);
@@ -829,6 +843,7 @@ export default function ChatScreen() {
 
   const handleDeleteConversation = useCallback(async (id: string) => {
     if (!agentCore) return;
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'delete_conversation', trigger: { convId: id }, state: { isActive: id === conversationId }, data: {}, outcome: 'deleting' });
     const cm = agentCore.getConversationManager();
     await cm.deleteConversation(id);
     if (id === conversationId) {
@@ -852,6 +867,7 @@ export default function ChatScreen() {
 
   const handleRenameConversation = useCallback(() => {
     if (!agentCore || !conversationId) return;
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'rename_conversation', trigger: {}, state: { convId: conversationId, platform: Platform.OS }, data: { currentTitle: conversationTitle }, outcome: Platform.OS === 'web' ? 'web_prompt' : 'modal_opened' });
     if (Platform.OS === "web") {
       const name = window.prompt("Rename conversation:", conversationTitle);
       if (name?.trim()) {
@@ -868,6 +884,7 @@ export default function ChatScreen() {
 
   const confirmRename = useCallback(() => {
     if (!agentCore || !conversationId || !renameText.trim()) return;
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'confirm_rename', trigger: {}, state: { convId: conversationId }, data: { newTitle: renameText.trim() }, outcome: 'renamed' });
     agentCore.getConversationManager().updateTitle(conversationId, renameText.trim()).then(() => {
       setConversationTitle(renameText.trim());
       refreshConversations(agentCore);
@@ -948,6 +965,7 @@ export default function ChatScreen() {
   // ── Action Grid execution ──────────────────────────
   const handleGridExecute = useCallback(async (capability: string, params: Record<string, any>) => {
     if (!agentCore) return;
+    UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'grid_execute', trigger: { capability }, state: { hasConvId: !!conversationId }, data: { params }, outcome: 'running' });
     setGridCollapsed(true);
     const plan: ActionPlan = { capability, params, reason: 'Action Grid' };
     try {

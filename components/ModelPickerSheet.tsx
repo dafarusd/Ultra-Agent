@@ -117,7 +117,7 @@ export default function ModelPickerSheet({
       const isActive = item.id === currentModelId;
       return (
         <Pressable
-          onPress={() => { onSelect(item.id); onClose(); }}
+          onPress={() => { UltraDevLog.push('CHAIN', { component: 'ModelPickerSheet', action: 'model_select', trigger: { modelId: item.id }, state: { prev: currentModelId, filter }, data: { modelName: item.name, type: item.type }, outcome: item.id === currentModelId ? 'same_model_reselected' : 'model_changed' }); onSelect(item.id); onClose(); }}
           style={({ pressed }) => [
             styles.modelRow,
             isActive && styles.modelRowActive,
@@ -184,7 +184,7 @@ export default function ModelPickerSheet({
               return (
                 <Pressable
                   key={tab.key}
-                  onPress={() => setFilter(tab.key)}
+                  onPress={() => { UltraDevLog.push('CHAIN', { component: 'ModelPickerSheet', action: 'filter_tab', trigger: { tab: tab.key }, state: { prev: filter }, data: {}, outcome: `filter_set_${tab.key}` }); setFilter(tab.key); }}
                   style={[styles.filterTab, isActive && styles.filterTabActive]}
                 >
                   <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>

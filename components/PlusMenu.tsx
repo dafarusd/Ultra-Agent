@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { UltraDevLog } from "@/src/utils/UltraDevLog";
 
 const ACCENT = "#34d399";
 const BG = "#000000";
@@ -107,7 +108,7 @@ export default function PlusMenu({
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.root} testID="PlusMenu">
-        <TouchableWithoutFeedback onPress={onClose}>
+        <TouchableWithoutFeedback onPress={() => { UltraDevLog.push('CHAIN', { component: 'PlusMenu', action: 'backdrop_close', trigger: {}, state: { currentType }, data: {}, outcome: 'dismissed' }); onClose(); }}>
           <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]} />
         </TouchableWithoutFeedback>
 
@@ -132,7 +133,7 @@ export default function PlusMenu({
               return (
                 <Pressable
                   key={opt.type}
-                  onPress={() => onSelect(opt.type)}
+                  onPress={() => { UltraDevLog.push('CHAIN', { component: 'PlusMenu', action: 'mode_select', trigger: { type: opt.type }, state: { prev: currentType }, data: { label: opt.label }, outcome: opt.type === currentType ? 'same_mode' : `mode_changed_to_${opt.type}` }); onSelect(opt.type); }}
                   style={({ pressed }) => [
                     styles.optionCard,
                     isActive && { borderColor: opt.color, backgroundColor: `${opt.color}10` },

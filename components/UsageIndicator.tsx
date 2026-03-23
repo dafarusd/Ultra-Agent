@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { UltraDevLog } from "@/src/utils/UltraDevLog";
 
 const ACCENT = "#34d399";
 const SURFACE = "#111111";
@@ -70,7 +71,7 @@ export default function UsageIndicator({
 
   return (
     <>
-      <Pressable onPress={() => setExpanded(true)} style={styles.pill}>
+      <Pressable onPress={() => { UltraDevLog.push('CHAIN', { component: 'UsageIndicator', action: 'expand', trigger: {}, state: { totalCost, totalCalls }, data: { modelCount: modelUsages.length }, outcome: 'sheet_opened' }); setExpanded(true); }} style={styles.pill}>
         <Ionicons
           name="pulse-outline"
           size={14}
@@ -85,7 +86,7 @@ export default function UsageIndicator({
 
       <Modal visible={expanded} transparent animationType="none" onRequestClose={() => setExpanded(false)} statusBarTranslucent>
         <View style={styles.sheetRoot}>
-          <TouchableWithoutFeedback onPress={() => setExpanded(false)}>
+          <TouchableWithoutFeedback onPress={() => { UltraDevLog.push('CHAIN', { component: 'UsageIndicator', action: 'backdrop_close', trigger: {}, state: { totalCost }, data: {}, outcome: 'sheet_dismissed' }); setExpanded(false); }}>
             <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]} />
           </TouchableWithoutFeedback>
 
@@ -104,7 +105,7 @@ export default function UsageIndicator({
 
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>Usage</Text>
-              <Pressable onPress={() => setExpanded(false)} hitSlop={12}>
+              <Pressable onPress={() => { UltraDevLog.push('CHAIN', { component: 'UsageIndicator', action: 'close_btn', trigger: {}, state: { totalCost }, data: {}, outcome: 'sheet_dismissed' }); setExpanded(false); }} hitSlop={12}>
                 <Ionicons name="close" size={20} color={DIM} />
               </Pressable>
             </View>
