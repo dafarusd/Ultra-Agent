@@ -97,6 +97,7 @@ export default function SettingsScreen() {
   const [defaultsExpanded, setDefaultsExpanded] = useState(false);
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [backupExporting, setBackupExporting] = useState(false);
+  const [tierVersion, setTierVersion] = useState(0);
   const [biometricGate] = useState(() => new BiometricGate());
   const [lockTimeout, setLockTimeout] = useState(0);
   const [backupImporting, setBackupImporting] = useState(false);
@@ -162,6 +163,14 @@ export default function SettingsScreen() {
       setIsDevMode(next);
       UltraDevLog.push('CHAIN', { component: 'Settings', action: 'version_tap_dev_mode', trigger: {}, state: { wasDevMode: isDevMode }, data: { taps: 7 }, outcome: next ? 'dev_mode_enabled' : 'dev_mode_disabled' });
       AppStorage.set("dev_mode_enabled", next ? "1" : "0");
+      // Also set TierService directly so it takes effect immediately
+      if (next) {
+        const core = getAgentCoreInstance();
+        if (core?.getTierService()) {
+          core.getTierService()!.setTier('dev');
+          setTierVersion(v => v + 1);
+        }
+      }
       Alert.alert(next ? "Dev Mode ON" : "Dev Mode OFF", next ? "Logs tab and advanced options enabled." : "Dev mode disabled.");
     }
   }, [isDevMode]);
@@ -880,6 +889,7 @@ export default function SettingsScreen() {
                       const core = getAgentCoreInstance();
                       if (core?.getTierService()) {
                         await core.getTierService()!.setTier(t);
+                        setTierVersion(v => v + 1);
                       }
                     }}
                     style={[styles.btn, isActive ? styles.primaryBtn : styles.secondaryBtn]}

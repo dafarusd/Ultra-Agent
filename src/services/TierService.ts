@@ -55,10 +55,10 @@ export class TierService {
       this.tier = savedTier;
     }
 
-    // Dev mode override
+    // Dev mode override — reads from AppStorage (which routes to SecureVault for this key)
     try {
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      const devMode = await AsyncStorage.getItem('dev_mode_enabled');
+      const { AppStorage } = require('../utils/AppStorage');
+      const devMode = await AppStorage.get('dev_mode_enabled');
       if (devMode === '1') this.tier = 'dev';
     } catch {}
 
