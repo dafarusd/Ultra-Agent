@@ -55,6 +55,10 @@ export default function RootLayout() {
     }
   }, [fontsLoaded, fontError]);
 
+  useEffect(() => {
+    UltraDevLog.collectEnvelopeContext();
+  }, []);
+
   // Global JS error capture — catches everything React ErrorBoundary misses
   useEffect(() => {
     // Unhandled promise rejections (the #1 source of silent failures)

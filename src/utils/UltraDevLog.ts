@@ -111,15 +111,142 @@ export class UltraDevLog {
   private static lastConvLoadedCounts = new Map<string, number>();
   private static processingStartedAt = 0;
 
+  // ── Envelope context (collected once at startup) ──
+  private static deviceInfo: Record<string, unknown> = {};
+  private static appVersion = '';
+  private static buildId = '';
+  private static rnVersion = '';
+  private static hermesEnabled = false;
+  private static currentScreen = 'unknown';
+  private static isBackground = false;
+  private static runCounter = 0;
+  private static currentRunId = '';
+  private static currentCorrId = '';
+  private static monoStartMs = Date.now();
+  private static perfNowAvailable = typeof performance !== 'undefined' && typeof performance.now === 'function';
+
+  private static getMonoMs(): number {
+    if (UltraDevLog.perfNowAvailable) return Math.round(performance.now());
+    return Date.now() - UltraDevLog.monoStartMs;
+  }
+
+  private static getLevel(cat: string, data: Record<string, unknown>): string {
+    if (cat === 'ERROR' || cat === 'ERROR_BOUNDARY' || cat === 'CRASH_NATIVE') return 'ERROR';
+    if (cat === 'PROCESS_RESTART' && data.event === 'warm_restart') return 'WARN';
+    if ((data.note as string)?.startsWith?.('WARN')) return 'WARN';
+    if ((data.note as string)?.startsWith?.('BUG')) return 'ERROR';
+    if (cat === 'TASK_WATCHDOG' && data.event === 'FIRED') return 'ERROR';
+    if (cat === 'APP_LAUNCH_FAIL') return 'ERROR';
+    if (cat === 'EXEC_RESULT' && data.success === false) return 'WARN';
+    if (cat === 'DEBUG_SCREENSHOT_FAIL') return 'WARN';
+    if (cat === 'VAULT_WRITE' && data.success === false) return 'WARN';
+    if (cat === 'SESSION_SUMMARY' || cat === 'DEVICE_INFO') return 'INFO';
+    if (cat === 'BUBBLE_DIAG' || cat === 'UI_MESSAGE_RENDERED' || cat === 'A11Y_CONTENT') return 'DEBUG';
+    return 'INFO';
+  }
+
+  static async collectEnvelopeContext(): Promise<void> {
+    try {
+      const Device = require('expo-device');
+      const Constants = require('expo-constants').default;
+
+      UltraDevLog.deviceInfo = {
+        model: Device.modelName || 'unknown',
+        manufacturer: (Device.manufacturer || 'unknown').toLowerCase(),
+        sdk_int: Device.platformApiLevel || 0,
+        os_release: Device.osVersion || '',
+        ram_mb: Device.totalMemory ? Math.round(Device.totalMemory / 1048576) : 0,
+      };
+
+      UltraDevLog.appVersion = Constants.expoConfig?.version || Constants.manifest?.version || 'unknown';
+      UltraDevLog.buildId = `${UltraDevLog.appVersion}-${Constants.expoConfig?.android?.versionCode || '?'}`;
+      try {
+        const rnv = require('react-native/Libraries/Core/ReactNativeVersion');
+        UltraDevLog.rnVersion = rnv?.version
+          ? `${rnv.version.major}.${rnv.version.minor}.${rnv.version.patch}`
+          : 'unknown';
+      } catch {
+        UltraDevLog.rnVersion = 'unknown';
+      }
+
+      UltraDevLog.hermesEnabled = typeof (global as any).HermesInternal !== 'undefined';
+
+      UltraDevLog.runCounter++;
+      UltraDevLog.currentRunId = `run_${UltraDevLog.runCounter}_${Date.now().toString(36)}`;
+    } catch (e: any) {
+      console.warn('[UltraDevLog] Envelope context collection failed:', e?.message);
+    }
+  }
+
+  static setCurrentScreen(screen: string): void {
+    UltraDevLog.currentScreen = screen;
+  }
+
+  static setIsBackground(bg: boolean): void {
+    UltraDevLog.isBackground = bg;
+  }
+
+  static setCorrId(corrId: string): void {
+    UltraDevLog.currentCorrId = corrId;
+  }
+
+  static clearCorrId(): void {
+    UltraDevLog.currentCorrId = '';
+  }
+
+  static newRun(): string {
+    UltraDevLog.runCounter++;
+    UltraDevLog.currentRunId = `run_${UltraDevLog.runCounter}_${Date.now().toString(36)}`;
+    return UltraDevLog.currentRunId;
+  }
+
   private static push(cat: UltraLogCat, data: Record<string, unknown>): void {
+    const level = UltraDevLog.getLevel(cat, data);
+
+    let errorEnvelope: Record<string, unknown> | undefined;
+    if (level === 'ERROR' || level === 'WARN' || level === 'FATAL') {
+      const recent = UltraDevLog.entries.slice(-20).map(e => ({
+        seq: e.seq,
+        event: e.cat,
+        ts: e.ts,
+        summary: JSON.stringify(e.data).slice(0, 100),
+      }));
+      errorEnvelope = {
+        error_type: data.context || cat,
+        error_code: data.error_code || cat,
+        message: data.message || data.error || data.note || '',
+        stack_js: data.stack || data.componentStack || '',
+        cause_chain: data.cause_chain || [],
+        last_20_events: recent,
+      };
+    }
+
     const entry: UltraLogEntry = {
       ts: new Date().toISOString(),
       t: Date.now(),
       cat,
       seq: ++UltraDevLog.seq,
-      data,
+      data: {
+        ts_iso: new Date().toISOString(),
+        mono_ms: UltraDevLog.getMonoMs(),
+        session_id: UltraDevLog.sessionId,
+        run_id: UltraDevLog.currentRunId,
+        build_id: UltraDevLog.buildId,
+        app_version: UltraDevLog.appVersion,
+        rn_version: UltraDevLog.rnVersion,
+        hermes: UltraDevLog.hermesEnabled,
+        device: UltraDevLog.deviceInfo,
+        is_background: UltraDevLog.isBackground,
+        screen: UltraDevLog.currentScreen,
+        event: cat,
+        level,
+        corr_id: UltraDevLog.currentCorrId || (data.taskId as string) || '',
+        payload: data,
+        ...(errorEnvelope ? { error: errorEnvelope } : {}),
+      },
       coreId: UltraDevLog.activeCoreId ?? undefined,
     };
+
     UltraDevLog.entries.push(entry);
     if (UltraDevLog.entries.length > UltraDevLog.MAX_MEMORY) {
       UltraDevLog.entries = UltraDevLog.entries.slice(-UltraDevLog.MAX_MEMORY);
@@ -435,6 +562,7 @@ export class UltraDevLog {
     UltraDevLog.lastActiveAt = Date.now();
     UltraDevLog.appStateListener = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       const now = Date.now();
+      UltraDevLog.isBackground = (nextState === 'background' || nextState === 'inactive');
       const elapsed = now - UltraDevLog.lastAppStateChangeAt;
       const bgDuration = nextState === 'active' ? now - UltraDevLog.lastActiveAt : 0;
       UltraDevLog.push('APP_STATE_CHANGE', {
@@ -826,8 +954,8 @@ export class UltraDevLog {
   }
 
   private static formatEntry(e: UltraLogEntry): string {
+    const d = (e.data.payload as Record<string, unknown>) || e.data;
     const t = e.ts.slice(11, 23);
-    const d = e.data;
     const c = e.coreId ? ` [${e.coreId.slice(-6)}]` : '';
     const w = (s: unknown) => (s as string)?.startsWith?.('WARN') || (s as string)?.startsWith?.('BUG') ? ' *** ' : ' ';
 
@@ -941,6 +1069,8 @@ export class UltraDevLog {
     const entries = [...UltraDevLog.entries];
     const lines: string[] = [];
     const hr = '='.repeat(52);
+    // Helper: reads original payload regardless of envelope wrapping
+    const p = (e: UltraLogEntry) => (e.data.payload as Record<string, unknown>) || e.data;
 
     lines.push(hr);
     lines.push(`AGENT ULTRA -- BUG REPORT v3`);
@@ -949,41 +1079,44 @@ export class UltraDevLog {
     lines.push(`Entries:   ${entries.length}`);
     lines.push(hr);
 
-    const failures = entries.filter(e =>
-      e.cat === 'ERROR' || e.cat === 'APP_LAUNCH_FAIL' ||
-      (e.cat === 'EXEC_RESULT' && !e.data.success) ||
-      (e.cat === 'SMS_FIRE' && !e.data.toIsPhone) ||
-      (e.cat === 'PARSE_COMPOUND') ||
-      (e.cat === 'TASK_WATCHDOG' && e.data.event === 'FIRED') ||
-      (e.cat === 'CORE_INSTANCE' && (e.data.note as string)?.startsWith('WARN')) ||
-      (e.cat === 'COMPONENT_LIFECYCLE' && (e.data.note as string)?.startsWith('WARN')) ||
-      (e.cat === 'SETTINGS_SAVE' && e.data.event === 'write_result' && !e.data.success) ||
-      (e.cat === 'PICKER_CONTENT' && (e.data.note as string)?.startsWith('WARN')) ||
-      (e.cat === 'UI_MESSAGE_RENDERED' && (e.data.tallWarning || (e.data.note as string)?.includes('listHeightPx=0'))) ||
-      (e.cat === 'VAULT_WRITE' && e.data.success === false) ||
-      (e.cat === 'PROCESS_RESTART' && e.data.event === 'warm_restart') ||
-      (e.cat === 'FOCUS_EFFECT_DEPS' && (e.data.changedDeps as string[])?.includes('currentMode'))
-    );
+    const failures = entries.filter(e => {
+      const d = p(e);
+      return (
+        e.cat === 'ERROR' || e.cat === 'APP_LAUNCH_FAIL' ||
+        (e.cat === 'EXEC_RESULT' && !d.success) ||
+        (e.cat === 'SMS_FIRE' && !d.toIsPhone) ||
+        (e.cat === 'PARSE_COMPOUND') ||
+        (e.cat === 'TASK_WATCHDOG' && d.event === 'FIRED') ||
+        (e.cat === 'CORE_INSTANCE' && (d.note as string)?.startsWith('WARN')) ||
+        (e.cat === 'COMPONENT_LIFECYCLE' && (d.note as string)?.startsWith('WARN')) ||
+        (e.cat === 'SETTINGS_SAVE' && d.event === 'write_result' && !d.success) ||
+        (e.cat === 'PICKER_CONTENT' && (d.note as string)?.startsWith('WARN')) ||
+        (e.cat === 'UI_MESSAGE_RENDERED' && (d.tallWarning || (d.note as string)?.includes('listHeightPx=0'))) ||
+        (e.cat === 'VAULT_WRITE' && d.success === false) ||
+        (e.cat === 'PROCESS_RESTART' && d.event === 'warm_restart') ||
+        (e.cat === 'FOCUS_EFFECT_DEPS' && (d.changedDeps as string[])?.includes('currentMode'))
+      );
+    });
 
     lines.push(''); lines.push(`-- FAILURES & WARNINGS (${failures.length}) -----------------`);
     failures.length === 0 ? lines.push('  None.') : failures.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
 
     const lastUser = [...entries].reverse().find(e => e.cat === 'USER_MSG');
     lines.push(''); lines.push('-- LAST USER INPUT --------------------------------');
-    lines.push(lastUser ? `  "${lastUser.data.content}"` : '  (none)');
+    lines.push(lastUser ? `  "${p(lastUser).content}"` : '  (none)');
 
-    const lastExec = [...entries].reverse().find(e => e.data.taskId);
+    const lastExec = [...entries].reverse().find(e => p(e).taskId);
     if (lastExec) {
-      const taskId = lastExec.data.taskId as string;
-      const te = entries.filter(e => e.data.taskId === taskId);
+      const taskId = p(lastExec).taskId as string;
+      const te = entries.filter(e => p(e).taskId === taskId);
       lines.push(''); lines.push(`-- LAST TASK CHAIN (${taskId}) ----------------------`);
       te.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
       const PHASES = ['INGEST','ROUTE','PLAN','VERIFY','APPROVE','EXECUTE','VERIFY_RESULT','RESPOND'];
-      const reached = te.filter(e => e.cat === 'EXECUTE_PHASE').map(e => e.data.phase as string);
+      const reached = te.filter(e => e.cat === 'EXECUTE_PHASE').map(e => p(e).phase as string);
       const last = reached[reached.length - 1];
       if (last) { const next = PHASES[PHASES.indexOf(last) + 1]; if (next) { lines.push(''); lines.push(`  PHASE GAP: crash in ${last} phase (next ${next} never reached).`); } }
-      const enter = te.filter(e => e.cat === 'EXECUTOR_BRANCH' && e.data.branch === 'ENTER').length;
-      const exit = te.filter(e => e.cat === 'EXECUTOR_BRANCH' && e.data.branch === 'EXIT').length;
+      const enter = te.filter(e => e.cat === 'EXECUTOR_BRANCH' && p(e).branch === 'ENTER').length;
+      const exit = te.filter(e => e.cat === 'EXECUTOR_BRANCH' && p(e).branch === 'EXIT').length;
       if (enter > exit) { lines.push(''); lines.push(`  EXECUTOR MISFIRE: ENTER=${enter} EXIT=${exit}.`); }
     }
 
@@ -1001,12 +1134,12 @@ export class UltraDevLog {
     const proc = entries.filter(e => e.cat === 'UI_PROCESSING').slice(-10);
     lines.push(''); lines.push('-- isProcessing TRANSITIONS (last 10) ---------------');
     proc.length === 0 ? lines.push('  None.') : proc.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
-    if (proc[proc.length-1]?.data.isProcessing === true) lines.push('  *** isProcessing=true at end -- UI locked.');
+    if (p(proc[proc.length-1] as UltraLogEntry)?.isProcessing === true) lines.push('  *** isProcessing=true at end -- UI locked.');
 
     const cores = entries.filter(e => e.cat === 'CORE_INSTANCE').slice(-10);
     lines.push(''); lines.push(`-- CORE INSTANCE TRACE (last ${cores.length}) ------------------`);
     cores.length === 0 ? lines.push('  None.') : cores.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
-    const creates = entries.filter(e => e.cat === 'CORE_INSTANCE' && e.data.event === 'created').length;
+    const creates = entries.filter(e => e.cat === 'CORE_INSTANCE' && p(e).event === 'created').length;
     if (creates > 1) lines.push(`  *** ${creates} cores created. Move AgentCore to React Context.`);
 
     const appSt = entries.filter(e => e.cat === 'APP_STATE_CHANGE').slice(-6);
@@ -1018,13 +1151,13 @@ export class UltraDevLog {
     const errs = entries.filter(e => e.cat === 'ERROR').slice(-5);
     if (errs.length > 0) { lines.push(''); lines.push('-- ERRORS --------------------------------------------'); errs.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e))); }
 
-    const chainFails = entries.filter(e => e.cat === 'CHAIN' && ((e.data.outcome as string)?.startsWith('FAIL') || (e.data.outcome as string)?.startsWith('EMPTY')));
+    const chainFails = entries.filter(e => e.cat === 'CHAIN' && ((p(e).outcome as string)?.startsWith('FAIL') || (p(e).outcome as string)?.startsWith('EMPTY')));
     if (chainFails.length > 0) {
       lines.push(''); lines.push(`-- CHAIN FAILURES (${chainFails.length}) -----------------------`);
       chainFails.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
     }
 
-    const vf = entries.filter(e => e.cat === 'VAULT_WRITE' && e.data.success === false).slice(-5);
+    const vf = entries.filter(e => e.cat === 'VAULT_WRITE' && p(e).success === false).slice(-5);
     if (vf.length > 0) { lines.push(''); lines.push(`-- VAULT WRITE FAILURES (${vf.length}) --------------------`); vf.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e))); }
 
     const launch = entries.filter(e => ['APP_LAUNCH_BEGIN','APP_LAUNCH_DEVICE','APP_LAUNCH_MATCH','APP_LAUNCH_AI','APP_LAUNCH_FIRE','APP_LAUNCH_RESUME','APP_LAUNCH_FAIL'].includes(e.cat)).slice(-12);

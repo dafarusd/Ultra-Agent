@@ -61,6 +61,11 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{ tab?: string }>();
+
+  useEffect(() => {
+    UltraDevLog.setCurrentScreen('SettingsScreen');
+    return () => UltraDevLog.setCurrentScreen('ChatScreen');
+  }, []);
   const initialTab = (params.tab === "costs" || params.tab === "logs") ? params.tab : "apis";
   const [tab, setTab] = useState<SettingsTab>(initialTab);
 

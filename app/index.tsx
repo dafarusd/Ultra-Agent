@@ -99,6 +99,11 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
+  useEffect(() => {
+    UltraDevLog.setCurrentScreen('ChatScreen');
+    return () => UltraDevLog.setCurrentScreen('unknown');
+  }, []);
+
   // Onboarding & biometric lock
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isAppLocked, setIsAppLocked] = useState(false);
@@ -684,6 +689,7 @@ export default function ChatScreen() {
       return;
     }
 
+    UltraDevLog.newRun();
     UltraDevLog.sendAttempt(text, currentMode, activeModelId || '', conversationId, messages.length, isProcessing);
     DebugLog.uiSendMessage(text.length, currentMode, activeModelId, isProcessing);
     snapUI("before_send");

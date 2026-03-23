@@ -400,6 +400,7 @@ You are always on. Always capable. Always direct.`;
 
     const { conversationId, userInput } = args;
     const taskId = Date.now().toString(36);
+    DebugLog.setCorrId(taskId);
     const startTime = Date.now();
     const steps: ExecutionStep[] = [];
     let execError: string | null = null;
@@ -1319,6 +1320,7 @@ You are always on. Always capable. Always direct.`;
       };
       await this.conversations.addMessage(conversationId, aiMsg);
 
+      DebugLog.clearCorrId();
       return {
         type: 'text',
         message: aiResult.content,
@@ -1329,6 +1331,7 @@ You are always on. Always capable. Always direct.`;
       const stack = err.stack || err.message;
       DebugLog.error('AI_REQUEST', err.message, stack);
       step('EXECUTE', `AI request failed: ${stack}`, false);
+      DebugLog.clearCorrId();
       return { type: 'error', message: 'AI request failed: ' + err.message, taskId };
     }
   }
