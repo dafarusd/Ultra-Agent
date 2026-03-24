@@ -4,7 +4,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ChatMessage } from "@/src/types/ultra";
 import { UltraDevLog } from "@/src/utils/UltraDevLog";
 
-const ACCENT = "#34d399";
+const ACCENT = "#e5e5e5";
 const SURFACE2 = "#1a1a1a";
 const SURFACE3 = "#222222";
 const DIM = "#666666";

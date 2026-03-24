@@ -21,7 +21,7 @@ import { UltraDevLog } from "@/src/utils/UltraDevLog";
 import { loadZoneConfig, lookupAction } from "@/src/data/ZoneConfig";
 import type { GridAction } from "@/src/types/actionGrid";
 
-const ACCENT = "#34d399";
+const ACCENT = "#e5e5e5";
 const BG = "#000000";
 const SURFACE = "#0a0a0a";
 const SURFACE2 = "#141414";
@@ -50,6 +50,7 @@ interface ConversationListProps {
   onOpenLogs: () => void;
   onQuickCommand?: (command: string) => void;
   onExecuteToggle?: (capability: string, params: Record<string, any>) => void;
+  onOpenZoneEditor?: () => void;
 }
 
 const QUICK_COMMANDS = [
@@ -162,6 +163,7 @@ export default function ConversationList({
   onOpenLogs,
   onQuickCommand,
   onExecuteToggle,
+  onOpenZoneEditor,
 }: ConversationListProps) {
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
@@ -344,7 +346,20 @@ export default function ConversationList({
           >
             <Ionicons name="git-branch-outline" size={20} color={toggleTreeOpen ? ACCENT : TEXT} />
             <Text style={[styles.menuRowText, toggleTreeOpen && { color: ACCENT }]}>Quick Toggles</Text>
-            <Ionicons name={toggleTreeOpen ? 'chevron-up' : 'chevron-down'} size={14} color={DIM} style={{ marginLeft: 'auto' }} />
+            {onOpenZoneEditor && (
+              <Pressable
+                onPress={() => {
+                  UltraDevLog.push('CHAIN', { component: 'ConversationList', action: 'zone_edit_tap', trigger: { source: 'sidebar_toggles' }, state: {}, data: {}, outcome: 'opening_zone_editor' });
+                  onClose();
+                  setTimeout(() => onOpenZoneEditor(), 300);
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{ marginLeft: 'auto', marginRight: 8 }}
+              >
+                <Ionicons name="pencil-outline" size={14} color={DIM} />
+              </Pressable>
+            )}
+            <Ionicons name={toggleTreeOpen ? 'chevron-up' : 'chevron-down'} size={14} color={DIM} style={onOpenZoneEditor ? {} : { marginLeft: 'auto' }} />
           </Pressable>
 
           {toggleTreeOpen && (

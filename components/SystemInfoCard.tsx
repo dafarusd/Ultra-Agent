@@ -4,13 +4,13 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Battery from 'expo-battery';
 import type { SystemInfoData } from '@/src/services/SystemInfoService';
 
-const ACCENT = '#34d399';
+const ACCENT = '#e5e5e5';
 const SURFACE2 = '#1a1a1a';
 const DIM = '#666666';
 
 function statusColor(percent: number, inverted = false): string {
   const val = inverted ? 100 - percent : percent;
-  if (val >= 70) return '#34d399';
+  if (val >= 70) return '#e5e5e5';
   if (val >= 30) return '#fbbf24';
   return '#ef4444';
 }
@@ -159,7 +159,7 @@ export default function SystemInfoCard({ data }: Props) {
           icon="wifi"
           label="Network"
           value={data.network.connected ? data.network.type : 'Disconnected'}
-          valueColor={data.network.connected ? '#34d399' : '#ef4444'}
+          valueColor={data.network.connected ? '#e5e5e5' : '#ef4444'}
         />
         <InfoItem
           icon="resize"
@@ -171,7 +171,7 @@ export default function SystemInfoCard({ data }: Props) {
             icon="thermometer"
             label="CPU Temp"
             value={`${data.cpuTemp}°C`}
-            valueColor={data.cpuTemp > 45 ? '#ef4444' : data.cpuTemp > 35 ? '#fbbf24' : '#34d399'}
+            valueColor={data.cpuTemp > 45 ? '#ef4444' : data.cpuTemp > 35 ? '#fbbf24' : '#e5e5e5'}
           />
         )}
         {data.processCount !== null && (

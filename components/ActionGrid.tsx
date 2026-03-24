@@ -8,13 +8,12 @@ import { AppStorage } from '@/src/utils/AppStorage';
 import { UltraDevLog } from '@/src/utils/UltraDevLog';
 import type { GridCategory, GridAction, GridConfig, TaskTemplate } from '@/src/types/actionGrid';
 import { DEFAULT_CATEGORIES, DEFAULT_GRID_CONFIG, getGridForMode } from '@/src/data/defaultGrid';
-import { ZoneConfig, loadZoneConfig, saveZoneConfig, resolveActions, lookupAction as zoneLookup } from '@/src/data/ZoneConfig';
-import ZoneEditor from '@/components/ZoneEditor';
+import { ZoneConfig, resolveActions, lookupAction as zoneLookup } from '@/src/data/ZoneConfig';
 
 const BG = '#000';
 const SURFACE = '#111';
 const SURFACE2 = '#1a1a1a';
-const ACCENT = '#34d399';
+const ACCENT = '#e5e5e5';
 const DIM = '#666';
 const TEXT = '#e0e0e0';
 
@@ -25,6 +24,8 @@ interface ActionGridProps {
   onExecute: (capability: string, params: Record<string, any>) => void;
   onRunTask: (template: TaskTemplate) => void;
   savedTasks: TaskTemplate[];
+  onOpenZoneEditor?: () => void;
+  zoneConfig?: ZoneConfig | null;
 }
 
 interface InputState {
@@ -40,25 +41,14 @@ export default function ActionGrid({
   onExecute,
   onRunTask,
   savedTasks,
+  onOpenZoneEditor,
+  zoneConfig: externalZoneConfig,
 }: ActionGridProps) {
   const [config, setConfig] = useState<GridConfig>(DEFAULT_GRID_CONFIG);
-  const [zoneConfig, setZoneConfig] = useState<ZoneConfig | null>(null);
-  const [zoneEditorVisible, setZoneEditorVisible] = useState(false);
+  const zoneConfig = externalZoneConfig ?? null;
   const [editMode, setEditMode] = useState(false);
   const [inputState, setInputState] = useState<InputState | null>(null);
   const inputRef = useRef<TextInput>(null);
-
-  // Load zone config
-  useEffect(() => {
-    loadZoneConfig().then(zc => {
-      setZoneConfig(zc);
-      UltraDevLog.push('EFFECT', {
-        component: 'ActionGrid', action: 'zone_config_loaded',
-        favCount: zc.favorites.length, gridCats: zc.grid.length,
-        sidebarCount: zc.sidebar.length, success: true,
-      });
-    });
-  }, []);
 
   useEffect(() => {
     AppStorage.get('action_grid_config').then(raw => {
@@ -125,7 +115,7 @@ export default function ActionGrid({
 
   // Always append saved tasks category
   const tasksCategory: GridCategory = {
-    id: 'quick', label: 'My Tasks', icon: 'flash-outline', iconFamily: 'ionicons', color: '#34d399',
+    id: 'quick', label: 'My Tasks', icon: 'flash-outline', iconFamily: 'ionicons', color: '#e5e5e5',
     actions: savedTasks.map(t => ({
       id: `task_${t.id}`, label: t.name, icon: t.icon || 'flash',
       iconFamily: 'ionicons' as const, capability: '__task__', params: { templateId: t.id },
@@ -243,6 +233,18 @@ export default function ActionGrid({
             </Pressable>
           ))}
         </ScrollView>
+        {onOpenZoneEditor && (
+          <Pressable
+            onPress={() => {
+              UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'zone_edit_tap', trigger: { source: 'favorites_row' }, state: {}, data: {}, outcome: 'opening_zone_editor' });
+              onOpenZoneEditor();
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={styles.chevronBtn}
+          >
+            <Ionicons name="pencil-outline" size={14} color={DIM} />
+          </Pressable>
+        )}
         <Pressable
           onPress={() => { UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'chevron_toggle', trigger: {}, state: { collapsed }, data: {}, outcome: collapsed ? 'expanding' : 'collapsing' }); onToggle(); }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -281,9 +283,14 @@ export default function ActionGrid({
           <View style={styles.expandedHeader}>
             <Text style={styles.expandedTitle}>Actions</Text>
             <View style={styles.expandedHeaderRight}>
-              <Pressable onPress={() => setZoneEditorVisible(true)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                <Ionicons name="options-outline" size={16} color={DIM} />
-              </Pressable>
+              {onOpenZoneEditor && (
+                <Pressable onPress={() => {
+                  UltraDevLog.push('CHAIN', { component: 'ActionGrid', action: 'zone_edit_tap', trigger: { source: 'grid_header' }, state: {}, data: {}, outcome: 'opening_zone_editor' });
+                  onOpenZoneEditor();
+                }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                  <Ionicons name="options-outline" size={16} color={DIM} />
+                </Pressable>
+              )}
               {editMode && (
                 <Pressable onPress={resetDefaults} style={styles.resetBtn}>
                   <Text style={styles.resetText}>Reset</Text>
@@ -370,13 +377,6 @@ export default function ActionGrid({
         </ScrollView>
       </View>)}
 
-      {/* Zone Editor Modal */}
-      <ZoneEditor
-        visible={zoneEditorVisible}
-        onClose={() => setZoneEditorVisible(false)}
-        onSaved={(zc) => { setZoneConfig(zc); }}
-        savedTasks={savedTasks}
-      />
     </View>
   );
 }

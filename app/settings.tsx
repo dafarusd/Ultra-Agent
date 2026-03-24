@@ -32,7 +32,7 @@ import { BiometricGate } from "@/src/security/BiometricGate";
 import type { ApiCategory, ApiProvider } from "@/src/types/ultra";
 
 // ── Palette ────────────────────────────────────────────
-const ACCENT = "#34d399";
+const ACCENT = "#e5e5e5";
 const BG = "#000000";
 const SURFACE = "#0e0e0e";
 const SURFACE2 = "#161616";
@@ -661,12 +661,12 @@ export default function SettingsScreen() {
                     {providersExpanded && apis.map((api) => {
                       const hasKey = !!api.apiKey;
                       return (
-                        <View key={api.id} style={[styles.card, { borderColor: hasKey && api.isActive ? '#1a3a2a' : '#1e1e1e' }]}>
+                        <View key={api.id} style={[styles.card, { borderColor: hasKey && api.isActive ? '#2a2a2a' : '#1e1e1e' }]}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                               <View style={{
                                 width: 8, height: 8, borderRadius: 4, marginRight: 8,
-                                backgroundColor: hasKey && api.isActive ? '#34d399' : '#666',
+                                backgroundColor: hasKey && api.isActive ? '#e5e5e5' : '#666',
                               }} />
                               <Text style={{ color: TEXT, fontSize: 14, fontFamily: 'Inter_600SemiBold' }} numberOfLines={1}>
                                 {api.name}

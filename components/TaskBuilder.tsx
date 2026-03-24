@@ -10,7 +10,7 @@ import { UltraDevLog } from '@/src/utils/UltraDevLog';
 const BG = '#000';
 const SURFACE = '#111';
 const SURFACE2 = '#1a1a1a';
-const ACCENT = '#34d399';
+const ACCENT = '#e5e5e5';
 const DIM = '#666';
 const TEXT = '#e0e0e0';
 const DANGER = '#ef4444';

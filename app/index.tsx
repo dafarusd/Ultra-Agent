@@ -37,6 +37,8 @@ import ActionMenu, { ActionMenuItem } from "@/components/ActionMenu";
 import ModelPickerSheet, { PickerModel } from "@/components/ModelPickerSheet";
 import PlusMenu, { ActionType } from "@/components/PlusMenu";
 import ActionGrid from "@/components/ActionGrid";
+import ZoneEditor from "@/components/ZoneEditor";
+import { ZoneConfig, loadZoneConfig } from "@/src/data/ZoneConfig";
 import ContextBar from "@/components/ContextBar";
 import TaskBuilder from "@/components/TaskBuilder";
 import SystemInfoCard from "@/components/SystemInfoCard";
@@ -46,7 +48,7 @@ import type { ActionPlan } from "@/src/types/ultra";
 import { DEFAULT_CATEGORIES } from "@/src/data/defaultGrid";
 
 // ── Color Palette (softened green accent) ──────────────
-const ACCENT = "#34d399";       // softer mint green (was #00ff88)
+const ACCENT = "#e5e5e5";       // clean near-white (Claude/ChatGPT style)
 const BG = "#000000";
 const SURFACE = "#111111";
 const SURFACE2 = "#1a1a1a";
@@ -102,6 +104,14 @@ export default function ChatScreen() {
 
   useEffect(() => {
     UltraDevLog.setCurrentScreen('ChatScreen');
+    loadZoneConfig().then(zc => {
+      setZoneConfig(zc);
+      UltraDevLog.push('EFFECT', {
+        component: 'ChatScreen', action: 'zone_config_loaded',
+        favCount: zc.favorites.length, gridCats: zc.grid.length,
+        sidebarCount: zc.sidebar.length, success: true,
+      });
+    });
     return () => UltraDevLog.setCurrentScreen('unknown');
   }, []);
 
@@ -154,6 +164,8 @@ export default function ChatScreen() {
 
   // Action Grid / Task Builder
   const [gridCollapsed, setGridCollapsed] = useState(true);
+  const [zoneEditorVisible, setZoneEditorVisible] = useState(false);
+  const [zoneConfig, setZoneConfig] = useState<ZoneConfig | null>(null);
   const [taskBuilderVisible, setTaskBuilderVisible] = useState(false);
   const [savedTasks, setSavedTasks] = useState<TaskTemplate[]>([]);
   const [sessionModelOverride, setSessionModelOverride] = useState(false);
@@ -1323,7 +1335,7 @@ export default function ChatScreen() {
             <Pressable
               onPress={() => router.push('/settings')}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8,
-                       paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#1a3a2a',
+                       paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#2a2a2a',
                        borderRadius: 10, alignSelf: 'flex-start' }}
             >
               <Ionicons name="arrow-up-circle" size={16} color={ACCENT} />
@@ -1494,14 +1506,6 @@ export default function ChatScreen() {
             listHeightRef.current = e.nativeEvent.layoutMeasurement.height;
           }}
           scrollEventThrottle={100}
-          ListEmptyComponent={
-            <View style={[styles.emptyState, { transform: [{ scaleY: -1 }] }]}>
-              <MaterialCommunityIcons name="robot-outline" size={48} color={SURFACE2} />
-              <Text style={styles.emptyText}>
-                Ask me anything. I can manage files, contacts, build apps, and more.
-              </Text>
-            </View>
-          }
         />
 
         {/* ══════════════════════════════════════════════
@@ -1532,6 +1536,8 @@ export default function ChatScreen() {
             onExecute={handleGridExecute}
             onRunTask={handleRunTask}
             savedTasks={savedTasks}
+            onOpenZoneEditor={() => setZoneEditorVisible(true)}
+            zoneConfig={zoneConfig}
           />
 
           {/* Tier indicator */}
@@ -1670,6 +1676,14 @@ export default function ChatScreen() {
         }}
         onQuickCommand={(cmd) => handleSend(cmd)}
         onExecuteToggle={handleGridExecute}
+        onOpenZoneEditor={() => { setConvListVisible(false); setZoneEditorVisible(true); }}
+      />
+
+      <ZoneEditor
+        visible={zoneEditorVisible}
+        onClose={() => setZoneEditorVisible(false)}
+        onSaved={(zc) => { setZoneConfig(zc); }}
+        savedTasks={savedTasks}
       />
 
       <PromptViewer
@@ -1806,14 +1820,9 @@ const styles = StyleSheet.create({
   // Messages
   messageList: { flex: 1 },
   messageListContent: { paddingHorizontal: 16, paddingVertical: 8 },
-  emptyState: {
-    flex: 1, justifyContent: "center", alignItems: "center", paddingVertical: 80,
-    ...(Platform.OS === "web" ? { transform: [{ scaleY: -1 }] } : {}),
-  },
-  emptyText: { color: DIM, fontSize: 14, textAlign: "center", marginTop: 12, fontFamily: "Inter_400Regular", maxWidth: 280 },
   messageBubble: { borderRadius: 12, padding: 12, marginBottom: 8, maxWidth: "85%" },
-  userBubble: { backgroundColor: ACCENT, alignSelf: "flex-end" },
-  ultraBubble: { backgroundColor: SURFACE, alignSelf: "flex-start", borderWidth: 1, borderColor: "#1a3a2a" },
+  userBubble: { backgroundColor: "#2a2a2a", alignSelf: "flex-end" },
+  ultraBubble: { backgroundColor: SURFACE, alignSelf: "flex-start", borderWidth: 1, borderColor: "#2a2a2a" },
   aiBubble: { backgroundColor: SURFACE, alignSelf: "flex-start", borderWidth: 1, borderColor: "#1a2a3a" },
   blockedBubble: { backgroundColor: "#1a0a0a", alignSelf: "flex-start", borderWidth: 1, borderColor: "#3a1a1a" },
   buildLogBubble: { backgroundColor: "#1a1400", alignSelf: "flex-start", borderWidth: 1, borderColor: "#3a2a00", maxWidth: "95%" },
@@ -1823,7 +1832,7 @@ const styles = StyleSheet.create({
   roleLabel: { fontSize: 10, fontFamily: "Inter_700Bold", textTransform: "uppercase", letterSpacing: 0.5 },
   capBadge: { fontSize: 9, color: DIM, fontFamily: "Inter_400Regular", backgroundColor: "#1a1a1a", paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, overflow: "hidden", marginLeft: 4 },
   messageText: { color: "#cccccc", fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
-  userText: { color: BG },
+  userText: { color: "#e5e5e5" },
   msgActions: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 6 },
   copyBtn: { flexDirection: "row", alignItems: "center", gap: 3, padding: 2 },
   copiedInline: { color: ACCENT, fontSize: 10, fontFamily: "Inter_500Medium" },
