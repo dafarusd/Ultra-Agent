@@ -2633,11 +2633,10 @@ const HEADLESS_TASK_SERVICE_JAVA = `package com.agent.ultra;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.util.Log;
 import com.facebook.react.HeadlessJsTaskService;
 import com.facebook.react.bridge.Arguments;
-import com.facebook.react.javamodules.ReactPackage;
-import com.facebook.react.jstasks.HeadlessJsTaskConfig;
+import com.facebook.react.jstask.HeadlessJsTaskConfig;
+import javax.annotation.Nullable;
 
 public class AgentHeadlessTaskService extends HeadlessJsTaskService {
     private static final String TAG = "AgentHeadlessTask";
