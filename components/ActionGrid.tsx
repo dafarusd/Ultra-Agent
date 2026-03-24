@@ -8,6 +8,8 @@ import { AppStorage } from '@/src/utils/AppStorage';
 import { UltraDevLog } from '@/src/utils/UltraDevLog';
 import type { GridCategory, GridAction, GridConfig, TaskTemplate } from '@/src/types/actionGrid';
 import { DEFAULT_CATEGORIES, DEFAULT_GRID_CONFIG, getGridForMode } from '@/src/data/defaultGrid';
+import { ZoneConfig, loadZoneConfig, saveZoneConfig, resolveActions, lookupAction as zoneLookup } from '@/src/data/ZoneConfig';
+import ZoneEditor from '@/components/ZoneEditor';
 
 const BG = '#000';
 const SURFACE = '#111';
@@ -40,9 +42,23 @@ export default function ActionGrid({
   savedTasks,
 }: ActionGridProps) {
   const [config, setConfig] = useState<GridConfig>(DEFAULT_GRID_CONFIG);
+  const [zoneConfig, setZoneConfig] = useState<ZoneConfig | null>(null);
+  const [zoneEditorVisible, setZoneEditorVisible] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [inputState, setInputState] = useState<InputState | null>(null);
   const inputRef = useRef<TextInput>(null);
+
+  // Load zone config
+  useEffect(() => {
+    loadZoneConfig().then(zc => {
+      setZoneConfig(zc);
+      UltraDevLog.push('EFFECT', {
+        component: 'ActionGrid', action: 'zone_config_loaded',
+        favCount: zc.favorites.length, gridCats: zc.grid.length,
+        sidebarCount: zc.sidebar.length, success: true,
+      });
+    });
+  }, []);
 
   useEffect(() => {
     AppStorage.get('action_grid_config').then(raw => {
@@ -86,20 +102,44 @@ export default function ActionGrid({
     return c;
   }));
 
-  const orderedCategories = allCategories
-    .filter(c => !config.hiddenCategories.includes(c.id))
-    .sort((a, b) => {
-      const ai = config.categoryOrder.indexOf(a.id);
-      const bi = config.categoryOrder.indexOf(b.id);
-      if (ai >= 0 && bi >= 0) return ai - bi;
-      if (ai >= 0) return -1;
-      if (bi >= 0) return 1;
-      return 0;
-    });
+  // Build grid categories: zone config if available, otherwise DEFAULT_CATEGORIES
+  const orderedCategories: GridCategory[] = zoneConfig
+    ? zoneConfig.grid.map(zg => ({
+        id: zg.id,
+        label: zg.label,
+        icon: 'grid-outline',
+        iconFamily: 'ionicons' as const,
+        color: '#818cf8',
+        actions: resolveActions(zg.items),
+      }))
+    : allCategories
+      .filter(c => !config.hiddenCategories.includes(c.id))
+      .sort((a, b) => {
+        const ai = config.categoryOrder.indexOf(a.id);
+        const bi = config.categoryOrder.indexOf(b.id);
+        if (ai >= 0 && bi >= 0) return ai - bi;
+        if (ai >= 0) return -1;
+        if (bi >= 0) return 1;
+        return 0;
+      });
+
+  // Always append saved tasks category
+  const tasksCategory: GridCategory = {
+    id: 'quick', label: 'My Tasks', icon: 'flash-outline', iconFamily: 'ionicons', color: '#34d399',
+    actions: savedTasks.map(t => ({
+      id: `task_${t.id}`, label: t.name, icon: t.icon || 'flash',
+      iconFamily: 'ionicons' as const, capability: '__task__', params: { templateId: t.id },
+    })),
+  };
+  if (savedTasks.length > 0 && !orderedCategories.find(c => c.id === 'quick')) {
+    orderedCategories.push(tasksCategory);
+  }
 
   const allActions = allCategories.flatMap(c => c.actions);
-  const favoriteActions = config.favorites
-    .map(fid => allActions.find(a => a.id === fid))
+  // Use zone favorites if available, otherwise fall back to GridConfig
+  const favIds = zoneConfig ? zoneConfig.favorites : config.favorites;
+  const favoriteActions = favIds
+    .map(fid => zoneLookup(fid) || allActions.find(a => a.id === fid))
     .filter(Boolean) as GridAction[];
 
   const handleActionPress = useCallback((action: GridAction) => {
@@ -241,6 +281,9 @@ export default function ActionGrid({
           <View style={styles.expandedHeader}>
             <Text style={styles.expandedTitle}>Actions</Text>
             <View style={styles.expandedHeaderRight}>
+              <Pressable onPress={() => setZoneEditorVisible(true)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                <Ionicons name="options-outline" size={16} color={DIM} />
+              </Pressable>
               {editMode && (
                 <Pressable onPress={resetDefaults} style={styles.resetBtn}>
                   <Text style={styles.resetText}>Reset</Text>
@@ -326,6 +369,14 @@ export default function ActionGrid({
           ))}
         </ScrollView>
       </View>)}
+
+      {/* Zone Editor Modal */}
+      <ZoneEditor
+        visible={zoneEditorVisible}
+        onClose={() => setZoneEditorVisible(false)}
+        onSaved={(zc) => { setZoneConfig(zc); }}
+        savedTasks={savedTasks}
+      />
     </View>
   );
 }

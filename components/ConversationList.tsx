@@ -18,6 +18,8 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { ConversationMeta } from "@/src/types/ultra";
 import { AppStorage } from "@/src/utils/AppStorage";
 import { UltraDevLog } from "@/src/utils/UltraDevLog";
+import { loadZoneConfig, lookupAction } from "@/src/data/ZoneConfig";
+import type { GridAction } from "@/src/types/actionGrid";
 
 const ACCENT = "#34d399";
 const BG = "#000000";
@@ -185,6 +187,41 @@ export default function ConversationList({
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [toggleTreeOpen, setToggleTreeOpen] = useState(false);
+  const [sidebarItems, setSidebarItems] = useState<Array<{ id: string; label: string; icon: string; capability: string; params: Record<string, any> }> | null>(null);
+
+  // Load sidebar items from zone config
+  useEffect(() => {
+    loadZoneConfig().then(zc => {
+      if (zc.sidebar && zc.sidebar.length > 0) {
+        const resolved = zc.sidebar
+          .map(id => {
+            const action = lookupAction(id);
+            if (!action) return null;
+            return { id: `toggle_${action.id}`, label: action.label, icon: action.icon, capability: action.capability, params: action.params };
+          })
+          .filter(Boolean) as Array<{ id: string; label: string; icon: string; capability: string; params: Record<string, any> }>;
+        if (resolved.length > 0) {
+          setSidebarItems(resolved);
+          UltraDevLog.push('EFFECT', {
+            component: 'ConversationList', action: 'sidebar_zone_loaded',
+            itemCount: resolved.length, source: 'zone_config', success: true,
+          });
+        } else {
+          UltraDevLog.push('EFFECT', {
+            component: 'ConversationList', action: 'sidebar_zone_loaded',
+            itemCount: 0, source: 'fallback_toggle_tree', success: true,
+            note: 'Zone sidebar empty or all IDs orphaned — using TOGGLE_TREE',
+          });
+        }
+      }
+    }).catch(() => {
+      UltraDevLog.push('EFFECT', {
+        component: 'ConversationList', action: 'sidebar_zone_loaded',
+        source: 'fallback_toggle_tree', success: false,
+        note: 'Zone config load failed — using TOGGLE_TREE',
+      });
+    });
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -312,7 +349,7 @@ export default function ConversationList({
 
           {toggleTreeOpen && (
             <View style={styles.toggleGrid}>
-              {TOGGLE_TREE.map(toggle => (
+              {(sidebarItems || TOGGLE_TREE).map(toggle => (
                 <Pressable
                   key={toggle.id}
                   testID={toggle.id}
