@@ -642,7 +642,7 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             if (info == null) { promise.resolve(null); return; }
             String ssid = info.getSSID();
             if (ssid == null || ssid.equals("<unknown ssid>")) { promise.resolve(null); return; }
-            if (ssid.startsWith("\"") && ssid.endsWith("\"")) ssid = ssid.substring(1, ssid.length() - 1);
+            if (ssid.length() >= 2 && ssid.charAt(0) == 0x22 && ssid.charAt(ssid.length() - 1) == 0x22) ssid = ssid.substring(1, ssid.length() - 1);
             promise.resolve(ssid);
         } catch (Exception e) {
             promise.resolve(null);
