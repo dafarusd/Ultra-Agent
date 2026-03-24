@@ -2530,6 +2530,17 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
+    public void updateBackgroundNotification(String text, Promise promise) {
+        try {
+            android.content.Intent intent = new android.content.Intent("com.agent.ultra.UPDATE_NOTIFICATION");
+            intent.putExtra("text", text);
+            intent.setPackage(reactContext.getPackageName());
+            reactContext.sendBroadcast(intent);
+            promise.resolve(true);
+        } catch (Exception e) { promise.reject("NOTIF_ERR", e.getMessage()); }
+    }
+
+    @ReactMethod
     public void getA11yServiceState(Promise promise) {
         try {
             android.content.SharedPreferences prefs =
@@ -2610,6 +2621,30 @@ public class AgentBackgroundService extends Service {
             getApplicationContext().startService(restartIntent);
         }
         super.onTaskRemoved(rootIntent);
+    }
+
+    public void updateNotification(String text) {
+        try {
+            Notification.Builder b;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                b = new Notification.Builder(this, CHANNEL_ID);
+            } else {
+                b = new Notification.Builder(this);
+            }
+            PendingIntent pi = PendingIntent.getActivity(this, 0,
+                getPackageManager().getLaunchIntentForPackage(getPackageName()),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            Notification n = b.setContentTitle("Agent Ultra")
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.ic_menu_manage)
+                .setContentIntent(pi)
+                .setOngoing(true)
+                .build();
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm != null) nm.notify(NOTIFICATION_ID, n);
+        } catch (Exception e) {
+            Log.e(TAG, "Notification update failed: " + e.getMessage());
+        }
     }
 
     private void createNotificationChannel() {

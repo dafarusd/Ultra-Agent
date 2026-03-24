@@ -181,6 +181,55 @@ export class KnowledgeGraph {
     return lines.join('\n');
   }
 
+  resolveAll(naturalText: string): GraphResult[] {
+    const lower = naturalText.toLowerCase().trim().replace(/^(my|the|a|an)\s+/i, '');
+    const results: GraphResult[] = [];
+    const seen = new Set<string>();
+
+    for (const [alias, entityId] of this.aliasIndex) {
+      if (alias.includes(lower) || lower.includes(alias)) {
+        if (seen.has(entityId)) continue;
+        seen.add(entityId);
+        const entity = this.entities.get(entityId);
+        if (entity && entity.confidence > 0.1) {
+          const relations = this.getRelations(entity.id);
+          results.push({
+            entity,
+            relations,
+            paths: relations.map(r => `${entity.name} —[${r.relation.type}]→ ${r.targetEntity.name}`),
+          });
+        }
+      }
+    }
+
+    results.sort((a, b) => (b.entity?.accessCount || 0) - (a.entity?.accessCount || 0));
+
+    if (results.length > 1) {
+      DebugLog.push('KG_RESOLVE' as any, {
+        event: 'ambiguous',
+        query: naturalText.slice(0, 40),
+        matchCount: results.length,
+        matches: results.slice(0, 5).map(r => r.entity?.name),
+      });
+    }
+
+    return results;
+  }
+
+  softDeleteRelation(fromEntityId: string, toEntityId: string, relationType?: string): number {
+    let deleted = 0;
+    for (const rel of this.relations) {
+      const fromMatch = rel.fromEntity === fromEntityId || rel.toEntity === fromEntityId;
+      const toMatch = !toEntityId || rel.toEntity === toEntityId || rel.fromEntity === toEntityId;
+      if (fromMatch && toMatch && (!relationType || rel.type === relationType)) {
+        rel.confidence = 0;
+        deleted++;
+      }
+    }
+    if (deleted > 0) this.dirty = true;
+    return deleted;
+  }
+
   getSummary(): string {
     const people = this.getByType('person'); const places = this.getByType('place'); const apps = this.getByType('app');
     const lines: string[] = [];

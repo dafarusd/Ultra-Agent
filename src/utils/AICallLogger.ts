@@ -126,3 +126,40 @@ export function logContextBudget(params: {
     overBudget: (params.totalTokens + params.reservedForResponse) > params.contextWindow,
   });
 }
+
+/**
+ * Retry an AI call with exponential backoff on transient errors.
+ * Only retries on network/timeout/server errors — NOT on auth, rate limit, or bad request.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  options?: { maxRetries?: number; baseDelayMs?: number; agentId?: string },
+): Promise<T> {
+  const maxRetries = options?.maxRetries ?? 3;
+  const baseDelay = options?.baseDelayMs ?? 2000;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastError = e;
+      const category = categorizeAIError(e.message || '');
+
+      if (!['network', 'server_error'].includes(category)) throw e;
+      if (attempt >= maxRetries) throw e;
+
+      const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+      DebugLog.push('AI_CALL' as any, {
+        event: 'retry',
+        attempt: attempt + 1,
+        maxRetries,
+        delayMs: Math.round(delay),
+        error: e.message?.slice(0, 100),
+        agentId: options?.agentId,
+      });
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}

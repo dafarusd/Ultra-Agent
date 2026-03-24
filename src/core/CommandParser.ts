@@ -995,6 +995,25 @@ const rules: ParseRule[] = [
     capability: 'self_replicate',
     extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
   },
+
+  // ════════════════════════════════════════════════════
+  // USER CORRECTIONS
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:no,?\s*)?(?:that'?s?\s+(?:wrong|incorrect|not right)|actually|correct(?:ion)?:?\s)/i,
+    capability: 'user_correction',
+    extractParams: (m) => ({ correction: m.input || '' }),
+  },
+  {
+    pattern: /^(?:forget\s+(?:about\s+)?|remove\s+|delete\s+)(.+)$/i,
+    capability: 'user_correction',
+    extractParams: (m) => ({ correction: m.input || '' }),
+  },
+  {
+    pattern: /^(.+)\s+(?:moved|lives?|works?|changed|switched)\s+(?:to|at|in)\s+(.+)$/i,
+    capability: 'user_correction',
+    extractParams: (m) => ({ correction: m.input || '' }),
+  },
 ];
 
 export class CommandParser {

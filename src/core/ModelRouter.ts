@@ -37,6 +37,21 @@ interface CompletionResult {
 const VENICE_BASE_URL = 'https://api.venice.ai/api/v1';
 const REQUEST_TIMEOUT = 60000;
 
+export interface ProviderConfig {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  categories: string[];
+  isActive: boolean;
+  models: ModelDef[];
+}
+
+interface CategoryDefault {
+  modelId: string;
+  providerId: string;
+}
+
 export class ModelRouter {
   private vault: SecureVault;
   private costTracker: CostTracker;
@@ -47,6 +62,8 @@ export class ModelRouter {
   private baseUrl: string;
   private activeController: AbortController | null = null;
   private hasDiscoveredModels = false;
+  private providers: Map<string, ProviderConfig> = new Map();
+  private categoryDefaults: Map<string, CategoryDefault> = new Map();
 
   constructor(vault: SecureVault, costTracker: CostTracker) {
     this.vault = vault;
@@ -156,6 +173,119 @@ export class ModelRouter {
     if (m.includes('70b') || m.includes('405b') || m.includes('72b')) return 'heavy';
     if (m.includes('8b') || m.includes('mini') || m.includes('small') || m.includes('7b')) return 'fast';
     return 'balanced';
+  }
+
+  async loadProviders(): Promise<void> {
+    try {
+      const savedApis = await this.vault.get('saved_apis');
+      if (!savedApis) return;
+      const providers: Array<{
+        id: string; name: string; baseUrl: string; apiKey: string;
+        categories: string[]; isActive: boolean;
+      }> = JSON.parse(savedApis);
+
+      for (const p of providers) {
+        if (!p.isActive || !p.apiKey) continue;
+        const config: ProviderConfig = {
+          id: p.id, name: p.name, baseUrl: p.baseUrl,
+          apiKey: p.apiKey, categories: p.categories || ['text'],
+          isActive: true, models: [],
+        };
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 12000);
+          const resp = await fetch(`${p.baseUrl}/models`, {
+            headers: { 'Authorization': `Bearer ${p.apiKey}`, 'Content-Type': 'application/json' },
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          if (resp.ok) {
+            const data = await resp.json();
+            const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+            for (const m of list) {
+              const spec = m.model_spec || {};
+              const caps = spec.capabilities || {};
+              const pricing = spec.pricing || {};
+              const rawType = m.type || spec.type || 'text';
+              const classifiedType = classifyModelType(m.id, m.name || m.id, rawType, caps);
+              const validTypes: ModelDef['type'][] = ['text', 'image', 'video', 'audio', 'embedding'];
+              const modelType: ModelDef['type'] = validTypes.includes(classifiedType as any) ? classifiedType as ModelDef['type'] : validTypes.includes(rawType as any) ? rawType as ModelDef['type'] : 'text';
+              const def: ModelDef = {
+                id: m.id, name: spec.name || m.name || m.id, description: spec.description || '',
+                type: modelType, costPer1kInput: pricing.input?.usd ?? 0.01, costPer1kOutput: pricing.output?.usd ?? 0.01,
+                maxTokens: Math.min(Number(spec.availableContextTokens ?? m.context_length ?? 8192) || 8192, 4096),
+                contextWindow: Number(spec.availableContextTokens ?? m.context_length ?? 8192) || 8192,
+                speedTier: this.inferSpeed(m.id),
+                capabilities: {
+                  supportsVision: caps.supportsVision ?? false, supportsReasoning: caps.supportsReasoning ?? false,
+                  supportsFunctionCalling: caps.supportsFunctionCalling ?? false, supportsWebSearch: caps.supportsWebSearch ?? false,
+                  supportsMultipleImages: caps.supportsMultipleImages ?? false,
+                  isUncensored: (m.id || '').toLowerCase().includes('uncensored') || spec.privacy === 'unfiltered',
+                },
+                offline: spec.offline ?? false,
+              };
+              config.models.push(def);
+              this.models.set(m.id, def);
+            }
+          }
+          DebugLog.push('SYSTEM' as any, { event: 'provider_discovered', provider: p.name, models: config.models.length });
+        } catch (e: any) {
+          DebugLog.error('ModelRouter', `Provider ${p.name} discovery failed: ${e.message}`);
+        }
+        this.providers.set(p.id, config);
+      }
+
+      const defaultsRaw = await this.vault.get('api_defaults');
+      if (defaultsRaw) {
+        try {
+          const defs = JSON.parse(defaultsRaw);
+          for (const [category, modelId] of Object.entries(defs)) {
+            if (!modelId) continue;
+            const provider = this.findProviderForModel(modelId as string);
+            if (provider) this.categoryDefaults.set(category, { modelId: modelId as string, providerId: provider.id });
+          }
+        } catch {}
+      }
+      DebugLog.push('SYSTEM' as any, { event: 'providers_loaded', count: this.providers.size, totalModels: this.models.size });
+    } catch (e: any) {
+      DebugLog.error('ModelRouter', `loadProviders failed: ${e.message}`);
+    }
+  }
+
+  private findProviderForModel(modelId: string): ProviderConfig | null {
+    for (const [, p] of this.providers) {
+      if (p.models.some(m => m.id === modelId)) return p;
+    }
+    return null;
+  }
+
+  getModelForCategory(category: string): { modelId: string; baseUrl: string; apiKey: string } | null {
+    const catDefault = this.categoryDefaults.get(category);
+    if (catDefault) {
+      const provider = this.providers.get(catDefault.providerId);
+      if (provider && provider.isActive && provider.apiKey) {
+        return { modelId: catDefault.modelId, baseUrl: provider.baseUrl, apiKey: provider.apiKey };
+      }
+    }
+    if (this.apiKey && this.defaultModel) {
+      return { modelId: this.defaultModel, baseUrl: this.baseUrl, apiKey: this.apiKey };
+    }
+    return null;
+  }
+
+  getAllModelsWithProvider(): Array<ModelDef & { providerId: string; providerName: string }> {
+    const result: Array<ModelDef & { providerId: string; providerName: string }> = [];
+    for (const [, p] of this.providers) {
+      for (const m of p.models) result.push({ ...m, providerId: p.id, providerName: p.name });
+    }
+    if (result.length === 0) {
+      for (const [, m] of this.models) result.push({ ...m, providerId: 'primary', providerName: 'Primary' });
+    }
+    return result;
+  }
+
+  getProviders(): ProviderConfig[] {
+    return Array.from(this.providers.values());
   }
 
   private async discoverModels(): Promise<void> {
@@ -305,6 +435,7 @@ export class ModelRouter {
       taskId?: string;
       agentId?: string;
       timeout?: number;
+      category?: string;
     } = {}
   ): Promise<CompletionResult> {
     if (!this.apiKey) {
@@ -322,6 +453,29 @@ export class ModelRouter {
     const model = options.model || this.defaultModel;
     const taskId = options.taskId || 'default';
     const agentId = options.agentId || 'main';
+
+    // ── Category-based routing (Gap 18A) ──
+    let effectiveApiKey = this.apiKey!;
+    let effectiveBaseUrl = this.baseUrl;
+    let effectiveModel = model;
+    if (!options.model) {
+      const agentCategoryMap: Record<string, string> = {
+        'cortex_planner': 'reasoning', 'cortex_reasoner': 'reasoning',
+        'context_analyst': 'chat', 'diagnostician': 'chat',
+        'app_intel': 'chat', 'app_extractor': 'chat',
+        'vision': 'image', 'kg_extractor': 'chat',
+        'intent_parser': 'chat', 'proactive': 'chat', 'correction': 'chat',
+      };
+      const cat = options.category || agentCategoryMap[agentId] || '';
+      if (cat) {
+        const catRoute = this.getModelForCategory(cat);
+        if (catRoute) {
+          effectiveModel = catRoute.modelId;
+          effectiveApiKey = catRoute.apiKey;
+          effectiveBaseUrl = catRoute.baseUrl;
+        }
+      }
+    }
     if (!this.costTracker.isWithinDailyLimit()) {
       throw new Error('Daily cost limit reached. Increase in Settings or wait until tomorrow.');
     }
@@ -349,7 +503,7 @@ export class ModelRouter {
       this.activeController = controller;
       const timeout = setTimeout(() => controller.abort(), options.timeout || REQUEST_TIMEOUT);
       const apiPayload = {
-        model,
+        model: effectiveModel,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt },
@@ -357,12 +511,12 @@ export class ModelRouter {
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens ?? 4000,
       };
-      DebugLog.systemEvent('ModelRouter.complete', `API_PAYLOAD model=${model} task=${taskId} system_chars=${systemPrompt.length} user_chars=${prompt.length} temp=${apiPayload.temperature} max_tokens=${apiPayload.max_tokens}`);
+      DebugLog.systemEvent('ModelRouter.complete', `API_PAYLOAD model=${effectiveModel} task=${taskId} system_chars=${systemPrompt.length} user_chars=${prompt.length} temp=${apiPayload.temperature} max_tokens=${apiPayload.max_tokens}`);
       const fetchStartMs = Date.now();
-      const resp = await fetch(`${this.baseUrl}/chat/completions`, {
+      const resp = await fetch(`${effectiveBaseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          'Authorization': `Bearer ${effectiveApiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(apiPayload),
@@ -378,16 +532,16 @@ export class ModelRouter {
       const data = await resp.json();
       const content = data.choices[0].message.content;
       const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
-      const cost = await this.costTracker.record(model, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
+      const cost = await this.costTracker.record(effectiveModel, usage.prompt_tokens, usage.completion_tokens, taskId, agentId);
       const durationMs = Date.now() - startTime;
       const fetchDurationMs = Date.now() - fetchStartMs;
-      DebugLog.modelApiResponse(model, taskId, usage.prompt_tokens, usage.completion_tokens, cost, durationMs);
-      DebugLog.push('NET_DETAIL', { method: 'POST', url: '/chat/completions', status: resp.status, durationMs: fetchDurationMs, bodyBytes: JSON.stringify(apiPayload).length, model, taskId });
-      this.logger.info(`${model} responded in ${durationMs}ms, cost: $${cost.toFixed(6)}`);
-      return { content, model, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
+      DebugLog.modelApiResponse(effectiveModel, taskId, usage.prompt_tokens, usage.completion_tokens, cost, durationMs);
+      DebugLog.push('NET_DETAIL', { method: 'POST', url: '/chat/completions', status: resp.status, durationMs: fetchDurationMs, bodyBytes: JSON.stringify(apiPayload).length, model: effectiveModel, taskId });
+      this.logger.info(`${effectiveModel} responded in ${durationMs}ms, cost: $${cost.toFixed(6)}`);
+      return { content, model: effectiveModel, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, cost };
     } catch (error: any) {
       const durationMs = Date.now() - startTime;
-      DebugLog.modelApiError(model, taskId, error.message, durationMs);
+      DebugLog.modelApiError(effectiveModel, taskId, error.message, durationMs);
       if (error.name === 'AbortError') {
         if (this.activeController === null) {
           throw new Error('Request stopped by user.');

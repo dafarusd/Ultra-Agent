@@ -165,6 +165,15 @@ export class EventMonitor {
     if (data.packageName) {
       return c.includes(data.packageName.toLowerCase());
     }
+    // Day of week: "every sunday" / "on mondays" / "weekdays" / "weekends"
+    const dayNames: Record<string, number> = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    const dayMatch = condition.match(/(?:every|on)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)s?/i);
+    if (dayMatch && data.dayOfWeek !== undefined) {
+      const targetDay = dayNames[dayMatch[1].toLowerCase()];
+      if (targetDay !== undefined) return data.dayOfWeek === targetDay;
+    }
+    if (/weekday/i.test(condition) && data.dayOfWeek !== undefined) return data.dayOfWeek >= 1 && data.dayOfWeek <= 5;
+    if (/weekend/i.test(condition) && data.dayOfWeek !== undefined) return data.dayOfWeek === 0 || data.dayOfWeek === 6;
     return false;
   }
 

@@ -54,6 +54,12 @@ export class ProactiveEngine {
         try {
           const suggestion = this.rules[ruleIdx](snap, patterns, calendar, this.graph);
           if (suggestion && !this.dismissedIds.has(suggestion.id) && suggestion.confidence >= 0.5) {
+            // Check concept-level dismissal
+            const conceptKey = `concept:${suggestion.type}:${Object.values(suggestion.context).join(':')}`.toLowerCase();
+            if (this.dismissedIds.has(conceptKey)) {
+              DebugLog.push('PROACTIVE_EVAL' as any, { event: 'rule_miss', ruleIndex: ruleIdx, reason: 'concept_dismissed' });
+              continue;
+            }
             if (!this.suggestions.some(s => s.id === suggestion.id)) {
               newSuggestions.push(suggestion);
               DebugLog.push('PROACTIVE_SUGGEST' as any, { event: 'rule_match', ruleIndex: ruleIdx, title: suggestion.title, confidence: suggestion.confidence, urgency: suggestion.urgency });
@@ -122,7 +128,30 @@ export class ProactiveEngine {
     return this.suggestions.filter(s => !s.dismissed && !s.acted && s.expiresAt > now).sort((a, b) => { const o = { high: 3, medium: 2, low: 1 }; return (o[b.urgency] || 0) - (o[a.urgency] || 0) || b.confidence - a.confidence; });
   }
 
-  async dismiss(id: string): Promise<void> { const s = this.suggestions.find(x => x.id === id); if (s) s.dismissed = true; this.dismissedIds.add(id); await this.persistSuggestions(); DebugLog.push('PROACTIVE_DISMISS' as any, { event: 'dismissed', id }); }
+  async dismiss(id: string, dismissConcept: boolean = true): Promise<void> {
+    const suggestion = this.suggestions.find(x => x.id === id);
+    if (suggestion) {
+      suggestion.dismissed = true;
+      this.dismissedIds.add(id);
+
+      if (dismissConcept) {
+        const conceptKey = `${suggestion.type}:${Object.values(suggestion.context).join(':')}`.toLowerCase();
+        this.dismissedIds.add(`concept:${conceptKey}`);
+
+        for (const s of this.suggestions) {
+          if (s.dismissed || s.id === id) continue;
+          const otherKey = `${s.type}:${Object.values(s.context).join(':')}`.toLowerCase();
+          if (otherKey === conceptKey) {
+            s.dismissed = true;
+            this.dismissedIds.add(s.id);
+          }
+        }
+      }
+    }
+
+    await this.persistSuggestions();
+    DebugLog.push('PROACTIVE_DISMISS' as any, { event: 'dismissed', id, conceptDismissal: dismissConcept });
+  }
   async markActed(id: string): Promise<void> { const s = this.suggestions.find(x => x.id === id); if (s) s.acted = true; await this.persistSuggestions(); DebugLog.push('PROACTIVE_ACT' as any, { event: 'acted', id }); }
   addRule(rule: RuleFunction): void { this.rules.push(rule); }
 

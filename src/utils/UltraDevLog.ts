@@ -216,7 +216,7 @@ export class UltraDevLog {
     return UltraDevLog.currentRunId;
   }
 
-  private static push(cat: UltraLogCat, data: Record<string, unknown>): void {
+  static push(cat: UltraLogCat, data: Record<string, unknown>): void {
     const level = UltraDevLog.getLevel(cat, data);
 
     let errorEnvelope: Record<string, unknown> | undefined;

@@ -175,7 +175,8 @@ export class Cortex {
 
     try {
       const aiLog = logAICall({ agentId: 'cortex_planner', prompt, maxTokens: 1500, temperature: 0.2 });
-      const result = await this.ai.complete(prompt, { taskId: `decompose_${Date.now().toString(36)}`, agentId: 'cortex_planner', maxTokens: 1500, temperature: 0.2 });
+      const { withRetry } = await import('../utils/AICallLogger');
+      const result = await withRetry(() => this.ai.complete(prompt, { taskId: `decompose_${Date.now().toString(36)}`, agentId: 'cortex_planner', maxTokens: 1500, temperature: 0.2 }), { maxRetries: 2, agentId: 'cortex_planner' });
       aiLog.logResponse(result.content, result.cost);
       if (result.cost) taskTotalCost += result.cost;
       const parsed = JSON.parse(result.content.replace(/```json|```/g, '').trim());
@@ -236,7 +237,16 @@ export class Cortex {
           if (targetApp === 'google' || targetApp === 'chrome' || targetApp === 'browser') result = await this.appIntel.search(query, { app: targetApp, extractPrompt: step.params?.extractPrompt, maxSteps: 12 });
           else result = await this.appIntel.readApp(targetApp, query, { extractPrompt: step.params?.extractPrompt, maxSteps: 15 });
           return { success: result.success, result: { aiSummary: result.aiSummary, structuredData: result.structuredData, confidence: result.confidence, app: result.app }, summary: result.aiSummary.slice(0, 500) };
-        } catch (e: any) { return { success: false, result: null, summary: `App data failed: ${e.message}` }; }
+        } catch (e: any) {
+          let suggestion = `Failed to get data from ${targetApp}: ${e.message}`;
+          try {
+            const { AppFallback } = await import('./AppFallback');
+            const alts = AppFallback.suggestAlternatives(query, targetApp);
+            if (alts.length > 0) suggestion += '\n\nAlternatives:\n' + alts.map((a: string) => `• ${a}`).join('\n');
+          } catch {}
+          DebugLog.error('Cortex', suggestion);
+          return { success: false, result: null, summary: suggestion };
+        }
       }
       default: return { success: false, result: null, summary: `Unknown step type: ${step.type}` };
     }
@@ -278,7 +288,68 @@ export class Cortex {
     const task = await this.taskStore.get(taskId);
     if (!task) return { success: false, summary: `Task ${taskId} not found`, taskId, subResults: [], persistent: false, totalCost: 0 };
     if (task.status === 'completed') return { success: true, summary: task.result || 'Already completed', taskId, subResults: [], persistent: true, totalCost: 0 };
-    return this.execute(task.goal, task.conversationId, onProgress);
+
+    await this.initialize();
+    const disposeCorrId = CorrIdScope.enter(`resume_${taskId}`);
+    try {
+      DebugLog.push('CORTEX_ROUTE' as any, { event: 'resume', taskId, goal: task.goal.slice(0, 80), completedSteps: task.subTasks.filter((s: any) => s.status === 'completed').length, totalSteps: task.subTasks.length });
+
+      for (const st of task.subTasks) {
+        if (st.status === 'active' || st.status === 'failed') {
+          st.status = 'pending';
+          st.retries = (st.retries || 0) + 1;
+        }
+      }
+      await this.taskStore.update(taskId, { status: 'active', subTasks: task.subTasks });
+
+      const subResults: CortexResult['subResults'] = [];
+      const completedResults: Map<string, any> = new Map();
+
+      for (const st of task.subTasks) {
+        if (st.status === 'completed' && st.result) {
+          completedResults.set(st.id, { success: true, result: st.result, summary: typeof st.result === 'string' ? st.result.slice(0, 300) : JSON.stringify(st.result).slice(0, 300) });
+          subResults.push({ step: st.description, success: true, result: typeof st.result === 'string' ? st.result.slice(0, 300) : 'completed' });
+          onProgress?.('skipping', `Already done: ${st.description.slice(0, 50)}`);
+        }
+      }
+
+      let allSucceeded = true;
+      const decomposed = task.subTasks.map((st: any) => ({
+        id: st.id, description: st.description, type: (st.capability || 'capability') as any,
+        capability: st.capability, params: st.params, dependsOn: st.dependsOn,
+      }));
+
+      for (let round = 0; round < task.subTasks.length + 5; round++) {
+        const currentTask = await this.taskStore.get(taskId);
+        if (!currentTask) break;
+        const ready = this.taskStore.getReadySubTasks(currentTask);
+        if (ready.length === 0) { if (this.taskStore.isComplete(currentTask)) break; break; }
+
+        const step = ready[0];
+        if (step.retries > 3) {
+          await this.taskStore.updateSubTask(taskId, step.id, { status: 'failed', error: 'Max retries exceeded' });
+          allSucceeded = false;
+          continue;
+        }
+
+        onProgress?.('executing', `${step.description.slice(0, 60)}...`);
+        await this.taskStore.updateSubTask(taskId, step.id, { status: 'active', startedAt: Date.now() });
+
+        const dStep = decomposed.find((d: any) => d.id === step.id);
+        let stepResult: { success: boolean; result: any; summary: string };
+        try { stepResult = await this.executeStep(dStep!, completedResults, taskId); } catch (e: any) { stepResult = { success: false, result: null, summary: `Error: ${e.message}` }; }
+
+        completedResults.set(step.id, stepResult);
+        await this.taskStore.updateSubTask(taskId, step.id, { status: stepResult.success ? 'completed' : 'failed', result: stepResult.result, completedAt: Date.now() });
+        subResults.push({ step: step.description, success: stepResult.success, result: stepResult.summary.slice(0, 300) });
+        if (!stepResult.success) allSucceeded = false;
+      }
+
+      const summary = await this.summarizeResults(task.goal, subResults, {} as any);
+      await this.taskStore.update(taskId, { status: allSucceeded ? 'completed' : 'failed', completedAt: Date.now(), result: summary });
+
+      return { success: allSucceeded, summary, taskId, subResults, persistent: true, totalCost: 0 };
+    } finally { disposeCorrId(); }
   }
 
   async getResumableTasks(): Promise<StoredTask[]> { await this.initialize(); return this.taskStore.getResumableTasks(); }

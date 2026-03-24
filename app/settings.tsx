@@ -147,14 +147,51 @@ export default function SettingsScreen() {
     loadCostData();
   }, []);
 
-  // ── Load models when API tab is shown ─────
+  // ── Load models from ALL active providers (Gap 18C) ─────
   useEffect(() => {
     if (tab === 'apis') {
-      const core = getAgentCoreInstance();
-      const models = core ? core.getAvailableModels() || [] : [];
-      setAvailableModels(models);
+      const loadAllModels = async () => {
+        const allModels: any[] = [];
+        const core = getAgentCoreInstance();
+        if (core) {
+          const coreModels = (core as any).getAllModelsWithProvider?.() || core.getAvailableModels?.() || [];
+          allModels.push(...coreModels);
+        }
+        for (const api of apis) {
+          if (!api.isActive || !api.apiKey || !api.baseUrl) continue;
+          const alreadyHave = allModels.some((m: any) => m.providerId === api.id);
+          if (alreadyHave) continue;
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 10000);
+            const res = await fetch(`${api.baseUrl}/models`, {
+              headers: { Authorization: `Bearer ${api.apiKey}` },
+              signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            if (res.ok) {
+              const json = await res.json();
+              const list = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+              for (const m of list) {
+                const spec = m.model_spec || {};
+                allModels.push({
+                  id: m.id, name: spec.name || m.name || m.id,
+                  type: m.type || spec.type || 'text',
+                  providerId: api.id, providerName: api.name,
+                  capabilities: spec.capabilities || {},
+                  costPer1kInput: spec.pricing?.input?.usd ?? 0,
+                });
+              }
+            }
+          } catch {}
+        }
+        const seen = new Set<string>();
+        const deduped = allModels.filter((m: any) => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
+        setAvailableModels(deduped);
+      };
+      loadAllModels();
     }
-  }, [tab, apis.length]);
+  }, [tab, apis]);
 
   const handleVersionTap = useCallback(() => {
     devTapCountRef.current += 1;
@@ -860,7 +897,7 @@ export default function SettingsScreen() {
                                       style={[styles.defaultOption, isActive && styles.defaultOptionActive]}
                                     >
                                       <Text style={[styles.defaultOptionText, isActive && styles.defaultOptionTextActive]} numberOfLines={1}>
-                                        {(m.name || m.id).slice(0, 22)}
+                                        {(m.providerName ? `[${m.providerName}] ` : '') + (m.name || m.id).slice(0, 20)}
                                       </Text>
                                     </Pressable>
                                   );

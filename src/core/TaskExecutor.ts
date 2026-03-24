@@ -1105,6 +1105,11 @@ export class TaskExecutor {
 
         if (!pkg || !pkg.includes('.')) {
           DebugLog.appLaunchFail(taskId, target, pkg, 'No valid package found', 'no_package');
+          try {
+            const { AppFallback } = await import('./AppFallback');
+            const fallbackResult = await AppFallback.suggest(target);
+            if (fallbackResult) return fallbackResult;
+          } catch {}
           return { success: false, error: `Could not find "${target}" on this device` };
         }
 
@@ -1118,6 +1123,11 @@ export class TaskExecutor {
             // Native verification failed — package does not exist or is not launchable
             DebugLog.appLaunchFail(taskId, target, pkg, nativeLaunchResult.error || 'Not launchable', 'native_launch_verify');
             DebugLog.executorExit(taskId, 'app_launch', false, 'native_launch_not_found');
+            try {
+              const { AppFallback } = await import('./AppFallback');
+              const fallbackResult = await AppFallback.suggest(target);
+              if (fallbackResult) return fallbackResult;
+            } catch {}
             return { success: false, error: `"${target}" is not installed on this device. (tried package: ${pkg})` };
           }
         } catch (err: any) {
@@ -1926,10 +1936,33 @@ export class TaskExecutor {
           const core = (await import('./AgentCore')).getAgentCoreInstance();
           const graph = core?.getCortex()?.getKnowledgeGraph();
           if (!graph) return { success: false, summary: 'Knowledge graph not available' };
-          const result = graph.resolve(params.query || '');
-          if (!result.entity) return { success: true, summary: `I don't have specific knowledge about "${params.query}" yet. I learn from our interactions.` };
-          return { success: true, summary: `${graph.getContextFor(params.query || '')}\n\nOverall: ${graph.getSummary()}`, data: { entity: result.entity } };
+          const query = params.query || '';
+          const allResults = graph.resolveAll(query);
+          if (allResults.length === 0) {
+            return { success: true, summary: `I don't have specific knowledge about "${query}" yet.` };
+          }
+          if (allResults.length === 1) {
+            return { success: true, summary: `${graph.getContextFor(query)}\n\n${graph.getSummary()}`, data: { entity: allResults[0].entity } };
+          }
+          const list = allResults.map((r, i) => {
+            const e = r.entity!;
+            const relSummary = r.relations.slice(0, 3).map(rel => `${rel.relation.type} → ${rel.targetEntity.name}`).join(', ');
+            return `${i + 1}. ${e.name} (${e.type})${relSummary ? `: ${relSummary}` : ''}`;
+          }).join('\n');
+          return { success: true, summary: `I know ${allResults.length} entities matching "${query}":\n\n${list}`, data: { matches: allResults.length } };
         } catch (e: any) { return { success: false, summary: `Knowledge query failed: ${e.message}` }; }
+      }
+      case 'user_correction': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const graph = core?.getCortex()?.getKnowledgeGraph();
+          const ai = core?.getModelRouter();
+          if (!graph) return { success: false, summary: 'Knowledge graph not available' };
+          const { UserCorrection } = await import('./UserCorrection');
+          const corrector = new UserCorrection(graph, ai!);
+          const result = await corrector.process(params.correction || '');
+          return { success: result.applied, summary: result.description };
+        } catch (e: any) { return { success: false, summary: `Correction failed: ${e.message}` }; }
       }
       case 'proactive_suggestions': {
         try {

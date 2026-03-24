@@ -83,6 +83,30 @@ export class AppIntelligence {
       await AppController.allowPackage(pkg);
       await AppController.allowPackage('com.android.systemui');
       try { const fg = await AppController.getActivePackage(); if (fg && fg !== pkg) await AppController.allowPackage(fg); } catch {}
+
+      // Gap 16A: Auth wall detection after app launch
+      try {
+        const { AuthGate } = await import('./AuthGate');
+        const authDetection = await AuthGate.detect();
+        if (authDetection.detected) {
+          DebugLog.push('APP_INTEL_LAUNCH' as any, { event: 'auth_wall', app: appName, authType: authDetection.authType });
+          const userPresent = true;
+          let credentialVault: any = undefined;
+          try {
+            const core = (await import('./AgentCore')).getAgentCoreInstance();
+            const cv = core?.getCredentialVault?.();
+            if (cv && cv.isEnabled()) {
+              credentialVault = {
+                hasCredentials: (app: string) => cv.hasCredentials(app),
+                autoFill: (app: string, authType: any) => cv.autoFill(app, authType),
+              };
+            }
+          } catch {}
+          const authResult = await AuthGate.handle(authDetection, { userPresent, credentialVault });
+          if (!authResult.success) return { success: false, packageName: pkg };
+        }
+      } catch {}
+
       DebugLog.push('APP_INTEL_LAUNCH' as any, { event: 'launched', app: appName, packageName: pkg });
       return { success: true, packageName: pkg };
     } catch (e: any) { DebugLog.error('AppIntelligence', `Launch ${appName} failed: ${e.message}`); return { success: false, packageName: '' }; }
@@ -93,7 +117,16 @@ export class AppIntelligence {
     try {
       result.activePackage = await AppController.getActivePackage();
       const flat = await AppController.getScreenContentFlat();
-      result.nodes = JSON.parse(flat);
+      const allNodes: typeof result.nodes = JSON.parse(flat);
+      // Gap 11: filter out noisy/invisible/empty nodes before analysis
+      const SKIP_PATTERNS = /^(com\.|android\.|·|•|\.{3,}|\s*)$/;
+      result.nodes = allNodes.filter(n => {
+        const text = (n.t || n.d || '').trim();
+        if (!text) return false;
+        if (text.length < 2 && !n.c) return false; // skip single-char non-clickable
+        if (SKIP_PATTERNS.test(text)) return false;
+        return true;
+      });
       for (const node of result.nodes) { const text = (node.t || node.d || '').trim(); if (text) { result.allText.push(text); if (node.c) result.clickableLabels.push(text); } if (node.e) result.editableCount++; }
     } catch (e: any) { DebugLog.error('AppIntelligence', `Screen read failed: ${e.message}`); }
     return result;
@@ -105,7 +138,8 @@ export class AppIntelligence {
     const prompt = `You are reading an Android app screen.\n\nAPP: ${reading.activePackage}\nQUERY: "${query}"\n\nSCREEN CONTENT:\n${screenContext.slice(0, 6000)}\n\n${extractPrompt || 'Extract the most relevant information. Be specific with numbers, dates, prices.'}\n\nRespond:\nSUMMARY: Clear answer (2-5 sentences with real data)\nDATA: JSON of key extracted data\nCONFIDENCE: 0-1`;
     try {
       const aiLog = logAICall({ agentId: 'app_extractor', prompt, maxTokens: 800, temperature: 0.2 });
-      const aiResult = await this.ai.complete(prompt, { taskId: `extract_${Date.now().toString(36)}`, agentId: 'app_extractor', maxTokens: 800, temperature: 0.2 });
+      const { withRetry } = await import('../utils/AICallLogger');
+      const aiResult = await withRetry(() => this.ai.complete(prompt, { taskId: `extract_${Date.now().toString(36)}`, agentId: 'app_extractor', maxTokens: 800, temperature: 0.2 }), { maxRetries: 2, agentId: 'app_extractor' });
       aiLog.logResponse(aiResult.content, aiResult.cost);
       const content = aiResult.content;
       const sm = content.match(/SUMMARY:\s*(.+?)(?=DATA:|CONFIDENCE:|$)/is);

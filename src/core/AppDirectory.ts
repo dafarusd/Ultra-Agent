@@ -180,9 +180,11 @@ const KNOWN_APPS: Record<string, string> = {
   'pokemon go': 'com.nianticlabs.pokemongo',
   'among us': 'com.innersloth.spacemafia',
 
-  // Weather
-  'weather': 'com.sec.android.daemonapp',
+  // Weather (device-brand-agnostic — use first installed at runtime, not hardcoded)
+  'weather': 'com.google.android.googlequicksearchbox',
   'samsung weather': 'com.sec.android.daemonapp',
+  'oneplus weather': 'net.oneplus.weather',
+  'xiaomi weather': 'com.miui.weather2',
   'google weather': 'com.google.android.googlequicksearchbox',
   'accuweather': 'com.accuweather.android',
   'weather channel': 'com.weather.Weather',
@@ -324,4 +326,20 @@ export function findBestMatch(
   return best && best.score >= threshold ? best : null;
 }
 
-export default { lookupPackage, findBestMatch, KNOWN_APPS };
+/**
+ * Packages that should NEVER be launched directly — they are system services
+ * or background daemons that crash or misbehave when opened like regular apps.
+ */
+export const UNLAUNCHABLE_PACKAGES = new Set([
+  'com.sec.android.daemonapp',       // Samsung weather daemon (not an app)
+  'com.android.systemui',            // Android SystemUI
+  'com.android.settings',            // Use SettingsDirectory intents instead
+  'com.android.providers.calendar',  // Calendar provider
+  'com.android.providers.contacts',  // Contacts provider
+  'android',                         // Base Android OS
+  'com.google.android.gms',          // Google Play Services (background)
+  'com.google.android.gsf',          // Google Services Framework
+  'com.android.phone',               // Phone background service
+]);
+
+export default { lookupPackage, findBestMatch, KNOWN_APPS, UNLAUNCHABLE_PACKAGES };

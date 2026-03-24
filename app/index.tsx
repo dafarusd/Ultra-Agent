@@ -856,6 +856,33 @@ export default function ChatScreen() {
     }
   }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages, messages.length, currentMode, activeModelId]);
 
+  // ── Gap 16G: Notification tap handler (proactive suggestion) ──────
+  useEffect(() => {
+    let notifSub: any;
+    try {
+      import('expo-notifications').then(Notifications => {
+        notifSub = Notifications.addNotificationResponseReceivedListener(response => {
+          const data = response.notification.request.content.data as any;
+          if (data?.command) {
+            handleSend(data.command as string);
+          } else if (data?.suggestionId) {
+            setSuggestions((prev: any[]) => {
+              if (prev.some((s: any) => s.id === data.suggestionId)) return prev;
+              return [...prev, {
+                id: data.suggestionId as string,
+                title: response.notification.request.content.title?.replace('💡 ', '') || '',
+                body: response.notification.request.content.body || '',
+                urgency: 'medium' as const,
+                suggestedCommand: data.command as string | undefined,
+              }];
+            });
+          }
+        });
+      }).catch(() => {});
+    } catch {}
+    return () => { try { notifSub?.remove(); } catch {} };
+  }, [handleSend, setSuggestions]);
+
   // ── Quick reply handler ────────────────────────────
   const handleQuickReply = useCallback((prompt: string, messageContent: string) => {
     if (prompt === "__COPY_ERROR__") {
@@ -1046,7 +1073,7 @@ export default function ChatScreen() {
   // ── Model picker data ──────────────────────────────
   const getPickerModels = useCallback((): PickerModel[] => {
     if (!agentCore) return [];
-    const models = agentCore.getAvailableModels();
+    const models = (agentCore as any).getAllModelsWithProvider?.() || agentCore.getAvailableModels();
     const currentModel = activeModelId || agentCore.getDefaultModel();
     const result = models.map((m: any) => {
       const pickerType = classifyModelType(m.id, m.name || m.id, m.type);
@@ -1054,7 +1081,7 @@ export default function ChatScreen() {
         id: m.id,
         name: m.name || m.id,
         type: pickerType,
-        apiName: "Venice",
+        apiName: m.providerName || "API",
         costIndicator: m.costPer1kInput > 0 ? `$${m.costPer1kInput.toFixed(4)}/1K` : "Free",
         isSelected: m.id === currentModel,
       };

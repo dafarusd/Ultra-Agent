@@ -7,7 +7,7 @@ import { DebugEngine } from './DebugEngine';
 import { BuildSystem } from './BuildSystem';
 import { TaskExecutor } from './TaskExecutor';
 import { VeniceService } from './VeniceService';
-import { Orchestrator } from './Orchestrator';
+
 import { PreferenceLearner } from '../utils/PreferenceLearner';
 import { CostTracker } from '../services/CostTracker';
 import { StorageManager } from '../services/StorageManager';
@@ -26,6 +26,8 @@ import { KnowledgeGraph } from './KnowledgeGraph';
 import { DeviceSignals } from './DeviceSignals';
 import { ProactiveEngine } from './ProactiveEngine';
 import { BackgroundOrchestrator } from './BackgroundOrchestrator';
+import { CredentialVault } from './CredentialVault';
+import { AIIntentParser } from './AIIntentParser';
 import type {
   ChatMessage,
   UltraExecutionResult,
@@ -84,7 +86,6 @@ export class AgentCore extends SimpleEmitter {
   private debugEngine: DebugEngine;
   private buildSystem: BuildSystem;
   private executor: TaskExecutor;
-  private orchestrator: Orchestrator;
   private learner: PreferenceLearner;
   private costTracker: CostTracker;
   private storage: StorageManager;
@@ -103,6 +104,8 @@ export class AgentCore extends SimpleEmitter {
   private logger: Logger;
   private ready: boolean;
   private instanceId: string;
+  private credentialVault: CredentialVault;
+  private intentParser: AIIntentParser;
 
   constructor(vault: SecureVault, cb: (msg: string, type: string) => void) {
     super();
@@ -122,7 +125,6 @@ export class AgentCore extends SimpleEmitter {
     this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai, this.probe);
     this.executor.setPreferenceLearner(this.learner);
     this.executor.setVeniceService(this.venice);
-    this.orchestrator = new Orchestrator(this.ai, this.costTracker);
     this.conversations = new ConversationManager();
     this.ledger = new ExecutionLedger();
     this.safety = new SafetyChecker();
@@ -131,6 +133,8 @@ export class AgentCore extends SimpleEmitter {
     this.tierService = new TierService(vault);
     this.cortex = new Cortex(this.ai, this.executor, this.caps, this.memory, this.vault);
     this.deviceSignals = new DeviceSignals();
+    this.credentialVault = new CredentialVault(this.vault);
+    this.intentParser = new AIIntentParser(this.ai, this.caps);
     this.ready = false;
     this.on('log', cb);
   }
@@ -177,9 +181,11 @@ export class AgentCore extends SimpleEmitter {
       safeInit('TierService', () => this.tierService.initialize()),
       safeInit('CapabilityProbe', () => this.probe.probe().then(() => {})),
       safeInit('VeniceService', () => this.venice.initialize()),
+      safeInit('CredentialVault', () => this.credentialVault.initialize()),
     ]);
 
     await safeInit('ModelRouter', () => this.ai.initialize());
+    await safeInit('ModelProviders', () => this.ai.loadProviders());
     await safeInit('DebugEngine', () => this.debugEngine.initialize());
     await safeInit('BuildSystem', () => this.buildSystem.initialize());
     await safeInit('TaskExecutor', () => this.executor.initialize());
@@ -237,6 +243,15 @@ export class AgentCore extends SimpleEmitter {
       try {
         const Contacts = await import('expo-contacts');
         const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers], pageSize: 100 });
+        // Create the "user" entity — the person holding the phone
+        const userEntity = graph.addEntity({
+          type: 'person' as any,
+          name: 'me',
+          aliases: ['myself', 'i', 'user', 'owner'],
+          properties: { isOwner: true },
+          confidence: 1.0,
+          source: 'system_init',
+        });
         let seeded = 0;
         for (const contact of data) {
           if (!contact.name || contact.name.length < 2) continue;
@@ -246,6 +261,7 @@ export class AgentCore extends SimpleEmitter {
             const numE = graph.addEntity({ type: 'person', name: phone.number, properties: { isPhoneNumber: true, label: phone.label || 'other' }, confidence: 0.9 } as any);
             graph.addRelation({ fromEntity: entity.id, toEntity: numE.id, type: 'has_number', source: 'contact_sync', confidence: 0.9 });
           }
+          graph.addRelation({ fromEntity: userEntity.id, toEntity: entity.id, type: 'is_contact_of', source: 'contact_sync', confidence: 0.7 });
           seeded++;
         }
         await graph.persist();
@@ -660,6 +676,20 @@ You are always on. Always capable. Always direct.`;
           await this.conversations.addMessage(conversationId, tierMsg);
           return { type: 'blocked', message: tierMsg.content, taskId };
         }
+        // Gap 17: Try AIIntentParser as lightweight fallback before full LLM routing
+        if (!plan && this.ai.hasApiKey()) {
+          try {
+            const intentPlan = await this.intentParser.parse(userInput);
+            if (intentPlan) {
+              plan = intentPlan;
+              planFromParser = true;
+              step('PLAN', `AIIntentParser matched: ${intentPlan.capability}`, true);
+            }
+          } catch (intentErr: any) {
+            step('PLAN', `AIIntentParser failed: ${intentErr.message}`, false);
+          }
+        }
+
         if (!this.ai.hasApiKey()) {
           step('PLAN', 'No deterministic match and no API key configured', false);
           const errMsg: ChatMessage = {
@@ -1572,6 +1602,8 @@ You are always on. Always capable. Always direct.`;
   hasApiKey(): boolean { return this.ai.hasApiKey(); }
   async refreshApiKey(): Promise<void> { await this.ai.refreshApiKey(); }
   getAvailableModels() { return this.ai.getAvailableModels(); }
+  getCredentialVault(): CredentialVault { return this.credentialVault; }
+  getAllModelsWithProvider() { return this.ai.getAllModelsWithProvider(); }
   async setApiBaseUrl(url: string) { await this.ai.setBaseUrl(url); }
   getApiBaseUrl() { return this.ai.getBaseUrl(); }
   getDefaultModel() { return this.ai.getDefaultModel(); }
@@ -1588,7 +1620,7 @@ You are always on. Always capable. Always direct.`;
   async getStorageBreakdown() { return this.storage.getBreakdown(); }
   getDebugStats() { return this.debugEngine.getStats(); }
   getLearnedPatterns() { return this.learner.getTopPatterns(); }
-  killSwarm(): void { this.orchestrator.killAll(); }
+  killSwarm(): void { /* Orchestrator removed — no-op */ }
   async recallContact(name: string): Promise<{ name: string; number: string; label: string } | null> {
     return this.memory.recallContact(name);
   }

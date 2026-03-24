@@ -75,6 +75,20 @@ export class EnhancedReActLoop {
           if (currentPkg) await AppController.allowPackage(currentPkg);
         } catch {}
 
+        // Gap 16B: Auth wall detection each iteration
+        try {
+          const { AuthGate } = await import('./AuthGate');
+          const authCheck = await AuthGate.detect();
+          if (authCheck.detected) {
+            DebugLog.push('REACT_LOOP_STEP' as any, { event: 'auth_wall_mid_loop', iteration, authType: authCheck.authType, app: authCheck.appPackage });
+            const authResult = await AuthGate.handle(authCheck, { userPresent: true });
+            if (!authResult.success) {
+              return { success: false, goalAchieved: false, steps, finalObservation: `Blocked by ${authCheck.authType} on ${authCheck.appPackage}. ${authResult.message}`, totalIterations: iteration, error: 'auth_wall' };
+            }
+            currentNodes = await this.getStableScreen();
+          }
+        } catch {}
+
         const diff = this.computeDiff(prevNodes, currentNodes);
         const currentObs = this.formatNodes(currentNodes);
         const stateHash = this.hashScreen(currentNodes);

@@ -22,6 +22,12 @@ export class BackgroundOrchestrator {
     if (isNative) {
       try { const native = NativeModules.AgentNative; if (native?.startBackgroundAgent) { await native.startBackgroundAgent(); DebugLog.push('BG_SERVICE' as any, { event: 'foreground_service_started' }); } } catch (e: any) { DebugLog.error('BackgroundOrchestrator', `FG service failed: ${e.message}`); }
     }
+    // Request notification permission
+    try {
+      const Notifications = await import('expo-notifications');
+      const { status } = await Notifications.requestPermissionsAsync();
+      DebugLog.push('BG_SERVICE' as any, { event: 'notification_permission', status });
+    } catch {}
     setTimeout(async () => { try { await this.runSignalRead(); await this.runProactiveEval(); } catch {} }, 30_000);
     AppState.addEventListener('change', this.handleAppStateChange);
   }
@@ -35,7 +41,37 @@ export class BackgroundOrchestrator {
   async runProactiveEval(): Promise<void> {
     const sid = `eval_${Date.now().toString(36)}`;
     this.startSentinel(sid, 'proactive_eval');
-    try { const sug = await this.proactive.evaluate(); DebugLog.push('HEADLESS_TASK' as any, { event: 'eval_complete', sentinelId: sid, newSuggestions: sug.length }); if (sug.length > 0 && this.onSuggestion) this.onSuggestion(sug); } catch (e: any) { DebugLog.push('HEADLESS_TASK' as any, { event: 'eval_error', sentinelId: sid, error: e.message }); } finally { this.endSentinel(sid); }
+    try {
+      const sug = await this.proactive.evaluate();
+      DebugLog.push('HEADLESS_TASK' as any, { event: 'eval_complete', sentinelId: sid, newSuggestions: sug.length });
+      if (sug.length > 0 && this.onSuggestion) this.onSuggestion(sug);
+      // Send push notification for high/medium urgency suggestions
+      if (sug.length > 0) {
+        try {
+          const Notifications = await import('expo-notifications');
+          for (const s of sug) {
+            if (s.urgency === 'high' || s.urgency === 'medium') {
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: `💡 ${s.title}`,
+                  body: s.body.slice(0, 200),
+                  data: { suggestionId: s.id, command: s.suggestedCommand || '' },
+                },
+                trigger: null,
+              });
+              DebugLog.push('PROACTIVE_SUGGEST' as any, {
+                event: 'notification_sent',
+                suggestionId: s.id,
+                title: s.title,
+                urgency: s.urgency,
+              });
+            }
+          }
+        } catch (e: any) {
+          DebugLog.error('BackgroundOrchestrator', `Notification send failed: ${e.message}`);
+        }
+      }
+    } catch (e: any) { DebugLog.push('HEADLESS_TASK' as any, { event: 'eval_error', sentinelId: sid, error: e.message }); } finally { this.endSentinel(sid); }
   }
 
   private startSentinel(id: string, type: string): void {
