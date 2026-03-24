@@ -30,7 +30,6 @@ import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
 import BlockedAppsTab from "@/components/BlockedAppsTab";
 import { BiometricGate } from "@/src/security/BiometricGate";
 import type { ApiCategory, ApiProvider } from "@/src/types/ultra";
-import { migrateProvider, getPrimaryBaseUrl, getProviderCategories } from "@/src/types/ultra";
 
 // ── Palette ────────────────────────────────────────────
 const ACCENT = "#34d399";
@@ -74,6 +73,9 @@ export default function SettingsScreen() {
   const [apis, setApis] = useState<ApiProvider[]>([]);
   const [editingApi, setEditingApi] = useState<ApiProvider | null>(null);
   const [isNewApi, setIsNewApi] = useState(false);
+  const [providersExpanded, setProvidersExpanded] = useState(true);
+  const [providerBilling, setProviderBilling] = useState<Record<string, { plan: string; usage: string; limit: string }>>({});
+  const [providerEndpoints, setProviderEndpoints] = useState<Record<string, string[]>>({});
   const [defaults, setDefaults] = useState<ApiDefaults>({
     chat: "", image: "", code: "", reasoning: "", video: "", audio: "",
   });
@@ -189,7 +191,7 @@ export default function SettingsScreen() {
         try {
           const parsed: ApiProvider[] = JSON.parse(savedApis);
           // Migration: ensure all providers have categories and isActive fields
-          const migrated = parsed.map((a) => migrateProvider({
+          const migrated = parsed.map((a) => ({
             ...a,
             categories: a.categories && a.categories.length > 0 ? a.categories : ['text' as ApiCategory],
             isActive: a.isActive !== undefined ? a.isActive : true,
@@ -208,17 +210,11 @@ export default function SettingsScreen() {
           const migratedApi: ApiProvider = {
             id: `api_${Date.now()}`,
             name: "Venice",
+            baseUrl: legacyUrl || "https://api.venice.ai/api/v1",
             apiKey: legacyKey,
             password: "",
-            isActive: true,
-            endpoints: [{
-              id: 'default',
-              baseUrl: legacyUrl || "https://api.venice.ai/api/v1",
-              categories: ['text', 'image', 'video', 'audio', 'code', 'reasoning'],
-            }],
-            // Legacy compat fields
-            baseUrl: legacyUrl || "https://api.venice.ai/api/v1",
             categories: ['text', 'image', 'video', 'audio', 'code', 'reasoning'],
+            isActive: true,
           };
           setApis([migratedApi]);
           await vault.set("saved_apis", JSON.stringify([migratedApi]));
@@ -291,10 +287,11 @@ export default function SettingsScreen() {
     const draft: ApiProvider = {
       id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: "",
+      baseUrl: "",
       apiKey: "",
       password: "",
+      categories: ['text'],
       isActive: true,
-      endpoints: [{ id: 'ep_default', baseUrl: '', categories: ['text'] }],
     };
     setEditingApi(draft);
     setIsNewApi(true);
@@ -307,15 +304,14 @@ export default function SettingsScreen() {
   }, []);
 
   const saveApi = useCallback(async () => {
-    const hasEndpointUrl = (editingApi?.endpoints || []).some((ep) => !!ep.baseUrl);
-    if (!editingApi?.name || !hasEndpointUrl) {
-      UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { hasName: !!editingApi?.name, hasEndpointUrl }, outcome: 'EMPTY:validation_failed' });
-      Alert.alert('Error', 'Name and at least one Endpoint URL are required.');
+    if (!editingApi?.name || !editingApi?.baseUrl) {
+      UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { hasName: !!editingApi?.name, hasUrl: !!editingApi?.baseUrl }, outcome: 'EMPTY:validation_failed' });
+      Alert.alert('Error', 'Name and Base URL are required.');
       return;
     }
 
     UltraDevLog.push('UI_TAP', { component: 'settings', target: 'save_api', provider: editingApi.name });
-    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { name: editingApi.name, endpointCount: (editingApi.endpoints || []).length }, outcome: 'saving' });
+    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { name: editingApi.name }, outcome: 'saving' });
 
     const updated: ApiProvider[] = isNewApi
       ? [...apis, editingApi]
@@ -331,15 +327,15 @@ export default function SettingsScreen() {
       await vault.set('saved_apis', JSON.stringify(updated));
 
       // Set the first active provider with a key as the engine's primary
-      const primary = updated.find((a) => a.isActive && a.apiKey && getProviderCategories(a).includes('text'));
+      const primary = updated.find((a) => a.isActive && a.apiKey && (a.categories || []).includes('text'));
       if (primary) {
         await vault.set('venice_api_key', primary.apiKey);
-        await vault.set('api_base_url', getPrimaryBaseUrl(primary));
+        await vault.set('api_base_url', primary.baseUrl);
         DebugLog.settingsApiSave(primary.id, true);
         const core = getAgentCoreInstance();
         if (core) {
           await core.refreshApiKey();
-          await core.setApiBaseUrl(getPrimaryBaseUrl(primary));
+          await core.setApiBaseUrl(primary.baseUrl);
         }
       } else {
         await vault.set('venice_api_key', '');
@@ -360,18 +356,50 @@ export default function SettingsScreen() {
   const refreshPrimaryEngine = useCallback(async (providers: ApiProvider[]) => {
     try {
       const vault = await SecureVault.initialize();
-      const primary = providers.find((a) => a.isActive && a.apiKey && getProviderCategories(a).includes('text'));
+      const primary = providers.find((a) => a.isActive && a.apiKey && (a.categories || []).includes('text'));
       if (primary) {
         await vault.set('venice_api_key', primary.apiKey);
-        await vault.set('api_base_url', getPrimaryBaseUrl(primary));
+        await vault.set('api_base_url', primary.baseUrl);
         const core = getAgentCoreInstance();
         if (core) {
           await core.refreshApiKey();
-          await core.setApiBaseUrl(getPrimaryBaseUrl(primary));
+          await core.setApiBaseUrl(primary.baseUrl);
         }
       } else {
         await vault.set('venice_api_key', '');
         await vault.set('api_base_url', '');
+      }
+    } catch {}
+  }, []);
+
+  const probeProvider = useCallback(async (api: ApiProvider) => {
+    try {
+      const res = await fetch(`${api.baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${api.apiKey}` },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const ids: string[] = (json.data || []).map((m: any) => m.id || m.name || String(m));
+        setProviderEndpoints(prev => ({ ...prev, [api.id]: ids }));
+      }
+    } catch {}
+  }, []);
+
+  const fetchProviderBilling = useCallback(async (api: ApiProvider) => {
+    try {
+      const res = await fetch(`${api.baseUrl}/billing`, {
+        headers: { Authorization: `Bearer ${api.apiKey}` },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setProviderBilling(prev => ({
+          ...prev,
+          [api.id]: {
+            plan: json.plan || 'unknown',
+            usage: json.usage != null ? `$${Number(json.usage).toFixed(4)}` : '—',
+            limit: json.limit != null ? `$${Number(json.limit).toFixed(2)}` : '—',
+          },
+        }));
       }
     } catch {}
   }, []);
@@ -548,6 +576,18 @@ export default function SettingsScreen() {
                       style={styles.textInput}
                     />
 
+                    <Text style={styles.fieldLabel}>Base URL *</Text>
+                    <TextInput
+                      value={editingApi.baseUrl}
+                      onChangeText={(t) => setEditingApi({ ...editingApi, baseUrl: t })}
+                      placeholder="https://api.venice.ai/api/v1"
+                      placeholderTextColor="#444"
+                      style={styles.textInput}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                    />
+
                     <Text style={styles.fieldLabel}>API Key</Text>
                     <TextInput
                       value={editingApi.apiKey}
@@ -570,73 +610,27 @@ export default function SettingsScreen() {
                       secureTextEntry
                     />
 
-                    {/* ── Multi-Endpoint Editor ── */}
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, marginBottom: 6 }}>
-                      <Text style={[styles.fieldLabel, { flex: 1, marginTop: 0, marginBottom: 0 }]}>Endpoints *</Text>
-                      <Pressable
-                        onPress={() => {
-                          UltraDevLog.push('CHAIN', { component: 'Settings', action: 'add_endpoint', trigger: {}, state: { epCount: (editingApi.endpoints || []).length }, data: {}, outcome: 'adding' });
-                          const eps = editingApi.endpoints || [];
-                          setEditingApi({ ...editingApi, endpoints: [...eps, { id: `ep_${Date.now()}`, baseUrl: '', categories: ['text'] }] });
-                        }}
-                        style={[styles.btn, styles.secondaryBtn, { paddingHorizontal: 10, paddingVertical: 4 }]}
-                      >
-                        <Ionicons name="add-outline" size={14} color={TEXT} />
-                        <Text style={[styles.secondaryBtnText, { fontSize: 11 }]}>Add Endpoint</Text>
-                      </Pressable>
+                    <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Use For (select all that apply)</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                      {(['text', 'image', 'video', 'audio', 'code', 'reasoning'] as ApiCategory[]).map(cat => {
+                        const active = (editingApi.categories || []).includes(cat);
+                        return (
+                          <Pressable
+                            key={cat}
+                            onPress={() => {
+                              const cats = editingApi.categories || [];
+                              const updated = active ? cats.filter((c) => c !== cat) : [...cats, cat];
+                              setEditingApi({ ...editingApi, categories: updated });
+                            }}
+                            style={[styles.btn, active ? styles.primaryBtn : styles.secondaryBtn, { paddingHorizontal: 14 }]}
+                          >
+                            <Text style={active ? styles.primaryBtnText : styles.secondaryBtnText}>
+                              {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
                     </View>
-                    {(editingApi.endpoints || []).map((ep, epIdx) => (
-                      <View key={ep.id} style={{ borderWidth: 1, borderColor: SURFACE3, borderRadius: 8, padding: 10, marginBottom: 8 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                          <Text style={[styles.fieldLabel, { flex: 1, marginTop: 0, marginBottom: 0, fontSize: 11 }]}>URL #{epIdx + 1}</Text>
-                          {(editingApi.endpoints || []).length > 1 && (
-                            <Pressable onPress={() => {
-                              UltraDevLog.push('CHAIN', { component: 'Settings', action: 'delete_endpoint', trigger: { epIdx }, state: {}, data: {}, outcome: 'removed' });
-                              const eps = (editingApi.endpoints || []).filter((_, i) => i !== epIdx);
-                              setEditingApi({ ...editingApi, endpoints: eps });
-                            }}>
-                              <Ionicons name="remove-circle-outline" size={16} color={DANGER} />
-                            </Pressable>
-                          )}
-                        </View>
-                        <TextInput
-                          value={ep.baseUrl}
-                          onChangeText={(t) => {
-                            const eps = [...(editingApi.endpoints || [])];
-                            eps[epIdx] = { ...eps[epIdx], baseUrl: t };
-                            setEditingApi({ ...editingApi, endpoints: eps });
-                          }}
-                          placeholder="https://api.venice.ai/api/v1"
-                          placeholderTextColor="#444"
-                          style={[styles.textInput, { marginBottom: 8 }]}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          keyboardType="url"
-                        />
-                        <Text style={[styles.fieldLabel, { fontSize: 11, marginTop: 0, marginBottom: 4 }]}>Use For</Text>
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                          {(['text', 'image', 'video', 'audio', 'code', 'reasoning'] as ApiCategory[]).map(cat => {
-                            const active = ep.categories.includes(cat);
-                            return (
-                              <Pressable
-                                key={cat}
-                                onPress={() => {
-                                  const cats = active ? ep.categories.filter((c) => c !== cat) : [...ep.categories, cat];
-                                  const eps = [...(editingApi.endpoints || [])];
-                                  eps[epIdx] = { ...eps[epIdx], categories: cats };
-                                  setEditingApi({ ...editingApi, endpoints: eps });
-                                }}
-                                style={[styles.btn, active ? styles.primaryBtn : styles.secondaryBtn, { paddingHorizontal: 10, paddingVertical: 4 }]}
-                              >
-                                <Text style={[active ? styles.primaryBtnText : styles.secondaryBtnText, { fontSize: 11 }]}>
-                                  {cat.charAt(0).toUpperCase() + cat.slice(1)}
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      </View>
-                    ))}
 
                     <View style={[styles.btnRow, { marginTop: 14 }]}>
                       <Pressable onPress={saveApi} style={[styles.btn, styles.primaryBtn]}>
@@ -651,11 +645,12 @@ export default function SettingsScreen() {
                 ) : (
                   <>
                     {/* ── Provider list ── */}
-                    <View style={styles.sectionHeader}>
+                    <Pressable style={styles.sectionHeader} onPress={() => setProvidersExpanded(v => !v)}>
                       <Text style={styles.sectionTitle}>API Providers</Text>
-                    </View>
+                      <Ionicons name={providersExpanded ? 'chevron-up' : 'chevron-down'} size={16} color={DIM} />
+                    </Pressable>
 
-                    {apis.length === 0 && (
+                    {providersExpanded && apis.length === 0 && (
                       <View style={styles.card}>
                         <Text style={{ color: '#666', textAlign: 'center', fontSize: 13 }}>
                           No providers configured.{'\n'}Add one to unlock AI features.
@@ -663,7 +658,7 @@ export default function SettingsScreen() {
                       </View>
                     )}
 
-                    {apis.map((api) => {
+                    {providersExpanded && apis.map((api) => {
                       const hasKey = !!api.apiKey;
                       return (
                         <View key={api.id} style={[styles.card, { borderColor: hasKey && api.isActive ? '#1a3a2a' : '#1e1e1e' }]}>
@@ -695,12 +690,12 @@ export default function SettingsScreen() {
                           </View>
 
                           <Text style={{ color: '#444', fontSize: 11, marginTop: 4 }} numberOfLines={1}>
-                            {getPrimaryBaseUrl(api)}{api.endpoints && api.endpoints.length > 1 ? ` (+${api.endpoints.length - 1} more)` : ''}
+                            {api.baseUrl}
                           </Text>
 
                           {/* Category badges */}
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
-                            {getProviderCategories(api).map((cat) => (
+                            {(api.categories || []).map((cat) => (
                               <View key={cat} style={{ paddingHorizontal: 8, paddingVertical: 2, backgroundColor: '#1a1a1a', borderRadius: 4 }}>
                                 <Text style={{ color: '#888', fontSize: 10 }}>{cat}</Text>
                               </View>
@@ -728,6 +723,40 @@ export default function SettingsScreen() {
                               {api.isActive ? 'Active' : 'Disabled'}
                             </Text>
                           </Pressable>
+
+                          {/* Probe / Billing row */}
+                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                            <Pressable
+                              onPress={() => probeProvider(api)}
+                              style={[styles.btn, styles.secondaryBtn, { flex: 1, justifyContent: 'center', paddingVertical: 4 }]}
+                            >
+                              <Ionicons name="search-outline" size={12} color={DIM} />
+                              <Text style={[styles.secondaryBtnText, { fontSize: 11 }]}>Probe Models</Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => fetchProviderBilling(api)}
+                              style={[styles.btn, styles.secondaryBtn, { flex: 1, justifyContent: 'center', paddingVertical: 4 }]}
+                            >
+                              <Ionicons name="card-outline" size={12} color={DIM} />
+                              <Text style={[styles.secondaryBtnText, { fontSize: 11 }]}>Fetch Billing</Text>
+                            </Pressable>
+                          </View>
+
+                          {providerEndpoints[api.id] && (
+                            <Text style={{ color: '#888', fontSize: 10, marginTop: 4 }}>
+                              {providerEndpoints[api.id].length} model{providerEndpoints[api.id].length !== 1 ? 's' : ''} discovered
+                            </Text>
+                          )}
+
+                          {providerBilling[api.id] && (
+                            <View style={{ backgroundColor: '#0d1a0f', borderRadius: 6, padding: 8, marginTop: 6 }}>
+                              <Text style={{ color: '#aaa', fontSize: 11 }}>
+                                Plan: <Text style={{ color: TEXT }}>{providerBilling[api.id].plan}</Text>
+                                {'  ·  '}Usage: <Text style={{ color: TEXT }}>{providerBilling[api.id].usage}</Text>
+                                {'  ·  '}Limit: <Text style={{ color: TEXT }}>{providerBilling[api.id].limit}</Text>
+                              </Text>
+                            </View>
+                          )}
                         </View>
                       );
                     })}
@@ -764,7 +793,8 @@ export default function SettingsScreen() {
                                 password: '',
                                 isBuiltIn: false,
                                 isActive: true,
-                                endpoints: [{ id: 'ep_default', baseUrl: preset.url, categories: preset.cats }],
+                                baseUrl: preset.url,
+                                categories: preset.cats,
                               });
                               setIsNewApi(true);
                             }}
@@ -784,7 +814,13 @@ export default function SettingsScreen() {
                       </Text>
 
                       {(['chat', 'image', 'code', 'reasoning', 'video', 'audio'] as DefaultRole[]).map(role => {
-                        const allModels = availableModels || [];
+                        const catMap: Record<string, ApiCategory> = { chat: 'text', image: 'image', code: 'code', reasoning: 'reasoning', video: 'video', audio: 'audio' };
+                        const targetCat = catMap[role];
+                        const filteredModels = (availableModels || []).filter((m: any) => {
+                          const type = classifyModelType(m.id || m.name || '');
+                          if (targetCat === 'text') return type === 'text' || type === 'chat';
+                          return type === targetCat;
+                        });
                         return (
                           <View key={role} style={styles.defaultRow}>
                             <Text style={styles.defaultLabel}>
@@ -805,7 +841,10 @@ export default function SettingsScreen() {
                                 >
                                   <Text style={[styles.defaultOptionText, !defaults[role] && styles.defaultOptionTextActive]}>Auto</Text>
                                 </Pressable>
-                                {allModels.map((m: any) => {
+                                {filteredModels.length === 0 && (availableModels || []).length > 0 && (
+                                  <Text style={{ color: '#444', fontSize: 11, alignSelf: 'center', paddingHorizontal: 8 }}>No {targetCat} models</Text>
+                                )}
+                                {filteredModels.map((m: any) => {
                                   const isActive = defaults[role] === m.id;
                                   return (
                                     <Pressable
@@ -967,6 +1006,23 @@ export default function SettingsScreen() {
                 dailyLimit={parseFloat(dailyLimit) || 0}
               />
             </View>
+
+            {/* Per-provider billing summary */}
+            {apis.filter(a => providerBilling[a.id]).length > 0 && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Provider Billing</Text>
+                {apis.filter(a => providerBilling[a.id]).map(a => (
+                  <View key={a.id} style={{ marginBottom: 8 }}>
+                    <Text style={{ color: TEXT, fontSize: 13, fontFamily: 'Inter_600SemiBold', marginBottom: 2 }}>{a.name}</Text>
+                    <Text style={{ color: '#888', fontSize: 11 }}>
+                      Plan: <Text style={{ color: TEXT }}>{providerBilling[a.id].plan}</Text>
+                      {'  ·  '}Usage: <Text style={{ color: TEXT }}>{providerBilling[a.id].usage}</Text>
+                      {'  ·  '}Limit: <Text style={{ color: TEXT }}>{providerBilling[a.id].limit}</Text>
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
 
             {/* Limits */}
             <View style={styles.card}>

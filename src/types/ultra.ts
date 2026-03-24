@@ -1,53 +1,14 @@
 export type ApiCategory = 'text' | 'image' | 'video' | 'audio' | 'code' | 'reasoning';
 
-export interface ApiEndpoint {
-  id: string;
-  baseUrl: string;
-  categories: ApiCategory[];
-}
-
 export interface ApiProvider {
   id: string;
   name: string;
+  baseUrl: string;
   apiKey: string;
   password?: string;
+  categories: ApiCategory[];
   isBuiltIn?: boolean;
   isActive: boolean;
-  endpoints: ApiEndpoint[];
-  // Legacy compat — migration reads these, new code uses endpoints[]
-  baseUrl?: string;
-  categories?: ApiCategory[];
-}
-
-/** Migrate a legacy provider (single baseUrl+categories) to the endpoints[] format */
-export function migrateProvider(p: ApiProvider): ApiProvider {
-  if (p.endpoints && p.endpoints.length > 0) return p;
-  return {
-    ...p,
-    endpoints: [{
-      id: 'default',
-      baseUrl: p.baseUrl || '',
-      categories: p.categories || ['text'],
-    }],
-  };
-}
-
-/** Get the primary base URL for a provider (first endpoint, or legacy baseUrl) */
-export function getPrimaryBaseUrl(p: ApiProvider): string {
-  if (p.endpoints && p.endpoints.length > 0) return p.endpoints[0].baseUrl;
-  return p.baseUrl || '';
-}
-
-/** Get all categories a provider covers */
-export function getProviderCategories(p: ApiProvider): ApiCategory[] {
-  if (p.endpoints && p.endpoints.length > 0) {
-    const all = new Set<ApiCategory>();
-    for (const ep of p.endpoints) {
-      for (const c of ep.categories) all.add(c);
-    }
-    return Array.from(all);
-  }
-  return p.categories || [];
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
