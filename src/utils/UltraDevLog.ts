@@ -32,6 +32,7 @@ import { Platform, AppState, AppStateStatus } from 'react-native';
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LogFolder } from '@/src/services/LogFolder';
+import { CorrIdScope } from './CorrIdScope';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 const PROCESS_RESTART_KEY = 'ultra_last_background_ts';
@@ -75,7 +76,21 @@ export type UltraLogCat =
   | 'A11Y_QS_TRACE'
   | 'GRID_TAP' | 'CONTEXT_TAP' | 'SLASH_CMD'
   | 'CHAIN'
-  | 'EFFECT';
+  | 'EFFECT'
+  // ── V3: Brain sensors ──
+  | 'CORTEX_ROUTE' | 'CORTEX_DECOMPOSE' | 'CORTEX_STEP' | 'CORTEX_REPLAN' | 'CORTEX_RESULT'
+  | 'KG_ENTITY' | 'KG_RELATION' | 'KG_RESOLVE' | 'KG_PERSIST' | 'KG_SEED'
+  | 'APP_INTEL_SEARCH' | 'APP_INTEL_READAPP' | 'APP_INTEL_EXTRACT' | 'APP_INTEL_LAUNCH'
+  | 'VISION_CAPTURE' | 'VISION_ANALYZE'
+  | 'SIGNAL_READ' | 'SIGNAL_PATTERN'
+  | 'PROACTIVE_EVAL' | 'PROACTIVE_SUGGEST' | 'PROACTIVE_DISMISS' | 'PROACTIVE_ACT'
+  | 'BG_SERVICE' | 'TASK_STORE'
+  | 'REACT_LOOP_STEP' | 'REACT_LOOP_DIFF'
+  | 'CTX_AGGREGATE'
+  // ── V5: Zero blind spots ──
+  | 'AI_CALL'           // Every AI prompt + response + error
+  | 'HEADLESS_TASK'     // HeadlessJS start/complete/timeout
+  | 'BUDGET_CHECK';     // Token budget breakdown
 
 interface UltraLogEntry {
   ts: string;
@@ -241,7 +256,8 @@ export class UltraDevLog {
         screen: UltraDevLog.currentScreen,
         event: cat,
         level,
-        corr_id: UltraDevLog.currentCorrId || (data.taskId as string) || '',
+        corr_id: UltraDevLog.currentCorrId || CorrIdScope.current() || (data.taskId as string) || '',
+        brain_corr: CorrIdScope.current() || '',
         payload: data,
         ...(errorEnvelope ? { error: errorEnvelope } : {}),
       },

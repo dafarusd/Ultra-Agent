@@ -255,6 +255,49 @@ export default function ChatScreen() {
     return () => UltraDevLog.componentUnmount('ChatScreen', compIdRef.current);
   }, []);
 
+  // ── V5 Fix 13: Proactive suggestion tracking ──────
+  // suggestions[] is populated by ProactiveEngine via agentCore callback (wired in V3)
+  const [suggestions, setSuggestions] = useState<Array<{
+    id: string;
+    title: string;
+    body?: string;
+    urgency?: string;
+    suggestedCommand?: string;
+    confidence?: number;
+  }>>([]);
+  const visibleSuggestionIds = useRef<Set<string>>(new Set());
+
+  // Expire suggestions older than 1 hour and log each expiry
+  useEffect(() => {
+    if (suggestions.length === 0) return;
+    const timer = setInterval(() => {
+      setSuggestions(prev => {
+        const now = Date.now();
+        const expired = prev.filter(s => {
+          const age = now - parseInt(s.id.split('_')[1] || '0', 10);
+          return age > 3_600_000;
+        });
+        if (expired.length > 0) {
+          for (const s of expired) {
+            const wasVisible = visibleSuggestionIds.current.has(s.id);
+            UltraDevLog.push('PROACTIVE_SUGGEST' as any, {
+              event: 'suggestion_expired',
+              suggestionId: s.id,
+              title: s.title,
+              wasVisible,
+              wasDismissed: false,
+              wasActed: false,
+            });
+            visibleSuggestionIds.current.delete(s.id);
+          }
+          return prev.filter(s => !expired.includes(s));
+        }
+        return prev;
+      });
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [suggestions.length]);
+
   // ── AppState Lifecycle Sensor + A11y Health Monitor ─
   useEffect(() => {
     UltraDevLog.installAppStateListener();
