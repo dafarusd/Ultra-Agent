@@ -1805,7 +1805,26 @@ public class AgentAccessibilityService extends AccessibilityService {
             if (byDesc != null) nodes.add(0, byDesc);
             emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"search\\",\\"tile\\":\\"" + tileLabel + "\\",\\"found\\":" + nodes.size() + "}");
 
-            for (android.view.accessibility.AccessibilityNodeInfo node : nodes) {
+            // Filter out nodes in status bar area (y < 400) — Samsung OneUI places
+            // notification banners and status bar icons that match tile labels
+            java.util.List<android.view.accessibility.AccessibilityNodeInfo> filteredNodes = new java.util.ArrayList<>();
+            for (android.view.accessibility.AccessibilityNodeInfo candidate : nodes) {
+                android.graphics.Rect cb2 = new android.graphics.Rect();
+                candidate.getBoundsInScreen(cb2);
+                int centerY2 = (cb2.top + cb2.bottom) / 2;
+                if (centerY2 < 400) {
+                    emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"skip_node\\",\\"tile\\":\\"" + tileLabel + "\\",\\"y\\":" + centerY2 + ",\\"reason\\":\\"status_bar_area\\"}");
+                } else {
+                    filteredNodes.add(candidate);
+                }
+            }
+            // If all nodes were filtered, fall back to unfiltered list
+            if (filteredNodes.isEmpty() && !nodes.isEmpty()) {
+                emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"filter_fallback\\",\\"tile\\":\\"" + tileLabel + "\\",\\"reason\\":\\"all_nodes_below_400\\"}");
+                filteredNodes = nodes;
+            }
+
+            for (android.view.accessibility.AccessibilityNodeInfo node : filteredNodes) {
                 // Strategy 1: walk up to clickable ancestor, try ACTION_CLICK first (works on Samsung QS)
                 android.view.accessibility.AccessibilityNodeInfo current = node;
                 for (int depth = 0; depth < 6; depth++) {
@@ -1915,8 +1934,25 @@ public class AgentAccessibilityService extends AccessibilityService {
         }
 
         try { Thread.sleep(200); } catch (InterruptedException ignored) {}
-        performGlobalAction(GLOBAL_ACTION_BACK);
-        performGlobalAction(GLOBAL_ACTION_BACK);
+        // Dismiss the notification shade with a swipe-up instead of BACK presses
+        // BACK can dismiss transient dialogs that might have appeared during toggle
+        if (result) {
+            // Shade is open after toggle — swipe up to dismiss
+            android.graphics.Point dismissSize = new android.graphics.Point(1080, 2340);
+            try {
+                android.hardware.display.DisplayManager dmgr = (android.hardware.display.DisplayManager) getSystemService(android.content.Context.DISPLAY_SERVICE);
+                android.view.Display dmDisp = dmgr != null ? dmgr.getDisplay(android.view.Display.DEFAULT_DISPLAY) : null;
+                if (dmDisp != null) dmDisp.getRealSize(dismissSize);
+            } catch (Exception ignored) {}
+            int dcx = dismissSize.x / 2;
+            int dh = dismissSize.y;
+            emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"dismiss_shade\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"swipe_up\\"}");
+            swipeRaw(dcx, dh / 2, dcx, dh / 6, 250);
+            try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+        } else {
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            performGlobalAction(GLOBAL_ACTION_BACK);
+        }
         return result;
     }
 

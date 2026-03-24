@@ -30,6 +30,7 @@ import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
 import BlockedAppsTab from "@/components/BlockedAppsTab";
 import { BiometricGate } from "@/src/security/BiometricGate";
 import type { ApiCategory, ApiProvider } from "@/src/types/ultra";
+import { migrateProvider, getPrimaryBaseUrl, getProviderCategories } from "@/src/types/ultra";
 
 // ── Palette ────────────────────────────────────────────
 const ACCENT = "#34d399";
@@ -54,7 +55,7 @@ interface ApiDefaults {
 }
 
 // Settings tabs
-type SettingsTab = "apis" | "costs" | "logs" | "blocked";
+type SettingsTab = "apis" | "costs" | "security" | "devtools" | "blocked";
 
 // ── Main Component ─────────────────────────────────────
 export default function SettingsScreen() {
@@ -66,7 +67,7 @@ export default function SettingsScreen() {
     UltraDevLog.setCurrentScreen('SettingsScreen');
     return () => UltraDevLog.setCurrentScreen('ChatScreen');
   }, []);
-  const initialTab = (params.tab === "costs" || params.tab === "logs") ? params.tab : "apis";
+  const initialTab = (params.tab === "costs" || params.tab === "security" || params.tab === "devtools") ? params.tab as SettingsTab : "apis";
   const [tab, setTab] = useState<SettingsTab>(initialTab);
 
   // ── API state ──────────────────────────────────────
@@ -134,7 +135,7 @@ export default function SettingsScreen() {
   }, []);
 
   useEffect(() => {
-    if (tab === 'logs' && !isDevMode) setTab('apis');
+    if (tab === 'devtools' && !isDevMode) setTab('apis');
   }, [isDevMode]);
 
   // ── Load settings on mount ─────────────────────────
@@ -188,7 +189,7 @@ export default function SettingsScreen() {
         try {
           const parsed: ApiProvider[] = JSON.parse(savedApis);
           // Migration: ensure all providers have categories and isActive fields
-          const migrated = parsed.map((a) => ({
+          const migrated = parsed.map((a) => migrateProvider({
             ...a,
             categories: a.categories && a.categories.length > 0 ? a.categories : ['text' as ApiCategory],
             isActive: a.isActive !== undefined ? a.isActive : true,
@@ -207,11 +208,17 @@ export default function SettingsScreen() {
           const migratedApi: ApiProvider = {
             id: `api_${Date.now()}`,
             name: "Venice",
-            baseUrl: legacyUrl || "https://api.venice.ai/api/v1",
             apiKey: legacyKey,
             password: "",
-            categories: ['text', 'image', 'video', 'audio', 'code', 'reasoning'],
             isActive: true,
+            endpoints: [{
+              id: 'default',
+              baseUrl: legacyUrl || "https://api.venice.ai/api/v1",
+              categories: ['text', 'image', 'video', 'audio', 'code', 'reasoning'],
+            }],
+            // Legacy compat fields
+            baseUrl: legacyUrl || "https://api.venice.ai/api/v1",
+            categories: ['text', 'image', 'video', 'audio', 'code', 'reasoning'],
           };
           setApis([migratedApi]);
           await vault.set("saved_apis", JSON.stringify([migratedApi]));
@@ -284,11 +291,10 @@ export default function SettingsScreen() {
     const draft: ApiProvider = {
       id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: "",
-      baseUrl: "",
       apiKey: "",
       password: "",
-      categories: ['text'],
       isActive: true,
+      endpoints: [{ id: 'ep_default', baseUrl: '', categories: ['text'] }],
     };
     setEditingApi(draft);
     setIsNewApi(true);
@@ -301,14 +307,15 @@ export default function SettingsScreen() {
   }, []);
 
   const saveApi = useCallback(async () => {
-    if (!editingApi?.name || !editingApi?.baseUrl) {
-      UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { hasName: !!editingApi?.name, hasUrl: !!editingApi?.baseUrl }, outcome: 'EMPTY:validation_failed' });
-      Alert.alert('Error', 'Name and Base URL are required.');
+    const hasEndpointUrl = (editingApi?.endpoints || []).some((ep) => !!ep.baseUrl);
+    if (!editingApi?.name || !hasEndpointUrl) {
+      UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { hasName: !!editingApi?.name, hasEndpointUrl }, outcome: 'EMPTY:validation_failed' });
+      Alert.alert('Error', 'Name and at least one Endpoint URL are required.');
       return;
     }
 
     UltraDevLog.push('UI_TAP', { component: 'settings', target: 'save_api', provider: editingApi.name });
-    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { name: editingApi.name }, outcome: 'saving' });
+    UltraDevLog.push('CHAIN', { component: 'Settings', action: 'save_api', trigger: {}, state: { isNew: isNewApi }, data: { name: editingApi.name, endpointCount: (editingApi.endpoints || []).length }, outcome: 'saving' });
 
     const updated: ApiProvider[] = isNewApi
       ? [...apis, editingApi]
@@ -324,15 +331,15 @@ export default function SettingsScreen() {
       await vault.set('saved_apis', JSON.stringify(updated));
 
       // Set the first active provider with a key as the engine's primary
-      const primary = updated.find((a) => a.isActive && a.apiKey && (a.categories || []).includes('text'));
+      const primary = updated.find((a) => a.isActive && a.apiKey && getProviderCategories(a).includes('text'));
       if (primary) {
         await vault.set('venice_api_key', primary.apiKey);
-        await vault.set('api_base_url', primary.baseUrl);
+        await vault.set('api_base_url', getPrimaryBaseUrl(primary));
         DebugLog.settingsApiSave(primary.id, true);
         const core = getAgentCoreInstance();
         if (core) {
           await core.refreshApiKey();
-          await core.setApiBaseUrl(primary.baseUrl);
+          await core.setApiBaseUrl(getPrimaryBaseUrl(primary));
         }
       } else {
         await vault.set('venice_api_key', '');
@@ -353,14 +360,14 @@ export default function SettingsScreen() {
   const refreshPrimaryEngine = useCallback(async (providers: ApiProvider[]) => {
     try {
       const vault = await SecureVault.initialize();
-      const primary = providers.find((a) => a.isActive && a.apiKey && (a.categories || []).includes('text'));
+      const primary = providers.find((a) => a.isActive && a.apiKey && getProviderCategories(a).includes('text'));
       if (primary) {
         await vault.set('venice_api_key', primary.apiKey);
-        await vault.set('api_base_url', primary.baseUrl);
+        await vault.set('api_base_url', getPrimaryBaseUrl(primary));
         const core = getAgentCoreInstance();
         if (core) {
           await core.refreshApiKey();
-          await core.setApiBaseUrl(primary.baseUrl);
+          await core.setApiBaseUrl(getPrimaryBaseUrl(primary));
         }
       } else {
         await vault.set('venice_api_key', '');
@@ -371,6 +378,7 @@ export default function SettingsScreen() {
 
   const deleteApi = useCallback(async (id: string) => {
     UltraDevLog.push('CHAIN', { component: 'Settings', action: 'delete_api', trigger: { apiId: id }, state: { apiCount: apis.length }, data: {}, outcome: 'deleting' });
+    UltraDevLog.push('EFFECT', { component: 'Settings', action: 'delete_api', success: true, apiId: id, remainingCount: apis.length - 1 });
     DebugLog.settingsApiDelete(id, true);
     const updated = apis.filter((a) => a.id !== id);
     setApis(updated);
@@ -456,7 +464,7 @@ export default function SettingsScreen() {
   }, []);
 
   useEffect(() => {
-    if (tab === "logs" && !logsLoaded) loadLogs();
+    if (tab === "devtools" && !logsLoaded) loadLogs();
   }, [tab, logsLoaded, loadLogs]);
 
   // ── Render ─────────────────────────────────────────
@@ -475,7 +483,7 @@ export default function SettingsScreen() {
 
       {/* Tab bar */}
       <View style={styles.tabBar}>
-        {(["apis", "costs", "logs", "blocked"] as SettingsTab[]).filter((t) => t !== "logs" || isDevMode).map((t) => (
+        {(["apis", "costs", "security", ...(isDevMode ? ["devtools" as SettingsTab] : []), "blocked"] as SettingsTab[]).map((t) => (
           <Pressable
             key={t}
             testID={`SettingsTab-${t}`}
@@ -483,13 +491,13 @@ export default function SettingsScreen() {
               UltraDevLog.push('SETTINGS_TAB_SWITCH', { from: tab, to: t });
               UltraDevLog.push('CHAIN', { component: 'Settings', action: 'tab_switch', trigger: {}, state: { from: tab }, data: { to: t }, outcome: `switched_to_${t}` });
               setTab(t);
-              if (t === "logs") { loadLogs(); }
+              if (t === "devtools") { loadLogs(); }
               if (t === "costs") loadCostData();
             }}
             style={[styles.tab, tab === t && styles.tabActive]}
           >
             <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-              {t === "apis" ? "API Setup" : t === "costs" ? "Cost Limits" : t === "logs" ? "Logs" : "Blocked"}
+              {t === "apis" ? "API Setup" : t === "costs" ? "Cost Limits" : t === "security" ? "Security" : t === "devtools" ? "Dev Tools" : "Blocked"}
             </Text>
           </Pressable>
         ))}
@@ -540,18 +548,6 @@ export default function SettingsScreen() {
                       style={styles.textInput}
                     />
 
-                    <Text style={styles.fieldLabel}>Base URL *</Text>
-                    <TextInput
-                      value={editingApi.baseUrl}
-                      onChangeText={(t) => setEditingApi({ ...editingApi, baseUrl: t })}
-                      placeholder="https://api.venice.ai/api/v1"
-                      placeholderTextColor="#444"
-                      style={styles.textInput}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="url"
-                    />
-
                     <Text style={styles.fieldLabel}>API Key</Text>
                     <TextInput
                       value={editingApi.apiKey}
@@ -574,27 +570,73 @@ export default function SettingsScreen() {
                       secureTextEntry
                     />
 
-                    <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Use For (select all that apply)</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-                      {(['text', 'image', 'video', 'audio', 'code', 'reasoning'] as ApiCategory[]).map(cat => {
-                        const active = (editingApi.categories || []).includes(cat);
-                        return (
-                          <Pressable
-                            key={cat}
-                            onPress={() => {
-                              const cats = editingApi.categories || [];
-                              const updated = active ? cats.filter((c) => c !== cat) : [...cats, cat];
-                              setEditingApi({ ...editingApi, categories: updated });
-                            }}
-                            style={[styles.btn, active ? styles.primaryBtn : styles.secondaryBtn, { paddingHorizontal: 14 }]}
-                          >
-                            <Text style={active ? styles.primaryBtnText : styles.secondaryBtnText}>
-                              {cat.charAt(0).toUpperCase() + cat.slice(1)}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
+                    {/* ── Multi-Endpoint Editor ── */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, marginBottom: 6 }}>
+                      <Text style={[styles.fieldLabel, { flex: 1, marginTop: 0, marginBottom: 0 }]}>Endpoints *</Text>
+                      <Pressable
+                        onPress={() => {
+                          UltraDevLog.push('CHAIN', { component: 'Settings', action: 'add_endpoint', trigger: {}, state: { epCount: (editingApi.endpoints || []).length }, data: {}, outcome: 'adding' });
+                          const eps = editingApi.endpoints || [];
+                          setEditingApi({ ...editingApi, endpoints: [...eps, { id: `ep_${Date.now()}`, baseUrl: '', categories: ['text'] }] });
+                        }}
+                        style={[styles.btn, styles.secondaryBtn, { paddingHorizontal: 10, paddingVertical: 4 }]}
+                      >
+                        <Ionicons name="add-outline" size={14} color={TEXT} />
+                        <Text style={[styles.secondaryBtnText, { fontSize: 11 }]}>Add Endpoint</Text>
+                      </Pressable>
                     </View>
+                    {(editingApi.endpoints || []).map((ep, epIdx) => (
+                      <View key={ep.id} style={{ borderWidth: 1, borderColor: SURFACE3, borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                          <Text style={[styles.fieldLabel, { flex: 1, marginTop: 0, marginBottom: 0, fontSize: 11 }]}>URL #{epIdx + 1}</Text>
+                          {(editingApi.endpoints || []).length > 1 && (
+                            <Pressable onPress={() => {
+                              UltraDevLog.push('CHAIN', { component: 'Settings', action: 'delete_endpoint', trigger: { epIdx }, state: {}, data: {}, outcome: 'removed' });
+                              const eps = (editingApi.endpoints || []).filter((_, i) => i !== epIdx);
+                              setEditingApi({ ...editingApi, endpoints: eps });
+                            }}>
+                              <Ionicons name="remove-circle-outline" size={16} color={DANGER} />
+                            </Pressable>
+                          )}
+                        </View>
+                        <TextInput
+                          value={ep.baseUrl}
+                          onChangeText={(t) => {
+                            const eps = [...(editingApi.endpoints || [])];
+                            eps[epIdx] = { ...eps[epIdx], baseUrl: t };
+                            setEditingApi({ ...editingApi, endpoints: eps });
+                          }}
+                          placeholder="https://api.venice.ai/api/v1"
+                          placeholderTextColor="#444"
+                          style={[styles.textInput, { marginBottom: 8 }]}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType="url"
+                        />
+                        <Text style={[styles.fieldLabel, { fontSize: 11, marginTop: 0, marginBottom: 4 }]}>Use For</Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                          {(['text', 'image', 'video', 'audio', 'code', 'reasoning'] as ApiCategory[]).map(cat => {
+                            const active = ep.categories.includes(cat);
+                            return (
+                              <Pressable
+                                key={cat}
+                                onPress={() => {
+                                  const cats = active ? ep.categories.filter((c) => c !== cat) : [...ep.categories, cat];
+                                  const eps = [...(editingApi.endpoints || [])];
+                                  eps[epIdx] = { ...eps[epIdx], categories: cats };
+                                  setEditingApi({ ...editingApi, endpoints: eps });
+                                }}
+                                style={[styles.btn, active ? styles.primaryBtn : styles.secondaryBtn, { paddingHorizontal: 10, paddingVertical: 4 }]}
+                              >
+                                <Text style={[active ? styles.primaryBtnText : styles.secondaryBtnText, { fontSize: 11 }]}>
+                                  {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ))}
 
                     <View style={[styles.btnRow, { marginTop: 14 }]}>
                       <Pressable onPress={saveApi} style={[styles.btn, styles.primaryBtn]}>
@@ -653,12 +695,12 @@ export default function SettingsScreen() {
                           </View>
 
                           <Text style={{ color: '#444', fontSize: 11, marginTop: 4 }} numberOfLines={1}>
-                            {api.baseUrl}
+                            {getPrimaryBaseUrl(api)}{api.endpoints && api.endpoints.length > 1 ? ` (+${api.endpoints.length - 1} more)` : ''}
                           </Text>
 
                           {/* Category badges */}
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
-                            {(api.categories || []).map((cat) => (
+                            {getProviderCategories(api).map((cat) => (
                               <View key={cat} style={{ paddingHorizontal: 8, paddingVertical: 2, backgroundColor: '#1a1a1a', borderRadius: 4 }}>
                                 <Text style={{ color: '#888', fontSize: 10 }}>{cat}</Text>
                               </View>
@@ -718,12 +760,11 @@ export default function SettingsScreen() {
                               setEditingApi({
                                 id: `api_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
                                 name: preset.name,
-                                baseUrl: preset.url,
                                 apiKey: '',
                                 password: '',
-                                categories: preset.cats,
                                 isBuiltIn: false,
                                 isActive: true,
+                                endpoints: [{ id: 'ep_default', baseUrl: preset.url, categories: preset.cats }],
                               });
                               setIsNewApi(true);
                             }}
@@ -798,7 +839,7 @@ export default function SettingsScreen() {
           </>
         )}
 
-        {tab === "apis" && (
+        {tab === "security" && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>App Lock</Text>
             <Text style={styles.cardSubtitle}>
@@ -813,8 +854,10 @@ export default function SettingsScreen() {
                     key={mins}
                     style={[styles.btn, active ? styles.primaryBtn : styles.secondaryBtn, { paddingHorizontal: 14 }]}
                     onPress={async () => {
+                      UltraDevLog.push('CHAIN', { component: 'Settings', action: 'set_lock_timeout', trigger: { mins }, state: { prevTimeout: lockTimeout }, data: {}, outcome: 'saving' });
                       await biometricGate.setLockTimeout(mins);
                       setLockTimeout(mins);
+                      UltraDevLog.push('EFFECT', { component: 'Settings', action: 'set_lock_timeout', success: true, mins });
                     }}
                   >
                     <Text style={active ? styles.primaryBtnText : styles.secondaryBtnText}>{label}</Text>
@@ -825,7 +868,7 @@ export default function SettingsScreen() {
           </View>
         )}
 
-        {tab === "apis" && (
+        {tab === "security" && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Preferences Backup</Text>
             <Text style={styles.cardSubtitle}>
@@ -837,8 +880,10 @@ export default function SettingsScreen() {
                 disabled={backupExporting}
                 onPress={async () => {
                   setBackupExporting(true);
+                  UltraDevLog.push('CHAIN', { component: 'Settings', action: 'export_preferences', trigger: {}, state: {}, data: {}, outcome: 'exporting' });
                   try {
                     const result = await exportPreferences();
+                    UltraDevLog.push('EFFECT', { component: 'Settings', action: 'export_preferences', success: result.success, message: result.message });
                     Alert.alert(result.success ? 'Export Complete' : 'Export Failed', result.message);
                   } finally {
                     setBackupExporting(false);
@@ -855,8 +900,10 @@ export default function SettingsScreen() {
                 disabled={backupImporting}
                 onPress={async () => {
                   setBackupImporting(true);
+                  UltraDevLog.push('CHAIN', { component: 'Settings', action: 'import_preferences', trigger: {}, state: {}, data: {}, outcome: 'importing' });
                   try {
                     const result = await importPreferences();
+                    UltraDevLog.push('EFFECT', { component: 'Settings', action: 'import_preferences', success: result.success, message: result.message });
                     Alert.alert(result.success ? 'Import Complete' : 'Import Failed', result.message);
                   } finally {
                     setBackupImporting(false);
@@ -873,7 +920,7 @@ export default function SettingsScreen() {
 
         )}
 
-        {tab === "apis" && isDevMode && (
+        {tab === "devtools" && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Dev Tier Override</Text>
             <Text style={[styles.cardSubtitle, { marginBottom: 10 }]}>
@@ -959,9 +1006,9 @@ export default function SettingsScreen() {
         )}
 
         {/* ══════════════════════════════════════════
-            TAB: LOGS
+            TAB: DEV TOOLS
             ══════════════════════════════════════════ */}
-        {tab === "logs" && (
+        {tab === "devtools" && (
           <>
             <View style={styles.card}>
               <View style={styles.logHeader}>

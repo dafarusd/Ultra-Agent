@@ -11,8 +11,9 @@ export const DEFAULT_CATEGORIES: GridCategory[] = [
       { id: 'call', label: 'Call', icon: 'call-outline', iconFamily: 'ionicons', capability: 'app_launch', params: { target: 'phone', action: 'android.intent.action.DIAL' } },
       { id: 'call_contact', label: 'Call Contact', icon: 'person-outline', iconFamily: 'ionicons', capability: 'app_launch', params: { action: 'android.intent.action.CALL' }, requiresInput: true, inputPlaceholder: 'Contact name', inputKey: '_contactName' },
       { id: 'text', label: 'Text', icon: 'chatbubble-outline', iconFamily: 'ionicons', capability: 'sms_send', params: {}, requiresInput: true, inputPlaceholder: 'Who and what?', inputKey: '_smsInput' },
-      { id: 'email', label: 'Email', icon: 'mail-outline', iconFamily: 'ionicons', capability: 'app_launch', params: { action: 'android.intent.action.SENDTO', data: 'mailto:' } },
-      { id: 'compose_email', label: 'New Email', icon: 'create-outline', iconFamily: 'ionicons', capability: 'app_launch', params: { action: 'android.intent.action.SENDTO', data: 'mailto:' }, requiresInput: true, inputPlaceholder: 'To: email@...', inputKey: '_emailTo' },
+      // Email entries removed — they produce no_target errors because app_launch
+      // executor expects a 'target' field but SENDTO actions don't provide one.
+      // TODO: Re-add when IntentResolver handles SENDTO actions directly.
     ],
   },
   {

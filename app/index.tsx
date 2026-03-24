@@ -13,6 +13,7 @@ import {
   Modal,
   TouchableWithoutFeedback,
   Image,
+  Share,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppStorage } from "@/src/utils/AppStorage";
@@ -827,7 +828,9 @@ export default function ChatScreen() {
       else if (replay.type === "model_switch") args.approvedModel = replay.recommendedModel;
       const result = await agentCore.execute(args);
       await handleResult(result, agentCore, conversationId);
+      UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'approve', success: result.type !== 'error', resultType: result.type });
     } catch (e: any) {
+      UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'approve', success: false, error: e?.message });
       UltraDevLog.error('handleApprove', e?.message || 'approval execute failed', e?.stack);
       await reloadMessages(agentCore, conversationId);
     }
@@ -851,7 +854,9 @@ export default function ChatScreen() {
       try {
         const result = await agentCore.execute({ conversationId, userInput: replay.userInput, replay: true, skipModelSwitchPrompt: true });
         await handleResult(result, agentCore, conversationId);
-      } catch {
+        UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'deny_model_switch', success: result.type !== 'error', resultType: result.type });
+      } catch (e: any) {
+        UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'deny_model_switch', success: false, error: e?.message });
         await reloadMessages(agentCore, conversationId);
       }
       setIsProcessing(false);
@@ -861,6 +866,7 @@ export default function ChatScreen() {
       const cm = agentCore.getConversationManager();
       await cm.addMessage(conversationId, { id: `msg_${Math.random().toString(36).slice(2)}_${Date.now()}`, role: "assistant", content: "Cancelled.", createdAt: Date.now(), source: "ultra" });
       await reloadMessages(agentCore, conversationId);
+      UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'deny_cancel', success: true, replayType: replay.type });
     }
   }, [agentCore, conversationId, pendingReplay, handleResult, reloadMessages]);
 
@@ -878,6 +884,7 @@ export default function ChatScreen() {
     setConvListVisible(false);
     setSessionModelOverride(false);
     await refreshConversations(agentCore);
+    UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'new_chat', success: true, newConvId: conv.id });
   }, [agentCore, refreshConversations]);
 
   const handleSelectConversation = useCallback(async (id: string) => {
@@ -892,6 +899,7 @@ export default function ChatScreen() {
     setConversationStarred(!!conv?.meta?.starred);
     await reloadMessages(agentCore, id);
     setConvListVisible(false);
+    UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'select_conversation', success: true, convId: id });
   }, [agentCore, reloadMessages, conversationId]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
@@ -913,6 +921,7 @@ export default function ChatScreen() {
       }
     }
     await refreshConversations(agentCore);
+    UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'delete_conversation', success: true, deletedId: id });
   }, [agentCore, conversationId, reloadMessages, refreshConversations]);
 
   const [renameModalVisible, setRenameModalVisible] = useState(false);
@@ -1322,12 +1331,29 @@ export default function ChatScreen() {
             </Pressable>
           )}
 
-          {/* Message action row: copy + prompt trace */}
+          {/* Message action row: copy + share + prompt trace */}
           <View style={styles.msgActions}>
             <Pressable onPress={() => handleCopyMessage(item)} hitSlop={8} style={styles.copyBtn}>
               <Ionicons name={isCopied ? "checkmark" : "copy-outline"} size={14} color={isCopied ? ACCENT : DIM} />
               {isCopied && <Text style={styles.copiedInline}>Copied</Text>}
             </Pressable>
+            {!isUser && (
+              <Pressable
+                hitSlop={8}
+                style={styles.copyBtn}
+                onPress={async () => {
+                  UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'share_message', trigger: { msgId: item.id }, state: {}, data: { contentLength: item.content.length }, outcome: 'sharing' });
+                  try {
+                    const shareResult = await Share.share({ message: item.content });
+                    UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'share_message', success: shareResult.action !== Share.dismissedAction, action: shareResult.action });
+                  } catch (e: any) {
+                    UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'share_message', success: false, error: e?.message });
+                  }
+                }}
+              >
+                <Ionicons name="share-outline" size={14} color={DIM} />
+              </Pressable>
+            )}
             {trace && !isUser && (
               <Pressable onPress={() => openPromptViewer(trace)} style={styles.viewPromptBtn} hitSlop={8}>
                 <Ionicons name="eye-outline" size={12} color={DIM} />
@@ -1430,7 +1456,7 @@ export default function ChatScreen() {
           </Pressable>
           <Pressable onLongPress={handleRenameConversation} delayLongPress={500} style={{ flex: 1 }}>
             <Text style={styles.headerTitle} numberOfLines={1}>
-              {conversationTitle}
+              Agent Ultra
             </Text>
           </Pressable>
         </View>

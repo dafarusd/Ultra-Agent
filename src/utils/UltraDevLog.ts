@@ -74,7 +74,8 @@ export type UltraLogCat =
   | 'BUBBLE_DIAG'
   | 'A11Y_QS_TRACE'
   | 'GRID_TAP' | 'CONTEXT_TAP' | 'SLASH_CMD'
-  | 'CHAIN';
+  | 'CHAIN'
+  | 'EFFECT';
 
 interface UltraLogEntry {
   ts: string;
@@ -565,12 +566,26 @@ export class UltraDevLog {
       UltraDevLog.isBackground = (nextState === 'background' || nextState === 'inactive');
       const elapsed = now - UltraDevLog.lastAppStateChangeAt;
       const bgDuration = nextState === 'active' ? now - UltraDevLog.lastActiveAt : 0;
+      // Capture active operation context when backgrounding
+      let activeOperation: Record<string, unknown> | undefined;
+      if ((nextState === 'background' || nextState === 'inactive') && UltraDevLog.processingStartedAt > 0) {
+        const processingForMs = now - UltraDevLog.processingStartedAt;
+        const watchdogEntries: Array<{ taskId: string; phase: string; elapsedMs: number }> = [];
+        for (const [, wd] of UltraDevLog.watchdogs) {
+          watchdogEntries.push({ taskId: wd.taskId, phase: wd.phase, elapsedMs: now - wd.startedAt });
+        }
+        activeOperation = { processingForMs, watchdogs: watchdogEntries };
+      }
+
       UltraDevLog.push('APP_STATE_CHANGE', {
         nextState, elapsedSinceLastChange: elapsed,
         backgroundDurationMs: nextState === 'active' ? bgDuration : undefined,
         activeCoreId: UltraDevLog.activeCoreId, activeWatchdogs: UltraDevLog.watchdogs.size,
+        ...(activeOperation ? { activeOperation } : {}),
         note: nextState === 'active' && bgDuration > 0
           ? `App back after ${bgDuration}ms. If CORE_INSTANCE follows, re-init triggered here.`
+          : (nextState === 'background' || nextState === 'inactive') && activeOperation
+          ? `Going to background with active operation (${(activeOperation as any).processingForMs}ms). Capability may report user_cancelled.`
           : (nextState === 'background' || nextState === 'inactive')
           ? 'Going to background. Watch for CORE_INSTANCE after next active.'
           : 'ok',
@@ -1086,6 +1101,7 @@ export class UltraDevLog {
       case 'CONTEXT_TAP': return `${t} [CTX_TAP ]${c} cap=${d.capability} params=${JSON.stringify(d.params).slice(0, 100)}`;
       case 'SLASH_CMD': return `${t} [SLASH   ]${c} ${d.command} ${d.durationMs}ms result=${d.resultPreview}`;
       case 'CHAIN': return `${t} [CHAIN   ]${c} ${d.component}.${d.action} → ${d.outcome}`;
+      case 'EFFECT': return `${t} [EFFECT  ]${c} ${d.component}.${d.action} ${d.success !== undefined ? (d.success ? 'OK' : 'FAIL') : ''} ${JSON.stringify(d).slice(0, 200)}`;
       default: return `${t} [${e.cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }
@@ -1119,7 +1135,8 @@ export class UltraDevLog {
         (e.cat === 'UI_MESSAGE_RENDERED' && (d.tallWarning || (d.note as string)?.includes('listHeightPx=0'))) ||
         (e.cat === 'VAULT_WRITE' && d.success === false) ||
         (e.cat === 'PROCESS_RESTART' && d.event === 'warm_restart') ||
-        (e.cat === 'FOCUS_EFFECT_DEPS' && (d.changedDeps as string[])?.includes('currentMode'))
+        (e.cat === 'FOCUS_EFFECT_DEPS' && (d.changedDeps as string[])?.includes('currentMode')) ||
+        (e.cat === 'EFFECT' && d.success === false)
       );
     });
 

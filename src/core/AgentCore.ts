@@ -1285,6 +1285,15 @@ You are always on. Always capable. Always direct.`;
       });
 
       DebugLog.aiResponse(conversationId, aiResult.model, aiResult.content, aiResult.cost);
+      DebugLog.push('EFFECT', {
+        component: 'AgentCore', action: 'ai_response_received',
+        model: aiResult.model,
+        contentLength: aiResult.content.length,
+        cost: aiResult.cost ?? 0,
+        preview: aiResult.content.slice(0, 150),
+        empty: aiResult.content.length === 0,
+        success: aiResult.content.length > 0,
+      });
       step('EXECUTE', `AI response received (${aiResult.content.length} chars, model=${aiResult.model}, cost=${aiResult.cost ?? 0})`, true);
       step('VERIFY_RESULT', 'N/A — no capability result to verify in conversation mode', true);
       step('WRITE_MEMORY', 'AI response written to conversation history', true);
