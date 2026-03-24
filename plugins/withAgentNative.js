@@ -2695,8 +2695,6 @@ function withAgentNative(config) {
       fs.writeFileSync(path.join(javaDir, 'AgentAccessibilityService.java'), ACCESSIBILITY_SERVICE_JAVA);
       fs.writeFileSync(path.join(javaDir, 'AccessibilityBridgeModule.java'), ACCESSIBILITY_BRIDGE_JAVA);
       fs.writeFileSync(path.join(javaDir, 'AgentBackgroundService.java'), BACKGROUND_SERVICE_JAVA);
-      fs.writeFileSync(path.join(javaDir, 'AgentHeadlessTaskService.java'), HEADLESS_TASK_SERVICE_JAVA);
-
       const xmlDir = path.join(androidDir, 'app', 'src', 'main', 'res', 'xml');
       fs.mkdirSync(xmlDir, { recursive: true });
       fs.writeFileSync(path.join(xmlDir, 'file_paths.xml'), FILE_PROVIDER_PATHS);
@@ -2860,19 +2858,6 @@ function withAgentNative(config) {
           'android:exported': 'false',
           'android:foregroundServiceType': 'dataSync',
           'android:stopWithTask': 'false',
-        },
-      });
-    }
-
-    const hasHeadlessService = (app.service || []).some(
-      (s) => s.$['android:name'] === '.AgentHeadlessTaskService'
-    );
-    if (!hasHeadlessService) {
-      if (!app.service) app.service = [];
-      app.service.push({
-        $: {
-          'android:name': '.AgentHeadlessTaskService',
-          'android:exported': 'false',
         },
       });
     }

@@ -1,23 +1,10 @@
-import { NativeModules, Platform, AppState, AppRegistry } from 'react-native';
+import { NativeModules, Platform, AppState } from 'react-native';
 import { ProactiveEngine, ProactiveSuggestion } from './ProactiveEngine';
 import { DeviceSignals } from './DeviceSignals';
 import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 const isNative = Platform.OS !== 'web';
 let _orchestratorInstance: BackgroundOrchestrator | null = null;
-
-if (isNative) {
-  AppRegistry.registerHeadlessTask('AgentBackgroundTask', () => async (taskData: any) => {
-    const taskType = taskData?.taskType || 'signal_read';
-    const tick = taskData?.tick || 0;
-    DebugLog.push('HEADLESS_TASK' as any, { event: 'received', taskType, tick, hasOrchestrator: !!_orchestratorInstance });
-    if (!_orchestratorInstance) return;
-    try {
-      if (taskType === 'proactive_eval') await _orchestratorInstance.runProactiveEval();
-      else await _orchestratorInstance.runSignalRead();
-    } catch (e: any) { DebugLog.error('HeadlessTask', e.message, e.stack); }
-  });
-}
 
 export class BackgroundOrchestrator {
   private isRunning = false;
