@@ -6,17 +6,15 @@ import type { ModelRouter } from '../core/ModelRouter';
 
 export interface EventTrigger {
   id: string;
-  type: 'sms' | 'battery' | 'notification' | 'schedule';
-  condition: string;
-  action: string;
-  enabled: boolean;
-  createdAt: number;
-  lastFired?: number;
+  type: 'sms' | 'battery' | 'notification' | 'schedule' | 'sms_content' | 'battery_level' | 'time_range';
+  condition: string; action: string; enabled: boolean; createdAt: number;
+  lastFired?: number; metadata?: Record<string, any>;
 }
 
 export class EventMonitor {
   private triggers: EventTrigger[] = [];
   private scheduleInterval: ReturnType<typeof setInterval> | null = null;
+  private batteryInterval: ReturnType<typeof setInterval> | null = null;
   private isRunning = false;
   private uiEventEmitter: NativeEventEmitter | null = null;
 
@@ -43,6 +41,14 @@ export class EventMonitor {
       this.evaluateScheduleTriggers();
     }, 60000);
 
+    this.batteryInterval = setInterval(() => {
+      this.evaluateBatteryTriggers();
+    }, 30000);
+
+    setInterval(() => {
+      this.evaluateSmsContentTriggers();
+    }, 120000);
+
     DebugLog.systemEvent('EventMonitor', `Started. Triggers: ${this.triggers.length}`);
   }
 
@@ -50,6 +56,7 @@ export class EventMonitor {
     if (!this.isRunning) return;
     this.isRunning = false;
     if (this.scheduleInterval) clearInterval(this.scheduleInterval);
+    if (this.batteryInterval) clearInterval(this.batteryInterval);
     if (this.uiEventEmitter) this.uiEventEmitter.removeAllListeners('onUiTreeChanged');
   }
 
@@ -82,9 +89,68 @@ export class EventMonitor {
     }
   }
 
+  private async evaluateBatteryTriggers(): Promise<void> {
+    const batteryTriggers = this.triggers.filter(t => t.enabled && (t.type === 'battery' || t.type === 'battery_level'));
+    if (batteryTriggers.length === 0) return;
+    try {
+      const AgentNative = (await import('../native/AgentNative')).default;
+      const storageInfo = await AgentNative.getStorageInfo(); // side-channel for battery
+      const { NativeModules: NM } = require('react-native');
+      const batteryLevel: number = NM.DeviceInfo?.getBatteryLevel ? await NM.DeviceInfo.getBatteryLevel() : -1;
+      if (batteryLevel < 0) return;
+      const pct = Math.round(batteryLevel * 100);
+      for (const trigger of batteryTriggers) {
+        const conditionMet = this.evaluateCondition(trigger.condition, { batteryPct: pct });
+        if (conditionMet) {
+          const cooldown = 300000;
+          if (!trigger.lastFired || Date.now() - trigger.lastFired > cooldown) {
+            trigger.lastFired = Date.now();
+            await this.fireTrigger(trigger);
+          }
+        }
+      }
+    } catch {}
+  }
+
+  private async evaluateSmsContentTriggers(): Promise<void> {
+    const smsTriggers = this.triggers.filter(t => t.enabled && t.type === 'sms_content');
+    if (smsTriggers.length === 0) return;
+    try {
+      const AgentNative = (await import('../native/AgentNative')).default;
+      const recent = await AgentNative.readSms(10, 'inbox');
+      for (const trigger of smsTriggers) {
+        const keyword = trigger.condition.replace(/sms.*contains?/i, '').trim().toLowerCase();
+        const match = recent.find(s => s.body.toLowerCase().includes(keyword));
+        if (match) {
+          const cooldown = 300000;
+          if (!trigger.lastFired || Date.now() - trigger.lastFired > cooldown) {
+            trigger.lastFired = Date.now();
+            await this.fireTrigger(trigger);
+          }
+        }
+      }
+    } catch {}
+  }
+
   private evaluateCondition(condition: string, data: Record<string, any>): boolean {
     const c = condition.toLowerCase();
+    if (data.batteryPct !== undefined) {
+      const underMatch = condition.match(/battery.*(?:under|below|<)\s*(\d+)%/i);
+      if (underMatch) return data.batteryPct < parseInt(underMatch[1]);
+      const overMatch = condition.match(/battery.*(?:over|above|>)\s*(\d+)%/i);
+      if (overMatch) return data.batteryPct > parseInt(overMatch[1]);
+    }
     if (data.hour !== undefined && data.minute !== undefined) {
+      // time range: "between 9am and 5pm"
+      const rangeMatch = condition.match(/between\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+and\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+      if (rangeMatch) {
+        let startH = parseInt(rangeMatch[1]), startM = rangeMatch[2] ? parseInt(rangeMatch[2]) : 0;
+        let endH = parseInt(rangeMatch[4]), endM = rangeMatch[5] ? parseInt(rangeMatch[5]) : 0;
+        if (rangeMatch[3]?.toLowerCase() === 'pm' && startH < 12) startH += 12;
+        if (rangeMatch[6]?.toLowerCase() === 'pm' && endH < 12) endH += 12;
+        const nowMins = data.hour * 60 + data.minute;
+        return nowMins >= startH * 60 + startM && nowMins <= endH * 60 + endM;
+      }
       const timeMatch = condition.match(/at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
       if (timeMatch) {
         let targetHour = parseInt(timeMatch[1]);

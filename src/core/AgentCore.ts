@@ -21,6 +21,11 @@ import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import { MemoryManager } from './MemoryManager';
 import { EventMonitor } from '../services/EventMonitor';
 import { TierService } from '../services/TierService';
+import { Cortex, CortexResult } from './Cortex';
+import { KnowledgeGraph } from './KnowledgeGraph';
+import { DeviceSignals } from './DeviceSignals';
+import { ProactiveEngine } from './ProactiveEngine';
+import { BackgroundOrchestrator } from './BackgroundOrchestrator';
 import type {
   ChatMessage,
   UltraExecutionResult,
@@ -89,6 +94,10 @@ export class AgentCore extends SimpleEmitter {
   private parser: CommandParser;
   private memory: MemoryManager;
   private tierService: TierService;
+  private cortex: Cortex;
+  private deviceSignals: DeviceSignals;
+  private proactive: ProactiveEngine | null = null;
+  private background: BackgroundOrchestrator | null = null;
   private eventMonitor: EventMonitor | null = null;
   private venice: VeniceService;
   private logger: Logger;
@@ -120,6 +129,8 @@ export class AgentCore extends SimpleEmitter {
     this.parser = new CommandParser();
     this.memory = new MemoryManager(vault);
     this.tierService = new TierService(vault);
+    this.cortex = new Cortex(this.ai, this.executor, this.caps, this.memory, this.vault);
+    this.deviceSignals = new DeviceSignals();
     this.ready = false;
     this.on('log', cb);
   }
@@ -135,6 +146,7 @@ export class AgentCore extends SimpleEmitter {
   destroy(reason: string = 'cleanup'): void {
     DebugLog.coreDestroyed(this.instanceId, reason);
     this.removeAllListeners();
+    this.background?.stop();
   }
 
   async initialize(): Promise<void> {
@@ -194,6 +206,9 @@ export class AgentCore extends SimpleEmitter {
 
     this.ready = true;
 
+    await safeInit('Cortex', () => this.cortex.initialize());
+    await safeInit('DeviceSignals', () => this.deviceSignals.initialize());
+
     try {
       this.eventMonitor = new EventMonitor(this.executor, this.memory, this.ai);
       await this.eventMonitor.start();
@@ -201,6 +216,44 @@ export class AgentCore extends SimpleEmitter {
     } catch (evErr: any) {
       DebugLog.error('EventMonitor', `Failed to start: ${evErr.message}`, evErr.stack);
     }
+
+    await safeInit('ProactiveEngine', async () => {
+      const graph = this.cortex.getKnowledgeGraph();
+      this.proactive = new ProactiveEngine(this.deviceSignals, graph, this.ai, this.vault);
+      await this.proactive.initialize();
+    });
+    await safeInit('BackgroundOrchestrator', async () => {
+      if (this.proactive) {
+        this.background = new BackgroundOrchestrator(this.proactive, this.deviceSignals);
+        await this.background.start((suggestions) => {
+          for (const s of suggestions) this.emit('log', `\ud83d\udca1 ${s.title}: ${s.body}`, 'proactive');
+        });
+      }
+    });
+    await safeInit('KnowledgeGraphSeed', async () => {
+      const graph = this.cortex.getKnowledgeGraph();
+      if (!graph || graph.getByType('person').length > 0) return;
+      DebugLog.push('KG_SEED' as any, { event: 'start' });
+      try {
+        const Contacts = await import('expo-contacts');
+        const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers], pageSize: 100 });
+        let seeded = 0;
+        for (const contact of data) {
+          if (!contact.name || contact.name.length < 2) continue;
+          const entity = graph.addEntity({ type: 'person', name: contact.name, confidence: 0.7, source: 'contact_sync' } as any);
+          if (contact.phoneNumbers) for (const phone of contact.phoneNumbers) {
+            if (!phone.number) continue;
+            const numE = graph.addEntity({ type: 'person', name: phone.number, properties: { isPhoneNumber: true, label: phone.label || 'other' }, confidence: 0.9 } as any);
+            graph.addRelation({ fromEntity: entity.id, toEntity: numE.id, type: 'has_number', source: 'contact_sync', confidence: 0.9 });
+          }
+          seeded++;
+        }
+        await graph.persist();
+        DebugLog.push('KG_SEED' as any, { event: 'done', contacts: data.length, seeded });
+      } catch (e: any) { DebugLog.error('KGSeed', e.message, e.stack); }
+    });
+
+    try { const resumable = await this.cortex.getResumableTasks(); if (resumable.length > 0) DebugLog.systemEvent('AgentCore', `${resumable.length} resumable Cortex tasks`); } catch {}
 
     this.emit('log', 'All systems online', 'agent');
   }
@@ -464,6 +517,34 @@ You are always on. Always capable. Always direct.`;
     const relevantMemory = await this.memory.retrieveRelevant(userInput, 5);
     if (relevantMemory.length > 0) {
       DebugLog.systemEvent('AgentCore', `Memory retrieved: ${relevantMemory.length} relevant entries`);
+    }
+
+    // ── CORTEX ROUTING ──
+    if (mode === 'command' && this.cortex.isComplex(userInput)) {
+      DebugLog.push('CORTEX_ROUTE' as any, { event: 'routing', input: userInput.slice(0, 80) });
+      step('PLAN', 'Complex task — routing to Cortex', true);
+      const cortexAiCheck = this.tierService.canSendMessage(true);
+      if (!cortexAiCheck.allowed) {
+        const tierMsg: ChatMessage = { id: uid('msg'), role: 'assistant', content: `Complex task requires AI.\n\n${cortexAiCheck.reason}`, createdAt: Date.now(), source: 'system', meta: { mode, tierBlocked: true, needsUpgrade: cortexAiCheck.needsUpgrade } };
+        await this.conversations.addMessage(conversationId, tierMsg);
+        return { type: 'blocked', message: tierMsg.content, taskId };
+      }
+      if (!this.ai.hasApiKey()) {
+        const errMsg: ChatMessage = { id: uid('msg'), role: 'assistant', content: 'Complex task requires API key. Configure in Settings.', createdAt: Date.now(), source: 'system', meta: {} };
+        await this.conversations.addMessage(conversationId, errMsg);
+        return { type: 'error', message: errMsg.content, taskId };
+      }
+      try {
+        const cortexResult: CortexResult = await this.cortex.execute(userInput, conversationId, (phase, detail) => { this.emit('log', `[Cortex:${phase}] ${detail}`, 'cortex_progress'); });
+        const resultMsg: ChatMessage = { id: uid('msg'), role: 'assistant', content: cortexResult.summary.slice(0, 4000), createdAt: Date.now(), source: 'ultra', meta: { mode: 'command', cortex: true, cortexTaskId: cortexResult.taskId, subSteps: cortexResult.subResults.length } };
+        await this.conversations.addMessage(conversationId, resultMsg);
+        try { await this.learner.learnFromExecution(userInput, ['cortex_task'], cortexResult.summary, cortexResult.success); if (cortexResult.success) await this.memory.storeSession(userInput, 'cortex_task', cortexResult.summary); } catch {}
+        try { const graph = this.cortex.getKnowledgeGraph(); graph.learnFromInteraction(userInput, 'cortex_task', cortexResult.summary); } catch {}
+        return { type: 'action_result', message: cortexResult.summary.slice(0, 4000), taskId, data: { cortexResult } };
+      } catch (cortexErr: any) {
+        DebugLog.error('Cortex', cortexErr.message, cortexErr.stack);
+        step('PLAN', `Cortex failed: ${cortexErr.message} — falling back`, false);
+      }
     }
 
     const multiStepConnectors = /\b(then|and then|after that|followed by|next|afterwards|subsequently|once done|when done|after which|and also)\b/i;
@@ -986,6 +1067,7 @@ You are always on. Always capable. Always direct.`;
           await this.memory.storeSession(userInput, plan.capability, resultSummary);
           await this.memory.promoteLongterm(userInput, plan.capability, resultSummary);
         }
+        try { const graph = this.cortex.getKnowledgeGraph(); graph.learnFromInteraction(userInput, plan?.capability || 'conversation', resultSummary || ''); } catch {}
         step('ADAPT', `Learned from execution: verified=${verification.verified}`, true);
       } catch (adaptErr: any) {
         DebugLog.error('ADAPT', adaptErr.message, adaptErr.stack);
@@ -1217,6 +1299,9 @@ You are always on. Always capable. Always direct.`;
     }
     this.emit('log', 'Thinking...', 'system');
 
+    let proactiveContext = '';
+    if (this.proactive) { const c = this.proactive.formatForChat(2); if (c) proactiveContext = `\n\n[PROACTIVE SUGGESTIONS — share naturally if relevant]\n${c}`; }
+
     const model = args.approvedModel || this.ai.getDefaultModel();
     const conv = await this.conversations.loadConversation(conversationId);
     const summary = conv?.summary || '';
@@ -1224,7 +1309,7 @@ You are always on. Always capable. Always direct.`;
     const systemPrompt = this.buildDynamicPrompt({
       mode,
       userInput,
-      summary,
+      summary: summary + proactiveContext,
       capabilities: capList,
     });
 
@@ -1493,6 +1578,11 @@ You are always on. Always capable. Always direct.`;
   async setDefaultModel(modelId: string) { await this.ai.setDefaultModel(modelId); }
   getModelRouter() { return this.ai; }
   getTierService(): TierService { return this.tierService; }
+  getCortex(): Cortex { return this.cortex; }
+  getProactiveEngine(): ProactiveEngine | null { return this.proactive; }
+  getBackgroundOrchestrator(): BackgroundOrchestrator | null { return this.background; }
+  getKnowledgeGraph(): KnowledgeGraph { return this.cortex.getKnowledgeGraph(); }
+  getDeviceSignals(): DeviceSignals { return this.deviceSignals; }
   getCostSummary() { return this.costTracker.getSummary(); }
   getCapabilities() { return this.caps.getAll(); }
   async getStorageBreakdown() { return this.storage.getBreakdown(); }

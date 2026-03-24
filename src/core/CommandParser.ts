@@ -801,6 +801,16 @@ const rules: ParseRule[] = [
   },
 
   // ════════════════════════════════════════════════════
+  // BRAIN / CORTEX COMMANDS
+  // ════════════════════════════════════════════════════
+  { pattern: /^what\s+(?:do\s+you\s+)?know\s+(?:about\s+)?(.+)$/i, capability: 'knowledge_query', extractParams: (m: RegExpMatchArray) => ({ query: m[1].trim() }) },
+  { pattern: /^(?:show|any|get|what\s+are\s+(?:your|the))?\s*(?:proactive\s+)?suggestions?$/i, capability: 'proactive_suggestions', extractParams: () => ({}) },
+  { pattern: /^resume\s+(?:my\s+)?(?:last\s+)?task\s*(.*)$/i, capability: 'task_resume', extractParams: (m: RegExpMatchArray) => ({ query: m[1].trim() || '' }) },
+  { pattern: /^(?:show|what\s+are)\s+(?:my\s+)?(?:patterns?|habits?|routines?)$/i, capability: 'behavior_patterns', extractParams: () => ({}) },
+  { pattern: /^(?:research|look\s+up|find\s+out\s+about|investigate)\s+(.+)$/i, capability: 'web_research', extractParams: (m: RegExpMatchArray) => ({ query: m[1].trim() }) },
+  { pattern: /^(?:what(?:'s|\s+is)\s+on\s+(?:my\s+)?screen|read\s+(?:the\s+)?screen|what\s+do\s+you\s+see)$/i, capability: 'vision_read', extractParams: () => ({}) },
+
+  // ════════════════════════════════════════════════════
   // SIMPLE APP LAUNCH (existing patterns, preserved)
   // These generate app_launch plans with only `target` —
   // TaskExecutor uses openApplication() for these

@@ -1921,6 +1921,71 @@ export class TaskExecutor {
         }
       }
 
+      case 'knowledge_query': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const graph = core?.getCortex()?.getKnowledgeGraph();
+          if (!graph) return { success: false, summary: 'Knowledge graph not available' };
+          const result = graph.resolve(params.query || '');
+          if (!result.entity) return { success: true, summary: `I don't have specific knowledge about "${params.query}" yet. I learn from our interactions.` };
+          return { success: true, summary: `${graph.getContextFor(params.query || '')}\n\nOverall: ${graph.getSummary()}`, data: { entity: result.entity } };
+        } catch (e: any) { return { success: false, summary: `Knowledge query failed: ${e.message}` }; }
+      }
+      case 'proactive_suggestions': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const engine = core?.getProactiveEngine();
+          if (!engine) return { success: true, summary: 'Proactive engine not active yet.' };
+          const active = engine.getActive();
+          if (active.length === 0) return { success: true, summary: 'No suggestions right now.' };
+          return { success: true, summary: `${active.length} suggestions:\n\n${active.map(s => `${s.urgency === 'high' ? '\ud83d\udd34' : s.urgency === 'medium' ? '\ud83d\udfe1' : '\ud83d\udfe2'} ${s.title}\n   ${s.body}${s.suggestedCommand ? `\n   \u2192 Say: "${s.suggestedCommand}"` : ''}`).join('\n\n')}` };
+        } catch (e: any) { return { success: false, summary: `Suggestions failed: ${e.message}` }; }
+      }
+      case 'task_resume': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const cortex = core?.getCortex();
+          if (!cortex) return { success: false, summary: 'Cortex not available' };
+          const resumable = await cortex.getResumableTasks();
+          if (resumable.length === 0) return { success: true, summary: 'No tasks to resume.' };
+          const query = params.query?.toLowerCase() || '';
+          const match = query ? resumable.find(t => t.goal.toLowerCase().includes(query)) : resumable[0];
+          if (!match) return { success: true, summary: `${resumable.length} resumable tasks:\n${resumable.map(t => `\u2022 "${t.goal.slice(0, 50)}" [${t.status}]`).join('\n')}` };
+          const result = await cortex.resume(match.id);
+          return { success: result.success, summary: result.summary };
+        } catch (e: any) { return { success: false, summary: `Resume failed: ${e.message}` }; }
+      }
+      case 'behavior_patterns': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const signals = core?.getDeviceSignals();
+          if (!signals) return { success: true, summary: 'Pattern detection not active yet.' };
+          const patterns = signals.getPatterns();
+          if (patterns.length === 0) return { success: true, summary: 'Not enough data yet. Keep using the app.' };
+          return { success: true, summary: `Detected patterns:\n${patterns.sort((a, b) => b.confidence - a.confidence).slice(0, 10).map(p => `\u2022 ${p.description} (${Math.round(p.confidence * 100)}%)`).join('\n')}` };
+        } catch (e: any) { return { success: false, summary: `Pattern query failed: ${e.message}` }; }
+      }
+      case 'web_research': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const appIntel = core?.getCortex()?.getAppIntelligence();
+          if (!appIntel) return { success: false, summary: 'App intelligence not available' };
+          if (!params.query) return { success: false, summary: 'What should I research?' };
+          const result = await appIntel.search(params.query, { app: 'google' });
+          return { success: result.success, summary: result.aiSummary, data: { structuredData: result.structuredData, app: result.app, steps: result.steps } };
+        } catch (e: any) { return { success: false, summary: `Research failed: ${e.message}` }; }
+      }
+      case 'vision_read': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const vision = core?.getCortex()?.getVisionPipeline();
+          if (!vision) return { success: false, summary: 'Vision pipeline not available' };
+          const u = await vision.understand();
+          let summary = u.description;
+          if (u.interactableElements.length > 0) summary += '\n\nInteractive:\n' + u.interactableElements.map(e => `\u2022 ${e.label} [${e.type}] \u2014 ${e.suggestedAction}`).join('\n');
+          return { success: true, summary, data: u };
+        } catch (e: any) { return { success: false, summary: `Vision failed: ${e.message}` }; }
+      }
       default:
         throw new Error(`No executor for: ${capId}`);
     }

@@ -40,6 +40,12 @@ export interface AgentNativeInterface {
   sendSms(phoneNumber: string, message: string): Promise<boolean>;
   readSms(limit: number, filter: string): Promise<Array<{ id: string; address: string; body: string; date: number; read: boolean }>>;
   readSmsConversation(address: string, limit: number): Promise<Array<{ id: string; address: string; body: string; date: number; direction: string }>>;
+  readCalendarEvents(startMs: number, endMs: number, limit: number): Promise<Array<{ id: string; title: string; startDate: number; endDate: number; allDay: boolean; location: string; description: string; calendar: string }>>;
+  readCallLog(limit: number): Promise<Array<{ number: string; name: string; type: number; date: number; duration: number }>>;
+  getWifiSSID(): Promise<string | null>;
+  getConnectedBluetoothDevices(): Promise<string[]>;
+  startBackgroundAgent(): Promise<boolean>;
+  stopBackgroundAgent(): Promise<boolean>;
 }
 
 const ALLOWED_COMMANDS = ['dalvikvm', 'keytool', 'ls', 'mkdir', 'cp', 'cat', 'chmod', 'find'];
@@ -68,6 +74,14 @@ const noopModule: AgentNativeInterface = {
   setFlashlight: async () => false,
   sendMediaKey: async () => false,
   sendSms: async () => false,
+  readSms: async () => [],
+  readSmsConversation: async () => [],
+  readCalendarEvents: async () => [],
+  readCallLog: async () => [],
+  getWifiSSID: async () => null,
+  getConnectedBluetoothDevices: async () => [],
+  startBackgroundAgent: async () => false,
+  stopBackgroundAgent: async () => false,
 };
 
 function createNativeWrapper(): AgentNativeInterface {
@@ -110,6 +124,22 @@ function createNativeWrapper(): AgentNativeInterface {
     sendMediaKey: (keyCode: number) => native.sendMediaKey ? native.sendMediaKey(keyCode) : Promise.resolve(false),
     sendSms: (phoneNumber: string, message: string) =>
       native.sendSms ? native.sendSms(phoneNumber, message) : Promise.resolve(false),
+    readSms: (limit: number, filter: string) =>
+      native.readSms ? native.readSms(limit, filter) : Promise.resolve([]),
+    readSmsConversation: (address: string, limit: number) =>
+      native.readSmsConversation ? native.readSmsConversation(address, limit) : Promise.resolve([]),
+    readCalendarEvents: (startMs: number, endMs: number, limit: number) =>
+      native.readCalendarEvents ? native.readCalendarEvents(startMs, endMs, limit) : Promise.resolve([]),
+    readCallLog: (limit: number) =>
+      native.readCallLog ? native.readCallLog(limit) : Promise.resolve([]),
+    getWifiSSID: () =>
+      native.getWifiSSID ? native.getWifiSSID() : Promise.resolve(null),
+    getConnectedBluetoothDevices: () =>
+      native.getConnectedBluetoothDevices ? native.getConnectedBluetoothDevices() : Promise.resolve([]),
+    startBackgroundAgent: () =>
+      native.startBackgroundAgent ? native.startBackgroundAgent() : Promise.resolve(false),
+    stopBackgroundAgent: () =>
+      native.stopBackgroundAgent ? native.stopBackgroundAgent() : Promise.resolve(false),
   };
 }
 

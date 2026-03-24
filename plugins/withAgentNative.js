@@ -555,6 +555,144 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             promise.reject("SMS_READ_ERROR", e.getMessage(), e);
         }
     }
+
+    @ReactMethod
+    public void readCalendarEvents(double startMs, double endMs, int limit, Promise promise) {
+        try {
+            android.database.Cursor cursor = ctx.getContentResolver().query(
+                android.provider.CalendarContract.Events.CONTENT_URI,
+                new String[]{
+                    android.provider.CalendarContract.Events._ID,
+                    android.provider.CalendarContract.Events.TITLE,
+                    android.provider.CalendarContract.Events.DTSTART,
+                    android.provider.CalendarContract.Events.DTEND,
+                    android.provider.CalendarContract.Events.ALL_DAY,
+                    android.provider.CalendarContract.Events.EVENT_LOCATION,
+                    android.provider.CalendarContract.Events.DESCRIPTION,
+                    android.provider.CalendarContract.Events.CALENDAR_DISPLAY_NAME
+                },
+                android.provider.CalendarContract.Events.DTSTART + " >= ? AND " +
+                android.provider.CalendarContract.Events.DTSTART + " <= ?",
+                new String[]{String.valueOf((long)startMs), String.valueOf((long)endMs)},
+                android.provider.CalendarContract.Events.DTSTART + " ASC"
+            );
+            com.facebook.react.bridge.WritableArray result = com.facebook.react.bridge.Arguments.createArray();
+            int count = 0;
+            if (cursor != null) {
+                while (cursor.moveToNext() && count < Math.min(limit, 50)) {
+                    com.facebook.react.bridge.WritableMap ev = com.facebook.react.bridge.Arguments.createMap();
+                    ev.putString("id", cursor.getString(0));
+                    ev.putString("title", cursor.getString(1) != null ? cursor.getString(1) : "");
+                    ev.putDouble("startDate", cursor.getLong(2));
+                    ev.putDouble("endDate", cursor.getLong(3));
+                    ev.putBoolean("allDay", cursor.getInt(4) == 1);
+                    ev.putString("location", cursor.getString(5) != null ? cursor.getString(5) : "");
+                    ev.putString("description", cursor.getString(6) != null ? cursor.getString(6) : "");
+                    ev.putString("calendar", cursor.getString(7) != null ? cursor.getString(7) : "");
+                    result.pushMap(ev);
+                    count++;
+                }
+                cursor.close();
+            }
+            promise.resolve(result);
+        } catch (Exception e) {
+            promise.reject("CALENDAR_READ_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void readCallLog(int limit, Promise promise) {
+        try {
+            android.database.Cursor cursor = ctx.getContentResolver().query(
+                android.provider.CallLog.Calls.CONTENT_URI,
+                new String[]{
+                    android.provider.CallLog.Calls.NUMBER,
+                    android.provider.CallLog.Calls.CACHED_NAME,
+                    android.provider.CallLog.Calls.TYPE,
+                    android.provider.CallLog.Calls.DATE,
+                    android.provider.CallLog.Calls.DURATION
+                },
+                null, null,
+                android.provider.CallLog.Calls.DATE + " DESC LIMIT " + Math.min(limit, 50)
+            );
+            com.facebook.react.bridge.WritableArray result = com.facebook.react.bridge.Arguments.createArray();
+            if (cursor != null) {
+                while (cursor.moveToNext()) {
+                    com.facebook.react.bridge.WritableMap call = com.facebook.react.bridge.Arguments.createMap();
+                    call.putString("number", cursor.getString(0) != null ? cursor.getString(0) : "");
+                    call.putString("name", cursor.getString(1) != null ? cursor.getString(1) : "");
+                    call.putInt("type", cursor.getInt(2));
+                    call.putDouble("date", cursor.getLong(3));
+                    call.putInt("duration", cursor.getInt(4));
+                    result.pushMap(call);
+                }
+                cursor.close();
+            }
+            promise.resolve(result);
+        } catch (Exception e) {
+            promise.reject("CALL_LOG_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void getWifiSSID(Promise promise) {
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) ctx.getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+            android.net.wifi.WifiInfo info = wm != null ? wm.getConnectionInfo() : null;
+            if (info == null) { promise.resolve(null); return; }
+            String ssid = info.getSSID();
+            if (ssid == null || ssid.equals("<unknown ssid>")) { promise.resolve(null); return; }
+            if (ssid.startsWith("\"") && ssid.endsWith("\"")) ssid = ssid.substring(1, ssid.length() - 1);
+            promise.resolve(ssid);
+        } catch (Exception e) {
+            promise.resolve(null);
+        }
+    }
+
+    @ReactMethod
+    public void getConnectedBluetoothDevices(Promise promise) {
+        try {
+            android.bluetooth.BluetoothAdapter adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+            com.facebook.react.bridge.WritableArray result = com.facebook.react.bridge.Arguments.createArray();
+            if (adapter != null && adapter.isEnabled()) {
+                java.util.Set<android.bluetooth.BluetoothDevice> bonded = adapter.getBondedDevices();
+                for (android.bluetooth.BluetoothDevice device : bonded) {
+                    if (device.getBondState() == android.bluetooth.BluetoothDevice.BOND_BONDED) {
+                        result.pushString(device.getName() != null ? device.getName() : device.getAddress());
+                    }
+                }
+            }
+            promise.resolve(result);
+        } catch (Exception e) {
+            promise.resolve(com.facebook.react.bridge.Arguments.createArray());
+        }
+    }
+
+    @ReactMethod
+    public void startBackgroundAgent(Promise promise) {
+        try {
+            Intent intent = new Intent(getReactApplicationContext(), AgentBackgroundService.class);
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                getReactApplicationContext().startForegroundService(intent);
+            } else {
+                getReactApplicationContext().startService(intent);
+            }
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("BG_AGENT_START_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void stopBackgroundAgent(Promise promise) {
+        try {
+            Intent intent = new Intent(getReactApplicationContext(), AgentBackgroundService.class);
+            getReactApplicationContext().stopService(intent);
+            promise.resolve(true);
+        } catch (Exception e) {
+            promise.reject("BG_AGENT_STOP_ERROR", e.getMessage(), e);
+        }
+    }
 }`;
 
 const BINARY_MANIFEST_WRITER_JAVA = `package com.agent.ultra;
@@ -2491,6 +2629,40 @@ public class AgentBackgroundService extends Service {
 }`;
 
 
+const HEADLESS_TASK_SERVICE_JAVA = `package com.agent.ultra;
+
+import android.content.Intent;
+import android.os.Bundle;
+import android.util.Log;
+import com.facebook.react.HeadlessJsTaskService;
+import com.facebook.react.bridge.Arguments;
+import com.facebook.react.javamodules.ReactPackage;
+import com.facebook.react.jstasks.HeadlessJsTaskConfig;
+
+public class AgentHeadlessTaskService extends HeadlessJsTaskService {
+    private static final String TAG = "AgentHeadlessTask";
+
+    @Override
+    protected HeadlessJsTaskConfig getTaskConfig(Intent intent) {
+        Bundle extras = intent.getExtras();
+        if (extras != null) {
+            return new HeadlessJsTaskConfig(
+                "AgentBackgroundTask",
+                Arguments.fromBundle(extras),
+                5000,
+                true
+            );
+        }
+        return null;
+    }
+
+    @Override
+    public void onDestroy() {
+        Log.i(TAG, "AgentHeadlessTaskService destroyed");
+        super.onDestroy();
+    }
+}`;
+
 const ACCESSIBILITY_SERVICE_CONFIG = `<?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_service_description"
@@ -2524,6 +2696,7 @@ function withAgentNative(config) {
       fs.writeFileSync(path.join(javaDir, 'AgentAccessibilityService.java'), ACCESSIBILITY_SERVICE_JAVA);
       fs.writeFileSync(path.join(javaDir, 'AccessibilityBridgeModule.java'), ACCESSIBILITY_BRIDGE_JAVA);
       fs.writeFileSync(path.join(javaDir, 'AgentBackgroundService.java'), BACKGROUND_SERVICE_JAVA);
+      fs.writeFileSync(path.join(javaDir, 'AgentHeadlessTaskService.java'), HEADLESS_TASK_SERVICE_JAVA);
 
       const xmlDir = path.join(androidDir, 'app', 'src', 'main', 'res', 'xml');
       fs.mkdirSync(xmlDir, { recursive: true });
@@ -2688,6 +2861,19 @@ function withAgentNative(config) {
           'android:exported': 'false',
           'android:foregroundServiceType': 'dataSync',
           'android:stopWithTask': 'false',
+        },
+      });
+    }
+
+    const hasHeadlessService = (app.service || []).some(
+      (s) => s.$['android:name'] === '.AgentHeadlessTaskService'
+    );
+    if (!hasHeadlessService) {
+      if (!app.service) app.service = [];
+      app.service.push({
+        $: {
+          'android:name': '.AgentHeadlessTaskService',
+          'android:exported': 'false',
         },
       });
     }
