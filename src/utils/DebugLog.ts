@@ -426,12 +426,12 @@ export class DebugLog {
         content = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
       }
       if (ultraEntries) content = content + '\n' + ultraEntries;
-      await LogFolder.writeLog(`raw-export.jsonl`, content);
+      await LogFolder.writeLog(`debuglog-session-export.jsonl`, content);
       return content;
     } catch {}
     const base = DebugLog.entries.map(e => JSON.stringify(e)).join('\n');
     const combined = ultraEntries ? base + '\n' + ultraEntries : base;
-    await LogFolder.writeLog(`raw-export.jsonl`, combined);
+    await LogFolder.writeLog(`debuglog-session-export.jsonl`, combined);
     return combined;
   }
 

@@ -21,6 +21,7 @@ import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import * as Battery from 'expo-battery';
 import DeviceInfo from 'react-native-device-info';
 import AppController from '../native/AppController';
+import AgentNative from '../native/AgentNative';
 import type { ActionPlan } from '../types/ultra';
 import type { Genome } from '../genome/types';
 import { createDefaultGenome } from '../genome/GenomeFactory';
@@ -70,15 +71,16 @@ async function captureStateDelta(taskId: string, capability: string, toggleFn: (
 async function toAndroidContentUri(pathOrUri: string): Promise<string> {
   if (!pathOrUri) return pathOrUri;
   if (pathOrUri.startsWith('content://')) return pathOrUri;
-  const normalized = pathOrUri.startsWith('file://') ? pathOrUri : `file://${pathOrUri}`;
-  if (Platform.OS === 'android' && FileSystem?.getContentUriAsync) {
+  const normalized = pathOrUri.startsWith('file://') ? pathOrUri.substring(7) : pathOrUri;
+  if (Platform.OS === 'android') {
     try {
-      return await FileSystem.getContentUriAsync(normalized);
+      // Use the explicit native FileProvider helper backed by BuildConfig.APPLICATION_ID + ".fileprovider"
+      return await AgentNative.getContentUriForFile(normalized);
     } catch {
-      return normalized;
+      return `file://${normalized}`;
     }
   }
-  return normalized;
+  return `file://${normalized}`;
 }
 
 async function logUiSnapshot(taskId: string, capability: string): Promise<void> {

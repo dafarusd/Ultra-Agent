@@ -693,6 +693,25 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             promise.reject("BG_AGENT_STOP_ERROR", e.getMessage(), e);
         }
     }
+
+    @ReactMethod
+    public void getContentUriForFile(String filePath, Promise promise) {
+        try {
+            String normalized = filePath;
+            if (normalized.startsWith("file://")) {
+                normalized = normalized.substring(7);
+            }
+            java.io.File file = new java.io.File(normalized);
+            android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                getReactApplicationContext(),
+                BuildConfig.APPLICATION_ID + ".fileprovider",
+                file
+            );
+            promise.resolve(uri.toString());
+        } catch (Exception e) {
+            promise.reject("CONTENT_URI_ERROR", e.getMessage(), e);
+        }
+    }
 }`;
 
 const BINARY_MANIFEST_WRITER_JAVA = `package com.agent.ultra;

@@ -106,8 +106,10 @@ export default function ModelPickerSheet({
     ? models
     : models.filter((m) => m.type === filter);
   const usingFallback = filter !== "all" && filteredRaw.length === 0;
+  // When usingFallback, displayedModels is the complete model list — not the empty filtered set.
+  // This ensures the FlatList data always matches what the banner text claims.
   const filteredSource = usingFallback ? models : filteredRaw;
-  const filtered = [...filteredSource].sort((a, b) => {
+  const displayedModels = [...filteredSource].sort((a, b) => {
     const aActive = a.id === currentModelId ? 1 : 0;
     const bActive = b.id === currentModelId ? 1 : 0;
     return bActive - aActive;
@@ -115,7 +117,7 @@ export default function ModelPickerSheet({
 
   const renderModel = useCallback(
     ({ item, index }: { item: PickerModel; index: number }) => {
-      if (index === 0) UltraDevLog.pickerContentRender(filtered.length, models.length, filter, currentModelId);
+      if (index === 0) UltraDevLog.pickerContentRender(displayedModels.length, models.length, filter, currentModelId);
       const isActive = item.id === currentModelId;
       return (
         <Pressable
@@ -223,7 +225,7 @@ export default function ModelPickerSheet({
           )}
 
           <FlatList
-            data={filtered}
+            data={displayedModels}
             renderItem={renderModel}
             keyExtractor={(item) => item.id}
             style={styles.list}

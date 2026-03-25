@@ -1187,9 +1187,9 @@ export default function ChatScreen() {
       const msgStyle = getMessageStyle(item);
       const isUser = msgStyle === "user";
       const trace = item.meta?.promptTrace;
-      const isApprovalOrSwitch = item.content.startsWith("Approval required") || item.content.startsWith("I recommend switching");
+      const isApprovalRequired = item.content.startsWith("Approval required");
       const isLatestMessage = messages.length > 0 && item.id === messages[0].id;
-      const showPendingButtons = !!pendingReplay && isApprovalOrSwitch && isLatestMessage;
+      const showPendingButtons = !!pendingReplay && isApprovalRequired && isLatestMessage;
       const isCopied = copiedId === item.id;
 
       // Show quick replies only on the most recent assistant message (not on failures or errors)

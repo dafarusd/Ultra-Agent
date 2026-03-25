@@ -46,6 +46,7 @@ export interface AgentNativeInterface {
   getConnectedBluetoothDevices(): Promise<string[]>;
   startBackgroundAgent(): Promise<boolean>;
   stopBackgroundAgent(): Promise<boolean>;
+  getContentUriForFile(filePath: string): Promise<string>;
 }
 
 const ALLOWED_COMMANDS = ['dalvikvm', 'keytool', 'ls', 'mkdir', 'cp', 'cat', 'chmod', 'find'];
@@ -82,6 +83,7 @@ const noopModule: AgentNativeInterface = {
   getConnectedBluetoothDevices: async () => [],
   startBackgroundAgent: async () => false,
   stopBackgroundAgent: async () => false,
+  getContentUriForFile: async (filePath: string) => filePath,
 };
 
 function createNativeWrapper(): AgentNativeInterface {
@@ -140,6 +142,8 @@ function createNativeWrapper(): AgentNativeInterface {
       native.startBackgroundAgent ? native.startBackgroundAgent() : Promise.resolve(false),
     stopBackgroundAgent: () =>
       native.stopBackgroundAgent ? native.stopBackgroundAgent() : Promise.resolve(false),
+    getContentUriForFile: (filePath: string) =>
+      native.getContentUriForFile ? native.getContentUriForFile(filePath) : Promise.resolve(filePath),
   };
 }
 
