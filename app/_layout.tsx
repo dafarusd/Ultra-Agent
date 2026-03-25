@@ -17,6 +17,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import TouchInterceptor from "@/components/TouchInterceptor";
 import { queryClient } from "@/lib/query-client";
 import { UltraDevLog } from '@/src/utils/UltraDevLog';
+import { AgentCoreProvider } from '@/src/context/AgentCoreContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -118,7 +119,9 @@ export default function RootLayout() {
           <GestureHandlerRootView style={{ flex: 1 }}>
             <KeyboardProvider>
               <StatusBar barStyle="light-content" backgroundColor="#000000" />
-              <RootLayoutNav />
+              <AgentCoreProvider>
+                <RootLayoutNav />
+              </AgentCoreProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>

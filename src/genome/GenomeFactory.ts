@@ -47,7 +47,7 @@ export function createDefaultGenome(): Genome {
     ],
 
     ai: {
-      apiBaseUrl: 'https://api.venice.ai/api/v1',
+      apiBaseUrl: '',
       defaultModel: 'llama-3.3-70b',
       models: [
         { id: 'llama-3.3-70b', name: 'Llama 70B', maxTokens: 4000, tier: 'strong', useFor: ['code', 'planning', 'architecture'] },

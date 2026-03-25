@@ -27,7 +27,7 @@ const STEPS: Step[] = [
   {
     icon: 'key',
     title: 'Connect an AI Provider',
-    desc: 'Agent Ultra works with any OpenAI-compatible API — Venice AI, OpenRouter, Anthropic, OpenAI, Mistral, or your own local model. Add providers in Settings → AI Providers after setup.',
+    desc: 'Agent Ultra works with user-configured AI providers. Add one or more providers in Settings → AI Providers after setup.',
   },
   {
     icon: 'shield-checkmark',

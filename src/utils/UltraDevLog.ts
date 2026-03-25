@@ -386,7 +386,7 @@ export class UltraDevLog {
 
   static appLaunchFire(taskId: string, pkg: string, target: string): void {
     UltraDevLog.push('APP_LAUNCH_FIRE', { taskId, pkg, target, note: 'JS thread suspends after this.' });
-    UltraDevLog.flushSyncInternal();
+    UltraDevLog.scheduleFlush();
   }
 
   static appLaunchResume(lastKnownPkg: string, resumeTs: number): void {
@@ -610,7 +610,7 @@ export class UltraDevLog {
         UltraDevLog.lastActiveAt = now;
         try { AsyncStorage.setItem(PROCESS_RESTART_KEY, String(now)); } catch {}
         UltraDevLog.sessionSummary();
-        UltraDevLog.flushSyncInternal();
+        UltraDevLog.scheduleFlush();
       }
       UltraDevLog.lastAppStateChangeAt = now;
     });
@@ -777,7 +777,7 @@ export class UltraDevLog {
     const key = `${isConnected}:${type}`;
     if (key === UltraDevLog.lastNetworkKey && !note) return;
     UltraDevLog.lastNetworkKey = key;
-    UltraDevLog.push('NETWORK_STATUS', { isConnected, type, note: note ?? (isConnected ? 'ok' : 'WARN: offline -- Venice API unreachable') });
+    UltraDevLog.push('NETWORK_STATUS', { isConnected, type, note: note ?? (isConnected ? 'ok' : 'WARN: device is offline') });
   }
 
   static permissionStatus(permission: string, status: string): void {
@@ -910,7 +910,7 @@ export class UltraDevLog {
 
   static conversationSaved(conversationId: string, messageCount?: number): void { UltraDevLog.push('SYSTEM', { event: 'conversation_saved', conversationId, messageCount }); }
   static costLimitCheck(model: string, withinLimit: boolean, spent?: number, limit?: number): void { UltraDevLog.push('SYSTEM', { event: 'cost_limit_check', model, withinLimit, spent, limit }); }
-  static flushToFile(): void { UltraDevLog.flushSyncInternal(); }
+  static flushToFile(): void { UltraDevLog.scheduleFlush(); }
   static getDir(): string { return UltraDevLog.getLogDir(); }
   static getFilePath(): string { return UltraDevLog.getSessionFilePath(); }
   static getMemoryEntriesFormatted(limit?: number): string { return UltraDevLog.getFormattedLog(limit); }
@@ -1170,14 +1170,32 @@ export class UltraDevLog {
       lines.push(''); lines.push(`-- LAST TASK CHAIN (${taskId}) ----------------------`);
       te.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
       const PHASES = ['INGEST','ROUTE','PLAN','VERIFY','APPROVE','EXECUTE','VERIFY_RESULT','RESPOND'];
-      const reached = te.filter(e => e.cat === 'EXECUTE_PHASE').map(e => p(e).phase as string);
-      const last = reached[reached.length - 1];
-      const terminalEvidence = te.some(e => ['ERROR', 'EXEC_RESULT', 'AI_RESPONSE'].includes(e.cat) || (e.cat === 'EFFECT' && (p(e).success === false || p(e).success === true)));
-      if (last && !terminalEvidence && last !== 'RESPOND' && last !== 'VERIFY_RESULT') {
+      // Reconstruct phase evidence from EXECUTE_PHASE and AGENT_STEP categories
+      const reachedFromPhase = te.filter(e => e.cat === 'EXECUTE_PHASE').map(e => p(e).phase as string);
+      const reachedFromStep = te.filter(e => e.cat === 'AGENT_STEP' && p(e).phase).map(e => p(e).phase as string);
+      const allReachedPhases = [...new Set([...reachedFromPhase, ...reachedFromStep])];
+      const last = reachedFromPhase[reachedFromPhase.length - 1] || reachedFromStep[reachedFromStep.length - 1];
+      // Classify terminal states — these are NOT errors
+      const isCancelled = te.some(e => p(e).cancelled === true);
+      const requiresDisambig = te.some(e => p(e).requiresDisambiguation === true || (e.cat === 'AGENT_STEP' && (p(e).detail as string)?.includes('disambiguation')));
+      const requiresConfirm = te.some(e => p(e).requiresConfirmation === true || p(e).requiresApproval === true);
+      const terminalEvidence = te.some(e =>
+        ['ERROR', 'EXEC_RESULT', 'AI_RESPONSE'].includes(e.cat) ||
+        isCancelled || requiresDisambig || requiresConfirm ||
+        (e.cat === 'EFFECT' && (p(e).success === false || p(e).success === true))
+      );
+      if (isCancelled) {
+        lines.push(''); lines.push(`  TERMINAL STATE: cancelled — user cancelled the operation (not a defect).`);
+      } else if (requiresDisambig) {
+        lines.push(''); lines.push(`  TERMINAL STATE: requires_disambiguation — agent asked a clarifying question.`);
+      } else if (requiresConfirm) {
+        lines.push(''); lines.push(`  TERMINAL STATE: requires_confirmation — agent requested approval before proceeding.`);
+      } else if (last && !terminalEvidence && last !== 'RESPOND' && last !== 'VERIFY_RESULT') {
         const next = PHASES[PHASES.indexOf(last) + 1];
         if (next) {
           lines.push('');
-          lines.push(`  PHASE GAP: execution stopped after ${last}; ${next} was never reached and no terminal result was logged.`);
+          lines.push(`  PHASE GAP: last confirmed phase=${last}; no confirmed evidence of ${next}. No terminal result logged.`);
+          lines.push(`  NOTE: this indicates an actual gap, not an invented crash. Evidence from EXECUTE_PHASE + AGENT_STEP: [${allReachedPhases.join(', ')}]`);
         }
       }
       const enter = te.filter(e => e.cat === 'EXECUTOR_BRANCH' && p(e).branch === 'ENTER').length;
@@ -1262,8 +1280,8 @@ export class UltraDevLog {
     return dir ? `${dir}session_${UltraDevLog.sessionId}.jsonl` : '';
   }
 
-  private static flushSyncInternal(): void {
-    setTimeout(() => UltraDevLog.doFlush(), 0);
+  static async flushNow(): Promise<void> {
+    await UltraDevLog.doFlush();
   }
 
   private static scheduleFlush(): void {
@@ -1322,7 +1340,6 @@ export class UltraDevLog {
       const maxSeqFlushed = newEntries[newEntries.length - 1].seq;
 
       await LogFolder.appendLog(`ultra-devlog.jsonl`, appendContent);
-      await LogFolder.appendLog(`raw-export.jsonl`, appendContent);
 
       const sessionPath = UltraDevLog.getSessionFilePath();
       try {
@@ -1343,19 +1360,42 @@ export class UltraDevLog {
   }
 
   static async exportAll(): Promise<string> {
+    return UltraDevLog.exportSessionNow();
+  }
+
+  static async exportSessionNow(filename = 'raw-export.jsonl'): Promise<string> {
     await UltraDevLog.doFlush();
-    if (Platform.OS === 'web' || !FileSystem) return UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n');
+    const allEntries = UltraDevLog.entries;
+    const seqs = allEntries.map(e => e.seq);
+    const minSeq = seqs.length > 0 ? Math.min(...seqs) : 0;
+    const maxSeq = seqs.length > 0 ? Math.max(...seqs) : 0;
+    const expectedCount = maxSeq - minSeq + 1;
+    const missingSeqEstimate = Math.max(0, expectedCount - allEntries.length);
+    const meta = {
+      exportKind: 'full_session_export',
+      sessionId: UltraDevLog.sessionId,
+      entryCount: allEntries.length,
+      minSeq,
+      maxSeq,
+      missingSeqEstimate,
+      generatedAt: new Date().toISOString(),
+    };
+    const metaLine = JSON.stringify({ _meta: meta }) + '\n';
+
+    if (Platform.OS === 'web' || !FileSystem) {
+      return metaLine + allEntries.map(e => JSON.stringify(e)).join('\n');
+    }
     try {
       const fp = UltraDevLog.getSessionFilePath();
       const info = await FileSystem.getInfoAsync(fp);
       const persisted = info.exists ? await FileSystem.readAsStringAsync(fp) : '';
-      const pending = UltraDevLog.entries.filter(e => e.seq > UltraDevLog.lastFlushedSeq).map(e => JSON.stringify(e)).join('\n');
+      const pending = allEntries.filter(e => e.seq > UltraDevLog.lastFlushedSeq).map(e => JSON.stringify(e)).join('\n');
       const separator = persisted && pending ? '\n' : '';
-      const content = `${persisted}${separator}${pending}${pending ? '\n' : ''}` || UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
-      await LogFolder.writeLog(`raw-export.jsonl`, content);
+      const content = metaLine + (`${persisted}${separator}${pending}${pending ? '\n' : ''}` || allEntries.map(e => JSON.stringify(e)).join('\n') + '\n');
+      await LogFolder.writeLog(filename, content);
       return content;
     } catch {}
-    return UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n');
+    return metaLine + allEntries.map(e => JSON.stringify(e)).join('\n');
   }
 
   static clear(): void {
@@ -1375,13 +1415,17 @@ export class UltraDevLog {
     UltraDevLog.watchdogs.clear();
   }
 
-  static scheduleStartupRawExport(): void {
+  static scheduleStartupSnapshot(): void {
     if (Platform.OS === 'web' || !FileSystem) return;
     setTimeout(async () => {
       try {
-        await UltraDevLog.exportAll();
+        await UltraDevLog.exportSessionNow('startup-snapshot.jsonl');
       } catch {}
     }, 5000);
+  }
+
+  static scheduleStartupRawExport(): void {
+    UltraDevLog.scheduleStartupSnapshot();
   }
 
   static async cleanOldLogs(maxAgeDays = 7): Promise<number> {

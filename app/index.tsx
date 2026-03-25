@@ -24,12 +24,12 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { SecureVault } from "@/src/security/SecureVault";
 import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
 import { classifyModelType } from "@/src/utils/classifyModelType";
-import { AgentCore, setAgentCoreInstance } from "@/src/core/AgentCore";
+import type { AgentCore } from "@/src/core/AgentCore";
 import { BiometricGate } from "@/src/security/BiometricGate";
 import type { ExecuteArgs } from "@/src/core/AgentCore";
+import { useAgentCore } from "@/src/context/AgentCoreContext";
 import type { ChatMessage, UltraExecutionResult, ConversationMeta, PromptTrace } from "@/src/types/ultra";
 import ConversationList from "@/components/ConversationList";
 import PromptViewer from "@/components/PromptViewer";
@@ -122,8 +122,7 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
-  const [status, setStatus] = useState("Initializing...");
-  const [agentCore, setAgentCore] = useState<AgentCore | null>(null);
+  const { core: agentCore, vault, isReady, status, setStatus, buildPhase, setBuildPhase, genomePhase, setGenomePhase } = useAgentCore();
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("Agent Ultra");
   const [conversationStarred, setConversationStarred] = useState(false);
@@ -148,10 +147,6 @@ export default function ChatScreen() {
     type: "approval";
   } | null>(null);
 
-  // Build/genome progress
-  const [buildPhase, setBuildPhase] = useState<string | null>(null);
-  const [genomePhase, setGenomePhase] = useState<string | null>(null);
-
   // Copy feedback
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -170,8 +165,6 @@ export default function ChatScreen() {
   
   const scrollOffsetRef = useRef(0);
   const listHeightRef = useRef(0);
-  const initGuardRef = useRef(false);
-  const agentCoreRef = useRef<AgentCore | null>(null);
   const netInfoUnsubscribeRef = useRef<(() => void) | null>(null);
   const diagIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const deepIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -390,43 +383,46 @@ export default function ChatScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Init ───────────────────────────────────────────
+  // ── Init (mount-only: device info + network) ───────
   useEffect(() => {
-    async function init() {
-      if (initGuardRef.current) return;
-      initGuardRef.current = true;
-      UltraDevLog.checkProcessRestart();
-      DebugLog.uiInit("start", "Beginning app initialization");
+    UltraDevLog.checkProcessRestart();
+    DebugLog.uiInit("start", "Beginning app initialization");
 
-      try {
-        const { Dimensions: Dims } = require('react-native');
-        const win = Dims.get('window');
-        UltraDevLog.deviceInfo({
-          os: Platform.OS,
-          osVersion: String(Platform.Version),
-          model: Device.modelName ?? 'unknown',
-          screenWidth: Math.round(win.width),
-          screenHeight: Math.round(win.height),
-          totalMemory: Device.totalMemory ?? undefined,
-        });
-      } catch (diErr: any) {
-        UltraDevLog.push('INIT_CHECKPOINT', { point: 'device_info_failed', error: diErr?.message });
-      }
+    try {
+      const { Dimensions: Dims } = require('react-native');
+      const win = Dims.get('window');
+      UltraDevLog.deviceInfo({
+        os: Platform.OS,
+        osVersion: String(Platform.Version),
+        model: Device.modelName ?? 'unknown',
+        screenWidth: Math.round(win.width),
+        screenHeight: Math.round(win.height),
+        totalMemory: Device.totalMemory ?? undefined,
+      });
+    } catch (diErr: any) {
+      UltraDevLog.push('INIT_CHECKPOINT', { point: 'device_info_failed', error: diErr?.message });
+    }
 
-      try {
-        NetInfo.fetch().then(state => {
-          UltraDevLog.networkStatus(!!state.isConnected, state.type);
-        }).catch(() => {});
-        netInfoUnsubscribeRef.current = NetInfo.addEventListener(state => {
-          UltraDevLog.networkStatus(!!state.isConnected, state.type, state.isConnected ? undefined : 'WARN: went offline');
-        });
-      } catch (netErr: any) {
-        UltraDevLog.push('INIT_CHECKPOINT', { point: 'netinfo_failed', error: netErr?.message });
-      }
+    try {
+      NetInfo.fetch().then(state => {
+        UltraDevLog.networkStatus(!!state.isConnected, state.type);
+      }).catch(() => {});
+      netInfoUnsubscribeRef.current = NetInfo.addEventListener(state => {
+        UltraDevLog.networkStatus(!!state.isConnected, state.type, state.isConnected ? undefined : 'WARN: went offline');
+      });
+    } catch (netErr: any) {
+      UltraDevLog.push('INIT_CHECKPOINT', { point: 'netinfo_failed', error: netErr?.message });
+    }
+  }, []);
 
+  // ── Post-core-ready init (runs once when context is ready) ──
+  useEffect(() => {
+    if (!isReady || !agentCore || !vault) return;
+    const core = agentCore;
+
+    async function postCoreInit() {
       try {
-        const vault = await SecureVault.initialize();
-        DebugLog.uiInit("vault", "SecureVault initialized");
+        DebugLog.uiInit("vault", "AgentCore ready from context");
 
         // ── Version-based SecureStore reset ──
         // Expo SecureStore persists across uninstalls on Android.
@@ -483,16 +479,6 @@ export default function ChatScreen() {
             }
           } catch {}
         }
-
-        const core = new AgentCore(vault, (msg: string, type: string) => {
-          setStatus(msg);
-          if (type === "build_progress") setBuildPhase(msg);
-          if (type === "genome_progress") setGenomePhase(msg);
-        });
-        await core.initialize();
-        setAgentCore(core);
-        agentCoreRef.current = core;
-        setAgentCoreInstance(core);
 
         // Device diagnostics — automatic, no permissions needed
         const { DeviceDiagnostics } = await import('@/src/services/DeviceDiagnostics');
@@ -597,8 +583,9 @@ export default function ChatScreen() {
         setStatus("Init failed: " + (err?.message ?? "unknown"));
       }
     }
-    init();
-  }, []);
+    postCoreInit();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReady]);
 
   const lastFocusTime = useRef(0);
   const prevFocusDepsRef = useRef<Record<string, unknown> | null>(null);
@@ -635,12 +622,6 @@ export default function ChatScreen() {
       if (deepIntervalRef.current) clearInterval(deepIntervalRef.current);
       diagIntervalRef.current = null;
       deepIntervalRef.current = null;
-      try {
-        agentCoreRef.current?.destroy('ChatScreen unmount');
-      } catch {}
-      agentCoreRef.current = null;
-      setAgentCoreInstance(null);
-      initGuardRef.current = false;
     };
   }, []);
 

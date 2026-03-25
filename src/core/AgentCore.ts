@@ -708,7 +708,7 @@ You are always on. Always capable. Always direct.`;
           const errMsg: ChatMessage = {
             id: uid('msg'),
             role: 'assistant',
-            content: 'I understood that as a command but couldn\'t match it to a specific action. Configure your Venice API key in Settings to enable AI-assisted command routing.',
+            content: 'I understood that as a command but couldn\'t match it to a specific action. Configure an API provider in Settings to enable AI-assisted command routing.',
             createdAt: Date.now(),
             source: 'system',
             meta: {},
@@ -1247,95 +1247,11 @@ You are always on. Always capable. Always direct.`;
     }
 
     // === EXECUTE PLAN SET BY DISAMBIGUATION FOLLOW-UP ===
-    // If the disambiguation block set a plan (fuzzy app or contact resolve), execute it now
+    // If the disambiguation block set a plan (fuzzy app or contact resolve), re-enter
+    // the same execution kernel as a first-class task — no direct executor shortcut.
     if (plan && planFromParser) {
-      const safetyResult = this.safety.check(userInput, plan);
-      DebugLog.safetyCheck(taskId, safetyResult.risk, safetyResult.allowed, safetyResult.reasons);
-      step('VERIFY', `Disambiguation follow-up re-entered standard pipeline. risk=${safetyResult.risk}, allowed=${safetyResult.allowed}, requiresApproval=${safetyResult.requiresApproval}`, safetyResult.allowed);
-      if (!safetyResult.allowed) {
-        const blockedMsg: ChatMessage = {
-          id: uid('msg'),
-          role: 'assistant',
-          content: safetyResult.reasons.join('\n') || 'Blocked by safety policy.',
-          createdAt: Date.now(),
-          source: 'system',
-          meta: { mode: 'command', capability: plan.capability },
-        };
-        await this.conversations.addMessage(conversationId, blockedMsg);
-        return { type: 'blocked', message: blockedMsg.content, taskId };
-      }
-
-      const capTierCheck = this.tierService.canUseCapability(plan.capability);
-      if (!capTierCheck.allowed) {
-        const tierMsg: ChatMessage = {
-          id: uid('msg'),
-          role: 'assistant',
-          content: capTierCheck.reason,
-          createdAt: Date.now(),
-          source: 'ultra',
-          meta: { mode: 'command', capability: plan.capability, tierBlocked: true, needsUpgrade: capTierCheck.needsUpgrade },
-        };
-        await this.conversations.addMessage(conversationId, tierMsg);
-        return { type: 'blocked', message: capTierCheck.reason, taskId };
-      }
-
-      if (safetyResult.requiresApproval && !args.approvedAction) {
-        const approvalMsg = `I can do that, but it requires confirmation first. ${plan.reason || ''}`.trim();
-        const approvalChatMsg: ChatMessage = {
-          id: uid('msg'),
-          role: 'assistant',
-          content: approvalMsg,
-          createdAt: Date.now(),
-          source: 'ultra',
-          meta: { mode: 'command', capability: plan.capability, requiresApproval: true },
-        };
-        await this.conversations.addMessage(conversationId, approvalChatMsg);
-        return { type: 'approval_required', message: approvalMsg, taskId, data: { replayUserInput: userInput } };
-      }
-
-      step('APPROVE', safetyResult.requiresApproval ? 'Approved disambiguation follow-up action' : `Auto-approved (risk=${safetyResult.risk})`, true);
-      this.emit('log', `Executing ${plan.capability}...`, 'system');
-      DebugLog.executePhase(taskId, 'EXECUTE');
-      let disambigResult: any;
-      try {
-        disambigResult = await this.executor.runWithPlan(plan, taskId);
-      } catch (err: any) {
-        disambigResult = { success: false, error: err.message };
-      }
-      const verification = this.safety.verifyResult(plan, disambigResult);
-      DebugLog.verification(taskId, verification.verified, verification.issues);
-      const disambigSummary = disambigResult?.success !== false
-        ? (disambigResult?.summary || `Opened ${plan.params?.target || ''}`)
-        : `Failed: ${disambigResult?.error || 'unknown error'}`;
-      const disambigMsg: ChatMessage = {
-        id: uid('msg'),
-        role: 'assistant',
-        content: disambigSummary,
-        createdAt: Date.now(),
-        source: 'ultra',
-        meta: { mode: 'command', capability: plan.capability },
-      };
-      await this.conversations.addMessage(conversationId, disambigMsg);
-      await this.ledger.logEvent({
-        phase: 'EXECUTE',
-        capability: plan.capability,
-        inputSummary: userInput.slice(0, 200),
-        outputSummary: JSON.stringify(disambigResult).slice(0, 200),
-        model: this.ai.getDefaultModel(),
-        cost: this.costTracker.getTaskSpend(taskId),
-        success: disambigResult?.success !== false,
-        conversationId,
-      });
-      await this.ledger.logEvent({
-        phase: 'VERIFY_RESULT',
-        capability: plan.capability,
-        inputSummary: `verified=${verification.verified}`,
-        outputSummary: verification.issues.join('; ').slice(0, 200),
-        success: verification.verified,
-        conversationId,
-      });
-      await this.learner.learnFromExecution(userInput, [plan.capability], disambigSummary, verification.verified);
-      return { type: 'action_result', message: disambigSummary, taskId };
+      step('PLAN', `Resolved disambiguation: ${plan.capability} — routing through kernel`, true);
+      return this.executeResolvedPlanThroughKernel(plan, taskId, conversationId, userInput, args);
     }
 
     // === CONVERSATION / AI_INSTRUCTION MODE ===
@@ -1346,13 +1262,13 @@ You are always on. Always capable. Always direct.`;
       const errMsg: ChatMessage = {
         id: uid('msg'),
         role: 'assistant',
-        content: 'Venice API key not configured. Open Settings to add your key.',
+        content: 'No API provider configured. Open Settings → AI Providers to add one.',
         createdAt: Date.now(),
         source: 'system',
         meta: {},
       };
       await this.conversations.addMessage(conversationId, errMsg);
-      return { type: 'error', message: 'Venice API key not configured. Open Settings.', taskId };
+      return { type: 'error', message: 'No API provider configured. Open Settings.', taskId };
     }
     this.emit('log', 'Thinking...', 'system');
 
@@ -1479,6 +1395,115 @@ You are always on. Always capable. Always direct.`;
 
   getExecutionLedger(): ExecutionLedger {
     return this.ledger;
+  }
+
+  private async executeResolvedPlanThroughKernel(
+    plan: ActionPlan,
+    taskId: string,
+    conversationId: string,
+    userInput: string,
+    args: ExecuteArgs,
+  ): Promise<UltraExecutionResult> {
+    DebugLog.systemEvent('KernelResolvedPlan', `Executing resolved follow-up via kernel: ${plan.capability}`);
+    const step = (phase: string, detail: string, success: boolean) =>
+      DebugLog.agentStep(taskId, phase, detail, success);
+
+    const safetyResult = this.safety.check(userInput, plan);
+    DebugLog.safetyCheck(taskId, safetyResult.risk, safetyResult.allowed, safetyResult.reasons);
+    step('VERIFY', `Kernel re-verify: risk=${safetyResult.risk} allowed=${safetyResult.allowed}`, safetyResult.allowed);
+
+    if (!safetyResult.allowed) {
+      const blockedMsg: ChatMessage = {
+        id: uid('msg'),
+        role: 'assistant',
+        content: safetyResult.reasons.join('\n') || 'Blocked by safety policy.',
+        createdAt: Date.now(),
+        source: 'system',
+        meta: { mode: 'command', capability: plan.capability },
+      };
+      await this.conversations.addMessage(conversationId, blockedMsg);
+      return { type: 'blocked', message: blockedMsg.content, taskId };
+    }
+
+    const capTierCheck = this.tierService.canUseCapability(plan.capability);
+    if (!capTierCheck.allowed) {
+      const tierMsg: ChatMessage = {
+        id: uid('msg'),
+        role: 'assistant',
+        content: capTierCheck.reason,
+        createdAt: Date.now(),
+        source: 'ultra',
+        meta: { mode: 'command', capability: plan.capability, tierBlocked: true, needsUpgrade: capTierCheck.needsUpgrade },
+      };
+      await this.conversations.addMessage(conversationId, tierMsg);
+      return { type: 'blocked', message: capTierCheck.reason, taskId };
+    }
+
+    if (safetyResult.requiresApproval && !args.approvedAction) {
+      const approvalMsg = `I can do that, but it requires confirmation first. ${plan.reason || ''}`.trim();
+      const approvalChatMsg: ChatMessage = {
+        id: uid('msg'),
+        role: 'assistant',
+        content: approvalMsg,
+        createdAt: Date.now(),
+        source: 'ultra',
+        meta: { mode: 'command', capability: plan.capability, requiresApproval: true },
+      };
+      await this.conversations.addMessage(conversationId, approvalChatMsg);
+      return { type: 'approval_required', message: approvalMsg, taskId, data: { replayUserInput: userInput } };
+    }
+
+    step('APPROVE', safetyResult.requiresApproval ? 'Approved (was pre-approved by user)' : `Auto-approved (risk=${safetyResult.risk})`, true);
+    this.emit('log', `Executing ${plan.capability}...`, 'system');
+    DebugLog.executePhase(taskId, 'EXECUTE');
+
+    let execResult: any;
+    try {
+      execResult = await this.executor.runWithPlan(plan, taskId);
+    } catch (err: any) {
+      execResult = { success: false, error: err.message };
+    }
+
+    const verification = this.safety.verifyResult(plan, execResult);
+    DebugLog.verification(taskId, verification.verified, verification.issues);
+
+    const summary = execResult?.success !== false
+      ? (execResult?.summary || `Completed: ${plan.capability}`)
+      : `Failed: ${execResult?.error || 'unknown error'}`;
+
+    const resultMsg: ChatMessage = {
+      id: uid('msg'),
+      role: 'assistant',
+      content: summary,
+      createdAt: Date.now(),
+      source: 'ultra',
+      meta: { mode: 'command', capability: plan.capability },
+    };
+    await this.conversations.addMessage(conversationId, resultMsg);
+
+    await this.ledger.logEvent({
+      phase: 'EXECUTE',
+      capability: plan.capability,
+      inputSummary: userInput.slice(0, 200),
+      outputSummary: JSON.stringify(execResult).slice(0, 200),
+      model: this.ai.getDefaultModel(),
+      cost: this.costTracker.getTaskSpend(taskId),
+      success: execResult?.success !== false,
+      conversationId,
+    });
+    await this.ledger.logEvent({
+      phase: 'VERIFY_RESULT',
+      capability: plan.capability,
+      inputSummary: `verified=${verification.verified}`,
+      outputSummary: verification.issues.join('; ').slice(0, 200),
+      success: verification.verified,
+      conversationId,
+    });
+    await this.learner.learnFromExecution(userInput, [plan.capability], summary, verification.verified);
+
+    return execResult?.success !== false
+      ? { type: 'action_result', message: summary, taskId }
+      : { type: 'error', message: summary, taskId };
   }
 
   private buildPromptTrace(

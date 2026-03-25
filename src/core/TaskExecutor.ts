@@ -695,7 +695,7 @@ export class TaskExecutor {
             } catch (recoveryErr: any) {
               DebugLog.error('CameraRecovery', recoveryErr?.message || 'recovery failed', recoveryErr?.stack);
             }
-            return { success: false, summary: 'Camera capture cancelled by user' };
+            return { success: false, cancelled: true, summary: 'Camera capture cancelled by user' };
           }
           const asset = camResult.assets[0];
           return {
@@ -715,7 +715,7 @@ export class TaskExecutor {
             quality: 0.8,
           });
           if (pickResult.canceled || !pickResult.assets || pickResult.assets.length === 0) {
-            return { success: false, error: 'Image selection cancelled by user' };
+            return { success: false, cancelled: true, summary: 'Image selection cancelled by user' };
           }
           const picked = pickResult.assets[0];
           return { success: true, uri: picked.uri, width: picked.width, height: picked.height, fileSize: picked.fileSize || null };
@@ -1172,12 +1172,13 @@ export class TaskExecutor {
       case 'app_share': {
         const shareContent = params.content || params.message || params.url;
         if (shareContent) {
-          const fileUri = shareContent.startsWith?.('file://') || shareContent.startsWith?.('/');
-          if (fileUri) {
+          const isFilePath = shareContent.startsWith?.('file://') || shareContent.startsWith?.('/');
+          if (isFilePath) {
             const shareAvail = await Sharing.isAvailableAsync();
             if (!shareAvail) return { error: 'Sharing is not available on this device' };
-            await Sharing.shareAsync(shareContent.startsWith('/') ? 'file://' + shareContent : shareContent);
-            return { success: true, shared: shareContent };
+            const contentUri = await toAndroidContentUri(shareContent);
+            await Sharing.shareAsync(contentUri);
+            return { success: true, shared: contentUri };
           }
           try {
             const shareResult = await Share.share({ message: shareContent });
@@ -1774,9 +1775,11 @@ export class TaskExecutor {
         const filePath = params.path;
         if (!filePath) return { success: false, error: 'No file path specified' };
         const mimeType = params.mimeType || '*/*';
+        const contentUri = await toAndroidContentUri(filePath);
         await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-          data: filePath.startsWith('file://') ? filePath : `file://${filePath}`,
+          data: contentUri,
           type: mimeType,
+          flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
         });
         return { success: true, summary: `Opened file: ${filePath}` };
       }

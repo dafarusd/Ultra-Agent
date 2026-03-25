@@ -481,7 +481,7 @@ const schemas: CapabilitySchema[] = [
       prompt: { type: 'string', description: 'Description of the video to generate' },
     },
     optionalParams: {
-      model: { type: 'string', description: 'Venice video model ID' },
+      model: { type: 'string', description: 'AI video model ID' },
       seconds: { type: 'number', description: 'Duration in seconds (default 5)' },
     },
   },

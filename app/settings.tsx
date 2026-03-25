@@ -65,7 +65,6 @@ const STRATEGY_LABELS: Record<SelectionStrategy, string> = {
 const AUTH_MODES: AuthMode[] = ['bearer', 'api_key_header', 'basic', 'custom_header', 'none'];
 
 const PRESETS = [
-  { name: 'Venice AI', baseUrl: 'https://api.venice.ai/api/v1', authMode: 'bearer' as AuthMode },
   { name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', authMode: 'bearer' as AuthMode },
   { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', authMode: 'bearer' as AuthMode },
   { name: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1', authMode: 'bearer' as AuthMode },
@@ -631,7 +630,7 @@ export default function SettingsScreen() {
                         <TextInput
                           value={providerDraft.name}
                           onChangeText={t => setProviderDraft({ ...providerDraft, name: t })}
-                          placeholder='e.g. Venice AI, OpenRouter'
+                          placeholder='e.g. My Cloud API'
                           placeholderTextColor="#444"
                           style={styles.textInput}
                         />
