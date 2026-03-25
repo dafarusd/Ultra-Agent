@@ -76,9 +76,7 @@ export interface ExecuteArgs {
   conversationId: string;
   userInput: string;
   replay?: boolean;
-  approvedModel?: string;
   approvedAction?: boolean;
-  skipModelSwitchPrompt?: boolean;
 }
 
 export class AgentCore extends SimpleEmitter {
@@ -877,39 +875,6 @@ You are always on. Always capable. Always direct.`;
 
       step('APPROVE', args.approvedAction ? 'User pre-approved this action' : `Auto-approved (risk=${safetyResult.risk})`, true);
 
-      // Model switch recommendation (only for non-replay, non-skip)
-      if (!args.skipModelSwitchPrompt && !args.approvedModel) {
-        const model = this.ai.getDefaultModel();
-        const recommendation = this.ai.recommendModel({
-          taskType: 'agent_action',
-          requiredContextTokens: 2000,
-          currentModel: model,
-        });
-        if (recommendation) {
-          const switchMsg = `I recommend switching to ${recommendation.recommended}. ${recommendation.reason}`;
-          const switchChatMsg: ChatMessage = {
-            id: uid('msg'),
-            role: 'assistant',
-            content: switchMsg,
-            createdAt: Date.now(),
-            source: 'ultra',
-            meta: { mode: 'command' },
-          };
-          await this.conversations.addMessage(conversationId, switchChatMsg);
-          return {
-            type: 'model_switch_request',
-            message: switchMsg,
-            taskId,
-            data: {
-              recommendedModel: recommendation.recommended,
-              reason: recommendation.reason,
-              currentModel: model,
-              replayUserInput: userInput,
-            },
-          };
-        }
-      }
-
       // Capability tier check
       const capTierCheck = this.tierService.canUseCapability(plan.capability);
       if (!capTierCheck.allowed) {
@@ -1011,7 +976,7 @@ You are always on. Always capable. Always direct.`;
         capability: plan.capability,
         inputSummary: safetyResult.risk === 'dangerous' ? `[dangerous] ${userInput.slice(0, 150)}` : userInput.slice(0, 200),
         outputSummary: JSON.stringify(execResult).slice(0, 200),
-        model: args.approvedModel || this.ai.getDefaultModel(),
+        model: this.ai.getDefaultModel(),
         cost: this.costTracker.getTaskSpend(taskId),
         idempotencyKey,
         success: execResult?.success !== false,
@@ -1054,7 +1019,7 @@ You are always on. Always capable. Always direct.`;
       }));
 
       const promptTrace: PromptTrace = {
-        model: args.approvedModel || this.ai.getDefaultModel(),
+        model: this.ai.getDefaultModel(),
         systemPrompt: planFromParser ? '(deterministic parse — no AI call)' : systemPromptForTrace,
         framedUserMessage: userInput,
         includedMessages: [],
@@ -1356,7 +1321,7 @@ You are always on. Always capable. Always direct.`;
         capability: plan.capability,
         inputSummary: userInput.slice(0, 200),
         outputSummary: JSON.stringify(disambigResult).slice(0, 200),
-        model: args.approvedModel || this.ai.getDefaultModel(),
+        model: this.ai.getDefaultModel(),
         cost: this.costTracker.getTaskSpend(taskId),
         success: disambigResult?.success !== false,
         conversationId,
@@ -1394,7 +1359,7 @@ You are always on. Always capable. Always direct.`;
     let proactiveContext = '';
     if (this.proactive) { const c = this.proactive.formatForChat(2); if (c) proactiveContext = `\n\n[PROACTIVE SUGGESTIONS — share naturally if relevant]\n${c}`; }
 
-    const model = args.approvedModel || this.ai.getDefaultModel();
+    const model = this.ai.getDefaultModel();
     const conv = await this.conversations.loadConversation(conversationId);
     const summary = conv?.summary || '';
 
@@ -1409,44 +1374,6 @@ You are always on. Always capable. Always direct.`;
       conversationId, systemPrompt, 4000, model
     );
 
-    if (!args.skipModelSwitchPrompt && !args.approvedModel) {
-      // FIXED: explicit image task type detection so recommendModel switches to venice-uncensored (prevents "undefined is not a function" on chat-only models)
-      let taskType: 'image' | 'code' | 'conversation' = 'conversation';
-      if (plan && plan.capability === 'image_generate') {
-        taskType = 'image';
-      } else if (userInput.toLowerCase().includes('code')) {
-        taskType = 'code';
-      }
-      const recommendation = this.ai.recommendModel({
-        taskType,
-        requiredContextTokens,
-        currentModel: model,
-      });
-      if (recommendation) {
-        const switchMsg = `I recommend switching to ${recommendation.recommended}. ${recommendation.reason}`;
-        const switchChatMsg: ChatMessage = {
-          id: uid('msg'),
-          role: 'assistant',
-          content: switchMsg,
-          createdAt: Date.now(),
-          source: 'ultra',
-          meta: { mode },
-        };
-        await this.conversations.addMessage(conversationId, switchChatMsg);
-        return {
-          type: 'model_switch_request',
-          message: switchMsg,
-          taskId,
-          data: {
-            recommendedModel: recommendation.recommended,
-            reason: recommendation.reason,
-            currentModel: model,
-            replayUserInput: userInput,
-          },
-        };
-      }
-    }
-
     const framedUserMessage = mode === 'ai_instruction'
       ? `User meta-instruction mode. Follow the user's instruction while answering:\n${userInput}`
       : userInput;
@@ -1455,7 +1382,7 @@ You are always on. Always capable. Always direct.`;
 
     try {
       const aiResult = await this.ai.completeWithConversation(finalMessages, {
-        model: args.approvedModel || model,
+        model,
         taskId,
         agentId: 'chat',
         maxTokens: 4000,

@@ -140,14 +140,12 @@ export default function ChatScreen() {
 
   // Current mode & replay
   const [currentMode, setCurrentMode] = useState<ActionType>("chat");
-  const [savedDefaults, setSavedDefaults] = useState<Record<string, string>>({});
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
   const [contextBarDismissed, setContextBarDismissed] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ uri: string; base64: string; mimeType: string } | null>(null);
   const [pendingReplay, setPendingReplay] = useState<{
     userInput: string;
-    type: "approval" | "model_switch";
-    recommendedModel?: string;
+    type: "approval";
   } | null>(null);
 
   // Build/genome progress
@@ -166,7 +164,6 @@ export default function ChatScreen() {
   const [zoneConfig, setZoneConfig] = useState<ZoneConfig | null>(null);
   const [taskBuilderVisible, setTaskBuilderVisible] = useState(false);
   const [savedTasks, setSavedTasks] = useState<TaskTemplate[]>([]);
-  const [sessionModelOverride, setSessionModelOverride] = useState(false);
 
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
@@ -234,7 +231,6 @@ export default function ChatScreen() {
       isProcessing,
       conversationId,
       messageCount: messages.length,
-      savedDefaults,
       modelsLoaded: agentCore?.getAvailableModels()?.length ?? 0,
       hasApiKey: agentCore?.hasApiKey() ?? false,
       status,
@@ -471,7 +467,7 @@ export default function ChatScreen() {
         // AsyncStorage doesn't survive process kills on Samsung.
         // SecureVault (Expo SecureStore) does. Move critical keys.
         const MIGRATE_KEYS = [
-          'api_defaults', 'saved_apis', 'action_grid_config',
+          'action_grid_config',
           'preferred_model', 'dev_mode_enabled', 'onboarding_done',
           'battery_optim_prompted', 'user_folders', 'task_templates',
           'grid_config_version',
@@ -519,29 +515,7 @@ export default function ChatScreen() {
         DebugLog.uiInit("agentCore", "AgentCore initialized, default model: " + core.getDefaultModel());
         DebugLog.modelState("post_init", { discoveredCount: modelsAvailable, defaultModel: core.getDefaultModel(), hasApiKey: core.hasApiKey() });
 
-        const savedRaw = await vault.get("api_defaults");
-        if (savedRaw) {
-          try {
-            const parsed = JSON.parse(savedRaw);
-            setSavedDefaults(parsed);
-            DebugLog.uiDefaultsLoaded("init", parsed);
-            const chatDefault = parsed["chat"];
-            if (chatDefault) {
-              await core.setDefaultModel(chatDefault);
-              setActiveModelId(chatDefault);
-              DebugLog.uiModelApply(chatDefault, "chat", "init_default", true);
-            } else {
-              setActiveModelId(core.getDefaultModel());
-              DebugLog.uiInit("model", "No chat default saved, using engine default: " + core.getDefaultModel());
-            }
-          } catch {
-            setActiveModelId(core.getDefaultModel());
-            DebugLog.uiInit("model", "Failed to parse saved defaults, using engine default");
-          }
-        } else {
-          setActiveModelId(core.getDefaultModel());
-          DebugLog.uiInit("model", "No saved defaults, using engine default: " + core.getDefaultModel());
-        }
+        setActiveModelId(core.getDefaultModel());
         setStatus("Ready");
 
         const cm = core.getConversationManager();
@@ -614,41 +588,8 @@ export default function ChatScreen() {
         setIsAppLocked(!authed);
 
         if (!core.hasApiKey()) {
-          setStatus("Add API key in Settings");
-          const existingApis = await vault.get('saved_apis').catch(() => null);
-          if (!existingApis) {
-            const veniceEntry = {
-              id: 'api_venice_builtin',
-              name: 'Venice AI',
-              baseUrl: 'https://api.venice.ai/api/v1',
-              apiKey: '',
-              password: '',
-              isBuiltIn: true,
-            };
-            await vault.set('saved_apis', JSON.stringify([veniceEntry]));
-            await vault.set('api_base_url', 'https://api.venice.ai/api/v1');
-          }
+          setStatus("Add AI provider in Settings → AI Providers");
         }
-
-        // Storage snapshot for debugging
-        try {
-          const keys = ['api_defaults', 'saved_apis', 'action_grid_config', 'user_tier', 'tier_usage_today', 'preferred_model', 'dev_mode_enabled', 'onboarding_done', 'battery_optim_prompted'];
-          const snapshot: Record<string, string> = {};
-          for (const key of keys) {
-            try {
-              const val = await AsyncStorage.getItem(key);
-              snapshot[key] = val ? (val.length > 100 ? val.slice(0, 100) + '...' : val) : '(null)';
-            } catch { snapshot[key] = '(error)'; }
-          }
-          const vaultKeys = ['venice_api_key', 'api_base_url', 'user_tier'];
-          for (const key of vaultKeys) {
-            try {
-              const val = await vault.get(key);
-              snapshot[`vault:${key}`] = val ? (key.includes('key') ? '***set***' : (val.length > 60 ? val.slice(0, 60) + '...' : val)) : '(null)';
-            } catch { snapshot[`vault:${key}`] = '(error)'; }
-          }
-          UltraDevLog.push('STORAGE_SNAPSHOT', snapshot);
-        } catch {}
 
       } catch (err: any) {
         UltraDevLog.push('INIT_FATAL', { message: err?.message ?? 'Unknown', stack: (err?.stack ?? '').slice(0, 500) });
@@ -664,7 +605,7 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!agentCore) return;
-      const deps = { agentCore: !!agentCore, sessionModelOverride };
+      const deps = { agentCore: !!agentCore };
       UltraDevLog.focusEffectTriggered(deps, prevFocusDepsRef.current);
       prevFocusDepsRef.current = deps;
       const now = Date.now();
@@ -673,7 +614,7 @@ export default function ChatScreen() {
         return;
       }
       lastFocusTime.current = now;
-      DebugLog.uiFocusEffect("triggered", currentMode, Object.keys(savedDefaults), activeModelId);
+      DebugLog.uiFocusEffect("triggered", currentMode, [], activeModelId);
       snapUI("focus_effect");
       agentCore.refreshApiKey().then(() => {
         if (agentCore.hasApiKey()) setStatus("Ready");
@@ -682,25 +623,7 @@ export default function ChatScreen() {
           setActiveModelId(engineDefault);
         }
       });
-      SecureVault.initialize().then(async (v) => {
-        try {
-          const raw = await v.get("api_defaults");
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            setSavedDefaults(parsed);
-            // Only apply saved defaults if user hasn't manually overridden this session
-            if (!sessionModelOverride) {
-              const modeDefault = parsed[currentMode];
-              if (modeDefault && modeDefault !== activeModelId) {
-                setActiveModelId(modeDefault);
-                DebugLog.uiModelApply(modeDefault, currentMode, "focusEffect_default_sync", true);
-              }
-            }
-            DebugLog.uiDefaultsLoaded("focusEffect", parsed);
-          }
-        } catch (e: any) { DebugLog.uiError("focusEffect_defaults", e?.message || "unknown parse error"); }
-      });
-    }, [agentCore, sessionModelOverride])
+    }, [agentCore])
   );
 
 
@@ -724,13 +647,8 @@ export default function ChatScreen() {
   // ── Result handler ─────────────────────────────────
   const handleResult = useCallback(
     async (result: UltraExecutionResult, core: AgentCore, convId: string) => {
-      switch (result.type) {
-        case "model_switch_request":
-          setPendingReplay({ userInput: result.data?.replayUserInput || "", type: "model_switch", recommendedModel: result.data?.recommendedModel });
-          break;
-        case "approval_required":
-          setPendingReplay({ userInput: result.data?.replayUserInput || "", type: "approval" });
-          break;
+      if (result.type === "approval_required") {
+        setPendingReplay({ userInput: result.data?.replayUserInput || "", type: "approval" });
       }
       await reloadMessages(core, convId);
       await refreshConversations(core);
@@ -927,7 +845,6 @@ export default function ChatScreen() {
     try {
       const args: ExecuteArgs = { conversationId, userInput: replay.userInput, replay: true };
       if (replay.type === "approval") args.approvedAction = true;
-      else if (replay.type === "model_switch") args.approvedModel = replay.recommendedModel;
       const result = await agentCore.execute(args);
       await handleResult(result, agentCore, conversationId);
       UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'approve', success: result.type !== 'error', resultType: result.type });
@@ -949,28 +866,11 @@ export default function ChatScreen() {
     UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'deny', trigger: {}, state: { replayType: pendingReplay.type }, data: {}, outcome: 'denied' });
     const replay = pendingReplay;
     setPendingReplay(null);
-    if (replay.type === "model_switch") {
-      setIsProcessing(true);
-      UltraDevLog.processingState(true, 'handleDeny_modelSwitch');
-      setStatus("Continuing with current model...");
-      try {
-        const result = await agentCore.execute({ conversationId, userInput: replay.userInput, replay: true, skipModelSwitchPrompt: true });
-        await handleResult(result, agentCore, conversationId);
-        UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'deny_model_switch', success: result.type !== 'error', resultType: result.type });
-      } catch (e: any) {
-        UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'deny_model_switch', success: false, error: e?.message });
-        await reloadMessages(agentCore, conversationId);
-      }
-      setIsProcessing(false);
-      UltraDevLog.processingState(false, 'handleDeny_modelSwitch_done');
-      setStatus("Ready");
-    } else {
-      const cm = agentCore.getConversationManager();
-      await cm.addMessage(conversationId, { id: `msg_${Math.random().toString(36).slice(2)}_${Date.now()}`, role: "assistant", content: "Cancelled.", createdAt: Date.now(), source: "ultra" });
-      await reloadMessages(agentCore, conversationId);
-      UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'deny_cancel', success: true, replayType: replay.type });
-    }
-  }, [agentCore, conversationId, pendingReplay, handleResult, reloadMessages]);
+    const cm = agentCore.getConversationManager();
+    await cm.addMessage(conversationId, { id: `msg_${Math.random().toString(36).slice(2)}_${Date.now()}`, role: "assistant", content: "Cancelled.", createdAt: Date.now(), source: "ultra" });
+    await reloadMessages(agentCore, conversationId);
+    UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'deny_cancel', success: true, replayType: replay.type });
+  }, [agentCore, conversationId, pendingReplay, reloadMessages]);
 
   // ── Conversation management ────────────────────────
   const handleNewChat = useCallback(async () => {
@@ -984,7 +884,6 @@ export default function ChatScreen() {
     setConversationStarred(false);
     setPendingReplay(null);
     setConvListVisible(false);
-    setSessionModelOverride(false);
     await refreshConversations(agentCore);
     UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'new_chat', success: true, newConvId: conv.id });
   }, [agentCore, refreshConversations]);
@@ -1123,7 +1022,6 @@ export default function ChatScreen() {
     snapUI("model_select");
     await agentCore.setDefaultModel(modelId);
     setActiveModelId(modelId);
-    setSessionModelOverride(true);
     const confirmed = agentCore.getDefaultModel();
     UltraDevLog.push('EFFECT', {
       component: 'ChatScreen', action: 'model_select_result',
@@ -1810,20 +1708,11 @@ export default function ChatScreen() {
         currentType={currentMode}
         onSelect={async (type) => {
           DebugLog.uiModeSwitch(currentMode, type, "plusMenu");
-          DebugLog.uiPlusMenuSelect(type, !!savedDefaults[type], savedDefaults[type] || null);
+          DebugLog.uiPlusMenuSelect(type, false, null);
           snapUI("plus_menu_select");
           setCurrentMode(type);
           setPlusMenuVisible(false);
-          const defaultModelId = savedDefaults[type];
-          if (defaultModelId && agentCore) {
-            try {
-              await agentCore.setDefaultModel(defaultModelId);
-              setActiveModelId(defaultModelId);
-              DebugLog.uiModelApply(defaultModelId, type, "plusMenu_savedDefault", true);
-            } catch (err: any) {
-              DebugLog.uiModelApply(defaultModelId, type, "plusMenu_savedDefault", false, err?.message);
-            }
-          } else if (agentCore) {
+          if (agentCore) {
             DebugLog.uiPickerOpen("auto_from_plus", type, activeModelId);
             const filterMap: Record<string, typeof modelPickerInitialFilter> = {
               chat: "text", image: "image", code: "code",

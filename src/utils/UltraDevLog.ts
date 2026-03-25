@@ -418,7 +418,7 @@ export class UltraDevLog {
   }
 
   static vaultRead(key: string, found: boolean, valuePreview?: string): void {
-    const HIGH_FREQ = new Set(['api_base_url', 'preferred_model']);
+    const HIGH_FREQ = new Set(['preferred_model']);
     if (HIGH_FREQ.has(key)) {
       const last = UltraDevLog.lastVaultReadTs.get(key) ?? 0;
       if (Date.now() - last < 1000) return;

@@ -139,10 +139,6 @@ export class TaskExecutor {
   setAiService(svc: AiService): void {
     this.aiServiceProvider = svc;
   }
-  setVeniceService(_venice: any): void {
-    // Legacy shim — use setAiService instead
-  }
-
   setGenomeProgressCallback(cb: ((phase: string, message: string) => void) | null): void {
     this.onGenomeProgress = cb;
   }

@@ -109,7 +109,6 @@ export interface UltraModelDef {
 export type ExecutionResultType =
   | 'text'
   | 'action_result'
-  | 'model_switch_request'
   | 'approval_required'
   | 'blocked'
   | 'error'

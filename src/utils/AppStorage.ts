@@ -9,7 +9,7 @@ function normalizeValue(value: string | null): string | null {
 }
 
 const VAULT_KEYS = new Set([
-  'api_defaults', 'saved_apis', 'action_grid_config',
+  'action_grid_config',
   'preferred_model', 'dev_mode_enabled', 'onboarding_done',
   'battery_optim_prompted', 'user_folders', 'task_templates',
   'grid_config_version', 'user_tier', 'tier_usage_today',

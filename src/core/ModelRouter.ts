@@ -39,7 +39,6 @@ interface CompletionResult {
   cost: number;
 }
 
-const VENICE_BASE_URL = 'https://api.venice.ai/api/v1';
 const REQUEST_TIMEOUT = 60000;
 
 export interface ProviderConfig {
@@ -84,7 +83,7 @@ export class ModelRouter {
     this.logger = new Logger('ModelRouter');
     this.models = new Map();
     this.defaultModel = '';
-    this.baseUrl = VENICE_BASE_URL;
+    this.baseUrl = '';
     this.registerModel({
       id: 'llama-3.3-70b',
       name: 'Llama 3.3 70B',
@@ -116,19 +115,23 @@ export class ModelRouter {
   }
 
   async refreshApiKey(): Promise<void> {
-    this.apiKey = await this.vault.get('venice_api_key');
-    if (!this.apiKey) {
-      const envKey = process.env.EXPO_PUBLIC_VENICE_API_KEY || null;
-      if (envKey) {
-        this.apiKey = envKey;
-        await this.vault.set('venice_api_key', envKey);
-      }
+    // Load from first active provider in the provider list
+    const savedApis = await this.vault.get('saved_apis').catch(() => null);
+    if (savedApis) {
+      try {
+        const providers: Array<{ id: string; apiKey?: string; baseUrl?: string; isActive?: boolean }> = JSON.parse(savedApis);
+        const active = providers.find(p => p.isActive !== false && p.apiKey);
+        if (active) {
+          this.apiKey = active.apiKey || null;
+          if (active.baseUrl) this.baseUrl = this.normalizeBaseUrl(active.baseUrl);
+        }
+      } catch {}
     }
     const savedUrl = await this.vault.get('api_base_url');
-    this.baseUrl = this.normalizeBaseUrl(savedUrl || VENICE_BASE_URL);
+    if (savedUrl) this.baseUrl = this.normalizeBaseUrl(savedUrl);
 
     if (!this.apiKey) {
-      this.logger.warn('No Venice API key configured');
+      this.logger.warn('No AI provider API key configured');
     } else {
       this.logger.info('ModelRouter initialized with API key');
       DebugLog.systemEvent('ModelRouter', 'Initialized with API key');
@@ -248,17 +251,6 @@ export class ModelRouter {
         this.providers.set(p.id, config);
       }
 
-      const defaultsRaw = await this.vault.get('api_defaults');
-      if (defaultsRaw) {
-        try {
-          const defs = JSON.parse(defaultsRaw);
-          for (const [category, modelId] of Object.entries(defs)) {
-            if (!modelId) continue;
-            const provider = this.findProviderForModel(modelId as string);
-            if (provider) this.categoryDefaults.set(category, { modelId: modelId as string, providerId: provider.id });
-          }
-        } catch {}
-      }
       DebugLog.push('SYSTEM' as any, { event: 'providers_loaded', count: this.providers.size, totalModels: this.models.size });
     } catch (e: any) {
       DebugLog.error('ModelRouter', `loadProviders failed: ${e.message}`);
@@ -427,7 +419,7 @@ export class ModelRouter {
 
 
   private normalizeBaseUrl(url: string | null | undefined): string {
-    if (!this.isValidHttpUrl(url)) return VENICE_BASE_URL;
+    if (!this.isValidHttpUrl(url)) return '';
     return String(url).replace(/\/+$/, '');
   }
 
@@ -604,7 +596,7 @@ export class ModelRouter {
     } = {}
   ): Promise<CompletionResult> {
     if (!this.apiKey) {
-      throw new Error('Venice API key not configured. Open Settings to add it.');
+      throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
     }
     if (!options.model && !this.defaultModel) {
       const textModels = [...this.models.values()].filter(m => m.type === 'text');
@@ -672,9 +664,9 @@ export class ModelRouter {
       clearTimeout(timeout);
       this.activeController = null;
       if (!resp.ok) {
-        if (resp.status === 401) throw new Error('Invalid Venice API key.');
+        if (resp.status === 401) throw new Error('Invalid API key. Check your provider settings.');
         if (resp.status === 429) throw new Error('Rate limited. Wait before retrying.');
-        throw new Error(`Venice API error: HTTP ${resp.status}`);
+        throw new Error(`AI provider error: HTTP ${resp.status}`);
       }
       const data = await resp.json();
       const content = data.choices[0].message.content;
@@ -695,7 +687,7 @@ export class ModelRouter {
         }
         throw new Error('Request timed out after 60s. Check your connection and try again.');
       }
-      if (error.message.includes('Venice API') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
+      if (error.message.includes('AI provider') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
       throw new Error('AI request failed: ' + error.message);
     }
   }
@@ -711,7 +703,7 @@ export class ModelRouter {
       category?: string;
     } = {}
   ): Promise<CompletionResult> {
-    if (!this.apiKey) throw new Error('Venice API key not configured.');
+    if (!this.apiKey) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
     const taskId = options.taskId || 'default';
     const agentId = options.agentId || 'main';
     if (!this.costTracker.isWithinDailyLimit()) throw new Error('Daily cost limit reached.');
@@ -759,9 +751,9 @@ export class ModelRouter {
       clearTimeout(timeout);
       this.activeController = null;
       if (!resp.ok) {
-        if (resp.status === 401) throw new Error('Invalid Venice API key.');
+        if (resp.status === 401) throw new Error('Invalid API key. Check your provider settings.');
         if (resp.status === 429) throw new Error('Rate limited. Wait before retrying.');
-        throw new Error(`Venice API error: HTTP ${resp.status}`);
+        throw new Error(`AI provider error: HTTP ${resp.status}`);
       }
       const data = await resp.json();
       const content = data.choices[0].message.content;
@@ -781,7 +773,7 @@ export class ModelRouter {
         }
         throw new Error('Request timed out after 60s. Check your connection and try again.');
       }
-      if (error.message.includes('Venice API') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
+      if (error.message.includes('AI provider') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
       throw new Error('AI conversation failed: ' + error.message);
     }
   }
@@ -827,7 +819,7 @@ export class ModelRouter {
       agentId?: string;
     } = {}
   ): Promise<CompletionResult> {
-    if (!this.apiKey) throw new Error('Venice API key not configured.');
+    if (!this.apiKey) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
 
     let model = options.model || '';
     if (!model) {
@@ -876,7 +868,7 @@ export class ModelRouter {
       });
       clearTimeout(timeout);
       this.activeController = null;
-      if (!resp.ok) throw new Error(`Venice vision API error: HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(`Vision API error: HTTP ${resp.status}`);
       const data = await resp.json();
       const content = data.choices[0].message.content;
       const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
@@ -904,11 +896,11 @@ export class ModelRouter {
   }
 
   async setBaseUrl(url: string): Promise<void> {
-    this.baseUrl = this.normalizeBaseUrl(url || VENICE_BASE_URL);
-    if (this.baseUrl === VENICE_BASE_URL && (!url || !this.isValidHttpUrl(url))) {
-      await this.vault.delete('api_base_url').catch(() => {});
-    } else {
+    this.baseUrl = this.normalizeBaseUrl(url);
+    if (this.baseUrl) {
       await this.vault.set('api_base_url', this.baseUrl);
+    } else {
+      await this.vault.delete('api_base_url').catch(() => {});
     }
     this.logger.info(`API base URL set to: ${this.baseUrl}`);
   }

@@ -220,11 +220,9 @@ export class PreferenceLearner {
 
   async exportToFile(): Promise<string> {
     try {
-      const [preferredModel, apiDefaults, savedApis, learnedPatterns, userPreferences] =
+      const [preferredModel, learnedPatterns, userPreferences] =
         await Promise.all([
           this.vault.get('preferred_model').catch(() => null),
-          this.vault.get('api_defaults').catch(() => null),
-          this.vault.get('saved_apis').catch(() => null),
           this.vault.get('learned_patterns').catch(() => null),
           this.vault.get('user_preferences').catch(() => null),
         ]);
@@ -234,8 +232,6 @@ export class PreferenceLearner {
         exportedAt: new Date().toISOString(),
         source: 'agent-ultra',
         preferred_model: preferredModel,
-        api_defaults: apiDefaults,
-        saved_apis: savedApis,
         learned_patterns: learnedPatterns,
         user_preferences: userPreferences,
       };

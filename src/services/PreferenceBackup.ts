@@ -11,7 +11,6 @@ const EXPORT_SOURCE = 'agent-ultra';
 
 const EXPORTABLE_KEYS = [
   'preferred_model',
-  'api_defaults',
   'learned_patterns',
   'user_preferences',
   'daily_cost_limit',
@@ -29,7 +28,6 @@ interface PreferenceBackupV1 {
   exportedAt: string;
   source: string;
   preferred_model?: string;
-  api_defaults?: string;
   saved_apis?: string;
   learned_patterns?: string;
   user_preferences?: string;
@@ -68,8 +66,7 @@ function confirmImport(keysToRestore: string[]): Promise<boolean> {
   return new Promise((resolve) => {
     const keyLabels: Record<string, string> = {
       preferred_model: 'Preferred model',
-      api_defaults: 'Model defaults',
-      saved_apis: 'Saved APIs (names/URLs only, no keys)',
+      saved_apis: 'AI providers (names/URLs only, no keys)',
       learned_patterns: 'Learned patterns',
       user_preferences: 'User preferences',
       daily_cost_limit: 'Daily cost limit',
