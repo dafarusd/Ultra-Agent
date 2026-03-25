@@ -10,8 +10,6 @@ import { ProviderManager } from './provider/ProviderManager';
 import { GroupManager } from './provider/GroupManager';
 import { RouteHistoryStore } from './provider/RouteHistoryStore';
 import { AiService } from './provider/AiService';
-import { runLegacyMigration } from './provider/LegacyMigration';
-
 import { PreferenceLearner } from '../utils/PreferenceLearner';
 import { CostTracker } from '../services/CostTracker';
 import { StorageManager } from '../services/StorageManager';
@@ -205,7 +203,6 @@ export class AgentCore extends SimpleEmitter {
     await safeInit('LogCleanup', async () => { await Logger.cleanOldLogs(7); });
     await safeInit('DebugLogCleanup', async () => { await DebugLog.cleanOldLogs(7); });
     DebugLog.scheduleStartupRawExport();
-    await safeInit('LegacyMigration', () => runLegacyMigration(this.vault, this.providerManager, this.groupManager));
     try {
       const rawDaily = await this.vault.get('daily_cost_limit');
       const rawTask = await this.vault.get('task_cost_limit');
