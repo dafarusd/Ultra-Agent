@@ -4,6 +4,10 @@ import { UltraDevLog } from './UltraDevLog';
 
 // Keys that MUST survive process kills → vault (SecureStore)
 // AsyncStorage doesn't persist across process kills on Samsung.
+function normalizeValue(value: string | null): string | null {
+  return value === '' ? null : value;
+}
+
 const VAULT_KEYS = new Set([
   'api_defaults', 'saved_apis', 'action_grid_config',
   'preferred_model', 'dev_mode_enabled', 'onboarding_done',
@@ -23,17 +27,21 @@ export const AppStorage = {
     try {
       if (VAULT_KEYS.has(key)) {
         const vault = await getVault();
-        return await vault.get(key);
+        return normalizeValue(await vault.get(key));
       }
       return await AsyncStorage.getItem(key);
     } catch (e: any) {
-      UltraDevLog.push('STORAGE_READ_ERROR', { key, error: e?.message });
+      UltraDevLog.push('STORAGE_READ_ERROR', { key, error: e?.message || 'unknown error' });
       return null;
     }
   },
 
   async set(key: string, value: string): Promise<void> {
     try {
+      if (value === '') {
+        await this.remove(key);
+        return;
+      }
       if (VAULT_KEYS.has(key)) {
         const vault = await getVault();
         await vault.set(key, value);
@@ -41,7 +49,8 @@ export const AppStorage = {
       }
       await AsyncStorage.setItem(key, value);
     } catch (e: any) {
-      UltraDevLog.push('STORAGE_WRITE_ERROR', { key, error: e?.message });
+      UltraDevLog.push('STORAGE_WRITE_ERROR', { key, error: e?.message || 'unknown error' });
+      throw e;
     }
   },
 
@@ -49,10 +58,13 @@ export const AppStorage = {
     try {
       if (VAULT_KEYS.has(key)) {
         const vault = await getVault();
-        await vault.set(key, '');
+        await vault.delete(key);
         return;
       }
       await AsyncStorage.removeItem(key);
-    } catch {}
+    } catch (e: any) {
+      UltraDevLog.push('STORAGE_DELETE_ERROR', { key, error: e?.message || 'unknown error' });
+      throw e;
+    }
   },
 };

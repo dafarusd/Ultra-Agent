@@ -2836,15 +2836,18 @@ function withAgentNative(config) {
     const manifest = config.modResults;
     const app = manifest.manifest.application[0];
 
+    const appPackage = config.android?.package || config.android?.packageName || 'com.agent.ultra';
+    const fileProviderAuthority = `${appPackage}.fileprovider`;
+
     const hasProvider = (app.provider || []).some(
-      (p) => p.$['android:authorities'] === 'com.agent.ultra.fileprovider'
+      (p) => p.$['android:authorities'] === fileProviderAuthority
     );
     if (!hasProvider) {
       if (!app.provider) app.provider = [];
       app.provider.push({
         $: {
           'android:name': 'androidx.core.content.FileProvider',
-          'android:authorities': 'com.agent.ultra.fileprovider',
+          'android:authorities': fileProviderAuthority,
           'android:exported': 'false',
           'android:grantUriPermissions': 'true',
         },

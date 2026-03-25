@@ -1172,7 +1172,14 @@ export class UltraDevLog {
       const PHASES = ['INGEST','ROUTE','PLAN','VERIFY','APPROVE','EXECUTE','VERIFY_RESULT','RESPOND'];
       const reached = te.filter(e => e.cat === 'EXECUTE_PHASE').map(e => p(e).phase as string);
       const last = reached[reached.length - 1];
-      if (last) { const next = PHASES[PHASES.indexOf(last) + 1]; if (next) { lines.push(''); lines.push(`  PHASE GAP: crash in ${last} phase (next ${next} never reached).`); } }
+      const terminalEvidence = te.some(e => ['ERROR', 'EXEC_RESULT', 'AI_RESPONSE'].includes(e.cat) || (e.cat === 'EFFECT' && (p(e).success === false || p(e).success === true)));
+      if (last && !terminalEvidence && last !== 'RESPOND' && last !== 'VERIFY_RESULT') {
+        const next = PHASES[PHASES.indexOf(last) + 1];
+        if (next) {
+          lines.push('');
+          lines.push(`  PHASE GAP: execution stopped after ${last}; ${next} was never reached and no terminal result was logged.`);
+        }
+      }
       const enter = te.filter(e => e.cat === 'EXECUTOR_BRANCH' && p(e).branch === 'ENTER').length;
       const exit = te.filter(e => e.cat === 'EXECUTOR_BRANCH' && p(e).branch === 'EXIT').length;
       if (enter > exit) { lines.push(''); lines.push(`  EXECUTOR MISFIRE: ENTER=${enter} EXIT=${exit}.`); }
@@ -1312,8 +1319,10 @@ export class UltraDevLog {
       const newEntries = UltraDevLog.entries.filter(e => e.seq > UltraDevLog.lastFlushedSeq);
       if (newEntries.length === 0) return;
       const appendContent = newEntries.map(e => JSON.stringify(e)).join('\n') + '\n';
+      const maxSeqFlushed = newEntries[newEntries.length - 1].seq;
 
       await LogFolder.appendLog(`ultra-devlog.jsonl`, appendContent);
+      await LogFolder.appendLog(`raw-export.jsonl`, appendContent);
 
       const sessionPath = UltraDevLog.getSessionFilePath();
       try {
@@ -1329,7 +1338,7 @@ export class UltraDevLog {
         await FileSystem.writeAsStringAsync(UltraDevLog.getSessionFilePath(), fallbackContent);
       }
 
-      UltraDevLog.lastFlushedSeq = UltraDevLog.seq;
+      UltraDevLog.lastFlushedSeq = maxSeqFlushed;
     } catch {} finally { UltraDevLog.writing = false; }
   }
 
@@ -1339,9 +1348,10 @@ export class UltraDevLog {
     try {
       const fp = UltraDevLog.getSessionFilePath();
       const info = await FileSystem.getInfoAsync(fp);
-      const content = info.exists
-        ? await FileSystem.readAsStringAsync(fp)
-        : UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
+      const persisted = info.exists ? await FileSystem.readAsStringAsync(fp) : '';
+      const pending = UltraDevLog.entries.filter(e => e.seq > UltraDevLog.lastFlushedSeq).map(e => JSON.stringify(e)).join('\n');
+      const separator = persisted && pending ? '\n' : '';
+      const content = `${persisted}${separator}${pending}${pending ? '\n' : ''}` || UltraDevLog.entries.map(e => JSON.stringify(e)).join('\n') + '\n';
       await LogFolder.writeLog(`raw-export.jsonl`, content);
       return content;
     } catch {}

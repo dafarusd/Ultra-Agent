@@ -58,8 +58,6 @@ const ULTRA_COLOR = ACCENT;
 const WARN_COLOR = "#ff6600";
 const BLOCKED_COLOR = "#ff4444";
 
-let _agentCoreInitialized = false;
-
 // ── 3-dot menu items ───────────────────────────────────
 function getHeaderMenuItems(starred: boolean): ActionMenuItem[] {
   return [
@@ -175,6 +173,11 @@ export default function ChatScreen() {
   
   const scrollOffsetRef = useRef(0);
   const listHeightRef = useRef(0);
+  const initGuardRef = useRef(false);
+  const agentCoreRef = useRef<AgentCore | null>(null);
+  const netInfoUnsubscribeRef = useRef<(() => void) | null>(null);
+  const diagIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deepIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Pulse animation for status dot ─────────────────
   useEffect(() => {
@@ -394,8 +397,8 @@ export default function ChatScreen() {
   // ── Init ───────────────────────────────────────────
   useEffect(() => {
     async function init() {
-      if (_agentCoreInitialized) return;
-      _agentCoreInitialized = true;
+      if (initGuardRef.current) return;
+      initGuardRef.current = true;
       UltraDevLog.checkProcessRestart();
       DebugLog.uiInit("start", "Beginning app initialization");
 
@@ -418,7 +421,7 @@ export default function ChatScreen() {
         NetInfo.fetch().then(state => {
           UltraDevLog.networkStatus(!!state.isConnected, state.type);
         }).catch(() => {});
-        NetInfo.addEventListener(state => {
+        netInfoUnsubscribeRef.current = NetInfo.addEventListener(state => {
           UltraDevLog.networkStatus(!!state.isConnected, state.type, state.isConnected ? undefined : 'WARN: went offline');
         });
       } catch (netErr: any) {
@@ -447,7 +450,7 @@ export default function ChatScreen() {
               'grid_config_version',
             ];
             for (const key of RESET_ON_UPGRADE) {
-              try { await vault.set(key, ''); } catch {}
+              try { await vault.delete(key); } catch {}
             }
             for (const key of RESET_ON_UPGRADE) {
               try { await AsyncStorage.removeItem(key); } catch {}
@@ -492,6 +495,7 @@ export default function ChatScreen() {
         });
         await core.initialize();
         setAgentCore(core);
+        agentCoreRef.current = core;
         setAgentCoreInstance(core);
 
         // Device diagnostics — automatic, no permissions needed
@@ -500,10 +504,8 @@ export default function ChatScreen() {
         DeviceDiagnostics.runAll();
         DeviceDiagnostics.runDeep();
         // Core every 30s, deep every 5min
-        const diagInterval = setInterval(() => { DeviceDiagnostics.runAll(); }, 30000);
-        const deepInterval = setInterval(() => { DeviceDiagnostics.runDeep(); }, 300000);
-        void diagInterval;
-        void deepInterval;
+        diagIntervalRef.current = setInterval(() => { DeviceDiagnostics.runAll(); }, 30000);
+        deepIntervalRef.current = setInterval(() => { DeviceDiagnostics.runDeep(); }, 300000);
 
         // Start foreground service to prevent process kill
         try {
@@ -700,6 +702,24 @@ export default function ChatScreen() {
       });
     }, [agentCore, sessionModelOverride])
   );
+
+
+  useEffect(() => {
+    return () => {
+      netInfoUnsubscribeRef.current?.();
+      netInfoUnsubscribeRef.current = null;
+      if (diagIntervalRef.current) clearInterval(diagIntervalRef.current);
+      if (deepIntervalRef.current) clearInterval(deepIntervalRef.current);
+      diagIntervalRef.current = null;
+      deepIntervalRef.current = null;
+      try {
+        agentCoreRef.current?.destroy('ChatScreen unmount');
+      } catch {}
+      agentCoreRef.current = null;
+      setAgentCoreInstance(null);
+      initGuardRef.current = false;
+    };
+  }, []);
 
   // ── Result handler ─────────────────────────────────
   const handleResult = useCallback(

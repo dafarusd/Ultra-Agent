@@ -31,14 +31,14 @@ If the user wants one of these actions, respond with ONLY this JSON (no markdown
 Common mappings:
 - "opn X" / "oepn X" / "launch X" → app_launch, target: X
 - "cll X" / "cal X" / "ring X" → app_launch with call intent
-- "txt X" / "msg X" / "mesage X" → send_sms
+- "txt X" / "msg X" / "mesage X" → sms_send
 - "srch X" / "luk up X" / "google X" → web_research, query: X
 - "nav to X" / "go to X" / "take me X" → app_launch with navigation
-- "pic" / "foto" / "take a photo" → capture_photo
-- "set alarm" / "timer" / "wake me" → set_alarm/set_timer
-- "whats the weather" / "gonna rain" → weather check via app
-- "remind me" / "dont forget" → set_reminder
-- "turn on/off X" → system action (wifi, bluetooth, flashlight)
+- "pic" / "foto" / "take a photo" → camera_capture
+- "set alarm" / "timer" / "wake me" → alarm_set/timer_set
+- "whats the weather" / "gonna rain" → open a weather app or web_search depending on capability fit
+- "remind me" / "dont forget" → reminder_create
+- "turn on/off X" → one of flashlight_toggle, wifi_toggle, bluetooth_toggle, or do_not_disturb
 
 If this is just conversation (greeting, question, opinion, chat) respond with:
 {"capability":null}`;

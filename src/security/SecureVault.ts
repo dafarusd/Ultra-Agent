@@ -5,6 +5,8 @@ import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 const webStorage: Record<string, string> = {};
 
+const SENSITIVE_KEYS = ['api_key', 'venice_api_key', 'biometric', 'password', 'secret', 'token'];
+
 async function storeSet(key: string, value: string): Promise<void> {
   if (Platform.OS === 'web') {
     try { localStorage.setItem(key, value); } catch { webStorage[key] = value; }
@@ -16,17 +18,28 @@ async function storeSet(key: string, value: string): Promise<void> {
 async function storeGet(key: string): Promise<string | null> {
   if (Platform.OS === 'web') {
     try { return localStorage.getItem(key) ?? webStorage[key] ?? null; } catch { return webStorage[key] ?? null; }
-  } else {
-    return SecureStore.getItemAsync(key);
   }
+  return await SecureStore.getItemAsync(key);
 }
 
 async function storeDel(key: string): Promise<void> {
   if (Platform.OS === 'web') {
-    try { localStorage.removeItem(key); } catch { delete webStorage[key]; }
-  } else {
-    await SecureStore.deleteItemAsync(key);
+    try { localStorage.removeItem(key); } catch {}
+    delete webStorage[key];
+    return;
   }
+  await SecureStore.deleteItemAsync(key);
+}
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return SENSITIVE_KEYS.some(s => normalized.includes(s));
+}
+
+function normalizeStoredValue(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  if (value === '') return null;
+  return value;
 }
 
 export class SecureVault {
@@ -50,8 +63,9 @@ export class SecureVault {
       vault.initialized = true;
       vault.logger.info('SecureVault initialized');
     } catch (error: any) {
-      vault.logger.warn('SecureVault native init failed, using fallback: ' + error.message);
       vault.initialized = true;
+      vault.logger.warn('SecureVault initialization degraded: ' + (error?.message || 'unknown error'));
+      DebugLog.vaultError('INIT', '__vault_test', error?.message || 'unknown error');
     }
     SecureVault.instance = vault;
     return vault;
@@ -64,51 +78,52 @@ export class SecureVault {
 
   async set(key: string, value: string): Promise<void> {
     if (!this.initialized) throw new Error('Vault not initialized');
+    const isSensitive = isSensitiveKey(key);
     try {
       await storeSet(`vu_${key}`, value);
       this.cache.set(key, value);
-      const SENSITIVE = ['api_key', 'venice_api_key', 'biometric', 'password', 'secret', 'token'];
-      const isSensitive = SENSITIVE.some(s => key.toLowerCase().includes(s));
       DebugLog.vaultSet(key, true, isSensitive ? `[REDACTED ${value.length}ch]` : value.slice(0, 200));
     } catch (error: any) {
-      this.cache.set(key, value);
-      DebugLog.vaultError('SET', key, error.message);
-      this.logger.error(`Store failed for ${key}: ${error.message}`);
+      DebugLog.vaultError('SET', key, error?.message || 'unknown error');
+      this.logger.error(`Store failed for ${key}: ${error?.message || 'unknown error'}`);
+      throw error;
     }
   }
 
   async get(key: string): Promise<string | null> {
     if (!this.initialized) throw new Error('Vault not initialized');
     if (this.cache.has(key)) {
-      const cached = this.cache.get(key)!;
-      const SENSITIVE_GET = ['api_key', 'venice_api_key', 'biometric', 'password', 'secret', 'token'];
-      const isSensitiveGet = SENSITIVE_GET.some(s => key.toLowerCase().includes(s));
-      DebugLog.vaultGet(key, true, isSensitiveGet ? `[REDACTED ${cached.length}ch]` : cached.slice(0, 80));
-      return cached;
+      const cached = normalizeStoredValue(this.cache.get(key) ?? null);
+      if (cached === null) {
+        this.cache.delete(key);
+      } else {
+        DebugLog.vaultGet(key, true, isSensitiveKey(key) ? `[REDACTED ${cached.length}ch]` : cached.slice(0, 80));
+        return cached;
+      }
     }
     try {
-      const value = await storeGet(`vu_${key}`);
-      if (value) this.cache.set(key, value);
-      const SENSITIVE_STORE = ['api_key', 'venice_api_key', 'biometric', 'password', 'secret', 'token'];
-      const isSensitiveStore = SENSITIVE_STORE.some(s => key.toLowerCase().includes(s));
-      DebugLog.vaultGet(key, !!value, value ? (isSensitiveStore ? `[REDACTED ${value.length}ch]` : value.slice(0, 80)) : undefined);
+      const value = normalizeStoredValue(await storeGet(`vu_${key}`));
+      if (value !== null) this.cache.set(key, value);
+      else this.cache.delete(key);
+      DebugLog.vaultGet(key, value !== null, value ? (isSensitiveKey(key) ? `[REDACTED ${value.length}ch]` : value.slice(0, 80)) : undefined);
       return value;
     } catch (error: any) {
-      DebugLog.vaultError('GET', key, error.message);
-      this.logger.error(`Retrieve failed for ${key}: ${error.message}`);
+      DebugLog.vaultError('GET', key, error?.message || 'unknown error');
+      this.logger.error(`Retrieve failed for ${key}: ${error?.message || 'unknown error'}`);
       return null;
     }
   }
 
   async delete(key: string): Promise<void> {
+    if (!this.initialized) throw new Error('Vault not initialized');
     try {
       await storeDel(`vu_${key}`);
       this.cache.delete(key);
       DebugLog.vaultDelete(key);
     } catch (error: any) {
-      this.cache.delete(key);
-      DebugLog.vaultError('DEL', key, error.message);
-      this.logger.error(`Delete failed for ${key}: ${error.message}`);
+      DebugLog.vaultError('DEL', key, error?.message || 'unknown error');
+      this.logger.error(`Delete failed for ${key}: ${error?.message || 'unknown error'}`);
+      throw error;
     }
   }
 

@@ -105,7 +105,9 @@ export default function ModelPickerSheet({
   const filteredRaw = filter === "all"
     ? models
     : models.filter((m) => m.type === filter);
-  const filtered = [...filteredRaw].sort((a, b) => {
+  const usingFallback = filter !== "all" && filteredRaw.length === 0;
+  const filteredSource = usingFallback ? models : filteredRaw;
+  const filtered = [...filteredSource].sort((a, b) => {
     const aActive = a.id === currentModelId ? 1 : 0;
     const bActive = b.id === currentModelId ? 1 : 0;
     return bActive - aActive;
@@ -214,6 +216,12 @@ export default function ModelPickerSheet({
             })}
           </ScrollView>
 
+          {usingFallback && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No models for this category yet — showing all available models.</Text>
+            </View>
+          )}
+
           <FlatList
             data={filtered}
             renderItem={renderModel}
@@ -222,7 +230,7 @@ export default function ModelPickerSheet({
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>No models for this category</Text>
+                <Text style={styles.emptyText}>No models available</Text>
               </View>
             }
           />

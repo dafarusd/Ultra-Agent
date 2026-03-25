@@ -66,6 +66,21 @@ async function captureStateDelta(taskId: string, capability: string, toggleFn: (
   return { toggled, before, after, changed };
 }
 
+
+async function toAndroidContentUri(pathOrUri: string): Promise<string> {
+  if (!pathOrUri) return pathOrUri;
+  if (pathOrUri.startsWith('content://')) return pathOrUri;
+  const normalized = pathOrUri.startsWith('file://') ? pathOrUri : `file://${pathOrUri}`;
+  if (Platform.OS === 'android' && FileSystem?.getContentUriAsync) {
+    try {
+      return await FileSystem.getContentUriAsync(normalized);
+    } catch {
+      return normalized;
+    }
+  }
+  return normalized;
+}
+
 async function logUiSnapshot(taskId: string, capability: string): Promise<void> {
   try {
     const pkg = await AppController.getActivePackage();
@@ -1897,7 +1912,9 @@ export class TaskExecutor {
         try {
           const model = (params as any).model as string | undefined;
           const seconds = (params as any).seconds as number | undefined;
-          const job = await this.venice.generateVideo(prompt, { model, seconds });
+          const duration = (params as any).duration as number | undefined;
+          const resolvedDuration = duration ?? seconds;
+          const job = await this.venice.generateVideo(prompt, { model, duration: resolvedDuration });
           const { videoBase64 } = await this.venice.pollVideoJob(job.jobId);
           const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
           const videoPath = `${docDirSlash}video_${Date.now()}.mp4`;

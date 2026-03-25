@@ -106,6 +106,8 @@ export class AgentCore extends SimpleEmitter {
   private instanceId: string;
   private credentialVault: CredentialVault;
   private intentParser: AIIntentParser;
+  private destroyed = false;
+  private destroyPromise: Promise<void> | null = null;
 
   constructor(vault: SecureVault, cb: (msg: string, type: string) => void) {
     super();
@@ -1258,24 +1260,6 @@ You are always on. Always capable. Always direct.`;
                   DebugLog.systemEvent('AgentCore', `Contact preference stored: "${contactName}" → ${number.slice(0, 6)}****`);
                 }
               } catch (e: any) { DebugLog.error('ContactStore', e?.message || 'rememberContact failed', e?.stack); }
-              // Execute the resolved plan immediately — do not fall through to conversation mode
-              try {
-                const disambigResult = await this.executor.runWithPlan(plan, taskId);
-                const disambigSummary = disambigResult.summary || `Calling ${number}`;
-                const disambigMsg: ChatMessage = {
-                  id: uid('msg'),
-                  role: 'assistant',
-                  content: disambigSummary,
-                  createdAt: Date.now(),
-                  source: 'ultra',
-                  meta: { mode: 'command', capability: plan.capability },
-                };
-                await this.conversations.addMessage(conversationId, disambigMsg);
-                return { type: 'action_result', message: disambigSummary, taskId };
-              } catch (disambigErr: any) {
-                DebugLog.error('DisambiguationExecute', disambigErr.message, disambigErr.stack);
-                return { type: 'error', message: `Failed to execute resolved action: ${disambigErr.message}`, taskId };
-              }
             }
           }
         }
@@ -1287,6 +1271,51 @@ You are always on. Always capable. Always direct.`;
     // === EXECUTE PLAN SET BY DISAMBIGUATION FOLLOW-UP ===
     // If the disambiguation block set a plan (fuzzy app or contact resolve), execute it now
     if (plan && planFromParser) {
+      const safetyResult = this.safety.check(userInput, plan);
+      DebugLog.safetyCheck(taskId, safetyResult.risk, safetyResult.allowed, safetyResult.reasons);
+      step('VERIFY', `Disambiguation follow-up re-entered standard pipeline. risk=${safetyResult.risk}, allowed=${safetyResult.allowed}, requiresApproval=${safetyResult.requiresApproval}`, safetyResult.allowed);
+      if (!safetyResult.allowed) {
+        const blockedMsg: ChatMessage = {
+          id: uid('msg'),
+          role: 'assistant',
+          content: safetyResult.reasons.join('\n') || 'Blocked by safety policy.',
+          createdAt: Date.now(),
+          source: 'system',
+          meta: { mode: 'command', capability: plan.capability },
+        };
+        await this.conversations.addMessage(conversationId, blockedMsg);
+        return { type: 'blocked', message: blockedMsg.content, taskId };
+      }
+
+      const capTierCheck = this.tierService.canUseCapability(plan.capability);
+      if (!capTierCheck.allowed) {
+        const tierMsg: ChatMessage = {
+          id: uid('msg'),
+          role: 'assistant',
+          content: capTierCheck.reason,
+          createdAt: Date.now(),
+          source: 'ultra',
+          meta: { mode: 'command', capability: plan.capability, tierBlocked: true, needsUpgrade: capTierCheck.needsUpgrade },
+        };
+        await this.conversations.addMessage(conversationId, tierMsg);
+        return { type: 'blocked', message: capTierCheck.reason, taskId };
+      }
+
+      if (safetyResult.requiresApproval && !args.approvedAction) {
+        const approvalMsg = `I can do that, but it requires confirmation first. ${plan.reason || ''}`.trim();
+        const approvalChatMsg: ChatMessage = {
+          id: uid('msg'),
+          role: 'assistant',
+          content: approvalMsg,
+          createdAt: Date.now(),
+          source: 'ultra',
+          meta: { mode: 'command', capability: plan.capability, requiresApproval: true },
+        };
+        await this.conversations.addMessage(conversationId, approvalChatMsg);
+        return { type: 'approval_required', message: approvalMsg, taskId, data: { replayUserInput: userInput } };
+      }
+
+      step('APPROVE', safetyResult.requiresApproval ? 'Approved disambiguation follow-up action' : `Auto-approved (risk=${safetyResult.risk})`, true);
       this.emit('log', `Executing ${plan.capability}...`, 'system');
       DebugLog.executePhase(taskId, 'EXECUTE');
       let disambigResult: any;
@@ -1295,6 +1324,8 @@ You are always on. Always capable. Always direct.`;
       } catch (err: any) {
         disambigResult = { success: false, error: err.message };
       }
+      const verification = this.safety.verifyResult(plan, disambigResult);
+      DebugLog.verification(taskId, verification.verified, verification.issues);
       const disambigSummary = disambigResult?.success !== false
         ? (disambigResult?.summary || `Opened ${plan.params?.target || ''}`)
         : `Failed: ${disambigResult?.error || 'unknown error'}`;
@@ -1307,7 +1338,25 @@ You are always on. Always capable. Always direct.`;
         meta: { mode: 'command', capability: plan.capability },
       };
       await this.conversations.addMessage(conversationId, disambigMsg);
-      await this.learner.learnFromExecution(userInput, [plan.capability], disambigSummary, disambigResult?.success !== false);
+      await this.ledger.logEvent({
+        phase: 'EXECUTE',
+        capability: plan.capability,
+        inputSummary: userInput.slice(0, 200),
+        outputSummary: JSON.stringify(disambigResult).slice(0, 200),
+        model: args.approvedModel || this.ai.getDefaultModel(),
+        cost: this.costTracker.getTaskSpend(taskId),
+        success: disambigResult?.success !== false,
+        conversationId,
+      });
+      await this.ledger.logEvent({
+        phase: 'VERIFY_RESULT',
+        capability: plan.capability,
+        inputSummary: `verified=${verification.verified}`,
+        outputSummary: verification.issues.join('; ').slice(0, 200),
+        success: verification.verified,
+        conversationId,
+      });
+      await this.learner.learnFromExecution(userInput, [plan.capability], disambigSummary, verification.verified);
       return { type: 'action_result', message: disambigSummary, taskId };
     }
 
@@ -1627,5 +1676,5 @@ You are always on. Always capable. Always direct.`;
 }
 
 let _agentCoreInstance: AgentCore | null = null;
-export function setAgentCoreInstance(core: AgentCore) { _agentCoreInstance = core; }
+export function setAgentCoreInstance(core: AgentCore | null) { _agentCoreInstance = core; }
 export function getAgentCoreInstance(): AgentCore | null { return _agentCoreInstance; }

@@ -10,6 +10,8 @@ export class BackgroundOrchestrator {
   private isRunning = false;
   private onSuggestion: ((suggestions: ProactiveSuggestion[]) => void) | null = null;
   private pendingTasks: Map<string, { type: string; startedAt: number; timeoutHandle: ReturnType<typeof setTimeout> }> = new Map();
+  private appStateSubscription: { remove: () => void } | null = null;
+  private warmupTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly TASK_TIMEOUT_MS = 55_000;
 
   constructor(private proactive: ProactiveEngine, private signals: DeviceSignals) { _orchestratorInstance = this; }
@@ -28,8 +30,8 @@ export class BackgroundOrchestrator {
       const { status } = await Notifications.requestPermissionsAsync();
       DebugLog.push('BG_SERVICE' as any, { event: 'notification_permission', status });
     } catch {}
-    setTimeout(async () => { try { await this.runSignalRead(); await this.runProactiveEval(); } catch {} }, 30_000);
-    AppState.addEventListener('change', this.handleAppStateChange);
+    this.warmupTimer = setTimeout(async () => { try { await this.runSignalRead(); await this.runProactiveEval(); } catch {} }, 30_000);
+    this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange);
   }
 
   async runSignalRead(): Promise<void> {
@@ -84,6 +86,11 @@ export class BackgroundOrchestrator {
 
   async stop(): Promise<void> {
     if (!this.isRunning) return; this.isRunning = false;
+    if (this.warmupTimer) { clearTimeout(this.warmupTimer); this.warmupTimer = null; }
+    this.appStateSubscription?.remove();
+    this.appStateSubscription = null;
+    for (const entry of this.pendingTasks.values()) clearTimeout(entry.timeoutHandle);
+    this.pendingTasks.clear();
     if (isNative) { try { const n = NativeModules.AgentNative; if (n?.stopBackgroundAgent) await n.stopBackgroundAgent(); } catch {} }
     _orchestratorInstance = null;
     DebugLog.push('BG_SERVICE' as any, { event: 'stopped' });

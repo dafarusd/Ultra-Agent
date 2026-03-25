@@ -26,6 +26,11 @@ export interface ModelDef {
   offline: boolean;
 }
 
+export interface ModelRecommendation {
+  recommended: string;
+  reason: string;
+}
+
 interface CompletionResult {
   content: string;
   model: string;
@@ -51,6 +56,14 @@ interface CategoryDefault {
   modelId: string;
   providerId: string;
 }
+
+
+interface RouteResolution {
+  modelId: string;
+  apiKey: string;
+  baseUrl: string;
+}
+
 
 export class ModelRouter {
   private vault: SecureVault;
@@ -112,7 +125,7 @@ export class ModelRouter {
       }
     }
     const savedUrl = await this.vault.get('api_base_url');
-    if (savedUrl) this.baseUrl = savedUrl;
+    this.baseUrl = this.normalizeBaseUrl(savedUrl || VENICE_BASE_URL);
 
     if (!this.apiKey) {
       this.logger.warn('No Venice API key configured');
@@ -292,11 +305,12 @@ export class ModelRouter {
     if (!this.apiKey) return;
     DebugLog.modelDiscoveryStart(this.baseUrl);
     try {
+      const effectiveApiKey = this.apiKey!;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
       const resp = await fetch(`${this.baseUrl}/models`, {
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          'Authorization': `Bearer ${effectiveApiKey}`,
           'Content-Type': 'application/json',
         },
         signal: controller.signal,
@@ -400,6 +414,104 @@ export class ModelRouter {
     }
   }
 
+
+  private isValidHttpUrl(url: string | null | undefined): boolean {
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+
+
+  private normalizeBaseUrl(url: string | null | undefined): string {
+    if (!this.isValidHttpUrl(url)) return VENICE_BASE_URL;
+    return String(url).replace(/\/+$/, '');
+  }
+
+
+  private normalizeCategory(category: string | undefined | null): string {
+    if (!category) return '';
+    const raw = category.toLowerCase();
+    if (raw === 'conversation' || raw === 'chat' || raw === 'text') return 'chat';
+    if (raw === 'agent_action') return 'reasoning';
+    return raw;
+  }
+
+
+  private getCategoryForAgent(agentId: string | undefined, explicitCategory?: string): string {
+    const normalizedExplicit = this.normalizeCategory(explicitCategory);
+    if (normalizedExplicit) return normalizedExplicit;
+    const agentCategoryMap: Record<string, string> = {
+      cortex_planner: 'reasoning',
+      cortex_reasoner: 'reasoning',
+      multistep_planner: 'reasoning',
+      context_analyst: 'chat',
+      diagnostician: 'chat',
+      app_intel: 'chat',
+      app_extractor: 'chat',
+      vision: 'chat',
+      kg_extractor: 'chat',
+      intent_parser: 'chat',
+      proactive: 'chat',
+      correction: 'chat',
+      chat: 'chat',
+      main: 'chat',
+      codegen: 'reasoning',
+    };
+    return agentId ? (agentCategoryMap[agentId] || '') : '';
+  }
+
+
+  private findRoutingForModel(modelId: string): RouteResolution | null {
+    const provider = this.findProviderForModel(modelId);
+    if (!provider) return null;
+    return {
+      modelId,
+      apiKey: provider.apiKey,
+      baseUrl: this.normalizeBaseUrl(provider.baseUrl),
+    };
+  }
+
+
+  private resolveRoute(options: { requestedModel?: string; category?: string; agentId?: string }): RouteResolution {
+    const requestedModel = options.requestedModel || '';
+    if (requestedModel) {
+      const explicit = this.findRoutingForModel(requestedModel);
+      if (explicit) return explicit;
+      return { modelId: requestedModel, apiKey: this.apiKey || '', baseUrl: this.baseUrl };
+    }
+
+    const category = this.getCategoryForAgent(options.agentId, options.category);
+    if (category) {
+      const catRoute = this.getModelForCategory(category);
+      if (catRoute) {
+        return {
+          modelId: catRoute.modelId,
+          apiKey: catRoute.apiKey,
+          baseUrl: this.normalizeBaseUrl(catRoute.baseUrl),
+        };
+      }
+    }
+
+    const fallbackModel = this.defaultModel || requestedModel;
+    const discoveredFallback = fallbackModel ? this.findRoutingForModel(fallbackModel) : null;
+    if (discoveredFallback) return discoveredFallback;
+    return {
+      modelId: fallbackModel,
+      apiKey: this.apiKey || '',
+      baseUrl: this.baseUrl,
+    };
+  }
+
+
+  private getCandidateTextModels(): ModelDef[] {
+    return [...this.models.values()].filter(m => m.type === 'text');
+  }
+
+
   selectModel(_taskType: string, _budget?: number): string {
     return this.defaultModel;
   }
@@ -421,8 +533,61 @@ export class ModelRouter {
     return m?.contextWindow ?? 8192;
   }
 
-  recommendModel(_input: any): null {
-    return null;
+
+  recommendModel(input: { taskType?: string; requiredContextTokens?: number; currentModel?: string }): ModelRecommendation | null {
+    const textModels = this.getCandidateTextModels();
+    if (textModels.length === 0) return null;
+
+    const currentModelId = input.currentModel || this.defaultModel;
+    const current = currentModelId ? this.models.get(currentModelId) : undefined;
+    const taskType = (input.taskType || 'conversation').toLowerCase();
+    const requiredContextTokens = Math.max(0, Number(input.requiredContextTokens || 0));
+
+    let target: ModelDef | undefined = current && current.type === 'text' ? current : undefined;
+    let reason = '';
+
+    if (requiredContextTokens > 0) {
+      const contextEligible = textModels
+        .filter(m => m.contextWindow >= requiredContextTokens)
+        .sort((a, b) => a.contextWindow - b.contextWindow || a.maxTokens - b.maxTokens);
+      if (contextEligible.length > 0) {
+        const bestFit = contextEligible[0];
+        if (!target || target.contextWindow < requiredContextTokens || target.contextWindow > bestFit.contextWindow * 2) {
+          target = bestFit;
+          reason = `It better matches the required context window (${requiredContextTokens} tokens).`;
+        }
+      }
+    }
+
+    if (taskType === 'code' || taskType === 'agent_action' || taskType === 'reasoning') {
+      const reasoningModel = textModels
+        .filter(m => m.capabilities.supportsReasoning)
+        .sort((a, b) => b.contextWindow - a.contextWindow || b.maxTokens - a.maxTokens)[0];
+      if (reasoningModel && reasoningModel.id !== currentModelId) {
+        if (!target || !target.capabilities.supportsReasoning) {
+          target = reasoningModel;
+          reason = 'It is better suited for structured reasoning and multi-step work.';
+        }
+      }
+    }
+
+    if (taskType === 'image') {
+      const uncensoredTextModel = textModels.find(m => m.capabilities.isUncensored) || textModels.find(m => m.capabilities.supportsFunctionCalling);
+      if (uncensoredTextModel && uncensoredTextModel.id !== currentModelId) {
+        if (!target || target.type !== 'text') {
+          target = uncensoredTextModel;
+        }
+        reason = reason || 'It is a safer text-model choice for planning image generation prompts.';
+      }
+    }
+
+    if (!target) {
+      target = textModels.sort((a, b) => b.contextWindow - a.contextWindow || b.maxTokens - a.maxTokens)[0];
+      reason = reason || 'It is the strongest available general text model.';
+    }
+
+    if (!target || !currentModelId || target.id === currentModelId) return null;
+    return { recommended: target.id, reason };
   }
 
   async complete(
@@ -453,29 +618,11 @@ export class ModelRouter {
     const model = options.model || this.defaultModel;
     const taskId = options.taskId || 'default';
     const agentId = options.agentId || 'main';
+    const route = this.resolveRoute({ requestedModel: options.model || model, category: options.category, agentId });
+    const effectiveModel = route.modelId || model;
+    const effectiveApiKey = route.apiKey || this.apiKey;
+    const effectiveBaseUrl = route.baseUrl || this.baseUrl;
 
-    // ── Category-based routing (Gap 18A) ──
-    let effectiveApiKey = this.apiKey!;
-    let effectiveBaseUrl = this.baseUrl;
-    let effectiveModel = model;
-    if (!options.model) {
-      const agentCategoryMap: Record<string, string> = {
-        'cortex_planner': 'reasoning', 'cortex_reasoner': 'reasoning',
-        'context_analyst': 'chat', 'diagnostician': 'chat',
-        'app_intel': 'chat', 'app_extractor': 'chat',
-        'vision': 'image', 'kg_extractor': 'chat',
-        'intent_parser': 'chat', 'proactive': 'chat', 'correction': 'chat',
-      };
-      const cat = options.category || agentCategoryMap[agentId] || '';
-      if (cat) {
-        const catRoute = this.getModelForCategory(cat);
-        if (catRoute) {
-          effectiveModel = catRoute.modelId;
-          effectiveApiKey = catRoute.apiKey;
-          effectiveBaseUrl = catRoute.baseUrl;
-        }
-      }
-    }
     if (!this.costTracker.isWithinDailyLimit()) {
       throw new Error('Daily cost limit reached. Increase in Settings or wait until tomorrow.');
     }
@@ -487,8 +634,8 @@ export class ModelRouter {
       "You are Agent Ultra, an autonomous AI agent on a user's Android phone. You have device access including file system, contacts, SMS, camera, media, and can build Android apps on-device. Be precise, concise, action-oriented. When generating code, provide complete compilable code with no omissions.";
 
     const promptTokens = Math.ceil((prompt.length + systemPrompt.length) / 4);
-    DebugLog.modelApiRequest(model, taskId, promptTokens, options.maxTokens ?? 4000);
-    DebugLog.convContextSent(taskId, model, {
+    DebugLog.modelApiRequest(effectiveModel, taskId, promptTokens, options.maxTokens ?? 4000);
+    DebugLog.convContextSent(taskId, effectiveModel, {
       system_prompt_chars: systemPrompt.length,
       history_message_count: 0,
       history_chars: 0,
@@ -561,13 +708,17 @@ export class ModelRouter {
       maxTokens?: number;
       taskId?: string;
       agentId?: string;
+      category?: string;
     } = {}
   ): Promise<CompletionResult> {
     if (!this.apiKey) throw new Error('Venice API key not configured.');
-    const model = options.model || this.defaultModel;
     const taskId = options.taskId || 'default';
     const agentId = options.agentId || 'main';
     if (!this.costTracker.isWithinDailyLimit()) throw new Error('Daily cost limit reached.');
+    const route = this.resolveRoute({ requestedModel: options.model || this.defaultModel, category: options.category, agentId });
+    const model = route.modelId || options.model || this.defaultModel;
+    const effectiveApiKey = route.apiKey || this.apiKey;
+    const effectiveBaseUrl = route.baseUrl || this.baseUrl;
 
     const totalChars = messages.reduce((s, m) => s + (m.content?.length ?? 0), 0);
     const systemMsgs = messages.filter(m => m.role === 'system');
@@ -596,10 +747,10 @@ export class ModelRouter {
       };
       DebugLog.systemEvent('ModelRouter.completeWithConversation', `API_PAYLOAD model=${model} task=${taskId} msg_count=${messages.length} total_chars=${totalChars} temp=${convPayload.temperature} max_tokens=${convPayload.max_tokens}`);
       const convFetchStartMs = Date.now();
-      const resp = await fetch(`${this.baseUrl}/chat/completions`, {
+      const resp = await fetch(`${effectiveBaseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${effectiveApiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(convPayload),
@@ -607,7 +758,11 @@ export class ModelRouter {
       });
       clearTimeout(timeout);
       this.activeController = null;
-      if (!resp.ok) throw new Error(`Venice API error: HTTP ${resp.status}`);
+      if (!resp.ok) {
+        if (resp.status === 401) throw new Error('Invalid Venice API key.');
+        if (resp.status === 429) throw new Error('Rate limited. Wait before retrying.');
+        throw new Error(`Venice API error: HTTP ${resp.status}`);
+      }
       const data = await resp.json();
       const content = data.choices[0].message.content;
       const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0 };
@@ -626,6 +781,7 @@ export class ModelRouter {
         }
         throw new Error('Request timed out after 60s. Check your connection and try again.');
       }
+      if (error.message.includes('Venice API') || error.message.includes('Invalid') || error.message.includes('Rate limited')) throw error;
       throw new Error('AI conversation failed: ' + error.message);
     }
   }
@@ -748,8 +904,12 @@ export class ModelRouter {
   }
 
   async setBaseUrl(url: string): Promise<void> {
-    this.baseUrl = url.replace(/\/+$/, '');
-    await this.vault.set('api_base_url', this.baseUrl);
+    this.baseUrl = this.normalizeBaseUrl(url || VENICE_BASE_URL);
+    if (this.baseUrl === VENICE_BASE_URL && (!url || !this.isValidHttpUrl(url))) {
+      await this.vault.delete('api_base_url').catch(() => {});
+    } else {
+      await this.vault.set('api_base_url', this.baseUrl);
+    }
     this.logger.info(`API base URL set to: ${this.baseUrl}`);
   }
 

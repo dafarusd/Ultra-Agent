@@ -112,7 +112,7 @@ export default function SettingsScreen() {
       if (draft) {
         await vault.set("api_edit_draft", JSON.stringify({ draft, isNew }));
       } else {
-        await vault.set("api_edit_draft", "");
+        await vault.delete("api_edit_draft");
       }
     } catch {}
   }, []);
@@ -375,8 +375,8 @@ export default function SettingsScreen() {
           await core.setApiBaseUrl(primary.baseUrl);
         }
       } else {
-        await vault.set('venice_api_key', '');
-        await vault.set('api_base_url', '');
+        await vault.delete('venice_api_key');
+        await vault.delete('api_base_url');
       }
 
       UltraDevLog.settingsSaveResult('api', true, ['saved_apis', 'venice_api_key', 'api_base_url']);
@@ -403,8 +403,8 @@ export default function SettingsScreen() {
           await core.setApiBaseUrl(primary.baseUrl);
         }
       } else {
-        await vault.set('venice_api_key', '');
-        await vault.set('api_base_url', '');
+        await vault.delete('venice_api_key');
+        await vault.delete('api_base_url');
       }
     } catch {}
   }, []);

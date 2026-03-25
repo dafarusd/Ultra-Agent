@@ -15,8 +15,10 @@ export class EventMonitor {
   private triggers: EventTrigger[] = [];
   private scheduleInterval: ReturnType<typeof setInterval> | null = null;
   private batteryInterval: ReturnType<typeof setInterval> | null = null;
+  private smsInterval: ReturnType<typeof setInterval> | null = null;
   private isRunning = false;
   private uiEventEmitter: NativeEventEmitter | null = null;
+  private uiTreeSubscription: { remove: () => void } | null = null;
 
   constructor(
     private executor: TaskExecutor,
@@ -32,21 +34,21 @@ export class EventMonitor {
 
     if (NativeModules.AppController) {
       this.uiEventEmitter = new NativeEventEmitter(NativeModules.AppController);
-      this.uiEventEmitter.addListener('onUiTreeChanged', (event) => {
-        this.evaluateNotificationTriggers(event.packageName);
+      this.uiTreeSubscription = this.uiEventEmitter.addListener('onUiTreeChanged', (event) => {
+        this.evaluateNotificationTriggers(event.packageName).catch(() => {});
       });
     }
 
     this.scheduleInterval = setInterval(() => {
-      this.evaluateScheduleTriggers();
+      this.evaluateScheduleTriggers().catch(() => {});
     }, 60000);
 
     this.batteryInterval = setInterval(() => {
-      this.evaluateBatteryTriggers();
+      this.evaluateBatteryTriggers().catch(() => {});
     }, 30000);
 
-    setInterval(() => {
-      this.evaluateSmsContentTriggers();
+    this.smsInterval = setInterval(() => {
+      this.evaluateSmsContentTriggers().catch(() => {});
     }, 120000);
 
     DebugLog.systemEvent('EventMonitor', `Started. Triggers: ${this.triggers.length}`);
@@ -57,15 +59,22 @@ export class EventMonitor {
     this.isRunning = false;
     if (this.scheduleInterval) clearInterval(this.scheduleInterval);
     if (this.batteryInterval) clearInterval(this.batteryInterval);
-    if (this.uiEventEmitter) this.uiEventEmitter.removeAllListeners('onUiTreeChanged');
+    if (this.smsInterval) clearInterval(this.smsInterval);
+    this.scheduleInterval = null;
+    this.batteryInterval = null;
+    this.smsInterval = null;
+    this.uiTreeSubscription?.remove();
+    this.uiTreeSubscription = null;
+    this.uiEventEmitter = null;
   }
 
   private async evaluateScheduleTriggers(): Promise<void> {
     const now = new Date();
     const hour = now.getHours();
     const minute = now.getMinutes();
+    const dayOfWeek = now.getDay();
     for (const trigger of this.triggers.filter(t => t.enabled && t.type === 'schedule')) {
-      const conditionMet = this.evaluateCondition(trigger.condition, { hour, minute });
+      const conditionMet = this.evaluateCondition(trigger.condition, { hour, minute, dayOfWeek });
       if (conditionMet) {
         const cooldown = 60000;
         if (!trigger.lastFired || Date.now() - trigger.lastFired > cooldown) {
@@ -93,8 +102,6 @@ export class EventMonitor {
     const batteryTriggers = this.triggers.filter(t => t.enabled && (t.type === 'battery' || t.type === 'battery_level'));
     if (batteryTriggers.length === 0) return;
     try {
-      const AgentNative = (await import('../native/AgentNative')).default;
-      const storageInfo = await AgentNative.getStorageInfo(); // side-channel for battery
       const { NativeModules: NM } = require('react-native');
       const batteryLevel: number = NM.DeviceInfo?.getBatteryLevel ? await NM.DeviceInfo.getBatteryLevel() : -1;
       if (batteryLevel < 0) return;
@@ -120,7 +127,7 @@ export class EventMonitor {
       const recent = await AgentNative.readSms(10, 'inbox');
       for (const trigger of smsTriggers) {
         const keyword = trigger.condition.replace(/sms.*contains?/i, '').trim().toLowerCase();
-        const match = recent.find(s => s.body.toLowerCase().includes(keyword));
+        const match = recent.find((s: any) => s.body.toLowerCase().includes(keyword));
         if (match) {
           const cooldown = 300000;
           if (!trigger.lastFired || Date.now() - trigger.lastFired > cooldown) {
@@ -136,16 +143,18 @@ export class EventMonitor {
     const c = condition.toLowerCase();
     if (data.batteryPct !== undefined) {
       const underMatch = condition.match(/battery.*(?:under|below|<)\s*(\d+)%/i);
-      if (underMatch) return data.batteryPct < parseInt(underMatch[1]);
+      if (underMatch) return data.batteryPct < parseInt(underMatch[1], 10);
       const overMatch = condition.match(/battery.*(?:over|above|>)\s*(\d+)%/i);
-      if (overMatch) return data.batteryPct > parseInt(overMatch[1]);
+      if (overMatch) return data.batteryPct > parseInt(overMatch[1], 10);
     }
     if (data.hour !== undefined && data.minute !== undefined) {
       // time range: "between 9am and 5pm"
       const rangeMatch = condition.match(/between\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+and\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
       if (rangeMatch) {
-        let startH = parseInt(rangeMatch[1]), startM = rangeMatch[2] ? parseInt(rangeMatch[2]) : 0;
-        let endH = parseInt(rangeMatch[4]), endM = rangeMatch[5] ? parseInt(rangeMatch[5]) : 0;
+        let startH = parseInt(rangeMatch[1], 10);
+        let startM = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : 0;
+        let endH = parseInt(rangeMatch[4], 10);
+        let endM = rangeMatch[5] ? parseInt(rangeMatch[5], 10) : 0;
         if (rangeMatch[3]?.toLowerCase() === 'pm' && startH < 12) startH += 12;
         if (rangeMatch[6]?.toLowerCase() === 'pm' && endH < 12) endH += 12;
         const nowMins = data.hour * 60 + data.minute;
@@ -153,8 +162,8 @@ export class EventMonitor {
       }
       const timeMatch = condition.match(/at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
       if (timeMatch) {
-        let targetHour = parseInt(timeMatch[1]);
-        const targetMin = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+        let targetHour = parseInt(timeMatch[1], 10);
+        const targetMin = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
         const ampm = timeMatch[3]?.toLowerCase();
         if (ampm === 'pm' && targetHour < 12) targetHour += 12;
         if (ampm === 'am' && targetHour === 12) targetHour = 0;
@@ -163,7 +172,7 @@ export class EventMonitor {
       }
     }
     if (data.packageName) {
-      return c.includes(data.packageName.toLowerCase());
+      return c.includes(String(data.packageName).toLowerCase());
     }
     // Day of week: "every sunday" / "on mondays" / "weekdays" / "weekends"
     const dayNames: Record<string, number> = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };

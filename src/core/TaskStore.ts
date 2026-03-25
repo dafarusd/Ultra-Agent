@@ -79,7 +79,7 @@ export class TaskStore {
     await this.saveIndex();
     while (this.index.length > MAX_STORED_TASKS) {
       const oldId = this.index.shift()!;
-      try { await this.vault.set(TASK_PREFIX + oldId, ''); } catch {}
+      try { await this.vault.delete(TASK_PREFIX + oldId); } catch {}
       this.cache.delete(oldId);
     }
     DebugLog.push('TASK_STORE' as any, { event: 'created', taskId: id, goal: params.goal.slice(0, 60), subTaskCount: task.subTasks.length });
