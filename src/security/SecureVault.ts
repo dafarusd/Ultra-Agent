@@ -5,7 +5,7 @@ import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 const webStorage: Record<string, string> = {};
 
-const SENSITIVE_KEYS = ['api_key', 'venice_api_key', 'biometric', 'password', 'secret', 'token'];
+const SENSITIVE_KEYS = ['api_key', 'apikey', 'biometric', 'password', 'secret', 'token', 'provider_'];
 
 async function storeSet(key: string, value: string): Promise<void> {
   if (Platform.OS === 'web') {

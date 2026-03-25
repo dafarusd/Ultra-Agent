@@ -8,7 +8,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import * as MediaLibrary from 'expo-media-library';
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { BuildSystem } from './BuildSystem';
-import { VeniceService } from './VeniceService';
+import { AiService } from './provider/AiService';
 import { DebugEngine } from './DebugEngine';
 import { CapabilityRegistry } from './CapabilityRegistry';
 import { CapabilityProbe } from './CapabilityProbe';
@@ -117,7 +117,7 @@ export class TaskExecutor {
   private currentGenome: Genome | null = null;
   private onGenomeProgress: ((phase: string, message: string) => void) | null = null;
   private learner: PreferenceLearner | null = null;
-  private venice: VeniceService | null = null;
+  private aiServiceProvider: AiService | null = null;
 
   constructor(build: BuildSystem, debug: DebugEngine, caps: CapabilityRegistry, perms: PermissionBroker, ai: ModelRouter, probe?: CapabilityProbe) {
     this.build = build;
@@ -136,8 +136,11 @@ export class TaskExecutor {
     this.learner = learner;
   }
 
-  setVeniceService(venice: VeniceService): void {
-    this.venice = venice;
+  setAiService(svc: AiService): void {
+    this.aiServiceProvider = svc;
+  }
+  setVeniceService(_venice: any): void {
+    // Legacy shim — use setAiService instead
   }
 
   setGenomeProgressCallback(cb: ((phase: string, message: string) => void) | null): void {
@@ -1854,8 +1857,9 @@ export class TaskExecutor {
             (this.ai.getDefaultModelForMode ? this.ai.getDefaultModelForMode('image') : undefined) ||
             'fluently-xl';
           let result: { images: string[]; model: string };
-          if (this.venice) {
-            result = await this.venice.generateImage(prompt, { model: imageModel });
+          if (this.aiServiceProvider) {
+            const aiResult = await this.aiServiceProvider.generateImage({ prompt, model: imageModel, taskId });
+            result = { images: aiResult.images, model: aiResult.model };
           } else {
             result = await this.ai.generateImage(prompt, { taskId, model: imageModel });
           }
@@ -1882,11 +1886,10 @@ export class TaskExecutor {
       case 'tts': {
         const text = (params as any).text || request;
         if (!text) return { error: 'No text specified for speech' };
-        if (!this.venice) return { error: 'VeniceService not available for TTS' };
+        if (!this.aiServiceProvider) return { error: 'No AI service configured. Open Settings and add a provider with audio generation support.' };
         try {
           const voice = (params as any).voice as string | undefined;
-          const speed = (params as any).speed as number | undefined;
-          const result = await this.venice.textToSpeech(text, { voice, speed });
+          const result = await this.aiServiceProvider.generateSpeech({ text, voice, taskId });
           const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
           const audioPath = `${docDirSlash}tts_${Date.now()}.mp3`;
           if (isNative && FileSystem) {
@@ -1897,8 +1900,8 @@ export class TaskExecutor {
           return {
             success: true,
             path: isNative ? audioPath : undefined,
-            timingMs: result.timingMs,
-            summary: `Audio generated (${result.timingMs}ms)`,
+            latencyMs: result.latencyMs,
+            summary: `Audio generated (${result.latencyMs}ms)`,
           };
         } catch (err: any) {
           return { error: `TTS failed: ${err.message}` };
@@ -1908,27 +1911,27 @@ export class TaskExecutor {
       case 'video_generate': {
         const prompt = (params as any).prompt || request;
         if (!prompt) return { error: 'No prompt specified for video generation' };
-        if (!this.venice) return { error: 'VeniceService not available for video generation' };
+        if (!this.aiServiceProvider) return { error: 'No AI service configured. Open Settings and add a provider with video generation support.' };
         try {
           const model = (params as any).model as string | undefined;
           const seconds = (params as any).seconds as number | undefined;
           const duration = (params as any).duration as number | undefined;
           const resolvedDuration = duration ?? seconds;
-          const job = await this.venice.generateVideo(prompt, { model, duration: resolvedDuration });
-          const { videoBase64 } = await this.venice.pollVideoJob(job.jobId);
+          const videoResult = await this.aiServiceProvider.generateVideo({ prompt, model, duration: resolvedDuration, taskId });
+          const videoBase64 = videoResult.base64 ?? '';
           const docDirSlash = this.docDir.endsWith('/') ? this.docDir : this.docDir + '/';
           const videoPath = `${docDirSlash}video_${Date.now()}.mp4`;
-          if (isNative && FileSystem) {
+          if (isNative && FileSystem && videoBase64) {
             await FileSystem.writeAsStringAsync(videoPath, videoBase64, {
               encoding: FileSystem.EncodingType.Base64,
             });
           }
           return {
             success: true,
-            jobId: job.jobId,
-            model: job.model,
-            path: isNative ? videoPath : undefined,
-            summary: `Video generated with model ${job.model}`,
+            model: videoResult.model,
+            path: isNative && videoBase64 ? videoPath : undefined,
+            url: videoResult.url,
+            summary: `Video generated with model ${videoResult.model}`,
           };
         } catch (err: any) {
           return { error: `Video generation failed: ${err.message}` };

@@ -26,8 +26,8 @@ const STEPS: Step[] = [
   },
   {
     icon: 'key',
-    title: 'Venice API Key',
-    desc: 'Agent Ultra uses the Venice AI API to think and plan. Add your API key in Settings → APIs after setup. You can get a free key at venice.ai.',
+    title: 'Connect an AI Provider',
+    desc: 'Agent Ultra works with any OpenAI-compatible API — Venice AI, OpenRouter, Anthropic, OpenAI, Mistral, or your own local model. Add providers in Settings → AI Providers after setup.',
   },
   {
     icon: 'shield-checkmark',
@@ -92,10 +92,10 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
         {step === 1 && (
           <Pressable
             style={s.linkBtn}
-            onPress={() => { UltraDevLog.push('CHAIN', { component: 'OnboardingScreen', action: 'open_venice_link', trigger: {}, state: { step }, data: {}, outcome: 'browser_opened' }); Linking.openURL('https://venice.ai').catch(() => {}); }}
+            onPress={() => { Linking.openURL('https://openrouter.ai').catch(() => {}); }}
           >
             <Ionicons name="open-outline" size={16} color={ACCENT} />
-            <Text style={s.linkText}>Get API key at venice.ai</Text>
+            <Text style={s.linkText}>Try free models at openrouter.ai</Text>
           </Pressable>
         )}
 

@@ -6,7 +6,11 @@ import { PermissionBroker } from './PermissionBroker';
 import { DebugEngine } from './DebugEngine';
 import { BuildSystem } from './BuildSystem';
 import { TaskExecutor } from './TaskExecutor';
-import { VeniceService } from './VeniceService';
+import { ProviderManager } from './provider/ProviderManager';
+import { GroupManager } from './provider/GroupManager';
+import { RouteHistoryStore } from './provider/RouteHistoryStore';
+import { AiService } from './provider/AiService';
+import { runLegacyMigration } from './provider/LegacyMigration';
 
 import { PreferenceLearner } from '../utils/PreferenceLearner';
 import { CostTracker } from '../services/CostTracker';
@@ -100,7 +104,10 @@ export class AgentCore extends SimpleEmitter {
   private proactive: ProactiveEngine | null = null;
   private background: BackgroundOrchestrator | null = null;
   private eventMonitor: EventMonitor | null = null;
-  private venice: VeniceService;
+  private providerManager: ProviderManager;
+  private groupManager: GroupManager;
+  private routeHistoryStore: RouteHistoryStore;
+  private aiService: AiService;
   private logger: Logger;
   private ready: boolean;
   private instanceId: string;
@@ -123,10 +130,13 @@ export class AgentCore extends SimpleEmitter {
     this.learner = new PreferenceLearner(vault);
     this.debugEngine = new DebugEngine(this.ai, this.learner);
     this.buildSystem = new BuildSystem(this.ai, this.debugEngine, this.storage);
-    this.venice = new VeniceService(vault);
+    this.providerManager = new ProviderManager(vault);
+    this.groupManager = new GroupManager();
+    this.routeHistoryStore = new RouteHistoryStore();
+    this.aiService = new AiService(this.providerManager, this.groupManager, this.routeHistoryStore);
     this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai, this.probe);
     this.executor.setPreferenceLearner(this.learner);
-    this.executor.setVeniceService(this.venice);
+    this.executor.setAiService(this.aiService);
     this.conversations = new ConversationManager();
     this.ledger = new ExecutionLedger();
     this.safety = new SafetyChecker();
@@ -182,7 +192,9 @@ export class AgentCore extends SimpleEmitter {
       safeInit('MemoryManager', () => this.memory.initialize()),
       safeInit('TierService', () => this.tierService.initialize()),
       safeInit('CapabilityProbe', () => this.probe.probe().then(() => {})),
-      safeInit('VeniceService', () => this.venice.initialize()),
+      safeInit('ProviderManager', () => this.providerManager.initialize()),
+      safeInit('GroupManager', () => this.groupManager.initialize()),
+      safeInit('RouteHistory', () => this.routeHistoryStore.initialize()),
       safeInit('CredentialVault', () => this.credentialVault.initialize()),
     ]);
 
@@ -195,6 +207,7 @@ export class AgentCore extends SimpleEmitter {
     await safeInit('LogCleanup', async () => { await Logger.cleanOldLogs(7); });
     await safeInit('DebugLogCleanup', async () => { await DebugLog.cleanOldLogs(7); });
     DebugLog.scheduleStartupRawExport();
+    await safeInit('LegacyMigration', () => runLegacyMigration(this.vault, this.providerManager, this.groupManager));
     try {
       const rawDaily = await this.vault.get('daily_cost_limit');
       const rawTask = await this.vault.get('task_cost_limit');
@@ -1647,8 +1660,12 @@ You are always on. Always capable. Always direct.`;
     }
   }
 
+  getProviderManager(): ProviderManager { return this.providerManager; }
+  getGroupManager(): GroupManager { return this.groupManager; }
+  getRouteHistoryStore(): RouteHistoryStore { return this.routeHistoryStore; }
+  getAiService(): AiService { return this.aiService; }
   abortCurrentRequest(): void { this.ai.abortCurrentRequest(); }
-  hasApiKey(): boolean { return this.ai.hasApiKey(); }
+  hasApiKey(): boolean { return this.ai.hasApiKey() || this.providerManager.getActive().length > 0; }
   async refreshApiKey(): Promise<void> { await this.ai.refreshApiKey(); }
   getAvailableModels() { return this.ai.getAvailableModels(); }
   getCredentialVault(): CredentialVault { return this.credentialVault; }
