@@ -1010,13 +1010,24 @@ export class UltraDevLog {
   }
 
   private static formatEntry(e: UltraLogEntry | null | undefined): string {
-    if (!e) return '(null entry)';
-    const d = ((e.data?.payload as Record<string, unknown>) || e.data) ?? {};
-    const t = (e.ts ?? '').slice(11, 23);
-    const c = e.coreId ? ` [${e.coreId.slice(-6)}]` : '';
-    const w = (s: unknown) => (s as string)?.startsWith?.('WARN') || (s as string)?.startsWith?.('BUG') ? ' *** ' : ' ';
+    const safe = e ?? ({
+      ts: '',
+      t: 0,
+      cat: 'SYSTEM',
+      data: {},
+      seq: 0,
+    } as UltraLogEntry);
 
-    switch (e.cat) {
+    const d = (safe.data?.payload as Record<string, unknown>) || safe.data || {};
+    const t = typeof safe.ts === 'string' && safe.ts.length >= 23
+      ? safe.ts.slice(11, 23)
+      : '??:??:??.???';
+    const cat = safe.cat ?? 'SYSTEM';
+    const c = safe.coreId ? ` [${safe.coreId.slice(-6)}]` : '';
+    const w = (s: unknown) =>
+      (typeof s === 'string' && (s.startsWith('WARN') || s.startsWith('BUG'))) ? ' *** ' : ' ';
+
+    switch (cat) {
       case 'USER_MSG': return `${t} [USER    ]${c} "${d.content}"`;
       case 'AI_RESPONSE': return `${t} [AI      ]${c} model=${d.model} cost=$${d.cost} | ${(d.content as string).slice(0, 500)}`;
       case 'AGENT_STEP':
@@ -1119,7 +1130,7 @@ export class UltraDevLog {
       case 'SLASH_CMD': return `${t} [SLASH   ]${c} ${d.command} ${d.durationMs}ms result=${d.resultPreview}`;
       case 'CHAIN': return `${t} [CHAIN   ]${c} ${d.component}.${d.action} → ${d.outcome}`;
       case 'EFFECT': return `${t} [EFFECT  ]${c} ${d.component}.${d.action} ${d.success !== undefined ? (d.success ? 'OK' : 'FAIL') : ''} ${JSON.stringify(d).slice(0, 200)}`;
-      default: return `${t} [${e.cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
+      default: return `${t} [${cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }
 
@@ -1252,15 +1263,18 @@ export class UltraDevLog {
     lines.push(''); lines.push(`-- PICKER TRACE (last ${picker.length}) -------------------`);
     picker.length === 0 ? lines.push('  None.') : picker.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
 
-    const shots = entries.filter(e => e.cat === 'DEBUG_SCREENSHOT' || e.cat === 'DEBUG_SCREENSHOT_FAIL').slice(-10);
+    const shots = entries
+      .filter(e => e?.cat === 'DEBUG_SCREENSHOT' || e?.cat === 'DEBUG_SCREENSHOT_FAIL')
+      .slice(-10);
     if (shots.length > 0) {
-      lines.push(''); lines.push(`-- DEBUG SCREENSHOTS (${shots.length}) -----------------------`);
+      lines.push('');
+      lines.push(`-- DEBUG SCREENSHOTS (${shots.length}) -----------------------`);
       shots.forEach(e => {
-        const tag = e.cat === 'DEBUG_SCREENSHOT_FAIL' ? '[FAIL]' : '[OK]';
-        const pe = p(e);
-        lines.push(`  ${tag} reason=${pe.reason ?? ''} ts=${pe.timestamp ?? ''} path=${pe.filepath ?? pe.error ?? ''}`);
+        const d = p(e);
+        const tag = e?.cat === 'DEBUG_SCREENSHOT_FAIL' ? '[FAIL]' : '[OK]';
+        lines.push(`  ${tag} reason=${d.reason ?? ''} ts=${d.timestamp ?? ''} path=${d.filepath ?? d.error ?? ''}`);
       });
-      const screenshotDir = p(entries.find(e => e.cat === 'DEBUG_SCREENSHOT') ?? null).filepath;
+      const screenshotDir = p(entries.find(e => e?.cat === 'DEBUG_SCREENSHOT')).filepath;
       if (screenshotDir) {
         const dir = String(screenshotDir).split('/').slice(0, -1).join('/');
         lines.push(`  Screenshots dir: ${dir}/`);
