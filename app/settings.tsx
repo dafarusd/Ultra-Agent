@@ -89,7 +89,7 @@ function emptyDraft(): ProviderDraft {
     id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     name: '',
     baseUrl: '',
-    authType: 'bearer',
+    authMode: 'bearer',
     apiKey: '',
     password: '',
     capabilities: ['chat'],
@@ -204,7 +204,7 @@ export default function SettingsScreen() {
     if (!core) return;
     try {
       const pm = (core as any).getProviderManager?.();
-      if (pm) setProviders(pm.list());
+      if (pm) setProviders(pm.getAll());
     } catch {}
   }, []);
 
@@ -213,7 +213,7 @@ export default function SettingsScreen() {
     if (!core) return;
     try {
       const gm = (core as any).getGroupManager?.();
-      if (gm) setGroups(gm.list());
+      if (gm) setGroups(gm.getAll());
     } catch {}
   }, []);
 
@@ -308,7 +308,7 @@ export default function SettingsScreen() {
       d.name = preset.name;
       d.baseUrl = preset.baseUrl;
       d.authMode = preset.authMode;
-      d.capabilities = [...preset.capabilities];
+      d.capabilities = [...(preset.capabilities || d.capabilities || [])];
     }
     setProviderDraft(d);
     setIsNewProvider(true);
@@ -319,7 +319,7 @@ export default function SettingsScreen() {
       id: p.id,
       name: p.name,
       baseUrl: p.baseUrl,
-      authType: p.authMode ?? 'bearer',
+      authMode: p.authMode ?? 'bearer',
       apiKey: p.apiKey ?? '',
       password: p.password ?? '',
       capabilities: [...(p.capabilities ?? [])],
@@ -338,25 +338,24 @@ export default function SettingsScreen() {
     if (!pm) { Alert.alert('Error', 'Provider manager not available. Is the agent running?'); return; }
     try {
       if (isNewProvider) {
-        await pm.add({
-          id: providerDraft.id,
+        await pm.addProvider({
           name: providerDraft.name.trim(),
           baseUrl: providerDraft.baseUrl.trim(),
-          authType: providerDraft.authMode,
-          apiKey: providerDraft.apiKey.trim() || undefined,
+          authMode: providerDraft.authMode,
+          apiKey: providerDraft.apiKey.trim() || '',
           password: providerDraft.password.trim() || undefined,
           capabilities: providerDraft.capabilities,
           enabled: providerDraft.enabled,
         });
       } else {
-        await pm.update(providerDraft.id, {
+        await pm.updateProvider(providerDraft.id, {
           name: providerDraft.name.trim(),
           baseUrl: providerDraft.baseUrl.trim(),
-          authType: providerDraft.authMode,
+          authMode: providerDraft.authMode,
           apiKey: providerDraft.apiKey.trim() || undefined,
           password: providerDraft.password.trim() || undefined,
           capabilities: providerDraft.capabilities,
-          enabled: providerDraft.enabled,
+          isActive: providerDraft.enabled,
         });
       }
       setProviderDraft(null);
@@ -374,7 +373,7 @@ export default function SettingsScreen() {
         const pm = (core as any)?.getProviderManager?.();
         if (!pm) return;
         try {
-          await pm.remove(id);
+          await pm.deleteProvider(id);
           loadProviders();
         } catch (err: any) { Alert.alert('Error', err.message); }
       }},
@@ -386,7 +385,7 @@ export default function SettingsScreen() {
     const pm = (core as any)?.getProviderManager?.();
     if (!pm) return;
     try {
-      await pm.setEnabled(id, enabled);
+      await pm.setActive(id, enabled);
       loadProviders();
     } catch {}
   }, [loadProviders]);
@@ -443,7 +442,7 @@ export default function SettingsScreen() {
     if (!gm) { Alert.alert('Error', 'Group manager not available.'); return; }
     try {
       if (isNewGroup) {
-        await gm.create({
+        await gm.createGroup({
           id: groupDraft.id,
           name: groupDraft.name.trim(),
           operations: groupDraft.operations,
@@ -453,7 +452,7 @@ export default function SettingsScreen() {
           tags: groupDraft.tags,
         });
       } else {
-        await gm.update(groupDraft.id, {
+        await gm.updateGroup(groupDraft.id, {
           name: groupDraft.name.trim(),
           operations: groupDraft.operations,
           strategy: groupDraft.strategy,
@@ -477,7 +476,7 @@ export default function SettingsScreen() {
         const gm = (core as any)?.getGroupManager?.();
         if (!gm) return;
         try {
-          await gm.remove(id);
+          await gm.deleteGroup(id);
           loadGroups();
         } catch (err: any) { Alert.alert('Error', err.message); }
       }},
@@ -489,7 +488,7 @@ export default function SettingsScreen() {
     const gm = (core as any)?.getGroupManager?.();
     if (!gm) return;
     try {
-      await gm.setEnabled(id, enabled);
+      await gm.updateGroup(id, { enabled });
       loadGroups();
     } catch {}
   }, [loadGroups]);
@@ -652,7 +651,7 @@ export default function SettingsScreen() {
                           {AUTH_MODES.map(at => (
                             <Pressable
                               key={at}
-                              onPress={() => setProviderDraft({ ...providerDraft, authType: at })}
+                              onPress={() => setProviderDraft({ ...providerDraft, authMode: at })}
                               style={[styles.chip, providerDraft.authMode === at && styles.chipActive]}
                             >
                               <Text style={[styles.chipText, providerDraft.authMode === at && styles.chipTextActive]}>{at}</Text>

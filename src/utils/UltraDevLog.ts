@@ -1127,7 +1127,8 @@ export class UltraDevLog {
     const lines: string[] = [];
     const hr = '='.repeat(52);
     // Helper: reads original payload regardless of envelope wrapping
-    const p = (e: UltraLogEntry) => (e.data.payload as Record<string, unknown>) || e.data;
+    const p = (e: UltraLogEntry | null | undefined) =>
+      (e?.data?.payload as Record<string, unknown>) || e?.data || {};
 
     lines.push(hr);
     lines.push(`AGENT ULTRA -- BUG REPORT v3`);
