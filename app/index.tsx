@@ -973,7 +973,10 @@ export default function ChatScreen() {
   // ── Model picker data ──────────────────────────────
   const getPickerModels = useCallback((): PickerModel[] => {
     if (!agentCore) return [];
-    const models = (agentCore as any).getAllModelsWithProvider?.() || agentCore.getAvailableModels();
+    const routedModels = (agentCore as any).getAllModelsWithProvider?.() || [];
+    const models = routedModels.length > 0
+      ? routedModels
+      : (agentCore.getAvailableModels?.() || []);
     const currentModel = activeModelId || agentCore.getDefaultModel();
     const result = models.map((m: any) => {
       const pickerType = classifyModelType(m.id, m.name || m.id, m.type);
