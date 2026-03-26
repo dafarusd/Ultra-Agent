@@ -30,7 +30,9 @@ import type {
   AllowedOperation,
   SelectionStrategy,
   AuthMode,
+  ProviderCapabilities,
 } from "@/src/types/provider";
+import { DEFAULT_PROVIDER_CAPABILITIES } from "@/src/types/provider";
 
 // ── Palette ──────────────────────────────────────────────
 const ACCENT = "#e5e5e5";
@@ -51,6 +53,57 @@ const ALL_OPERATIONS: AllowedOperation[] = [
   'chat', 'reason', 'vision', 'image_generate', 'audio_generate',
   'audio_transcribe', 'video_generate', 'embeddings', 'tool_use', 'generic_text',
 ];
+
+function providerCapabilitiesToOperations(
+  capabilities?: ProviderCapabilities | null,
+): AllowedOperation[] {
+  const c = capabilities ?? DEFAULT_PROVIDER_CAPABILITIES;
+  const ops = new Set<AllowedOperation>(['chat', 'generic_text']);
+  if (c.supportsReasoningHints) ops.add('reason');
+  if (c.supportsVision) ops.add('vision');
+  if (c.supportsImageGeneration) ops.add('image_generate');
+  if (c.supportsAudioGeneration) ops.add('audio_generate');
+  if (c.supportsVideoGeneration) ops.add('video_generate');
+  if (c.supportsEmbeddings) ops.add('embeddings');
+  if (c.supportsToolCalls) ops.add('tool_use');
+  return ALL_OPERATIONS.filter(op => ops.has(op));
+}
+
+function operationsToProviderCapabilities(
+  operations: AllowedOperation[],
+  base?: ProviderCapabilities | null,
+): ProviderCapabilities {
+  const source = base ?? DEFAULT_PROVIDER_CAPABILITIES;
+  const opSet = new Set(operations);
+  return {
+    ...source,
+    adapterIds: [...(source.adapterIds ?? DEFAULT_PROVIDER_CAPABILITIES.adapterIds)],
+    supportsReasoningHints: opSet.has('reason'),
+    supportsVision: opSet.has('vision'),
+    supportsImageGeneration: opSet.has('image_generate'),
+    supportsAudioGeneration: opSet.has('audio_generate') || opSet.has('audio_transcribe'),
+    supportsVideoGeneration: opSet.has('video_generate'),
+    supportsEmbeddings: opSet.has('embeddings'),
+    supportsToolCalls: opSet.has('tool_use'),
+  };
+}
+
+function getGroupOperations(
+  group: ModelGroup | GroupDraft | null | undefined,
+): AllowedOperation[] {
+  if (!group) return [];
+  const directOps = (group as GroupDraft).operations;
+  if (Array.isArray(directOps) && directOps.length > 0) {
+    return ALL_OPERATIONS.filter(op => new Set(directOps).has(op));
+  }
+  const ops = new Set<AllowedOperation>();
+  for (const member of group.members ?? []) {
+    for (const op of member.allowedOperations ?? []) {
+      ops.add(op);
+    }
+  }
+  return ALL_OPERATIONS.filter(op => ops.has(op));
+}
 
 const STRATEGY_LABELS: Record<SelectionStrategy, string> = {
   priority: 'Priority',
@@ -138,7 +191,7 @@ export default function SettingsScreen() {
   const [apisSubTab, setApisSubTab] = useState<ApisSubTab>('providers');
 
   // ── Provider state ──────────────────────────────────────
-  const [providers, setProviders] = useState<ProviderRecord[]>([]);
+  const [providers, setProviders] = useState<ApiProvider[]>([]);
   const [providerDraft, setProviderDraft] = useState<ProviderDraft | null>(null);
   const [isNewProvider, setIsNewProvider] = useState(false);
   const [probingId, setProbingId] = useState<string | null>(null);
@@ -314,15 +367,15 @@ export default function SettingsScreen() {
     setIsNewProvider(true);
   }, []);
 
-  const startEditProvider = useCallback((p: ProviderRecord) => {
+  const startEditProvider = useCallback((p: ApiProvider) => {
     setProviderDraft({
       id: p.id,
       name: p.name,
       baseUrl: p.baseUrl,
       authMode: p.authMode ?? 'bearer',
-      apiKey: p.apiKey ?? '',
-      password: p.password ?? '',
-      capabilities: [...(p.capabilities ?? [])],
+      apiKey: '',
+      password: '',
+      capabilities: providerCapabilitiesToOperations(p.capabilities),
       enabled: p.isActive,
     });
     setIsNewProvider(false);
@@ -336,13 +389,20 @@ export default function SettingsScreen() {
     const core = getAgentCoreInstance();
     const pm = (core as any)?.getProviderManager?.();
     if (!pm) { Alert.alert('Error', 'Provider manager not available. Is the agent running?'); return; }
+    const existingProvider = providers.find(p => p.id === providerDraft.id);
     try {
       if (isNewProvider) {
-        await pm.addProvider({
+        const created = await pm.addProvider({
           name: providerDraft.name.trim(),
           baseUrl: providerDraft.baseUrl.trim(),
           authMode: providerDraft.authMode,
           apiKey: providerDraft.apiKey.trim() || '',
+        });
+        await pm.updateProvider(created.id, {
+          capabilities: operationsToProviderCapabilities(
+            providerDraft.capabilities,
+            created.capabilities,
+          ),
         });
       } else {
         await pm.updateProvider(providerDraft.id, {
@@ -350,6 +410,10 @@ export default function SettingsScreen() {
           baseUrl: providerDraft.baseUrl.trim(),
           authMode: providerDraft.authMode,
           isActive: providerDraft.enabled,
+          capabilities: operationsToProviderCapabilities(
+            providerDraft.capabilities,
+            existingProvider?.capabilities,
+          ),
         });
         if (providerDraft.apiKey.trim()) {
           await pm.updateApiKey(providerDraft.id, providerDraft.apiKey.trim());
@@ -414,7 +478,7 @@ export default function SettingsScreen() {
     setGroupDraft({
       id: g.id,
       name: g.name,
-      operations: [...(g.operations ?? [])],
+      operations: getGroupOperations(g),
       strategy: g.selectionStrategy ?? 'priority',
       enabled: g.isActive,
       members: [...(g.members ?? [])],
@@ -438,12 +502,15 @@ export default function SettingsScreen() {
     const gm = (core as any)?.getGroupManager?.();
     if (!gm) { Alert.alert('Error', 'Group manager not available.'); return; }
     try {
+      let groupId = groupDraft.id;
+
       if (isNewGroup) {
-        await gm.createGroup({
+        const created = await gm.createGroup({
           name: groupDraft.name.trim(),
           selectionStrategy: groupDraft.strategy,
           tags: groupDraft.tags,
         });
+        groupId = created.id;
       } else {
         await gm.updateGroup(groupDraft.id, {
           name: groupDraft.name.trim(),
@@ -452,6 +519,38 @@ export default function SettingsScreen() {
           tags: groupDraft.tags,
         });
       }
+
+      const storedMembers: GroupMember[] = isNewGroup ? [] : (gm.getById?.(groupId)?.members ?? []);
+      const storedIds = new Set(storedMembers.map((m: GroupMember) => m.id));
+      const draftIds = new Set(groupDraft.members.map(m => m.id).filter(Boolean));
+
+      for (const stored of storedMembers) {
+        if (!draftIds.has(stored.id)) {
+          await gm.removeMember(groupId, stored.id);
+        }
+      }
+
+      for (const [index, member] of groupDraft.members.entries()) {
+        const payload = {
+          providerId: member.providerId,
+          modelId: member.modelId,
+          enabled: member.enabled,
+          priority: member.priority ?? index + 1,
+          weight: member.weight ?? 1,
+          costRank: member.costRank,
+          speedRank: member.speedRank,
+          contextRank: member.contextRank,
+          allowedOperations: [...groupDraft.operations],
+          adapterOverrideId: member.adapterOverrideId,
+          metadata: member.metadata ?? {},
+        };
+        if (storedIds.has(member.id)) {
+          await gm.updateMember(groupId, member.id, payload);
+        } else {
+          await gm.addMember(groupId, payload);
+        }
+      }
+
       setGroupDraft(null);
       loadGroups();
     } catch (err: any) {
@@ -493,11 +592,14 @@ export default function SettingsScreen() {
       return;
     }
     const member: GroupMember = {
+      id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       providerId,
       modelId,
       priority: groupDraft.members.length + 1,
       weight: 1,
       enabled: true,
+      allowedOperations: [...groupDraft.operations],
+      metadata: {},
     };
     setGroupDraft({ ...groupDraft, members: [...groupDraft.members, member] });
     setMemberModelInput('');
@@ -747,7 +849,7 @@ export default function SettingsScreen() {
 
                             {/* Capabilities */}
                             <View style={[styles.chipRow, { marginTop: 6 }]}>
-                              {(p.capabilities ?? []).map(c => (
+                              {providerCapabilitiesToOperations(p.capabilities).map(c => (
                                 <View key={c} style={styles.capBadge}>
                                   <Text style={styles.capBadgeText}>{c}</Text>
                                 </View>
@@ -760,7 +862,7 @@ export default function SettingsScreen() {
                             )}
                             {p.lastProbeSummary?.probedAt && !p.probeError && (
                               <Text style={{ color: SUCCESS, fontSize: 11, marginTop: 4 }}>
-                                Connected · {p.lastProbeSummary?.modelsFound != null ? `${p.accountInfo.modelsCount} models` : 'probed'}
+                                Connected · {(p.lastProbeSummary?.modelsFound ?? 0)} model{(p.lastProbeSummary?.modelsFound ?? 0) === 1 ? '' : 's'}
                               </Text>
                             )}
 
@@ -964,7 +1066,7 @@ export default function SettingsScreen() {
                               {STRATEGY_LABELS[g.selectionStrategy] ?? g.selectionStrategy} · {g.members?.length ?? 0} model{(g.members?.length ?? 0) !== 1 ? 's' : ''}
                             </Text>
                             <View style={[styles.chipRow, { marginTop: 6 }]}>
-                              {(g.operations ?? []).map(op => (
+                              {getGroupOperations(g).map(op => (
                                 <View key={op} style={styles.capBadge}>
                                   <Text style={styles.capBadgeText}>{op}</Text>
                                 </View>
@@ -1021,7 +1123,7 @@ export default function SettingsScreen() {
                             >
                               <Text style={[styles.chipText, !currentGroupId && styles.chipTextActive]}>None</Text>
                             </Pressable>
-                            {groups.filter(g => g.isActive && (g.operations ?? []).includes(op)).map(g => (
+                            {groups.filter(g => g.isActive && getGroupOperations(g).includes(op)).map(g => (
                               <Pressable
                                 key={g.id}
                                 onPress={() => setOperationGroup(op, g.id)}
@@ -1032,7 +1134,7 @@ export default function SettingsScreen() {
                                 </Text>
                               </Pressable>
                             ))}
-                            {groups.filter(g => g.isActive && (g.operations ?? []).includes(op)).length === 0 && (
+                            {groups.filter(g => g.isActive && getGroupOperations(g).includes(op)).length === 0 && (
                               <Text style={{ color: '#444', fontSize: 11, alignSelf: 'center' }}>No eligible groups</Text>
                             )}
                           </ScrollView>

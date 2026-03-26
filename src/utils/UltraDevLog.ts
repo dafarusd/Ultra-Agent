@@ -1009,9 +1009,10 @@ export class UltraDevLog {
     UltraDevLog.push('BUBBLE_DIAG', { messageId, role, height, width, textLength, msgIndex, msgStyle });
   }
 
-  private static formatEntry(e: UltraLogEntry): string {
-    const d = (e.data.payload as Record<string, unknown>) || e.data;
-    const t = e.ts.slice(11, 23);
+  private static formatEntry(e: UltraLogEntry | null | undefined): string {
+    if (!e) return '(null entry)';
+    const d = ((e.data?.payload as Record<string, unknown>) || e.data) ?? {};
+    const t = (e.ts ?? '').slice(11, 23);
     const c = e.coreId ? ` [${e.coreId.slice(-6)}]` : '';
     const w = (s: unknown) => (s as string)?.startsWith?.('WARN') || (s as string)?.startsWith?.('BUG') ? ' *** ' : ' ';
 
@@ -1256,9 +1257,10 @@ export class UltraDevLog {
       lines.push(''); lines.push(`-- DEBUG SCREENSHOTS (${shots.length}) -----------------------`);
       shots.forEach(e => {
         const tag = e.cat === 'DEBUG_SCREENSHOT_FAIL' ? '[FAIL]' : '[OK]';
-        lines.push(`  ${tag} reason=${e.data.reason} ts=${e.data.timestamp ?? ''} path=${e.data.filepath ?? e.data.error ?? ''}`);
+        const pe = p(e);
+        lines.push(`  ${tag} reason=${pe.reason ?? ''} ts=${pe.timestamp ?? ''} path=${pe.filepath ?? pe.error ?? ''}`);
       });
-      const screenshotDir = entries.find(e => e.cat === 'DEBUG_SCREENSHOT')?.data.filepath;
+      const screenshotDir = p(entries.find(e => e.cat === 'DEBUG_SCREENSHOT') ?? null).filepath;
       if (screenshotDir) {
         const dir = String(screenshotDir).split('/').slice(0, -1).join('/');
         lines.push(`  Screenshots dir: ${dir}/`);
