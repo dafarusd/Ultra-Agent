@@ -99,6 +99,7 @@ export interface EmbeddingsInput {
 export class AiService {
   private router: GroupRouter;
   private routeHistory: RouteHistoryStore;
+  private groupManager: GroupManager;
   private userDefaultsGetter: () => { notifyOnRouteSwitch: boolean };
   private lastRouteByConversation: Map<string, ResolvedRoute> = new Map();
 
@@ -109,7 +110,30 @@ export class AiService {
   ) {
     this.router = new GroupRouter(providerManager, groupManager, routeHistory);
     this.routeHistory = routeHistory;
+    this.groupManager = groupManager;
     this.userDefaultsGetter = () => groupManager.getUserDefaults();
+  }
+
+  getOperationMapping(): Record<string, string> {
+    return { ...this.groupManager.getUserDefaults().groupAssignments };
+  }
+
+  async setOperationGroup(op: AllowedOperation, groupId: string | null): Promise<void> {
+    const defaults = this.groupManager.getUserDefaults();
+    const updated: Record<string, string> = { ...defaults.groupAssignments };
+    if (groupId === null) {
+      delete updated[op];
+    } else {
+      const group = this.groupManager.getAll().find(g => g.id === groupId);
+      if (!group) throw new Error(`Group '${groupId}' not found`);
+      if (!group.isActive) throw new Error(`Group '${group.name}' is disabled`);
+      if (!group.members.some(m => m.isEnabled && (m.allowedOperations.length === 0 || m.allowedOperations.includes(op)))) {
+        throw new Error(`Group '${group.name}' has no enabled member that supports '${op}'`);
+      }
+      updated[op] = groupId;
+    }
+    await this.groupManager.saveUserDefaults({ groupAssignments: updated });
+    UltraDevLog.push('SYSTEM', { event: 'operation_group_set', op, groupId });
   }
 
   private async resolveRoute(

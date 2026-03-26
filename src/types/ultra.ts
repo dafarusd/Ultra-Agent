@@ -74,6 +74,16 @@ export interface ChatMessage {
     risk?: 'safe' | 'moderate' | 'dangerous' | 'blocked';
     isBuildLog?: boolean;
     data?: any;
+    needsUpgrade?: boolean;
+    tierBlocked?: boolean;
+    model?: string;
+    cost?: number;
+    multiStep?: boolean;
+    stepCount?: number;
+    cortex?: boolean;
+    cortexTaskId?: string;
+    subSteps?: number;
+    originalMessage?: string;
   };
 }
 

@@ -5,6 +5,22 @@ import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 import { classifyModelType } from '../utils/classifyModelType';
 import type { UltraModelDef } from '../types/ultra';
 
+export interface ModelRouterBridge {
+  hasActiveProvider(): boolean;
+  completeConversation(
+    messages: Array<{ role: string; content: string }>,
+    opts: {
+      model?: string;
+      maxTokens?: number;
+      temperature?: number;
+      taskId?: string;
+      agentId?: string;
+      conversationId?: string;
+    }
+  ): Promise<{ content: string; model: string; inputTokens: number; outputTokens: number; cost: number }>;
+  refreshBridgeState(): Promise<void>;
+}
+
 export interface ModelDef {
   id: string;
   name: string;
@@ -76,6 +92,7 @@ export class ModelRouter {
   private hasDiscoveredModels = false;
   private providers: Map<string, ProviderConfig> = new Map();
   private categoryDefaults: Map<string, CategoryDefault> = new Map();
+  private bridge: ModelRouterBridge | null = null;
 
   constructor(vault: SecureVault, costTracker: CostTracker) {
     this.vault = vault;
@@ -110,25 +127,31 @@ export class ModelRouter {
     this.models.set(m.id, m);
   }
 
+  setRuntimeBridge(bridge: ModelRouterBridge): void {
+    this.bridge = bridge;
+    DebugLog.push('SYSTEM', { event: 'model_router_bridge_set', hasActiveProvider: bridge.hasActiveProvider() });
+    this.logger.info('ModelRouter runtime bridge attached');
+  }
+
   async initialize(): Promise<void> {
     await this.refreshApiKey();
   }
 
   async refreshApiKey(): Promise<void> {
-    // Load from first active provider in the provider list
-    const savedApis = await this.vault.get('saved_apis').catch(() => null);
-    if (savedApis) {
-      try {
-        const providers: Array<{ id: string; apiKey?: string; baseUrl?: string; isActive?: boolean }> = JSON.parse(savedApis);
-        const active = providers.find(p => p.isActive !== false && p.apiKey);
-        if (active) {
-          this.apiKey = active.apiKey || null;
-          if (active.baseUrl) this.baseUrl = this.normalizeBaseUrl(active.baseUrl);
-        }
-      } catch {}
+    // When a bridge is installed the new provider system is authoritative —
+    // skip all legacy vault reads; the bridge provides hasActiveProvider().
+    if (this.bridge) {
+      DebugLog.push('SYSTEM', { event: 'refresh_api_key_skipped_bridge_active' });
+      this.logger.info('ModelRouter refreshApiKey: bridge is active, skipping legacy vault reads');
+      // Still restore preferred_model from vault so model selection persists.
+      const savedModel = await this.vault.get('preferred_model');
+      if (savedModel && this.models.has(savedModel)) {
+        const prev = this.defaultModel;
+        this.defaultModel = savedModel;
+        DebugLog.modelSetDefault(savedModel, prev, 'vault_restore_bridge');
+      }
+      return;
     }
-    const savedUrl = await this.vault.get('api_base_url');
-    if (savedUrl) this.baseUrl = this.normalizeBaseUrl(savedUrl);
 
     if (!this.apiKey) {
       this.logger.warn('No AI provider API key configured');
@@ -173,69 +196,14 @@ export class ModelRouter {
   }
 
   async loadProviders(): Promise<void> {
-    try {
-      const savedApis = await this.vault.get('saved_apis');
-      if (!savedApis) return;
-      const providers: Array<{
-        id: string; name: string; baseUrl: string; apiKey: string;
-        categories: string[]; isActive: boolean;
-      }> = JSON.parse(savedApis);
-
-      for (const p of providers) {
-        if (!p.isActive || !p.apiKey) continue;
-        const config: ProviderConfig = {
-          id: p.id, name: p.name, baseUrl: p.baseUrl,
-          apiKey: p.apiKey, categories: p.categories || ['text'],
-          isActive: true, models: [],
-        };
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 12000);
-          const resp = await fetch(`${p.baseUrl}/models`, {
-            headers: { 'Authorization': `Bearer ${p.apiKey}`, 'Content-Type': 'application/json' },
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          if (resp.ok) {
-            const data = await resp.json();
-            const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
-            for (const m of list) {
-              const spec = m.model_spec || {};
-              const caps = spec.capabilities || {};
-              const pricing = spec.pricing || {};
-              const rawType = m.type || spec.type || 'text';
-              const classifiedType = classifyModelType(m.id, m.name || m.id, rawType, caps);
-              const validTypes: ModelDef['type'][] = ['text', 'image', 'video', 'audio', 'embedding'];
-              const modelType: ModelDef['type'] = validTypes.includes(classifiedType as any) ? classifiedType as ModelDef['type'] : validTypes.includes(rawType as any) ? rawType as ModelDef['type'] : 'text';
-              const def: ModelDef = {
-                id: m.id, name: spec.name || m.name || m.id, description: spec.description || '',
-                type: modelType, costPer1kInput: pricing.input?.usd ?? 0.01, costPer1kOutput: pricing.output?.usd ?? 0.01,
-                maxTokens: Math.min(Number(spec.availableContextTokens ?? m.context_length ?? 8192) || 8192, 4096),
-                contextWindow: Number(spec.availableContextTokens ?? m.context_length ?? 8192) || 8192,
-                speedTier: this.inferSpeed(m.id),
-                capabilities: {
-                  supportsVision: caps.supportsVision ?? false, supportsReasoning: caps.supportsReasoning ?? false,
-                  supportsFunctionCalling: caps.supportsFunctionCalling ?? false, supportsWebSearch: caps.supportsWebSearch ?? false,
-                  supportsMultipleImages: caps.supportsMultipleImages ?? false,
-                  isUncensored: (m.id || '').toLowerCase().includes('uncensored') || spec.privacy === 'unfiltered',
-                },
-                offline: spec.offline ?? false,
-              };
-              config.models.push(def);
-              this.models.set(m.id, def);
-            }
-          }
-          DebugLog.push('SYSTEM' as any, { event: 'provider_discovered', provider: p.name, models: config.models.length });
-        } catch (e: any) {
-          DebugLog.error('ModelRouter', `Provider ${p.name} discovery failed: ${e.message}`);
-        }
-        this.providers.set(p.id, config);
-      }
-
-      DebugLog.push('SYSTEM' as any, { event: 'providers_loaded', count: this.providers.size, totalModels: this.models.size });
-    } catch (e: any) {
-      DebugLog.error('ModelRouter', `loadProviders failed: ${e.message}`);
+    // When a runtime bridge is active, provider discovery is owned by ProviderManager.
+    // This method becomes a no-op — the bridge.refreshBridgeState() handles reloading.
+    if (this.bridge) {
+      DebugLog.push('SYSTEM', { event: 'load_providers_skipped_bridge_active' });
+      return;
     }
+    // Legacy no-bridge path: nothing to load because saved_apis is no longer written.
+    DebugLog.push('SYSTEM', { event: 'load_providers_no_bridge_no_op' });
   }
 
   private findProviderForModel(modelId: string): ProviderConfig | null {
@@ -576,6 +544,14 @@ export class ModelRouter {
       category?: string;
     } = {}
   ): Promise<CompletionResult> {
+    if (this.bridge) {
+      if (!this.bridge.hasActiveProvider()) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
+      const sysPrompt = options.systemPrompt ?? "You are Agent Ultra, an autonomous AI agent on a user's Android phone.";
+      return this.bridge.completeConversation(
+        [{ role: 'system', content: sysPrompt }, { role: 'user', content: prompt }],
+        { model: options.model, maxTokens: options.maxTokens, temperature: options.temperature, taskId: options.taskId, agentId: options.agentId }
+      );
+    }
     if (!this.apiKey) {
       throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
     }
@@ -684,6 +660,16 @@ export class ModelRouter {
       category?: string;
     } = {}
   ): Promise<CompletionResult> {
+    if (this.bridge) {
+      if (!this.bridge.hasActiveProvider()) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
+      return this.bridge.completeConversation(messages, {
+        model: options.model,
+        maxTokens: options.maxTokens,
+        temperature: options.temperature,
+        taskId: options.taskId,
+        agentId: options.agentId,
+      });
+    }
     if (!this.apiKey) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
     const taskId = options.taskId || 'default';
     const agentId = options.agentId || 'main';
@@ -770,6 +756,7 @@ export class ModelRouter {
   }
 
   hasApiKey(): boolean {
+    if (this.bridge) return this.bridge.hasActiveProvider();
     return this.apiKey !== null;
   }
 

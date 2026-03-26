@@ -135,6 +135,8 @@ interface ProviderDraft {
   password: string;
   capabilities: AllowedOperation[];
   enabled: boolean;
+  hasStoredKey?: boolean;
+  hasStoredPassword?: boolean;
 }
 
 function emptyDraft(): ProviderDraft {
@@ -368,6 +370,7 @@ export default function SettingsScreen() {
   }, []);
 
   const startEditProvider = useCallback((p: ApiProvider) => {
+    DebugLog.push('SETTINGS_SAVE', { event: 'edit_provider_opened', providerId: p.id, hasStoredApiKey: !!p.apiKeyRef, hasStoredPassword: !!p.passwordRef });
     setProviderDraft({
       id: p.id,
       name: p.name,
@@ -377,6 +380,8 @@ export default function SettingsScreen() {
       password: '',
       capabilities: providerCapabilitiesToOperations(p.capabilities),
       enabled: p.isActive,
+      hasStoredKey: !!p.apiKeyRef,
+      hasStoredPassword: !!p.passwordRef,
     });
     setIsNewProvider(false);
   }, []);
@@ -390,7 +395,10 @@ export default function SettingsScreen() {
     const pm = (core as any)?.getProviderManager?.();
     if (!pm) { Alert.alert('Error', 'Provider manager not available. Is the agent running?'); return; }
     const existingProvider = providers.find(p => p.id === providerDraft.id);
+    const keyReplaced = !!providerDraft.apiKey.trim();
+    DebugLog.push('SETTINGS_SAVE', { event: 'provider_save_tapped', isNew: isNewProvider, apiKeyReplaced: keyReplaced });
     try {
+      let savedId = providerDraft.id;
       if (isNewProvider) {
         const created = await pm.addProvider({
           name: providerDraft.name.trim(),
@@ -398,12 +406,14 @@ export default function SettingsScreen() {
           authMode: providerDraft.authMode,
           apiKey: providerDraft.apiKey.trim() || '',
         });
+        savedId = created.id;
         await pm.updateProvider(created.id, {
           capabilities: operationsToProviderCapabilities(
             providerDraft.capabilities,
             created.capabilities,
           ),
         });
+        DebugLog.push('SETTINGS_SAVE', { event: 'provider_created', providerId: created.id });
       } else {
         await pm.updateProvider(providerDraft.id, {
           name: providerDraft.name.trim(),
@@ -415,16 +425,34 @@ export default function SettingsScreen() {
             existingProvider?.capabilities,
           ),
         });
-        if (providerDraft.apiKey.trim()) {
+        if (keyReplaced) {
           await pm.updateApiKey(providerDraft.id, providerDraft.apiKey.trim());
+          DebugLog.push('SETTINGS_SAVE', { event: 'provider_key_replaced', providerId: providerDraft.id });
+        } else {
+          DebugLog.push('SETTINGS_SAVE', { event: 'provider_updated_no_key_change', providerId: providerDraft.id });
         }
       }
       setProviderDraft(null);
+      // Auto-probe the saved provider to populate models and verify connectivity.
+      DebugLog.push('SETTINGS_SAVE', { event: 'provider_probe_started', providerId: savedId });
+      setProbingId(savedId);
+      try {
+        await pm.probe(savedId);
+        DebugLog.push('SETTINGS_SAVE', { event: 'provider_probe_succeeded', providerId: savedId });
+      } catch (probeErr: any) {
+        DebugLog.push('SETTINGS_SAVE', { event: 'provider_probe_failed', providerId: savedId, error: probeErr.message });
+      } finally {
+        setProbingId(null);
+      }
+      // Re-wire the bridge so the runtime immediately sees the new provider.
+      (core as any)?.wireModelRouterBridge?.();
       loadProviders();
+      loadGroups();
+      DebugLog.push('SETTINGS_SAVE', { event: 'provider_reloaded_after_save', providerId: savedId });
     } catch (err: any) {
       Alert.alert('Error', err.message);
     }
-  }, [providerDraft, isNewProvider, loadProviders]);
+  }, [providerDraft, isNewProvider, loadProviders, loadGroups]);
 
   const deleteProvider = useCallback(async (id: string, name: string) => {
     Alert.alert('Delete Provider', `Remove "${name}"? Groups using this provider will need updating.`, [
@@ -620,6 +648,9 @@ export default function SettingsScreen() {
     try {
       await ai.setOperationGroup?.(op, groupId);
       setOperationMapping(ai.getOperationMapping?.() || {});
+      // Re-wire bridge so runtime routing reflects the new group immediately.
+      (core as any)?.wireModelRouterBridge?.();
+      DebugLog.push('SETTINGS_SAVE', { event: 'routing_operation_group_changed', op, groupId });
     } catch (err: any) {
       Alert.alert('Error', err.message);
     }
@@ -755,15 +786,26 @@ export default function SettingsScreen() {
                         {providerDraft.authMode !== 'none' && (
                           <>
                             <Text style={styles.fieldLabel}>API Key</Text>
-                            <TextInput
-                              value={providerDraft.apiKey}
-                              onChangeText={t => setProviderDraft({ ...providerDraft, apiKey: t })}
-                              placeholder="Your API key"
-                              placeholderTextColor="#444"
-                              style={styles.textInput}
-                              autoCapitalize="none"
-                              secureTextEntry
-                            />
+                            {!isNewProvider && providerDraft.hasStoredKey && !providerDraft.apiKey ? (
+                              <Pressable
+                                onPress={() => setProviderDraft({ ...providerDraft, apiKey: ' ', hasStoredKey: false })}
+                                style={[styles.textInput, { justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+                              >
+                                <Ionicons name="checkmark-circle" size={14} color={SUCCESS} />
+                                <Text style={{ color: SUCCESS, fontSize: 13 }}>API key saved — tap to replace</Text>
+                              </Pressable>
+                            ) : (
+                              <TextInput
+                                value={providerDraft.apiKey.trim() === '' && !isNewProvider && providerDraft.hasStoredKey === false ? '' : providerDraft.apiKey}
+                                onChangeText={t => setProviderDraft({ ...providerDraft, apiKey: t })}
+                                placeholder={isNewProvider ? 'Your API key' : 'Enter new API key'}
+                                placeholderTextColor="#444"
+                                style={styles.textInput}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                secureTextEntry
+                              />
+                            )}
                           </>
                         )}
 
@@ -991,40 +1033,82 @@ export default function SettingsScreen() {
                         ))}
 
                         <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add Member</Text>
-                        <TextInput
-                          value={memberProviderInput}
-                          onChangeText={setMemberProviderInput}
-                          placeholder="Provider ID (from Providers tab)"
-                          placeholderTextColor="#444"
-                          style={[styles.textInput, { marginBottom: 6 }]}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                        />
-                        <TextInput
-                          value={memberModelInput}
-                          onChangeText={setMemberModelInput}
-                          placeholder="Model ID (e.g. llama-3.3-70b)"
-                          placeholderTextColor="#444"
-                          style={[styles.textInput, { marginBottom: 8 }]}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                        />
-                        <Pressable
-                          onPress={addMemberToGroupDraft}
-                          style={[styles.btn, styles.secondaryBtn, { alignSelf: 'flex-start' }]}
-                        >
-                          <Ionicons name="add" size={14} color={TEXT} />
-                          <Text style={styles.secondaryBtnText}>Add Model</Text>
-                        </Pressable>
 
-                        {providers.length > 0 && (
+                        {providers.length === 0 ? (
+                          <View style={{ backgroundColor: SURFACE, borderRadius: 8, padding: 12, marginBottom: 8 }}>
+                            <Text style={{ color: DIM, fontSize: 12, textAlign: 'center' }}>
+                              No providers configured. Add a provider first.
+                            </Text>
+                          </View>
+                        ) : (
                           <>
-                            <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Provider IDs for reference</Text>
-                            {providers.map(p => (
-                              <Text key={p.id} style={{ color: DIM, fontSize: 11, marginBottom: 2 }}>
-                                <Text style={{ color: ACCENT }}>{p.id}</Text> — {p.name}
-                              </Text>
-                            ))}
+                            <Text style={{ color: DIM, fontSize: 11, marginBottom: 6 }}>Step 1 — Select provider</Text>
+                            <View style={[styles.chipRow, { marginBottom: 10 }]}>
+                              {providers.filter(p => p.isActive).map(p => (
+                                <Pressable
+                                  key={p.id}
+                                  onPress={() => { setMemberProviderInput(p.id); setMemberModelInput(''); }}
+                                  style={[styles.chip, memberProviderInput === p.id && styles.chipActive]}
+                                >
+                                  <Text style={[styles.chipText, memberProviderInput === p.id && styles.chipTextActive]}>{p.name}</Text>
+                                </Pressable>
+                              ))}
+                            </View>
+
+                            {memberProviderInput ? (() => {
+                              const core = getAgentCoreInstance();
+                              const pm = (core as any)?.getProviderManager?.();
+                              const discoveredModels: Array<{ id: string; name: string }> = pm ? pm.getModels(memberProviderInput) : [];
+                              const selectedProvider = providers.find(p => p.id === memberProviderInput);
+                              const manualIds: string[] = selectedProvider?.manualModelIds ?? [];
+                              const allModels: Array<{ id: string; name: string }> = [
+                                ...discoveredModels.map((m: any) => ({ id: m.id, name: m.name || m.id })),
+                                ...manualIds.filter(id => !discoveredModels.some((m: any) => m.id === id)).map(id => ({ id, name: id })),
+                              ];
+                              return allModels.length === 0 ? (
+                                <View style={{ marginBottom: 10 }}>
+                                  <Text style={{ color: DIM, fontSize: 11, marginBottom: 6 }}>Step 2 — Enter model ID manually</Text>
+                                  <TextInput
+                                    value={memberModelInput}
+                                    onChangeText={setMemberModelInput}
+                                    placeholder="e.g. llama-3.3-70b"
+                                    placeholderTextColor="#444"
+                                    style={[styles.textInput, { marginBottom: 0 }]}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                  />
+                                  <Text style={{ color: DIM, fontSize: 11, marginTop: 4 }}>
+                                    Probe this provider first to discover available models.
+                                  </Text>
+                                </View>
+                              ) : (
+                                <View style={{ marginBottom: 10 }}>
+                                  <Text style={{ color: DIM, fontSize: 11, marginBottom: 6 }}>Step 2 — Select model</Text>
+                                  <View style={styles.chipRow}>
+                                    {allModels.map(m => (
+                                      <Pressable
+                                        key={m.id}
+                                        onPress={() => setMemberModelInput(m.id)}
+                                        style={[styles.chip, memberModelInput === m.id && styles.chipActive]}
+                                      >
+                                        <Text style={[styles.chipText, memberModelInput === m.id && styles.chipTextActive]} numberOfLines={1}>
+                                          {m.name}
+                                        </Text>
+                                      </Pressable>
+                                    ))}
+                                  </View>
+                                </View>
+                              );
+                            })() : null}
+
+                            <Pressable
+                              onPress={addMemberToGroupDraft}
+                              disabled={!memberProviderInput || !memberModelInput}
+                              style={[styles.btn, styles.secondaryBtn, { alignSelf: 'flex-start', opacity: (!memberProviderInput || !memberModelInput) ? 0.4 : 1 }]}
+                            >
+                              <Ionicons name="add" size={14} color={TEXT} />
+                              <Text style={styles.secondaryBtnText}>Add Model</Text>
+                            </Pressable>
                           </>
                         )}
 

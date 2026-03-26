@@ -128,7 +128,7 @@ export class UltraDevLog {
   private static processingStartedAt = 0;
 
   // ── Envelope context (collected once at startup) ──
-  private static deviceInfo: Record<string, unknown> = {};
+  private static _deviceInfo: Record<string, unknown> = {};
   private static appVersion = '';
   private static buildId = '';
   private static rnVersion = '';
@@ -166,7 +166,7 @@ export class UltraDevLog {
       const Device = require('expo-device');
       const Constants = require('expo-constants').default;
 
-      UltraDevLog.deviceInfo = {
+      UltraDevLog._deviceInfo = {
         model: Device.modelName || 'unknown',
         manufacturer: (Device.manufacturer || 'unknown').toLowerCase(),
         sdk_int: Device.platformApiLevel || 0,
@@ -251,7 +251,7 @@ export class UltraDevLog {
         app_version: UltraDevLog.appVersion,
         rn_version: UltraDevLog.rnVersion,
         hermes: UltraDevLog.hermesEnabled,
-        device: UltraDevLog.deviceInfo,
+        device: UltraDevLog._deviceInfo,
         is_background: UltraDevLog.isBackground,
         screen: UltraDevLog.currentScreen,
         event: cat,

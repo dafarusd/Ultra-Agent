@@ -1,5 +1,5 @@
 import { SecureVault } from '../security/SecureVault';
-import { ModelRouter } from './ModelRouter';
+import { ModelRouter, type ModelRouterBridge } from './ModelRouter';
 import { CapabilityRegistry } from './CapabilityRegistry';
 import { CapabilityProbe } from './CapabilityProbe';
 import { PermissionBroker } from './PermissionBroker';
@@ -196,6 +196,8 @@ export class AgentCore extends SimpleEmitter {
 
     await safeInit('ModelRouter', () => this.ai.initialize());
     await safeInit('ModelProviders', () => this.ai.loadProviders());
+    // Wire the runtime bridge so ModelRouter delegates to the new provider system.
+    this.wireModelRouterBridge();
     await safeInit('DebugEngine', () => this.debugEngine.initialize());
     await safeInit('BuildSystem', () => this.buildSystem.initialize());
     await safeInit('TaskExecutor', () => this.executor.initialize());
@@ -1607,6 +1609,38 @@ You are always on. Always capable. Always direct.`;
       const raw = typeof result === 'object' ? JSON.stringify(result) : String(result);
       return `Done. ${raw.slice(0, 500)}`;
     }
+  }
+
+  wireModelRouterBridge(): void {
+    const pm = this.providerManager;
+    const aiSvc = this.aiService;
+    const bridge: ModelRouterBridge = {
+      hasActiveProvider: () => pm.getActive().some(p => !!p.apiKeyRef),
+      completeConversation: async (messages, opts) => {
+        const input = {
+          messages: messages.map(m => ({ role: m.role as 'system' | 'user' | 'assistant' | 'tool', content: m.content })),
+          model: opts.model,
+          maxTokens: opts.maxTokens,
+          temperature: opts.temperature,
+          taskId: opts.taskId,
+          agentId: opts.agentId,
+          conversationId: opts.conversationId,
+        };
+        const resp = await aiSvc.completeConversation(input);
+        return {
+          content: resp.content,
+          model: resp.model,
+          inputTokens: resp.inputTokens,
+          outputTokens: resp.outputTokens,
+          cost: 0,
+        };
+      },
+      refreshBridgeState: async () => {
+        await pm.initialize().catch(() => {});
+      },
+    };
+    this.ai.setRuntimeBridge(bridge);
+    DebugLog.push('SYSTEM', { event: 'agent_core_bridge_wired', hasActiveProvider: bridge.hasActiveProvider() });
   }
 
   getProviderManager(): ProviderManager { return this.providerManager; }
