@@ -343,20 +343,17 @@ export default function SettingsScreen() {
           baseUrl: providerDraft.baseUrl.trim(),
           authMode: providerDraft.authMode,
           apiKey: providerDraft.apiKey.trim() || '',
-          password: providerDraft.password.trim() || undefined,
-          capabilities: providerDraft.capabilities,
-          enabled: providerDraft.enabled,
         });
       } else {
         await pm.updateProvider(providerDraft.id, {
           name: providerDraft.name.trim(),
           baseUrl: providerDraft.baseUrl.trim(),
           authMode: providerDraft.authMode,
-          apiKey: providerDraft.apiKey.trim() || undefined,
-          password: providerDraft.password.trim() || undefined,
-          capabilities: providerDraft.capabilities,
           isActive: providerDraft.enabled,
         });
+        if (providerDraft.apiKey.trim()) {
+          await pm.updateApiKey(providerDraft.id, providerDraft.apiKey.trim());
+        }
       }
       setProviderDraft(null);
       loadProviders();
@@ -443,21 +440,15 @@ export default function SettingsScreen() {
     try {
       if (isNewGroup) {
         await gm.createGroup({
-          id: groupDraft.id,
           name: groupDraft.name.trim(),
-          operations: groupDraft.operations,
-          strategy: groupDraft.strategy,
-          enabled: groupDraft.enabled,
-          members: groupDraft.members,
+          selectionStrategy: groupDraft.strategy,
           tags: groupDraft.tags,
         });
       } else {
         await gm.updateGroup(groupDraft.id, {
           name: groupDraft.name.trim(),
-          operations: groupDraft.operations,
-          strategy: groupDraft.strategy,
-          enabled: groupDraft.enabled,
-          members: groupDraft.members,
+          selectionStrategy: groupDraft.strategy,
+          isActive: groupDraft.enabled,
           tags: groupDraft.tags,
         });
       }
@@ -488,7 +479,7 @@ export default function SettingsScreen() {
     const gm = (core as any)?.getGroupManager?.();
     if (!gm) return;
     try {
-      await gm.updateGroup(id, { enabled });
+      await gm.updateGroup(id, { isActive: enabled });
       loadGroups();
     } catch {}
   }, [loadGroups]);
