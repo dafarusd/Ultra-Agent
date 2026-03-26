@@ -148,30 +148,11 @@ export class ModelRouter {
         DebugLog.modelSetDefault(savedModel, prev, 'vault_restore');
         this.logger.info(`Using preferred model: ${savedModel}`);
       } else {
-        this.registerModel({
-          id: savedModel,
-          name: savedModel,
-          description: '',
-          type: 'text',
-          costPer1kInput: 0.01,
-          costPer1kOutput: 0.01,
-          maxTokens: 4096,
-          contextWindow: 8192,
-          speedTier: this.inferSpeed(savedModel),
-          capabilities: {
-            supportsVision: false,
-            supportsReasoning: false,
-            supportsFunctionCalling: false,
-            supportsWebSearch: false,
-            supportsMultipleImages: false,
-            isUncensored: false,
-          },
-          offline: false,
+        this.logger.warn(`Skipping saved preferred model because it is not discovered: ${savedModel}`);
+        DebugLog.push('SYSTEM' as any, {
+          event: 'preferred_model_skipped_undiscovered',
+          modelId: savedModel,
         });
-        const prev = this.defaultModel;
-        this.defaultModel = savedModel;
-        DebugLog.modelSetDefault(savedModel, prev, 'vault_restore_undiscovered');
-        this.logger.info(`Using saved model (not yet discovered): ${savedModel}`);
       }
     }
     if (!this.defaultModel && this.hasDiscoveredModels) {
