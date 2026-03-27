@@ -1360,7 +1360,19 @@ You are always on. Always capable. Always direct.`;
       DebugLog.error('AI_REQUEST', err.message, stack);
       step('EXECUTE', `AI request failed: ${stack}`, false);
       DebugLog.clearCorrId();
-      return { type: 'error', message: 'AI request failed: ' + err.message, taskId };
+      const errContent = err.message?.includes('No saved default')
+        ? `${err.message}\n\nOpen Settings → API Providers → create a group, add a model member, then go to the Routing tab and assign that group to the chat operation.`
+        : `AI request failed: ${err.message}`;
+      const errChatMsg: ChatMessage = {
+        id: uid('msg'),
+        role: 'assistant',
+        content: errContent,
+        createdAt: Date.now(),
+        source: 'system',
+        meta: { mode },
+      };
+      await this.conversations.addMessage(conversationId, errChatMsg).catch(() => {});
+      return { type: 'error', message: errContent, taskId };
     }
   }
 
