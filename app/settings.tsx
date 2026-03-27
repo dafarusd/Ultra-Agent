@@ -684,6 +684,7 @@ export default function SettingsScreen() {
       // Re-wire bridge so runtime routing reflects the new group immediately.
       (core as any)?.wireModelRouterBridge?.();
       await (core as any)?.refreshBridgeState?.().catch(() => {});
+      const mappingAfter = ai.getOperationMapping() as Record<string, string | null>;
       UltraDevLog.routingAssignmentChange({
         operation: op,
         beforeGroupId,
@@ -691,6 +692,14 @@ export default function SettingsScreen() {
         eligibleGroupIds,
         success: true,
         saveSource: 'settings_defaults_ui',
+      });
+      UltraDevLog.routingAssignment({
+        reason: 'settings_save',
+        operation: op,
+        groupId,
+        success: true,
+        eligibleGroupIds,
+        mappingAfter,
       });
       UltraDevLog.settingsSaveResult2({
         screen: 'settings',
@@ -701,8 +710,46 @@ export default function SettingsScreen() {
         persistedValue: groupId,
         durationMs,
       });
+      // Emit rich state snapshots so next audit can verify routing truth
+      const mr = (core as any)?.ai as any;
+      const pm = (core as any)?.providerManager;
+      const activeProviders = pm?.getActive?.() ?? [];
+      const providerModelCounts: Record<string, number> = {};
+      for (const p of activeProviders) { providerModelCounts[p.id] = pm?.getModelsForProvider?.(p.id)?.length ?? 0; }
+      UltraDevLog.apiStateSnapshot({
+        reason: 'routing_change',
+        sourceOfTruth: 'routing_change',
+        providerCount: activeProviders.length,
+        activeProviderCount: activeProviders.filter((p: any) => p.isActive !== false).length,
+        providerIds: activeProviders.map((p: any) => p.id),
+        activeProviderIds: activeProviders.filter((p: any) => p.isActive !== false).map((p: any) => p.id),
+        providerModelCounts,
+        providerBackedModelCount: mr?.getProviderBackedModelCount?.() ?? 0,
+        legacyModelCount: mr?.getLegacyModelCount?.() ?? 0,
+        defaultModel: mr?.getDefaultModelId?.() ?? null,
+        selectedModel: mr?.getDefaultModelId?.() ?? null,
+        bridgeAttached: mr?.isBridgeAttached?.() ?? false,
+        bridgeHasActiveProvider: activeProviders.some((p: any) => p.isActive !== false),
+        operationMapping: mappingAfter,
+        assignedGroupForCurrentOperation: mappingAfter[op] ?? null,
+        eligibleGroupIdsForCurrentOperation: eligibleGroupIds,
+        routeRestricted: false,
+      });
+      UltraDevLog.modelInventorySync({
+        reason: 'routing_change',
+        source: (mr?.getProviderBackedModelCount?.() ?? 0) > 0 ? 'provider_bridge' : 'legacy_cache',
+        providerBackedModelCount: mr?.getProviderBackedModelCount?.() ?? 0,
+        legacyModelCount: mr?.getLegacyModelCount?.() ?? 0,
+        returnedToPickerCount: mr?.getProviderBackedModelCount?.() ?? 0,
+        assignedGroupId: groupId,
+        eligibleGroupIds,
+        routeRestricted: false,
+        defaultModel: mr?.getDefaultModelId?.() ?? null,
+        selectedModel: mr?.getDefaultModelId?.() ?? null,
+      });
     } catch (err: any) {
       const durationMs = Date.now() - t0;
+      const mappingAfterErr = ai.getOperationMapping() as Record<string, string | null>;
       UltraDevLog.routingAssignmentChange({
         operation: op,
         beforeGroupId,
@@ -711,6 +758,15 @@ export default function SettingsScreen() {
         success: false,
         errorMessage: err?.message,
         saveSource: 'settings_defaults_ui',
+      });
+      UltraDevLog.routingAssignment({
+        reason: 'settings_save',
+        operation: op,
+        groupId,
+        success: false,
+        eligibleGroupIds,
+        mappingAfter: mappingAfterErr,
+        error: err?.message,
       });
       UltraDevLog.settingsSaveResult2({
         screen: 'settings',

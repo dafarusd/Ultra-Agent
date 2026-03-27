@@ -90,7 +90,27 @@ export default function ModelPickerSheet({
         initialFilter: initialFilter ?? 'all',
         source: models.length === 0 ? 'empty_no_providers' : 'provider_backed',
       });
-      UltraDevLog.pickerOpen(models.length, currentModelId, (slideAnim as any)._value ?? SHEET_MAX_HEIGHT, initialFilter ?? 'all');
+      const slideVal = (slideAnim as any)._value ?? SHEET_MAX_HEIGHT;
+      const initFilter = initialFilter ?? 'all';
+      const rawForFilter = initFilter === 'all' ? models : models.filter(m => m.type === initFilter);
+      const sheetFallback = initFilter !== 'all' && rawForFilter.length === 0;
+      UltraDevLog.pickerOpenDetailed({
+        requestedFilter: initFilter,
+        effectiveFilter: sheetFallback ? 'all' : initFilter,
+        currentMode: 'unknown',
+        totalModels: models.length,
+        rawFilteredCount: rawForFilter.length,
+        displayedCount: sheetFallback ? models.length : rawForFilter.length,
+        fallbackUsed: sheetFallback,
+        source: models.length === 0 ? 'empty' : 'provider_bridge',
+        selectedModel: currentModelId || null,
+        defaultModel: null,
+        assignedGroupId: null,
+        eligibleGroupIds: [],
+        routeRestricted: false,
+        slideAnimCurrentValue: slideVal,
+        note: slideVal > 0 && slideVal < 100 ? 'WARN: slideAnim partially open before reset' : 'ok',
+      });
       slideAnim.setValue(SHEET_MAX_HEIGHT);
       fadeAnim.setValue(0);
       const currentSlide = (slideAnim as any)._value ?? -1;
@@ -129,7 +149,24 @@ export default function ModelPickerSheet({
   const renderModel = useCallback(
     ({ item, index }: { item: PickerModel; index: number }) => {
       if (index === 0) {
-        UltraDevLog.pickerContentRender(displayedModels.length, models.length, filter, currentModelId);
+        UltraDevLog.pickerContentDetailed({
+          requestedFilter: filter,
+          effectiveFilter: usingFallback ? 'all' : filter,
+          currentMode: 'unknown',
+          rawFilteredCount: filteredRaw.length,
+          displayedCount: displayedModels.length,
+          totalModels: models.length,
+          fallbackUsed: usingFallback,
+          source: models.length === 0 ? 'empty' : 'provider_bridge',
+          selectedModel: currentModelId || null,
+          defaultModel: null,
+          assignedGroupId: null,
+          eligibleGroupIds: [],
+          routeRestricted: false,
+          note: usingFallback
+            ? `WARN: 0 models for filter "${filter}" -- showing all ${models.length}`
+            : `ok — ${displayedModels.length}/${models.length} for "${filter}"`,
+        });
         UltraDevLog.push('PICKER_RENDER' as any, {
           event: 'picker_content_rendered',
           filter,

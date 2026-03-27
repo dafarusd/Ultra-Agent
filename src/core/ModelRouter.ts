@@ -153,8 +153,8 @@ export class ModelRouter {
   syncRuntimeProviders(
     models: Array<ModelDef & { providerId: string; providerName: string }>
   ): void {
+    const legacyCount = this.models.size;
     this.providerBackedModels = models;
-    DebugLog.push('SYSTEM', { event: 'runtime_providers_synced', count: models.length });
     // If the current defaultModel is not in the new list, clear it so the picker
     // doesn't show a stale/unavailable model as selected.
     if (this.defaultModel && models.length > 0) {
@@ -164,6 +164,42 @@ export class ModelRouter {
         this.defaultModel = '';
       }
     }
+    DebugLog.modelInventorySync({
+      reason: 'syncRuntimeProviders',
+      source: models.length > 0 ? 'provider_bridge' : 'empty',
+      providerBackedModelCount: models.length,
+      legacyModelCount: legacyCount,
+      returnedToPickerCount: models.length,
+      selectedModel: this.defaultModel || null,
+      defaultModel: this.defaultModel || null,
+    });
+  }
+
+  // ── Debug / read-only helpers for logging snapshots ──────────────────────
+
+  getProviderBackedModelCount(): number {
+    return this.providerBackedModels.length;
+  }
+
+  getLegacyModelCount(): number {
+    return this.models.size;
+  }
+
+  isBridgeAttached(): boolean {
+    return this.bridge !== null;
+  }
+
+  getDefaultModelId(): string | null {
+    return this.defaultModel || null;
+  }
+
+  debugGetInventorySource(): 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty' {
+    const hasBacked = this.providerBackedModels.length > 0;
+    const hasLegacy = this.models.size > 0;
+    if (hasBacked && this.bridge) return 'provider_bridge';
+    if (hasBacked && hasLegacy) return 'mixed';
+    if (hasLegacy) return 'legacy_cache';
+    return 'empty';
   }
 
   async initialize(): Promise<void> {

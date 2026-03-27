@@ -96,6 +96,7 @@ export type UltraLogCat =
   | 'SETTINGS_SAVE_START'         // Structured settings save intent
   | 'SETTINGS_SAVE_RESULT'        // Structured settings save outcome
   | 'ROUTING_ASSIGNMENT_CHANGE'   // Operation→group routing change
+  | 'ROUTING_ASSIGNMENT'          // Normalized routing assignment snapshot
   | 'API_STATE_SNAPSHOT'          // Provider/group/model state snapshot
   | 'MODEL_INVENTORY_SYNC'        // Model inventory refresh event
   | 'PERMISSION_SNAPSHOT_STARTUP' // Permission states at startup
@@ -957,40 +958,117 @@ export class UltraDevLog {
   }
 
   static apiStateSnapshot(params: {
+    reason: string;
+    sourceOfTruth: 'startup' | 'bridge_refresh' | 'provider_probe' | 'picker_open' | 'routing_change' | 'settings_save' | 'manual';
     providerCount: number;
     activeProviderCount: number;
-    groupCount: number;
-    activeGroupCount: number;
-    routeMappingSummary: Record<string, string | null>;
+    providerIds: string[];
+    activeProviderIds: string[];
+    providerModelCounts: Record<string, number>;
     providerBackedModelCount: number;
-    defaultModelId: string | null;
-    hasUsableAuthCount: number;
-    trigger: string;
+    legacyModelCount: number;
+    defaultModel: string | null;
+    selectedModel: string | null;
+    bridgeAttached: boolean;
+    bridgeHasActiveProvider: boolean;
+    operationMapping: Record<string, string | null>;
+    assignedGroupForCurrentOperation: string | null;
+    eligibleGroupIdsForCurrentOperation: string[];
+    routeRestricted: boolean;
+    currentMode?: string;
+    note?: string;
   }): void {
     UltraDevLog.push('API_STATE_SNAPSHOT', {
       ...params,
-      note: params.activeProviderCount === 0
+      note: params.note ?? (params.activeProviderCount === 0
         ? 'WARN: no active providers'
-        : `ok — ${params.activeProviderCount}/${params.providerCount} providers active, ${params.providerBackedModelCount} models`,
+        : `ok — ${params.activeProviderCount}/${params.providerCount} providers active, ${params.providerBackedModelCount} providerModels legacy=${params.legacyModelCount} bridge=${params.bridgeAttached}`),
     });
   }
 
   static modelInventorySync(params: {
-    providerCountSeen: number;
+    reason: string;
+    source: 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty';
     providerBackedModelCount: number;
     legacyModelCount: number;
-    mergedCount: number;
-    activeModelId: string | null;
-    source: string;
-    durationMs: number;
-    success: boolean;
-    errorMessage?: string;
+    returnedToPickerCount: number;
+    currentMode?: string;
+    requestedFilter?: string;
+    effectiveFilter?: string;
+    rawFilteredCount?: number;
+    displayedCount?: number;
+    fallbackUsed?: boolean;
+    routeRestricted?: boolean;
+    assignedGroupId?: string | null;
+    eligibleGroupIds?: string[];
+    selectedModel?: string | null;
+    defaultModel?: string | null;
+    note?: string;
   }): void {
     UltraDevLog.push('MODEL_INVENTORY_SYNC', {
       ...params,
-      note: params.success
-        ? `ok — ${params.mergedCount} models merged (backed=${params.providerBackedModelCount} legacy=${params.legacyModelCount}) in ${params.durationMs}ms`
-        : `WARN: inventory sync failed: ${params.errorMessage ?? 'unknown'}`,
+      note: params.note ?? `ok — src=${params.source} total=${params.providerBackedModelCount + params.legacyModelCount} backed=${params.providerBackedModelCount} legacy=${params.legacyModelCount} shown=${params.displayedCount ?? params.returnedToPickerCount} reason=${params.reason}`,
+    });
+  }
+
+  static routingAssignment(params: {
+    reason: string;
+    operation: string;
+    groupId: string | null;
+    success: boolean;
+    eligibleGroupIds: string[];
+    mappingAfter: Record<string, string | null>;
+    note?: string;
+    error?: string;
+  }): void {
+    UltraDevLog.push('ROUTING_ASSIGNMENT', {
+      ...params,
+      note: params.note ?? (params.success
+        ? `ok — ${params.operation} → ${params.groupId ?? 'none'} eligible=[${params.eligibleGroupIds.join(',')}] reason=${params.reason}`
+        : `WARN: routing assignment failed for ${params.operation}: ${params.error ?? 'unknown'}`),
+    });
+  }
+
+  static pickerOpenDetailed(params: {
+    requestedFilter: string;
+    effectiveFilter: string;
+    currentMode: string;
+    totalModels: number;
+    rawFilteredCount: number;
+    displayedCount: number;
+    fallbackUsed: boolean;
+    source: 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty';
+    selectedModel: string | null;
+    defaultModel: string | null;
+    assignedGroupId: string | null;
+    eligibleGroupIds: string[];
+    routeRestricted: boolean;
+    slideAnimCurrentValue: number;
+    note: string;
+  }): void {
+    UltraDevLog.push('PICKER_OPEN', {
+      ...params,
+    });
+  }
+
+  static pickerContentDetailed(params: {
+    requestedFilter: string;
+    effectiveFilter: string;
+    currentMode: string;
+    rawFilteredCount: number;
+    displayedCount: number;
+    totalModels: number;
+    fallbackUsed: boolean;
+    source: 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty';
+    selectedModel: string | null;
+    defaultModel: string | null;
+    assignedGroupId: string | null;
+    eligibleGroupIds: string[];
+    routeRestricted: boolean;
+    note: string;
+  }): void {
+    UltraDevLog.push('PICKER_CONTENT', {
+      ...params,
     });
   }
 
@@ -1220,7 +1298,12 @@ export class UltraDevLog {
       case 'VAULT_WRITE': return `${t} [VAULT_W ] ${d.key} ok=${d.success}${d.valuePreview ? ` "${d.valuePreview}"` : ''}`;
       case 'PARSE_INPUT': return `${t} [PARSE   ]${c} pat=${d.matchedPattern || 'NONE'} cap=${d.capability || 'NONE'} compound=${d.isCompound}`;
       case 'PARSE_COMPOUND': return `${t} [COMPOUND]${c} "${d.input}"`;
-      case 'PICKER_OPEN': return `${t} [PICKER> ] ${d.modelCount} models filter=${d.filter} anim=${d.slideAnimCurrentValue} ${d.note}`;
+      case 'PICKER_OPEN': {
+        if (d.requestedFilter !== undefined) {
+          return `${t} [PICKER> ] req=${d.requestedFilter} eff=${d.effectiveFilter} total=${d.totalModels} raw=${d.rawFilteredCount} shown=${d.displayedCount} fallback=${d.fallbackUsed} src=${d.source} assigned=${d.assignedGroupId ?? 'none'} routeRestricted=${d.routeRestricted} anim=${d.slideAnimCurrentValue} ${d.note}`;
+        }
+        return `${t} [PICKER> ] ${d.modelCount} models filter=${d.filter} anim=${d.slideAnimCurrentValue} ${d.note}`;
+      }
       case 'PICKER_CLOSE': return `${t} [PICKER< ] via ${d.how}`;
       case 'PICKER_ANIMATE': return `${t} [PICKER~ ] ${d.direction} ${d.fromValue}->${d.toValue} ${d.animationType}`;
       case 'PICKER_SELECT': return `${t} [PICKER+ ] ${d.modelId} was=${d.previousModelId}`;
@@ -1249,9 +1332,10 @@ export class UltraDevLog {
       case 'PICKER_FILTER_CHANGE': return `${t} [PICK_FLT] ${d.fromFilter} → ${d.toFilter} displayed=${d.displayedCountAfter} raw=${d.rawCountAfter} route=${d.routeRestrictionActive}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
       case 'SETTINGS_SAVE_START': return `${t} [SAVE_ST ] ${d.screen}.${d.section}.${d.action} key=${d.targetKey}`;
       case 'SETTINGS_SAVE_RESULT': return `${t} [SAVE_RS ] ${d.success ? 'OK' : 'FAIL'} ${d.screen}.${d.section}.${d.action} ${d.durationMs}ms${d.errorMessage ? ' ERR=' + d.errorMessage : ''}`;
-      case 'ROUTING_ASSIGNMENT_CHANGE': return `${t} [ROUTE_  ] ${d.success ? 'OK' : 'FAIL'} op=${d.operation} ${d.beforeGroupId ?? 'none'} → ${d.afterGroupId ?? 'none'} via=${d.saveSource}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
-      case 'API_STATE_SNAPSHOT': return `${t} [API_SNP ] providers=${d.activeProviderCount}/${d.providerCount} groups=${d.activeGroupCount}/${d.groupCount} models=${d.providerBackedModelCount} default=${d.defaultModelId ?? 'none'} trigger=${d.trigger}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
-      case 'MODEL_INVENTORY_SYNC': return `${t} [INV_SYN ] ${d.success ? 'OK' : 'FAIL'} merged=${d.mergedCount} backed=${d.providerBackedModelCount} legacy=${d.legacyModelCount} src=${d.source} ${d.durationMs}ms${d.errorMessage ? ' ERR=' + d.errorMessage : ''}`;
+      case 'ROUTING_ASSIGNMENT_CHANGE': return `${t} [ROUTE_CH] ${d.success ? 'OK' : 'FAIL'} op=${d.operation} ${d.beforeGroupId ?? 'none'} → ${d.afterGroupId ?? 'none'} via=${d.saveSource}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      case 'ROUTING_ASSIGNMENT': return `${t} [ROUTE_AS] ${d.success ? 'OK' : 'FAIL'} op=${d.operation} group=${d.groupId ?? 'none'} eligible=[${(d.eligibleGroupIds as string[])?.join(',') ?? ''}] reason=${d.reason}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      case 'API_STATE_SNAPSHOT': return `${t} [API_ST  ] ${d.reason} providers=${d.activeProviderCount}/${d.providerCount} provModels=${d.providerBackedModelCount} legacy=${d.legacyModelCount} selected=${d.selectedModel ?? 'none'} default=${d.defaultModel ?? 'none'} bridge=${d.bridgeAttached} routeRestricted=${d.routeRestricted} assigned=${d.assignedGroupForCurrentOperation ?? 'none'} mode=${d.currentMode ?? '?'}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      case 'MODEL_INVENTORY_SYNC': return `${t} [MDL_SYN ] ${d.reason} src=${d.source} backed=${d.providerBackedModelCount} legacy=${d.legacyModelCount} shown=${d.displayedCount ?? d.returnedToPickerCount} req=${d.requestedFilter ?? '?'} eff=${d.effectiveFilter ?? '?'} fallback=${d.fallbackUsed ?? false} routeRestricted=${d.routeRestricted ?? false} assigned=${d.assignedGroupId ?? 'none'}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
       case 'PERMISSION_SNAPSHOT_STARTUP': return `${t} [PERM_SS ] ${JSON.stringify(d.permissions).slice(0, 200)}`;
       case 'PERMISSION_RECHECK_RUNTIME': return `${t} [PERM_RC ] cap=${d.capability} perm=${d.permission} startup=${d.startupStatus} runtime=${d.runtimeStatus} granted=${d.granted}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
       case 'PERMISSION_CONTRADICTION': return `${t} [PERM_!! ] *** cap=${d.capability} perm=${d.permission} startup=${d.startupStatus} runtime=${d.runtimeStatus} type=${d.contradictionType}`;
@@ -1261,7 +1345,12 @@ export class UltraDevLog {
         if (d.event === 'suppressed') return `${t} [FOCUS_T ] throttle ok ${d.elapsedMs}ms`;
         return `${t} [FOCUS_D ] changed=[${(d.changedDeps as string[]).join(',')}]${d.isFirstTrigger ? ' (first)' : ''}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
       case 'PROCESS_RESTART': return `${t} [PROC_RS ] ${d.event}${d.backgroundDurationMs ? ` bg=${d.backgroundDurationMs}ms` : ''} ${d.note}`;
-      case 'PICKER_CONTENT': return `${t} [PICK_CT ] filter=${d.activeFilter} ${d.filteredCount}/${d.totalCount}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      case 'PICKER_CONTENT': {
+        if (d.requestedFilter !== undefined) {
+          return `${t} [PICK_CT ] req=${d.requestedFilter} eff=${d.effectiveFilter} raw=${d.rawFilteredCount} shown=${d.displayedCount} total=${d.totalModels} fallback=${d.fallbackUsed} src=${d.source} routeRestricted=${d.routeRestricted} assigned=${d.assignedGroupId ?? 'none'}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+        }
+        return `${t} [PICK_CT ] filter=${d.activeFilter} ${d.filteredCount}/${d.totalCount}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      }
       case 'CONTEXT_PROVIDER': return `${t} [CTX_PRV ] ${d.providerName} render#${d.renderCount} core=${(d.coreInstanceId as string)?.slice(-6)} ${d.note}`;
       case 'SESSION_SUMMARY': return `${t} [SUMMARY ] ${JSON.stringify(d)}`;
       case 'DEVICE_INFO': return `${t} [DEVICE  ] os=${d.os} ver=${d.osVersion} model=${d.model} screen=${d.screenWidth}x${d.screenHeight} ram=${d.totalMemory ?? 'unknown'}`;
@@ -1319,7 +1408,7 @@ export class UltraDevLog {
     const allPickerEntries = entries.filter(e => pickerCats.has(e.cat));
     const allSettingsEntries = entries.filter(e => settingsCats.has(e.cat));
     const allRoutingEntries = entries.filter(e => e.cat === 'ROUTING_ASSIGNMENT_CHANGE');
-    const allApiSyncEntries = entries.filter(e => ['API_STATE_SNAPSHOT','MODEL_INVENTORY_SYNC'].includes(e.cat));
+    const allApiSyncEntries = entries.filter(e => ['API_STATE_SNAPSHOT','MODEL_INVENTORY_SYNC','ROUTING_ASSIGNMENT'].includes(e.cat));
     const allPermContradictions = entries.filter(e => e.cat === 'PERMISSION_CONTRADICTION');
 
     lines.push(hr);
@@ -1341,7 +1430,7 @@ export class UltraDevLog {
     lines.push(`  Picker trace:   ${allPickerEntries.length} entries — ALL included, uncapped`);
     lines.push(`  Settings trace: ${allSettingsEntries.length} entries — ALL included, uncapped`);
     lines.push(`  Routing trace:  ${allRoutingEntries.length} entries — ALL included, uncapped`);
-    lines.push(`  API/sync trace: ${allApiSyncEntries.length} entries — ALL included`);
+    lines.push(`  API/sync trace: ${allApiSyncEntries.length} entries — ALL included (API_STATE_SNAPSHOT + MODEL_INVENTORY_SYNC + ROUTING_ASSIGNMENT)`);
     lines.push(`  Perm contradict:${allPermContradictions.length} entries`);
     lines.push(`  Categories:     ${coveredCats}`);
 
@@ -1406,8 +1495,10 @@ export class UltraDevLog {
       } else if (requiresConfirm) {
         lines.push(''); lines.push(`  TERMINAL STATE: requires_confirmation — agent requested approval before proceeding.`);
       } else if (last && !terminalEvidence && last !== 'RESPOND' && last !== 'VERIFY_RESULT') {
-        const next = PHASES[PHASES.indexOf(last) + 1];
-        if (next) {
+        const lastIndex = PHASES.indexOf(last);
+        const hasLaterPhase = allReachedPhases.some(ph => PHASES.indexOf(ph) > lastIndex);
+        const next = PHASES[lastIndex + 1];
+        if (next && !hasLaterPhase) {
           lines.push('');
           lines.push(`  PHASE GAP: last confirmed phase=${last}; no confirmed evidence of ${next}. No terminal result logged.`);
           lines.push(`  NOTE: this indicates an actual gap, not an invented crash. Evidence from EXECUTE_PHASE + AGENT_STEP: [${allReachedPhases.join(', ')}]`);
@@ -1431,10 +1522,10 @@ export class UltraDevLog {
     lines.push(''); lines.push(`-- ROUTING ASSIGNMENT TRACE (ALL ${allRoutingEntries.length} entries, uncapped) ---`);
     allRoutingEntries.length === 0 ? lines.push('  None -- no routing changes this session.') : allRoutingEntries.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
 
-    if (allApiSyncEntries.length > 0) {
-      lines.push(''); lines.push(`-- API/MODEL SYNC TRACE (${allApiSyncEntries.length}) ----------------`);
-      allApiSyncEntries.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
-    }
+    lines.push(''); lines.push(`-- API / MODEL / ROUTING STATE (${allApiSyncEntries.length}) -----------`);
+    allApiSyncEntries.length === 0
+      ? lines.push('  None -- no API/model/routing snapshots this session.')
+      : allApiSyncEntries.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
 
     if (allPermContradictions.length > 0) {
       lines.push(''); lines.push(`-- PERMISSION CONTRADICTIONS (${allPermContradictions.length}) *** --------`);
