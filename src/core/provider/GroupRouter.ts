@@ -125,7 +125,8 @@ export class GroupRouter {
     if (defaults.conversationStickyRouting && ctx.conversationId) {
       const history = this.routeHistory.get(ctx.conversationId);
       if (history) {
-        const route = this.rehydrateHistory(history, operation, activeProviders, activeGroups);
+        UltraDevLog.push('ROUTE', { event: 'sticky_candidate_found', groupId: history.lastGroupId, providerId: history.lastProviderId, modelId: history.lastModelId });
+        const route = await this.rehydrateHistory(history, operation, activeProviders, activeGroups);
         if (route) {
           UltraDevLog.push('ROUTE', { event: 'route_resolved', step: 'sticky_routing', conversationId: ctx.conversationId, ...this.logRoute(route) });
           return { ok: true, route };
@@ -315,7 +316,11 @@ export class GroupRouter {
     const provider = activeProviders.find(p => p.id === member.providerId);
     if (!provider) return null;
     const apiKey = await this.providerManager.getApiKey(provider);
-    if (!apiKey) return null;
+    // For auth modes that require a key, block if none is found.
+    if (!apiKey && provider.authMode !== 'none') return null;
+    const password = provider.authMode === 'basic'
+      ? await this.providerManager.getPassword(provider)
+      : null;
     const registry = getAdapterRegistry();
     const adapterIds = member.adapterOverrideId
       ? [member.adapterOverrideId, ...provider.capabilities.adapterIds]
@@ -331,36 +336,55 @@ export class GroupRouter {
       adapterId: adapter.id,
       operation,
       selectionStrategy: group.selectionStrategy,
-      apiKey,
+      apiKey: apiKey ?? '',
       baseUrl: provider.baseUrl,
       authMode: provider.authMode,
       customAuthHeaderName: provider.customAuthHeaderName,
       customAuthHeaderPrefix: provider.customAuthHeaderPrefix,
+      password,
     };
   }
 
-  private rehydrateHistory(
+  private async rehydrateHistory(
     history: RouteHistory,
     operation: AllowedOperation,
     activeProviders: ApiProvider[],
     activeGroups: ModelGroup[]
-  ): ResolvedRoute | null {
+  ): Promise<ResolvedRoute | null> {
     const group = activeGroups.find(g => g.id === history.lastGroupId);
-    if (!group) return null;
+    if (!group) {
+      UltraDevLog.push('ROUTE', { event: 'sticky_rejected', reason: 'group_not_active', groupId: history.lastGroupId });
+      return null;
+    }
     const provider = activeProviders.find(p => p.id === history.lastProviderId);
-    if (!provider) return null;
+    if (!provider) {
+      UltraDevLog.push('ROUTE', { event: 'sticky_rejected', reason: 'provider_not_active', providerId: history.lastProviderId });
+      return null;
+    }
     const member = group.members.find(m =>
       m.enabled &&
       m.providerId === history.lastProviderId &&
       m.modelId === history.lastModelId &&
       m.allowedOperations.includes(operation)
     );
-    if (!member) return null;
-    if (!this.providerManager.hasModel(provider.id, member.modelId)) return null;
+    if (!member) {
+      UltraDevLog.push('ROUTE', { event: 'sticky_rejected', reason: 'member_not_found_or_not_allowed', modelId: history.lastModelId, operation });
+      return null;
+    }
     const registry = getAdapterRegistry();
-    const adapter = registry.getForOperation(provider.capabilities.adapterIds, operation);
-    if (!adapter) return null;
-    return null; // Can't await inside non-async; sticky handled by selectFromGroup
+    const adapterIds = member.adapterOverrideId
+      ? [member.adapterOverrideId, ...provider.capabilities.adapterIds]
+      : provider.capabilities.adapterIds;
+    const adapter = registry.getForOperation(adapterIds, operation);
+    if (!adapter) {
+      UltraDevLog.push('ROUTE', { event: 'sticky_rejected', reason: 'no_adapter', adapterIds, operation });
+      return null;
+    }
+    const route = await this.buildRoute(group, member, operation, activeProviders);
+    if (route) {
+      UltraDevLog.push('ROUTE', { event: 'sticky_reused', groupId: group.id, providerId: provider.id, modelId: member.modelId });
+    }
+    return route;
   }
 
   private failClosed(

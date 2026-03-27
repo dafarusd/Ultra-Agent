@@ -101,7 +101,7 @@ async function openaiChatInvoke(
 ): Promise<AdapterResult<NormalizedAiResponse>> {
   const url = buildEndpointUrl(route.baseUrl, '/chat/completions');
   const headers = {
-    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
+    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, password: route.password, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
     'Content-Type': 'application/json',
   };
   const body: Record<string, unknown> = {
@@ -149,7 +149,7 @@ async function openaiChatInvoke(
 async function openaiChatProbePlan(
   route: ResolvedRoute
 ): Promise<ProbeEndpointResult[]> {
-  const headers = buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix });
+  const headers = buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, password: route.password, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix });
   const results: ProbeEndpointResult[] = [];
   results.push(await probeEndpoint(buildEndpointUrl(route.baseUrl, '/models'), headers));
   return results;
@@ -174,7 +174,7 @@ async function imageGenerationInvoke(
 ): Promise<AdapterResult<NormalizedImageResponse>> {
   const url = buildEndpointUrl(route.baseUrl, '/image/generate');
   const headers = {
-    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
+    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, password: route.password, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
     'Content-Type': 'application/json',
   };
   const body: Record<string, unknown> = {
@@ -234,7 +234,7 @@ async function speechInvoke(
 ): Promise<AdapterResult<NormalizedAudioResponse>> {
   const url = buildEndpointUrl(route.baseUrl, '/audio/speech');
   const headers = {
-    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
+    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, password: route.password, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
     'Content-Type': 'application/json',
   };
   const body: Record<string, unknown> = {
@@ -287,7 +287,7 @@ async function videoQueueInvoke(
 ): Promise<AdapterResult<NormalizedVideoJob>> {
   const url = buildEndpointUrl(route.baseUrl, '/video/queue');
   const headers = {
-    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
+    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, password: route.password, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
     'Content-Type': 'application/json',
   };
   const body: Record<string, unknown> = {
@@ -327,7 +327,7 @@ async function videoPollResult(
   maxWaitMs = VIDEO_MAX_WAIT_MS
 ): Promise<AdapterResult<NormalizedVideoResult>> {
   const url = buildEndpointUrl(route.baseUrl, '/video/retrieve');
-  const headers = buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix });
+  const headers = buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, password: route.password, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix });
   const deadline = Date.now() + maxWaitMs;
   const t0 = Date.now();
   while (Date.now() < deadline) {
@@ -379,7 +379,7 @@ async function embeddingsInvoke(
 ): Promise<AdapterResult<NormalizedEmbeddingsResponse>> {
   const url = buildEndpointUrl(route.baseUrl, '/embeddings');
   const headers = {
-    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
+    ...buildAuthHeaders({ authMode: route.authMode, apiKey: route.apiKey, password: route.password, customAuthHeaderName: route.customAuthHeaderName, customAuthHeaderPrefix: route.customAuthHeaderPrefix }),
     'Content-Type': 'application/json',
   };
   const t0 = Date.now();

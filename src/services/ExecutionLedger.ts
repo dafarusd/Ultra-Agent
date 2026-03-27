@@ -10,15 +10,22 @@ interface BudgetLimits {
   maxActionsPerSession: number;
   maxCostPerSession: number;
   maxHighRiskPerSession: number;
+  /** Max spend for a single task/run (0 = disabled). */
+  maxCostPerTask: number;
+  /** Max spend across a rolling 24-hour window (0 = disabled). */
+  maxCostPerDay: number;
 }
 
 const DEFAULT_BUDGET: BudgetLimits = {
   maxActionsPerSession: 50,
   maxCostPerSession: 2.0,
   maxHighRiskPerSession: 3,
+  maxCostPerTask: 0,
+  maxCostPerDay: 0,
 };
 
 const SESSION_WINDOW_MS = 60 * 60 * 1000;
+const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const LEDGER_FILE = 'execution-ledger.json';
 const WEB_STORAGE_KEY = 'ultra_execution_ledger';
@@ -111,6 +118,14 @@ export class ExecutionLedger {
     return { actionCount, highRiskCount, totalCost };
   }
 
+  async getDailyStats(): Promise<{ totalCost: number }> {
+    await this.initialize();
+    const dayStart = Date.now() - DAILY_WINDOW_MS;
+    const dailyEvents = this.events.filter(e => e.timestamp >= dayStart);
+    const totalCost = dailyEvents.reduce((sum, e) => sum + (e.cost ?? 0), 0);
+    return { totalCost };
+  }
+
   async checkBudget(): Promise<BudgetCheck> {
     const stats = await this.getSessionStats();
 
@@ -135,7 +150,29 @@ export class ExecutionLedger {
       };
     }
 
+    if (this.budgetLimits.maxCostPerDay > 0) {
+      const dailyStats = await this.getDailyStats();
+      if (dailyStats.totalCost >= this.budgetLimits.maxCostPerDay) {
+        return {
+          allowed: false,
+          reason: `Daily cost limit reached ($${dailyStats.totalCost.toFixed(2)}/$${this.budgetLimits.maxCostPerDay.toFixed(2)}). Resets after 24 hours.`,
+        };
+      }
+    }
+
     return { allowed: true, reason: 'Within budget' };
+  }
+
+  /** Check whether a single task's accumulated cost would exceed the per-task limit. */
+  checkTaskBudget(taskCostSoFar: number): BudgetCheck {
+    if (this.budgetLimits.maxCostPerTask <= 0) return { allowed: true, reason: 'No per-task limit set' };
+    if (taskCostSoFar >= this.budgetLimits.maxCostPerTask) {
+      return {
+        allowed: false,
+        reason: `Per-task cost limit reached ($${taskCostSoFar.toFixed(4)}/$${this.budgetLimits.maxCostPerTask.toFixed(2)}). Start a new conversation to continue.`,
+      };
+    }
+    return { allowed: true, reason: 'Within per-task budget' };
   }
 
   private async loadEvents(): Promise<void> {

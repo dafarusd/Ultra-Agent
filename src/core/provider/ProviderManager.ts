@@ -132,10 +132,19 @@ export class ProviderManager {
     return this.vault.get(VK.providerPassword(provider.id));
   }
 
+  async updatePassword(id: string, password: string): Promise<void> {
+    const provider = this.providers.get(id);
+    if (!provider) throw new Error(`Provider ${id} not found`);
+    await this.vault.set(VK.providerPassword(id), password);
+    await this.updateProvider(id, { passwordRef: VK.providerPassword(id) });
+    UltraDevLog.push('SYSTEM', { event: 'provider_password_updated', id });
+  }
+
   async addProvider(input: {
     name: string;
     baseUrl: string;
     apiKey: string;
+    password?: string;
     authMode?: ApiProvider['authMode'];
     customAuthHeaderName?: string;
     customAuthHeaderPrefix?: string;
@@ -145,11 +154,13 @@ export class ProviderManager {
 
     const id = generateId();
     const now = Date.now();
+    const hasPassword = !!(input.password && input.password.trim());
     const provider: ApiProvider = {
       id,
       name: input.name,
       baseUrl: normalized.url,
       apiKeyRef: VK.providerApiKey(id),
+      passwordRef: hasPassword ? VK.providerPassword(id) : undefined,
       authMode: input.authMode ?? 'bearer',
       customAuthHeaderName: input.customAuthHeaderName,
       customAuthHeaderPrefix: input.customAuthHeaderPrefix,
@@ -161,9 +172,12 @@ export class ProviderManager {
       metadata: {},
     };
     await this.vault.set(VK.providerApiKey(id), input.apiKey);
+    if (hasPassword) {
+      await this.vault.set(VK.providerPassword(id), input.password!.trim());
+    }
     this.providers.set(id, provider);
     await this.save();
-    UltraDevLog.push('SYSTEM', { event: 'provider_added', id, name: provider.name, baseUrl: provider.baseUrl });
+    UltraDevLog.push('SYSTEM', { event: 'provider_added', id, name: provider.name, baseUrl: provider.baseUrl, authMode: provider.authMode });
     return provider;
   }
 

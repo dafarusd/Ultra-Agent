@@ -198,6 +198,8 @@ export class AgentCore extends SimpleEmitter {
     await safeInit('ModelProviders', () => this.ai.loadProviders());
     // Wire the runtime bridge so ModelRouter delegates to the new provider system.
     this.wireModelRouterBridge();
+    // Immediately populate the provider-backed model list so the picker shows real data.
+    await safeInit('BridgeSync', () => this.ai.refreshBridgeState());
     await safeInit('DebugEngine', () => this.debugEngine.initialize());
     await safeInit('BuildSystem', () => this.buildSystem.initialize());
     await safeInit('TaskExecutor', () => this.executor.initialize());
@@ -211,10 +213,15 @@ export class AgentCore extends SimpleEmitter {
       const dailyLimit = parseFloat(rawDaily || '0');
       const taskLimit = parseFloat(rawTask || '0');
       if (dailyLimit > 0) {
-        this.ledger.budgetLimits.maxCostPerSession = dailyLimit;
-        DebugLog.systemEvent('AgentCore', `Cost limit loaded from vault: $${dailyLimit}/session (task limit: $${taskLimit})`);
-      } else {
-        DebugLog.systemEvent('AgentCore', 'No cost limit configured — using default $2.00/session');
+        this.ledger.budgetLimits.maxCostPerDay = dailyLimit;
+        DebugLog.systemEvent('AgentCore', `Daily cost limit loaded: $${dailyLimit}/24h`);
+      }
+      if (taskLimit > 0) {
+        this.ledger.budgetLimits.maxCostPerTask = taskLimit;
+        DebugLog.systemEvent('AgentCore', `Per-task cost limit loaded: $${taskLimit}/task`);
+      }
+      if (dailyLimit === 0 && taskLimit === 0) {
+        DebugLog.systemEvent('AgentCore', 'No cost limits configured — using default session limit of $2.00');
       }
     } catch (costErr: any) {
       DebugLog.error('AgentCore', `Failed to load cost limits from vault: ${costErr.message}`, costErr.stack);
@@ -1627,7 +1634,11 @@ You are always on. Always capable. Always direct.`;
     const pm = this.providerManager;
     const aiSvc = this.aiService;
     const bridge: ModelRouterBridge = {
-      hasActiveProvider: () => pm.getActive().some(p => !!p.apiKeyRef),
+      hasActiveProvider: () => pm.getActive().some(p => {
+        if (!p.isActive) return false;
+        if (p.authMode === 'none') return true;
+        return !!p.apiKeyRef;
+      }),
       completeConversation: async (messages, opts) => {
         const input = {
           messages: messages.map(m => ({ role: m.role as 'system' | 'user' | 'assistant' | 'tool', content: m.content })),
@@ -1649,6 +1660,37 @@ You are always on. Always capable. Always direct.`;
       },
       refreshBridgeState: async () => {
         await pm.initialize().catch(() => {});
+        // Rebuild the provider-backed model inventory so the picker reflects reality.
+        const activeProviders = pm.getActive();
+        const providerBackedModels: Array<any> = [];
+        for (const p of activeProviders) {
+          const models = pm.getModelsForProvider(p.id);
+          for (const m of models) {
+            providerBackedModels.push({
+              id: m.id,
+              name: m.name || m.id,
+              type: 'text',
+              providerId: p.id,
+              providerName: p.name,
+              costPer1kInput: m.pricing?.inputPer1k ?? 0,
+              costPer1kOutput: m.pricing?.outputPer1k ?? 0,
+              maxTokens: m.maxTokens ?? 4096,
+              contextWindow: m.contextWindow ?? 0,
+              speedTier: 'balanced' as const,
+              capabilities: {
+                supportsVision: false,
+                supportsReasoning: false,
+                supportsFunctionCalling: true,
+                supportsWebSearch: false,
+                supportsMultipleImages: false,
+                isUncensored: false,
+              },
+              offline: false,
+            });
+          }
+        }
+        this.ai.syncRuntimeProviders(providerBackedModels);
+        DebugLog.push('SYSTEM', { event: 'bridge_refresh_complete', providerCount: activeProviders.length, modelCount: providerBackedModels.length });
       },
     };
     this.ai.setRuntimeBridge(bridge);
@@ -1656,6 +1698,8 @@ You are always on. Always capable. Always direct.`;
   }
 
   getProviderManager(): ProviderManager { return this.providerManager; }
+  getLedger(): ExecutionLedger { return this.ledger; }
+  async refreshBridgeState(): Promise<void> { await this.ai.refreshBridgeState().catch(() => {}); }
   getGroupManager(): GroupManager { return this.groupManager; }
   getRouteHistoryStore(): RouteHistoryStore { return this.routeHistoryStore; }
   getAiService(): AiService { return this.aiService; }

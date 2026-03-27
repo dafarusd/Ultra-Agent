@@ -79,6 +79,17 @@ export default function ModelPickerSheet({
   React.useEffect(() => {
     if (visible) {
       if (initialFilter) setFilter(initialFilter);
+      // Issue 8: log raw model count vs effective count (with source breakdown).
+      const byType: Record<string, number> = {};
+      for (const m of models) { byType[m.type] = (byType[m.type] ?? 0) + 1; }
+      UltraDevLog.push('PICKER_OPEN' as any, {
+        event: 'picker_opened',
+        rawCount: models.length,
+        currentModelId,
+        byType,
+        initialFilter: initialFilter ?? 'all',
+        source: models.length === 0 ? 'empty_no_providers' : 'provider_backed',
+      });
       UltraDevLog.pickerOpen(models.length, currentModelId, (slideAnim as any)._value ?? SHEET_MAX_HEIGHT, initialFilter ?? 'all');
       slideAnim.setValue(SHEET_MAX_HEIGHT);
       fadeAnim.setValue(0);
@@ -117,7 +128,19 @@ export default function ModelPickerSheet({
 
   const renderModel = useCallback(
     ({ item, index }: { item: PickerModel; index: number }) => {
-      if (index === 0) UltraDevLog.pickerContentRender(displayedModels.length, models.length, filter, currentModelId);
+      if (index === 0) {
+        UltraDevLog.pickerContentRender(displayedModels.length, models.length, filter, currentModelId);
+        UltraDevLog.push('PICKER_RENDER' as any, {
+          event: 'picker_content_rendered',
+          filter,
+          rawCount: models.length,
+          filteredRawCount: filteredRaw.length,
+          displayedCount: displayedModels.length,
+          usingFallback,
+          currentModelId,
+          currentModelInList: displayedModels.some(m => m.id === currentModelId),
+        });
+      }
       const isActive = item.id === currentModelId;
       return (
         <Pressable

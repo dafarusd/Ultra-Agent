@@ -186,6 +186,8 @@ export interface ResolvedRoute {
   authMode: AuthMode;
   customAuthHeaderName?: string;
   customAuthHeaderPrefix?: string;
+  /** Resolved password for basic auth. Never log this value. */
+  password?: string | null;
 }
 
 export interface RouteError {

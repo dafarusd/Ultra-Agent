@@ -93,6 +93,8 @@ export class ModelRouter {
   private providers: Map<string, ProviderConfig> = new Map();
   private categoryDefaults: Map<string, CategoryDefault> = new Map();
   private bridge: ModelRouterBridge | null = null;
+  /** Provider-backed models populated by syncRuntimeProviders() when bridge is active. */
+  private providerBackedModels: Array<ModelDef & { providerId: string; providerName: string }> = [];
 
   constructor(vault: SecureVault, costTracker: CostTracker) {
     this.vault = vault;
@@ -131,6 +133,37 @@ export class ModelRouter {
     this.bridge = bridge;
     DebugLog.push('SYSTEM', { event: 'model_router_bridge_set', hasActiveProvider: bridge.hasActiveProvider() });
     this.logger.info('ModelRouter runtime bridge attached');
+  }
+
+  /** Proxy bridge refresh — allows callers to re-sync providers without holding the bridge reference. */
+  async refreshBridgeState(): Promise<void> {
+    if (this.bridge) {
+      await this.bridge.refreshBridgeState();
+    } else {
+      DebugLog.push('SYSTEM', { event: 'refresh_bridge_state_skipped_no_bridge' });
+    }
+  }
+
+  /**
+   * Populate the provider-backed model inventory from the active provider system.
+   * Called by AgentCore.refreshBridgeState() after every provider save or init.
+   * When this list is non-empty, getAllModelsWithProvider() returns it exclusively
+   * so the picker reflects the real provider state rather than the legacy seed.
+   */
+  syncRuntimeProviders(
+    models: Array<ModelDef & { providerId: string; providerName: string }>
+  ): void {
+    this.providerBackedModels = models;
+    DebugLog.push('SYSTEM', { event: 'runtime_providers_synced', count: models.length });
+    // If the current defaultModel is not in the new list, clear it so the picker
+    // doesn't show a stale/unavailable model as selected.
+    if (this.defaultModel && models.length > 0) {
+      const stillValid = models.some(m => m.id === this.defaultModel);
+      if (!stillValid) {
+        DebugLog.push('SYSTEM', { event: 'default_model_cleared_after_sync', prev: this.defaultModel });
+        this.defaultModel = '';
+      }
+    }
   }
 
   async initialize(): Promise<void> {
@@ -228,6 +261,13 @@ export class ModelRouter {
   }
 
   getAllModelsWithProvider(): Array<ModelDef & { providerId: string; providerName: string }> {
+    // Bridge mode: return provider-backed list exclusively.
+    // If providers are configured but have no discovered models yet, return empty
+    // so the picker shows an honest empty state rather than the legacy Llama seed.
+    if (this.bridge) {
+      return [...this.providerBackedModels];
+    }
+    // Legacy (no-bridge) path: fall back to internal models map.
     const result: Array<ModelDef & { providerId: string; providerName: string }> = [];
     for (const [, p] of this.providers) {
       for (const m of p.models) result.push({ ...m, providerId: p.id, providerName: p.name });
@@ -765,7 +805,9 @@ export class ModelRouter {
   }
 
   async setDefaultModel(modelId: string): Promise<void> {
-    if (!this.models.has(modelId)) {
+    const inProviderBacked = this.providerBackedModels.some(m => m.id === modelId);
+    const inLegacy = this.models.has(modelId);
+    if (!inProviderBacked && !inLegacy) {
       DebugLog.modelSetDefaultError(modelId, 'Model not available');
       throw new Error(`Model ${modelId} not available`);
     }

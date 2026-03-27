@@ -133,6 +133,8 @@ interface ProviderDraft {
   authMode: AuthMode;
   apiKey: string;
   password: string;
+  customAuthHeaderName: string;
+  customAuthHeaderPrefix: string;
   capabilities: AllowedOperation[];
   enabled: boolean;
   hasStoredKey?: boolean;
@@ -147,6 +149,8 @@ function emptyDraft(): ProviderDraft {
     authMode: 'bearer',
     apiKey: '',
     password: '',
+    customAuthHeaderName: '',
+    customAuthHeaderPrefix: '',
     capabilities: ['chat'],
     enabled: true,
   };
@@ -380,6 +384,8 @@ export default function SettingsScreen() {
       authMode: p.authMode ?? 'bearer',
       apiKey: '',
       password: '',
+      customAuthHeaderName: p.customAuthHeaderName ?? '',
+      customAuthHeaderPrefix: p.customAuthHeaderPrefix ?? '',
       capabilities: providerCapabilitiesToOperations(p.capabilities),
       enabled: p.isActive,
       hasStoredKey: !!p.apiKeyRef,
@@ -407,6 +413,9 @@ export default function SettingsScreen() {
           baseUrl: providerDraft.baseUrl.trim(),
           authMode: providerDraft.authMode,
           apiKey: providerDraft.apiKey.trim() || '',
+          password: providerDraft.authMode === 'basic' ? providerDraft.password.trim() : undefined,
+          customAuthHeaderName: providerDraft.authMode === 'custom_header' || providerDraft.authMode === 'api_key_header' ? providerDraft.customAuthHeaderName.trim() : undefined,
+          customAuthHeaderPrefix: providerDraft.authMode === 'custom_header' ? providerDraft.customAuthHeaderPrefix.trim() : undefined,
         });
         savedId = created.id;
         await pm.updateProvider(created.id, {
@@ -422,6 +431,8 @@ export default function SettingsScreen() {
           baseUrl: providerDraft.baseUrl.trim(),
           authMode: providerDraft.authMode,
           isActive: providerDraft.enabled,
+          customAuthHeaderName: providerDraft.customAuthHeaderName.trim() || undefined,
+          customAuthHeaderPrefix: providerDraft.customAuthHeaderPrefix.trim() || undefined,
           capabilities: operationsToProviderCapabilities(
             providerDraft.capabilities,
             existingProvider?.capabilities,
@@ -432,6 +443,10 @@ export default function SettingsScreen() {
           DebugLog.push('SETTINGS_SAVE', { event: 'provider_key_replaced', providerId: providerDraft.id });
         } else {
           DebugLog.push('SETTINGS_SAVE', { event: 'provider_updated_no_key_change', providerId: providerDraft.id });
+        }
+        if (providerDraft.authMode === 'basic' && providerDraft.password.trim()) {
+          await pm.updatePassword(providerDraft.id, providerDraft.password.trim());
+          DebugLog.push('SETTINGS_SAVE', { event: 'provider_password_saved', providerId: providerDraft.id });
         }
       }
       setProviderDraft(null);
@@ -448,6 +463,8 @@ export default function SettingsScreen() {
       }
       // Re-wire the bridge so the runtime immediately sees the new provider.
       (core as any)?.wireModelRouterBridge?.();
+      // Sync provider-backed model list so the picker reflects the new state.
+      await (core as any)?.refreshBridgeState?.().catch(() => {});
       loadProviders();
       loadGroups();
       DebugLog.push('SETTINGS_SAVE', { event: 'provider_reloaded_after_save', providerId: savedId });
@@ -653,6 +670,7 @@ export default function SettingsScreen() {
       setOperationMapping(ai.getOperationMapping());
       // Re-wire bridge so runtime routing reflects the new group immediately.
       (core as any)?.wireModelRouterBridge?.();
+      await (core as any)?.refreshBridgeState?.().catch(() => {});
       UltraDevLog.push('SETTINGS_SAVE', { event: 'routing_operation_group_ui_saved', op, groupId });
     } catch (err: any) {
       UltraDevLog.push('SETTINGS_SAVE', { event: 'routing_operation_group_ui_error', op, groupId, error: err?.message });
@@ -662,10 +680,27 @@ export default function SettingsScreen() {
 
   // ── Cost limits ───────────────────────────────────────────
   const saveLimits = useCallback(async () => {
+    const parsedDaily = parseFloat(dailyLimit);
+    const parsedTask = parseFloat(taskLimit);
+    if (dailyLimit.trim() !== '' && (isNaN(parsedDaily) || parsedDaily < 0)) {
+      Alert.alert('Invalid', 'Daily limit must be a non-negative number (or blank for no limit).');
+      return;
+    }
+    if (taskLimit.trim() !== '' && (isNaN(parsedTask) || parsedTask < 0)) {
+      Alert.alert('Invalid', 'Per-task limit must be a non-negative number (or blank for no limit).');
+      return;
+    }
     try {
       const vault = await SecureVault.initialize();
-      await vault.set('daily_cost_limit', dailyLimit);
-      await vault.set('task_cost_limit', taskLimit);
+      await vault.set('daily_cost_limit', dailyLimit.trim() || '0');
+      await vault.set('task_cost_limit', taskLimit.trim() || '0');
+      // Propagate limits to the live ledger without requiring a restart.
+      const core = getAgentCoreInstance();
+      const ledger = (core as any)?.getLedger?.();
+      if (ledger) {
+        if (parsedDaily > 0) ledger.budgetLimits.maxCostPerDay = parsedDaily;
+        if (parsedTask > 0) ledger.budgetLimits.maxCostPerTask = parsedTask;
+      }
       Alert.alert('Saved', 'Cost limits updated.');
     } catch (err: any) {
       Alert.alert('Error', err.message);
@@ -816,15 +851,54 @@ export default function SettingsScreen() {
                         {providerDraft.authMode === 'basic' && (
                           <>
                             <Text style={styles.fieldLabel}>Password</Text>
+                            {!isNewProvider && providerDraft.hasStoredPassword && !providerDraft.password ? (
+                              <Pressable
+                                onPress={() => setProviderDraft({ ...providerDraft, password: ' ', hasStoredPassword: false })}
+                                style={[styles.textInput, { justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+                              >
+                                <Ionicons name="checkmark-circle" size={14} color={SUCCESS} />
+                                <Text style={{ color: SUCCESS, fontSize: 13 }}>Password saved — tap to replace</Text>
+                              </Pressable>
+                            ) : (
+                              <TextInput
+                                value={providerDraft.password}
+                                onChangeText={t => setProviderDraft({ ...providerDraft, password: t })}
+                                placeholder="Password for basic auth"
+                                placeholderTextColor="#444"
+                                style={styles.textInput}
+                                autoCapitalize="none"
+                                secureTextEntry
+                              />
+                            )}
+                          </>
+                        )}
+
+                        {(providerDraft.authMode === 'custom_header' || providerDraft.authMode === 'api_key_header') && (
+                          <>
+                            <Text style={styles.fieldLabel}>Header Name</Text>
                             <TextInput
-                              value={providerDraft.password}
-                              onChangeText={t => setProviderDraft({ ...providerDraft, password: t })}
-                              placeholder="Password for basic auth"
+                              value={providerDraft.customAuthHeaderName}
+                              onChangeText={t => setProviderDraft({ ...providerDraft, customAuthHeaderName: t })}
+                              placeholder={providerDraft.authMode === 'api_key_header' ? 'e.g. X-Api-Key' : 'e.g. X-Custom-Token'}
                               placeholderTextColor="#444"
                               style={styles.textInput}
                               autoCapitalize="none"
-                              secureTextEntry
+                              autoCorrect={false}
                             />
+                            {providerDraft.authMode === 'custom_header' && (
+                              <>
+                                <Text style={styles.fieldLabel}>Header Value Prefix <Text style={{ color: DIM }}>(optional)</Text></Text>
+                                <TextInput
+                                  value={providerDraft.customAuthHeaderPrefix}
+                                  onChangeText={t => setProviderDraft({ ...providerDraft, customAuthHeaderPrefix: t })}
+                                  placeholder='e.g. "Token " (leave blank for raw value)'
+                                  placeholderTextColor="#444"
+                                  style={styles.textInput}
+                                  autoCapitalize="none"
+                                  autoCorrect={false}
+                                />
+                              </>
+                            )}
                           </>
                         )}
 
@@ -1190,7 +1264,10 @@ export default function SettingsScreen() {
                     <View style={styles.card}>
                       <Text style={styles.cardTitle}>Operation Routing</Text>
                       <Text style={styles.cardSubtitle}>
-                        Map each AI operation to a model group. Requests are fail-closed — if no group is set or no model is available, the agent throws an error rather than silently failing.
+                        Map each AI operation to a model group. The agent is fail-closed — if no group is assigned or no model is reachable, it throws a visible error instead of silently failing. Tap a group chip to assign it; tap "None" to clear.
+                      </Text>
+                      <Text style={[styles.cardSubtitle, { marginTop: 6, color: DIM }]}>
+                        Route: <Text style={{ color: '#e5e5e5' }}>chat</Text> is the primary conversation operation. Assign at least one group here to enable the assistant.
                       </Text>
                     </View>
                     {ALL_OPERATIONS.map(op => {
@@ -1213,11 +1290,14 @@ export default function SettingsScreen() {
                             {op.charAt(0).toUpperCase() + op.slice(1)}
                           </Text>
                           <Text style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>
-                            {currentGroup ? `→ ${currentGroup.name}` : 'Not mapped (will fail if called)'}
+                            {currentGroup ? `→ ${currentGroup.name}` : 'Not mapped — will throw error if called'}
                           </Text>
                           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
+                            {/* "None" chip only: explicitly clears the mapping */}
                             <Pressable
-                              onPress={() => setOperationGroup(op, null)}
+                              onPress={() => {
+                                if (currentGroupId !== null) setOperationGroup(op, null);
+                              }}
                               style={[styles.chip, !currentGroupId && styles.chipActive]}
                             >
                               <Text style={[styles.chipText, !currentGroupId && styles.chipTextActive]}>None</Text>
@@ -1225,7 +1305,10 @@ export default function SettingsScreen() {
                             {eligibleGroups.map(g => (
                               <Pressable
                                 key={g.id}
-                                onPress={() => setOperationGroup(op, g.id)}
+                                onPress={() => {
+                                  // Guard: skip if this group is already assigned to prevent accidental clears.
+                                  if (currentGroupId !== g.id) setOperationGroup(op, g.id);
+                                }}
                                 style={[styles.chip, currentGroupId === g.id && styles.chipActive]}
                               >
                                 <Text style={[styles.chipText, currentGroupId === g.id && styles.chipTextActive]}>
