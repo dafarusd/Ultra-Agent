@@ -51,6 +51,17 @@ interface ModelPickerSheetProps {
   onSelect: (modelId: string) => void;
   onClose: () => void;
   initialFilter?: FilterTab;
+  logContext?: {
+    currentMode: string;
+    requestedFilter: FilterTab;
+    effectiveFilterAtOpen: FilterTab;
+    assignedGroupId: string | null;
+    eligibleGroupIds: string[];
+    routeRestricted: boolean;
+    defaultModel: string | null;
+    selectedModel: string | null;
+    source: 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty';
+  };
 }
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
@@ -69,27 +80,27 @@ export default function ModelPickerSheet({
   onSelect,
   onClose,
   initialFilter,
+  logContext,
 }: ModelPickerSheetProps) {
   const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<FilterTab>("all");
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const slideAnim = React.useRef(new Animated.Value(SHEET_MAX_HEIGHT)).current;
 
+  // Context extraction with safe fallbacks — parent is source of truth
+  const ctx = logContext;
+  const ctxCurrentMode = ctx?.currentMode ?? 'unknown';
+  const ctxAssignedGroupId = ctx?.assignedGroupId ?? null;
+  const ctxEligibleGroupIds = ctx?.eligibleGroupIds ?? [];
+  const ctxRouteRestricted = ctx?.routeRestricted ?? false;
+  const ctxDefaultModel = ctx?.defaultModel ?? null;
+  const ctxSelectedModel = ctx?.selectedModel ?? currentModelId ?? null;
+  const ctxSource = ctx?.source ?? (models.length === 0 ? 'empty' : 'provider_bridge');
+
   const mountedAtRef = React.useRef(Date.now());
   React.useEffect(() => {
     if (visible) {
       if (initialFilter) setFilter(initialFilter);
-      // Issue 8: log raw model count vs effective count (with source breakdown).
-      const byType: Record<string, number> = {};
-      for (const m of models) { byType[m.type] = (byType[m.type] ?? 0) + 1; }
-      UltraDevLog.push('PICKER_OPEN' as any, {
-        event: 'picker_opened',
-        rawCount: models.length,
-        currentModelId,
-        byType,
-        initialFilter: initialFilter ?? 'all',
-        source: models.length === 0 ? 'empty_no_providers' : 'provider_backed',
-      });
       const slideVal = (slideAnim as any)._value ?? SHEET_MAX_HEIGHT;
       const initFilter = initialFilter ?? 'all';
       const rawForFilter = initFilter === 'all' ? models : models.filter(m => m.type === initFilter);
@@ -97,17 +108,17 @@ export default function ModelPickerSheet({
       UltraDevLog.pickerOpenDetailed({
         requestedFilter: initFilter,
         effectiveFilter: sheetFallback ? 'all' : initFilter,
-        currentMode: 'unknown',
+        currentMode: ctxCurrentMode,
         totalModels: models.length,
         rawFilteredCount: rawForFilter.length,
         displayedCount: sheetFallback ? models.length : rawForFilter.length,
         fallbackUsed: sheetFallback,
-        source: models.length === 0 ? 'empty' : 'provider_bridge',
-        selectedModel: currentModelId || null,
-        defaultModel: null,
-        assignedGroupId: null,
-        eligibleGroupIds: [],
-        routeRestricted: false,
+        source: ctxSource,
+        selectedModel: ctxSelectedModel,
+        defaultModel: ctxDefaultModel,
+        assignedGroupId: ctxAssignedGroupId,
+        eligibleGroupIds: ctxEligibleGroupIds,
+        routeRestricted: ctxRouteRestricted,
         slideAnimCurrentValue: slideVal,
         note: slideVal > 0 && slideVal < 100 ? 'WARN: slideAnim partially open before reset' : 'ok',
       });
@@ -152,17 +163,17 @@ export default function ModelPickerSheet({
         UltraDevLog.pickerContentDetailed({
           requestedFilter: filter,
           effectiveFilter: usingFallback ? 'all' : filter,
-          currentMode: 'unknown',
+          currentMode: ctxCurrentMode,
           rawFilteredCount: filteredRaw.length,
           displayedCount: displayedModels.length,
           totalModels: models.length,
           fallbackUsed: usingFallback,
-          source: models.length === 0 ? 'empty' : 'provider_bridge',
-          selectedModel: currentModelId || null,
-          defaultModel: null,
-          assignedGroupId: null,
-          eligibleGroupIds: [],
-          routeRestricted: false,
+          source: ctxSource,
+          selectedModel: ctxSelectedModel,
+          defaultModel: ctxDefaultModel,
+          assignedGroupId: ctxAssignedGroupId,
+          eligibleGroupIds: ctxEligibleGroupIds,
+          routeRestricted: ctxRouteRestricted,
           note: usingFallback
             ? `WARN: 0 models for filter "${filter}" -- showing all ${models.length}`
             : `ok — ${displayedModels.length}/${models.length} for "${filter}"`,
@@ -261,17 +272,19 @@ export default function ModelPickerSheet({
                     const prevFilter = filter;
                     const rawCountBefore = prevFilter === 'all' ? models.length : models.filter(m => m.type === prevFilter).length;
                     const rawCountAfter = tab.key === 'all' ? models.length : models.filter(m => m.type === tab.key).length;
+                    const fallbackAfter = tab.key !== 'all' && rawCountAfter === 0;
+                    const displayedCountAfter = fallbackAfter ? models.length : rawCountAfter;
                     UltraDevLog.push('CHAIN', { component: 'ModelPickerSheet', action: 'filter_tab', trigger: { tab: tab.key }, state: { prev: filter }, data: {}, outcome: `filter_set_${tab.key}` });
                     UltraDevLog.pickerFilterChange({
                       fromFilter: prevFilter,
                       toFilter: tab.key,
                       rawCountBefore,
                       rawCountAfter,
-                      displayedCountAfter: rawCountAfter,
-                      sourceOfModels: usingFallback ? 'fallback_all' : 'provider_bridge',
-                      routeRestrictionActive: false,
-                      routeAssignedGroupId: null,
-                      routeAssignedModelId: null,
+                      displayedCountAfter,
+                      sourceOfModels: ctxSource,
+                      routeRestrictionActive: ctxRouteRestricted,
+                      routeAssignedGroupId: ctxAssignedGroupId,
+                      routeAssignedModelId: ctxSelectedModel,
                     });
                     setFilter(tab.key);
                     UltraDevLog.push('EFFECT', {

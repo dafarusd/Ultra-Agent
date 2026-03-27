@@ -135,6 +135,13 @@ export default function ChatScreen() {
   const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
   const [modelPickerInitialFilter, setModelPickerInitialFilter] = useState<"all" | "text" | "image" | "code" | "reasoning" | "video">("all");
+  const pickerLogCtxRef = React.useRef<{
+    currentMode: string; requestedFilter: "all"|"text"|"image"|"code"|"reasoning"|"video";
+    effectiveFilterAtOpen: "all"|"text"|"image"|"code"|"reasoning"|"video";
+    assignedGroupId: string | null; eligibleGroupIds: string[];
+    routeRestricted: boolean; defaultModel: string | null;
+    selectedModel: string | null; source: 'provider_bridge'|'legacy_cache'|'mixed'|'empty';
+  } | null>(null);
   const [plusMenuVisible, setPlusMenuVisible] = useState(false);
 
   // Current mode & replay
@@ -1544,7 +1551,7 @@ export default function ChatScreen() {
                 const modeToOp: Record<string, string> = { chat: 'chat', reasoning: 'reason', image: 'image_generate', video: 'video_generate', code: 'generic_text' };
                 const op = modeToOp[currentMode] ?? 'generic_text';
                 const assignedGroupId = opMap[op] ?? opMap['chat'] ?? null;
-                const eligibleGroupIds = (ai?.getGroups?.() ?? []).map((g: any) => g.id).filter(Boolean);
+                const eligibleGroupIds = (ai?.getEligibleGroupsForOperation?.(op) ?? []).map((g: any) => g.id).filter(Boolean);
                 const mr = (agentCore as any)?.ai as any;
                 const opMapping = opMap;
                 DebugLog.uiPickerOpen(filter, currentMode, activeModelId);
@@ -1605,6 +1612,17 @@ export default function ChatScreen() {
                 });
                 UltraDevLog.modalEvent('modelPicker', 'open', { modelCount: pickerModels.length });
                 snapUI("picker_open");
+                pickerLogCtxRef.current = {
+                  currentMode,
+                  requestedFilter: filter as any,
+                  effectiveFilterAtOpen: (fallbackUsed ? 'all' : filter) as any,
+                  assignedGroupId,
+                  eligibleGroupIds,
+                  routeRestricted: false,
+                  defaultModel: agentCore?.getDefaultModel() ?? null,
+                  selectedModel: activeModelId ?? null,
+                  source: pickerSource,
+                };
                 setModelPickerInitialFilter(filter);
                 setModelPickerVisible(true);
               }}
@@ -1754,6 +1772,7 @@ export default function ChatScreen() {
           setModelPickerInitialFilter("all");
         }}
         initialFilter={modelPickerInitialFilter}
+        logContext={pickerLogCtxRef.current ?? undefined}
       />
 
       <PlusMenu
@@ -1776,6 +1795,12 @@ export default function ChatScreen() {
             const plusRawFiltered = plusFilter === 'all' ? plusModels.length : plusModels.filter((m: any) => m.type === plusFilter).length;
             const plusFallback = plusFilter !== 'all' && plusRawFiltered === 0;
             const plusDisplayed = plusFallback ? plusModels.length : plusRawFiltered;
+            const plusAi = (agentCore as any)?.getAiService?.();
+            const plusModeToOp: Record<string, string> = { chat: 'chat', reasoning: 'reason', image: 'image_generate', video: 'video_generate', code: 'generic_text' };
+            const plusOp = plusModeToOp[type] ?? 'generic_text';
+            const plusOpMap = (plusAi?.getOperationMapping?.() ?? {}) as Record<string, string | null>;
+            const plusAssignedGroupId = plusOpMap[plusOp] ?? plusOpMap['chat'] ?? null;
+            const plusEligibleGroupIds = (plusAi?.getEligibleGroupsForOperation?.(plusOp) ?? []).map((g: any) => g.id).filter(Boolean);
             DebugLog.uiPickerOpen("auto_from_plus", type, activeModelId);
             UltraDevLog.pickerOpenDetailed({
               requestedFilter: plusFilter,
@@ -1788,12 +1813,23 @@ export default function ChatScreen() {
               source: plusSource,
               selectedModel: activeModelId ?? null,
               defaultModel: agentCore?.getDefaultModel() ?? null,
-              assignedGroupId: null,
-              eligibleGroupIds: [],
+              assignedGroupId: plusAssignedGroupId,
+              eligibleGroupIds: plusEligibleGroupIds,
               routeRestricted: false,
               slideAnimCurrentValue: 0,
               note: 'auto_from_plus',
             });
+            pickerLogCtxRef.current = {
+              currentMode: type,
+              requestedFilter: plusFilter as any,
+              effectiveFilterAtOpen: (plusFallback ? 'all' : plusFilter) as any,
+              assignedGroupId: plusAssignedGroupId,
+              eligibleGroupIds: plusEligibleGroupIds,
+              routeRestricted: false,
+              defaultModel: agentCore?.getDefaultModel() ?? null,
+              selectedModel: activeModelId ?? null,
+              source: plusSource,
+            };
             setModelPickerInitialFilter(plusFilter);
             setModelPickerVisible(true);
           }

@@ -667,7 +667,7 @@ export default function SettingsScreen() {
     if (!ai) { Alert.alert('Error', 'AI service not available.'); return; }
     const beforeMapping = ai.getOperationMapping?.() ?? {};
     const beforeGroupId = beforeMapping[op] ?? null;
-    const eligibleGroupIds = (ai.getGroups?.() ?? []).map((g: any) => g.id).filter(Boolean);
+    const eligibleGroupIds = (ai.getEligibleGroupsForOperation?.(op) ?? []).map((g: any) => g.id).filter(Boolean);
     const t0 = Date.now();
     UltraDevLog.settingsSaveStart({
       screen: 'settings',
