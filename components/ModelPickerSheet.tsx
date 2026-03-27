@@ -221,14 +221,27 @@ export default function ModelPickerSheet({
                 <Pressable
                   key={tab.key}
                   onPress={() => {
+                    const prevFilter = filter;
+                    const rawCountBefore = prevFilter === 'all' ? models.length : models.filter(m => m.type === prevFilter).length;
+                    const rawCountAfter = tab.key === 'all' ? models.length : models.filter(m => m.type === tab.key).length;
                     UltraDevLog.push('CHAIN', { component: 'ModelPickerSheet', action: 'filter_tab', trigger: { tab: tab.key }, state: { prev: filter }, data: {}, outcome: `filter_set_${tab.key}` });
+                    UltraDevLog.pickerFilterChange({
+                      fromFilter: prevFilter,
+                      toFilter: tab.key,
+                      rawCountBefore,
+                      rawCountAfter,
+                      displayedCountAfter: rawCountAfter,
+                      sourceOfModels: usingFallback ? 'fallback_all' : 'provider_bridge',
+                      routeRestrictionActive: false,
+                      routeAssignedGroupId: null,
+                      routeAssignedModelId: null,
+                    });
                     setFilter(tab.key);
-                    const count = tab.key === 'all' ? models.length : models.filter(m => m.type === tab.key).length;
                     UltraDevLog.push('EFFECT', {
                       component: 'ModelPickerSheet', action: 'filter_result',
-                      filter: tab.key, modelsShown: count, totalModels: models.length,
-                      empty: count === 0,
-                      note: count === 0 ? `WARN: 0 models for "${tab.key}"` : `ok — ${count} models`,
+                      filter: tab.key, modelsShown: rawCountAfter, totalModels: models.length,
+                      empty: rawCountAfter === 0,
+                      note: rawCountAfter === 0 ? `WARN: 0 models for "${tab.key}"` : `ok — ${rawCountAfter} models`,
                     });
                   }}
                   style={[styles.filterTab, isActive && styles.filterTabActive]}

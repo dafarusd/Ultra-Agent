@@ -665,15 +665,62 @@ export default function SettingsScreen() {
     const core = getAgentCoreInstance();
     const ai = (core as any)?.getAiService?.();
     if (!ai) { Alert.alert('Error', 'AI service not available.'); return; }
+    const beforeMapping = ai.getOperationMapping?.() ?? {};
+    const beforeGroupId = beforeMapping[op] ?? null;
+    const eligibleGroupIds = (ai.getGroups?.() ?? []).map((g: any) => g.id).filter(Boolean);
+    const t0 = Date.now();
+    UltraDevLog.settingsSaveStart({
+      screen: 'settings',
+      section: 'routing',
+      action: 'set_operation_group',
+      targetKey: op,
+      before: beforeGroupId,
+      after: groupId,
+    });
     try {
       await ai.setOperationGroup(op, groupId);
+      const durationMs = Date.now() - t0;
       setOperationMapping(ai.getOperationMapping());
       // Re-wire bridge so runtime routing reflects the new group immediately.
       (core as any)?.wireModelRouterBridge?.();
       await (core as any)?.refreshBridgeState?.().catch(() => {});
-      UltraDevLog.push('SETTINGS_SAVE', { event: 'routing_operation_group_ui_saved', op, groupId });
+      UltraDevLog.routingAssignmentChange({
+        operation: op,
+        beforeGroupId,
+        afterGroupId: groupId,
+        eligibleGroupIds,
+        success: true,
+        saveSource: 'settings_defaults_ui',
+      });
+      UltraDevLog.settingsSaveResult2({
+        screen: 'settings',
+        section: 'routing',
+        action: 'set_operation_group',
+        targetKey: op,
+        success: true,
+        persistedValue: groupId,
+        durationMs,
+      });
     } catch (err: any) {
-      UltraDevLog.push('SETTINGS_SAVE', { event: 'routing_operation_group_ui_error', op, groupId, error: err?.message });
+      const durationMs = Date.now() - t0;
+      UltraDevLog.routingAssignmentChange({
+        operation: op,
+        beforeGroupId,
+        afterGroupId: groupId,
+        eligibleGroupIds,
+        success: false,
+        errorMessage: err?.message,
+        saveSource: 'settings_defaults_ui',
+      });
+      UltraDevLog.settingsSaveResult2({
+        screen: 'settings',
+        section: 'routing',
+        action: 'set_operation_group',
+        targetKey: op,
+        success: false,
+        errorMessage: err?.message,
+        durationMs,
+      });
       Alert.alert('Error', err.message);
     }
   }, []);

@@ -90,7 +90,17 @@ export type UltraLogCat =
   // ── V5: Zero blind spots ──
   | 'AI_CALL'           // Every AI prompt + response + error
   | 'HEADLESS_TASK'     // HeadlessJS start/complete/timeout
-  | 'BUDGET_CHECK';     // Token budget breakdown
+  | 'BUDGET_CHECK'      // Token budget breakdown
+  // ── Logging truth pass ──
+  | 'PICKER_FILTER_CHANGE'        // Filter tab changed in model picker
+  | 'SETTINGS_SAVE_START'         // Structured settings save intent
+  | 'SETTINGS_SAVE_RESULT'        // Structured settings save outcome
+  | 'ROUTING_ASSIGNMENT_CHANGE'   // Operation→group routing change
+  | 'API_STATE_SNAPSHOT'          // Provider/group/model state snapshot
+  | 'MODEL_INVENTORY_SYNC'        // Model inventory refresh event
+  | 'PERMISSION_SNAPSHOT_STARTUP' // Permission states at startup
+  | 'PERMISSION_RECHECK_RUNTIME'  // Permission re-read before capability
+  | 'PERMISSION_CONTRADICTION';   // Startup vs runtime permission mismatch
 
 interface UltraLogEntry {
   ts: string;
@@ -876,6 +886,149 @@ export class UltraDevLog {
     });
   }
 
+  // ─── Logging truth pass: new structured sensors ───────────────────────────
+
+  static pickerFilterChange(params: {
+    fromFilter: string;
+    toFilter: string;
+    rawCountBefore: number;
+    rawCountAfter: number;
+    displayedCountAfter: number;
+    sourceOfModels: string;
+    routeRestrictionActive: boolean;
+    routeAssignedGroupId: string | null;
+    routeAssignedModelId: string | null;
+  }): void {
+    UltraDevLog.push('PICKER_FILTER_CHANGE', {
+      ...params,
+      note: params.displayedCountAfter === 0
+        ? `WARN: 0 models after filter change to "${params.toFilter}"`
+        : `ok — ${params.displayedCountAfter} models for "${params.toFilter}"`,
+    });
+  }
+
+  static settingsSaveStart(params: {
+    screen: string;
+    section: string;
+    action: string;
+    targetKey: string;
+    before: unknown;
+    after: unknown;
+  }): void {
+    UltraDevLog.push('SETTINGS_SAVE_START', {
+      ...params,
+      note: `save intent: ${params.section}.${params.action} key=${params.targetKey}`,
+    });
+  }
+
+  static settingsSaveResult2(params: {
+    screen: string;
+    section: string;
+    action: string;
+    targetKey: string;
+    success: boolean;
+    errorMessage?: string;
+    persistedValue?: unknown;
+    durationMs: number;
+  }): void {
+    UltraDevLog.push('SETTINGS_SAVE_RESULT', {
+      ...params,
+      note: params.success
+        ? `ok — ${params.section}.${params.action} in ${params.durationMs}ms`
+        : `WARN: ${params.section}.${params.action} failed: ${params.errorMessage ?? 'unknown'}`,
+    });
+  }
+
+  static routingAssignmentChange(params: {
+    operation: string;
+    beforeGroupId: string | null;
+    afterGroupId: string | null;
+    eligibleGroupIds: string[];
+    success: boolean;
+    errorMessage?: string;
+    saveSource: string;
+  }): void {
+    UltraDevLog.push('ROUTING_ASSIGNMENT_CHANGE', {
+      ...params,
+      note: params.success
+        ? `ok — ${params.operation}: ${params.beforeGroupId ?? 'none'} → ${params.afterGroupId ?? 'none'} via ${params.saveSource}`
+        : `WARN: routing assignment failed for ${params.operation}: ${params.errorMessage ?? 'unknown'}`,
+    });
+  }
+
+  static apiStateSnapshot(params: {
+    providerCount: number;
+    activeProviderCount: number;
+    groupCount: number;
+    activeGroupCount: number;
+    routeMappingSummary: Record<string, string | null>;
+    providerBackedModelCount: number;
+    defaultModelId: string | null;
+    hasUsableAuthCount: number;
+    trigger: string;
+  }): void {
+    UltraDevLog.push('API_STATE_SNAPSHOT', {
+      ...params,
+      note: params.activeProviderCount === 0
+        ? 'WARN: no active providers'
+        : `ok — ${params.activeProviderCount}/${params.providerCount} providers active, ${params.providerBackedModelCount} models`,
+    });
+  }
+
+  static modelInventorySync(params: {
+    providerCountSeen: number;
+    providerBackedModelCount: number;
+    legacyModelCount: number;
+    mergedCount: number;
+    activeModelId: string | null;
+    source: string;
+    durationMs: number;
+    success: boolean;
+    errorMessage?: string;
+  }): void {
+    UltraDevLog.push('MODEL_INVENTORY_SYNC', {
+      ...params,
+      note: params.success
+        ? `ok — ${params.mergedCount} models merged (backed=${params.providerBackedModelCount} legacy=${params.legacyModelCount}) in ${params.durationMs}ms`
+        : `WARN: inventory sync failed: ${params.errorMessage ?? 'unknown'}`,
+    });
+  }
+
+  static permissionSnapshotStartup(permissions: Record<string, string>): void {
+    UltraDevLog.push('PERMISSION_SNAPSHOT_STARTUP', {
+      permissions,
+      note: `startup snapshot: ${Object.keys(permissions).length} permissions`,
+    });
+  }
+
+  static permissionRecheckRuntime(params: {
+    capability: string;
+    permission: string;
+    startupStatus: string;
+    runtimeStatus: string;
+    granted: boolean;
+  }): void {
+    UltraDevLog.push('PERMISSION_RECHECK_RUNTIME', {
+      ...params,
+      note: params.granted
+        ? `ok — ${params.permission} granted at runtime`
+        : `WARN: ${params.permission} not granted at runtime for capability ${params.capability}`,
+    });
+  }
+
+  static permissionContradiction(params: {
+    capability: string;
+    permission: string;
+    startupStatus: string;
+    runtimeStatus: string;
+    contradictionType: string;
+  }): void {
+    UltraDevLog.push('PERMISSION_CONTRADICTION', {
+      ...params,
+      note: `WARN: permission contradiction for ${params.permission} on ${params.capability}: startup=${params.startupStatus} runtime=${params.runtimeStatus}`,
+    });
+  }
+
   // ─── Legacy compatibility stubs ────────────────────────────────────────────
 
   static agentExecuteStart(taskId: string, conversationId: string, inputLength: number, isReplay: boolean): void {
@@ -1090,9 +1243,18 @@ export class UltraDevLog {
         return `${t} [COMP_LC ]${warn}${d.event} ${d.componentName} id=${(d.componentId as string)?.slice(-6)}${d.reason ? ` reason=${d.reason}` : ''} ${d.note ?? ''}`;
       }
       case 'SETTINGS_SAVE': {
-        const icon = d.event === 'tap' ? '>' : (d.success ? 'OK' : 'FAIL');
+        const icon = d.event === 'tap' ? '>' : d.success === false ? 'FAIL' : d.success === true ? 'OK' : 'info';
         return `${t} [SETSAVE ] ${icon} ${d.section} ${d.event}${d.savedKeys ? ` keys=${(d.savedKeys as string[]).join(',')}` : ''}${d.error ? ` ERR=${d.error}` : ''}`;
       }
+      case 'PICKER_FILTER_CHANGE': return `${t} [PICK_FLT] ${d.fromFilter} → ${d.toFilter} displayed=${d.displayedCountAfter} raw=${d.rawCountAfter} route=${d.routeRestrictionActive}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      case 'SETTINGS_SAVE_START': return `${t} [SAVE_ST ] ${d.screen}.${d.section}.${d.action} key=${d.targetKey}`;
+      case 'SETTINGS_SAVE_RESULT': return `${t} [SAVE_RS ] ${d.success ? 'OK' : 'FAIL'} ${d.screen}.${d.section}.${d.action} ${d.durationMs}ms${d.errorMessage ? ' ERR=' + d.errorMessage : ''}`;
+      case 'ROUTING_ASSIGNMENT_CHANGE': return `${t} [ROUTE_  ] ${d.success ? 'OK' : 'FAIL'} op=${d.operation} ${d.beforeGroupId ?? 'none'} → ${d.afterGroupId ?? 'none'} via=${d.saveSource}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      case 'API_STATE_SNAPSHOT': return `${t} [API_SNP ] providers=${d.activeProviderCount}/${d.providerCount} groups=${d.activeGroupCount}/${d.groupCount} models=${d.providerBackedModelCount} default=${d.defaultModelId ?? 'none'} trigger=${d.trigger}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      case 'MODEL_INVENTORY_SYNC': return `${t} [INV_SYN ] ${d.success ? 'OK' : 'FAIL'} merged=${d.mergedCount} backed=${d.providerBackedModelCount} legacy=${d.legacyModelCount} src=${d.source} ${d.durationMs}ms${d.errorMessage ? ' ERR=' + d.errorMessage : ''}`;
+      case 'PERMISSION_SNAPSHOT_STARTUP': return `${t} [PERM_SS ] ${JSON.stringify(d.permissions).slice(0, 200)}`;
+      case 'PERMISSION_RECHECK_RUNTIME': return `${t} [PERM_RC ] cap=${d.capability} perm=${d.permission} startup=${d.startupStatus} runtime=${d.runtimeStatus} granted=${d.granted}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+      case 'PERMISSION_CONTRADICTION': return `${t} [PERM_!! ] *** cap=${d.capability} perm=${d.permission} startup=${d.startupStatus} runtime=${d.runtimeStatus} type=${d.contradictionType}`;
       case 'EXECUTE_PHASE': return `${t} [EX_PHASE]${c} ${d.phase} task=${d.taskId}`;
       case 'NAV_CHANGE': return `${t} [NAV     ]${c} route=${d.routeName} action=${d.action} depth=${d.stackDepth}`;
       case 'FOCUS_EFFECT_DEPS':
@@ -1134,38 +1296,78 @@ export class UltraDevLog {
     }
   }
 
-  static generateBugReport(): string {
-    const entries = [...UltraDevLog.entries];
+  static generateBugReport(entriesOverride?: UltraLogEntry[], sourceLabel?: string): string {
+    const entries = entriesOverride ?? [...UltraDevLog.entries];
+    const source = sourceLabel ?? 'memory_fallback';
     const lines: string[] = [];
     const hr = '='.repeat(52);
     // Helper: reads original payload regardless of envelope wrapping
     const p = (e: UltraLogEntry | null | undefined) =>
       (e?.data?.payload as Record<string, unknown>) || e?.data || {};
 
+    const seqs = entries.map(e => e.seq);
+    const minSeq = seqs.length > 0 ? Math.min(...seqs) : 0;
+    const maxSeq = seqs.length > 0 ? Math.max(...seqs) : 0;
+    const expectedCount = maxSeq - minSeq + 1;
+    const missingSeqEstimate = Math.max(0, expectedCount - entries.length);
+    const coveredTimeStart = entries.length > 0 ? entries[0].ts : 'n/a';
+    const coveredTimeEnd = entries.length > 0 ? entries[entries.length - 1].ts : 'n/a';
+    const coveredCats = [...new Set(entries.map(e => e.cat))].sort().join(', ');
+
+    const pickerCats = new Set(['PICKER_OPEN','PICKER_CLOSE','PICKER_ANIMATE','PICKER_SELECT','PICKER_CONTENT','PICKER_FILTER_CHANGE']);
+    const settingsCats = new Set(['SETTINGS_SAVE','SETTINGS_SAVE_START','SETTINGS_SAVE_RESULT','ROUTING_ASSIGNMENT_CHANGE']);
+    const allPickerEntries = entries.filter(e => pickerCats.has(e.cat));
+    const allSettingsEntries = entries.filter(e => settingsCats.has(e.cat));
+    const allRoutingEntries = entries.filter(e => e.cat === 'ROUTING_ASSIGNMENT_CHANGE');
+    const allApiSyncEntries = entries.filter(e => ['API_STATE_SNAPSHOT','MODEL_INVENTORY_SYNC'].includes(e.cat));
+    const allPermContradictions = entries.filter(e => e.cat === 'PERMISSION_CONTRADICTION');
+
     lines.push(hr);
-    lines.push(`AGENT ULTRA -- BUG REPORT v3`);
-    lines.push(`Generated: ${new Date().toISOString()}`);
-    lines.push(`Session:   ${UltraDevLog.sessionId}`);
-    lines.push(`Entries:   ${entries.length}`);
+    lines.push(`AGENT ULTRA -- BUG REPORT v4`);
+    lines.push(`Generated:      ${new Date().toISOString()}`);
+    lines.push(`SessionId:      ${UltraDevLog.sessionId}`);
+    lines.push(`EntryCount:     ${entries.length}`);
+    lines.push(`SeqRange:       ${minSeq}..${maxSeq} (expected=${expectedCount} missing≈${missingSeqEstimate})`);
+    lines.push(`Source:         ${source}`);
+    lines.push(`CoveredTime:    ${coveredTimeStart} → ${coveredTimeEnd}`);
+    lines.push(`ReportLimits:   picker=ALL settings=ALL routing=ALL (no arbitrary caps)`);
     lines.push(hr);
+
+    lines.push('');
+    lines.push('-- COVERAGE STATEMENT --------------------------------');
+    lines.push(`  Source:         ${source === 'session_file' ? 'Session file on disk (full durable log)' : 'In-memory entries (session file unavailable or unread)'}`);
+    lines.push(`  Entries:        ${entries.length} entries, seq ${minSeq}..${maxSeq}`);
+    lines.push(`  Missing seqs:   ≈${missingSeqEstimate} (cap evictions or gaps)`);
+    lines.push(`  Picker trace:   ${allPickerEntries.length} entries — ALL included, uncapped`);
+    lines.push(`  Settings trace: ${allSettingsEntries.length} entries — ALL included, uncapped`);
+    lines.push(`  Routing trace:  ${allRoutingEntries.length} entries — ALL included, uncapped`);
+    lines.push(`  API/sync trace: ${allApiSyncEntries.length} entries — ALL included`);
+    lines.push(`  Perm contradict:${allPermContradictions.length} entries`);
+    lines.push(`  Categories:     ${coveredCats}`);
 
     const failures = entries.filter(e => {
       const d = p(e);
       return (
-        e.cat === 'ERROR' || e.cat === 'APP_LAUNCH_FAIL' ||
-        (e.cat === 'EXEC_RESULT' && !d.success) ||
-        (e.cat === 'SMS_FIRE' && !d.toIsPhone) ||
-        (e.cat === 'PARSE_COMPOUND') ||
+        e.cat === 'ERROR' ||
+        e.cat === 'APP_LAUNCH_FAIL' ||
+        (e.cat === 'EXEC_RESULT' && d.success === false) ||
+        (e.cat === 'SMS_FIRE' && d.toIsPhone === false) ||
         (e.cat === 'TASK_WATCHDOG' && d.event === 'FIRED') ||
         (e.cat === 'CORE_INSTANCE' && (d.note as string)?.startsWith('WARN')) ||
         (e.cat === 'COMPONENT_LIFECYCLE' && (d.note as string)?.startsWith('WARN')) ||
-        (e.cat === 'SETTINGS_SAVE' && d.event === 'write_result' && !d.success) ||
+        (e.cat === 'SETTINGS_SAVE' && d.event === 'write_result' && d.success === false) ||
+        (e.cat === 'SETTINGS_SAVE_RESULT' && d.success === false) ||
+        (e.cat === 'ROUTING_ASSIGNMENT_CHANGE' && d.success === false) ||
         (e.cat === 'PICKER_CONTENT' && (d.note as string)?.startsWith('WARN')) ||
+        (e.cat === 'PICKER_FILTER_CHANGE' && (d.note as string)?.startsWith('WARN')) ||
         (e.cat === 'UI_MESSAGE_RENDERED' && (d.tallWarning || (d.note as string)?.includes('listHeightPx=0'))) ||
         (e.cat === 'VAULT_WRITE' && d.success === false) ||
         (e.cat === 'PROCESS_RESTART' && d.event === 'warm_restart') ||
         (e.cat === 'FOCUS_EFFECT_DEPS' && (d.changedDeps as string[])?.includes('currentMode')) ||
-        (e.cat === 'EFFECT' && d.success === false)
+        (e.cat === 'EFFECT' && d.success === false) ||
+        (e.cat === 'PERMISSION_CONTRADICTION') ||
+        (e.cat === 'API_STATE_SNAPSHOT' && (d.note as string)?.startsWith('WARN')) ||
+        (e.cat === 'MODEL_INVENTORY_SYNC' && d.success === false)
       );
     });
 
@@ -1223,9 +1425,21 @@ export class UltraDevLog {
     const restarts = entries.filter(e => e.cat === 'PROCESS_RESTART');
     if (restarts.length > 0) { lines.push(''); lines.push('-- PROCESS RESTART -----------------------------------'); restarts.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e))); }
 
-    const saves = entries.filter(e => e.cat === 'SETTINGS_SAVE').slice(-6);
-    lines.push(''); lines.push(`-- SETTINGS SAVE TRACE (last ${saves.length}) ----------------`);
-    saves.length === 0 ? lines.push('  None -- settingsSaveTap() not instrumented.') : saves.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+    lines.push(''); lines.push(`-- SETTINGS SAVE TRACE (ALL ${allSettingsEntries.length} entries, uncapped) ---`);
+    allSettingsEntries.length === 0 ? lines.push('  None -- settings save not instrumented.') : allSettingsEntries.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+
+    lines.push(''); lines.push(`-- ROUTING ASSIGNMENT TRACE (ALL ${allRoutingEntries.length} entries, uncapped) ---`);
+    allRoutingEntries.length === 0 ? lines.push('  None -- no routing changes this session.') : allRoutingEntries.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+
+    if (allApiSyncEntries.length > 0) {
+      lines.push(''); lines.push(`-- API/MODEL SYNC TRACE (${allApiSyncEntries.length}) ----------------`);
+      allApiSyncEntries.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+    }
+
+    if (allPermContradictions.length > 0) {
+      lines.push(''); lines.push(`-- PERMISSION CONTRADICTIONS (${allPermContradictions.length}) *** --------`);
+      allPermContradictions.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+    }
 
     const proc = entries.filter(e => e.cat === 'UI_PROCESSING').slice(-10);
     lines.push(''); lines.push('-- isProcessing TRANSITIONS (last 10) ---------------');
@@ -1259,9 +1473,8 @@ export class UltraDevLog {
     const launch = entries.filter(e => ['APP_LAUNCH_BEGIN','APP_LAUNCH_DEVICE','APP_LAUNCH_MATCH','APP_LAUNCH_AI','APP_LAUNCH_FIRE','APP_LAUNCH_RESUME','APP_LAUNCH_FAIL'].includes(e.cat)).slice(-12);
     if (launch.length > 0) { lines.push(''); lines.push(`-- APP LAUNCH TRACE (last ${launch.length}) ----------------`); launch.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e))); }
 
-    const picker = entries.filter(e => ['PICKER_OPEN','PICKER_CLOSE','PICKER_ANIMATE','PICKER_SELECT','PICKER_CONTENT'].includes(e.cat)).slice(-10);
-    lines.push(''); lines.push(`-- PICKER TRACE (last ${picker.length}) -------------------`);
-    picker.length === 0 ? lines.push('  None.') : picker.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+    lines.push(''); lines.push(`-- PICKER TRACE (ALL ${allPickerEntries.length} entries, uncapped) ---`);
+    allPickerEntries.length === 0 ? lines.push('  None.') : allPickerEntries.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
 
     const shots = entries
       .filter(e => e?.cat === 'DEBUG_SCREENSHOT' || e?.cat === 'DEBUG_SCREENSHOT_FAIL')
@@ -1321,7 +1534,32 @@ export class UltraDevLog {
   private static async doWriteBugReport(): Promise<boolean> {
     if (Platform.OS === 'web' || !FileSystem) return false;
     try {
-      const report = UltraDevLog.generateBugReport();
+      // Flush first so session file is up to date before reading it
+      await UltraDevLog.doFlush();
+
+      // Try to read from durable session file for a truth-complete report
+      let reportEntries: UltraLogEntry[] | undefined;
+      let sourceLabel = 'memory_fallback';
+      const sessionPath = UltraDevLog.getSessionFilePath();
+      if (sessionPath) {
+        try {
+          const info = await FileSystem.getInfoAsync(sessionPath);
+          if (info.exists) {
+            const content = await FileSystem.readAsStringAsync(sessionPath);
+            const parsed = content
+              .split('\n')
+              .filter(Boolean)
+              .map((line: string) => { try { return JSON.parse(line) as UltraLogEntry; } catch { return null; } })
+              .filter((e: UltraLogEntry | null): e is UltraLogEntry => e !== null);
+            if (parsed.length > 0) {
+              reportEntries = parsed;
+              sourceLabel = 'session_file';
+            }
+          }
+        } catch {}
+      }
+
+      const report = UltraDevLog.generateBugReport(reportEntries, sourceLabel);
       const ok = await LogFolder.writeLog('bug-report.txt', report);
       UltraDevLog.push('SYSTEM', {
         event: 'bug_report_write',
