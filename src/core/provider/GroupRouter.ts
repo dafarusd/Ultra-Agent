@@ -101,13 +101,24 @@ export class GroupRouter {
     const assignedGroupId = defaults.groupAssignments[operation];
     if (assignedGroupId) {
       const group = this.groupManager.getById(assignedGroupId);
-      if (group && group.isActive) {
-        const route = await this.selectFromGroup(group, operation, activeProviders, defaults, ctx.conversationId);
-        if (route) {
-          UltraDevLog.push('ROUTE', { event: 'route_resolved', step: 'operation_assignment', operation, groupId: group.id, ...this.logRoute(route) });
-          return { ok: true, route };
+      if (!group) {
+        UltraDevLog.push('ROUTE', { event: 'route_step4_skip', reason: 'assigned_group_missing', operation, assignedGroupId });
+      } else if (!group.isActive) {
+        UltraDevLog.push('ROUTE', { event: 'route_step4_skip', reason: 'assigned_group_inactive', operation, assignedGroupId, groupName: group.name });
+      } else {
+        const validMembers = this.getValidMembers(group, operation, activeProviders);
+        if (validMembers.length === 0) {
+          UltraDevLog.push('ROUTE', { event: 'route_step4_skip', reason: 'assigned_group_no_valid_members', operation, assignedGroupId, groupName: group.name, totalMembers: group.members.length });
+        } else {
+          const route = await this.selectFromGroup(group, operation, activeProviders, defaults, ctx.conversationId);
+          if (route) {
+            UltraDevLog.push('ROUTE', { event: 'route_resolved', step: 'operation_assignment', operation, groupId: group.id, ...this.logRoute(route) });
+            return { ok: true, route };
+          }
         }
       }
+    } else {
+      UltraDevLog.push('ROUTE', { event: 'route_step4_skip', reason: 'no_operation_assignment', operation });
     }
 
     // Step 5 — conversation sticky routing
@@ -260,18 +271,37 @@ export class GroupRouter {
     const registry = getAdapterRegistry();
     const activeProviderMap = new Map(activeProviders.map(p => [p.id, p]));
     return group.members.filter(member => {
-      if (!member.enabled) return false;
-      if (!member.allowedOperations.includes(operation)) return false;
+      if (!member.enabled) {
+        UltraDevLog.push('ROUTE', { event: 'member_skip', reason: 'disabled', groupId: group.id, modelId: member.modelId });
+        return false;
+      }
+      if (!member.allowedOperations.includes(operation)) {
+        UltraDevLog.push('ROUTE', { event: 'member_skip', reason: 'op_not_allowed', groupId: group.id, modelId: member.modelId, operation, memberOps: member.allowedOperations });
+        return false;
+      }
       const provider = activeProviderMap.get(member.providerId);
-      if (!provider) return false;
-      if (!provider.isActive) return false;
-      if (provider.status === 'network_error' || provider.status === 'unauthorized') return false;
-      if (!this.providerManager.hasModel(member.providerId, member.modelId)) return false;
+      if (!provider) {
+        UltraDevLog.push('ROUTE', { event: 'member_skip', reason: 'provider_not_active', groupId: group.id, modelId: member.modelId, providerId: member.providerId });
+        return false;
+      }
+      if (!provider.isActive) {
+        UltraDevLog.push('ROUTE', { event: 'member_skip', reason: 'provider_inactive', groupId: group.id, modelId: member.modelId, providerId: provider.id });
+        return false;
+      }
+      if (provider.status === 'network_error' || provider.status === 'unauthorized') {
+        UltraDevLog.push('ROUTE', { event: 'member_skip', reason: 'provider_error_status', groupId: group.id, modelId: member.modelId, providerId: provider.id, status: provider.status });
+        return false;
+      }
+      // Trust the group member's modelId as explicit configuration.
+      // hasModel() is advisory — models may be user-configured before a probe.
       const adapterIds = member.adapterOverrideId
         ? [member.adapterOverrideId, ...provider.capabilities.adapterIds]
         : provider.capabilities.adapterIds;
       const adapter = registry.getForOperation(adapterIds, operation);
-      if (!adapter) return false;
+      if (!adapter) {
+        UltraDevLog.push('ROUTE', { event: 'member_skip', reason: 'no_adapter', groupId: group.id, modelId: member.modelId, providerId: provider.id, adapterIds, operation });
+        return false;
+      }
       return true;
     });
   }

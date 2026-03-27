@@ -2,7 +2,7 @@
 
 import { AppStorage } from '../../utils/AppStorage';
 import { UltraDevLog } from '../../utils/UltraDevLog';
-import type { ModelGroup, GroupMember, UserDefaults, AllowedOperation, SelectionStrategy } from '../../types/provider';
+import type { ModelGroup, GroupMember, UserDefaults, AllowedOperation, SelectionStrategy, ApiProvider } from '../../types/provider';
 import { DEFAULT_USER_DEFAULTS, STORAGE_KEYS as SK } from '../../types/provider';
 
 function generateId(): string {
@@ -200,6 +200,40 @@ export class GroupManager {
 
   getRoundRobinCursor(groupId: string): number {
     return this.roundRobinState.get(groupId) ?? 0;
+  }
+
+  async setOperationGroup(operation: AllowedOperation, groupId: string | null): Promise<void> {
+    const ga: Record<string, string> = { ...this.userDefaults.groupAssignments };
+    if (groupId === null) {
+      delete ga[operation];
+    } else {
+      ga[operation] = groupId;
+    }
+    this.userDefaults = { ...this.userDefaults, groupAssignments: ga };
+    await this.saveDefaults();
+    UltraDevLog.push('SYSTEM', { event: 'group_manager_operation_group_set', operation, groupId });
+  }
+
+  /**
+   * Returns groups that are genuinely routable for the given operation.
+   * A group is eligible if it is active and has at least one enabled member whose
+   * allowedOperations includes the operation. Provider-level checks (isActive,
+   * key present) require passing activeProviders; if omitted the check is
+   * operation-only (used for UI display).
+   */
+  getEligibleGroupsForOperation(operation: AllowedOperation, activeProviders?: ApiProvider[]): ModelGroup[] {
+    const providerMap = activeProviders ? new Map(activeProviders.map(p => [p.id, p])) : null;
+    return this.getActive().filter(g => {
+      return g.members.some(m => {
+        if (!m.enabled) return false;
+        if (!m.allowedOperations.includes(operation)) return false;
+        if (providerMap) {
+          const p = providerMap.get(m.providerId);
+          if (!p || !p.isActive) return false;
+        }
+        return true;
+      });
+    });
   }
 
   async removeProviderReferences(providerId: string): Promise<void> {

@@ -127,13 +127,17 @@ export class AiService {
       const group = this.groupManager.getAll().find(g => g.id === groupId);
       if (!group) throw new Error(`Group '${groupId}' not found`);
       if (!group.isActive) throw new Error(`Group '${group.name}' is disabled`);
-      if (!group.members.some(m => m.isEnabled && (m.allowedOperations.length === 0 || m.allowedOperations.includes(op)))) {
-        throw new Error(`Group '${group.name}' has no enabled member that supports '${op}'`);
+      if (!group.members.some(m => m.enabled && m.allowedOperations.includes(op))) {
+        throw new Error(`Group '${group.name}' has no enabled member that supports '${op}'. Open the group, add a member, and select '${op}' in its allowed operations.`);
       }
       updated[op] = groupId;
     }
     await this.groupManager.saveUserDefaults({ groupAssignments: updated });
-    UltraDevLog.push('SYSTEM', { event: 'operation_group_set', op, groupId });
+    UltraDevLog.push('SYSTEM', { event: 'operation_group_set', op, groupId, assignmentCount: Object.keys(updated).length });
+  }
+
+  getEligibleGroupsForOperation(op: AllowedOperation): import('../../types/provider').ModelGroup[] {
+    return this.groupManager.getEligibleGroupsForOperation(op);
   }
 
   private async resolveRoute(

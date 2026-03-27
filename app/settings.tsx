@@ -1192,6 +1192,16 @@ export default function SettingsScreen() {
                     {ALL_OPERATIONS.map(op => {
                       const currentGroupId = operationMapping[op] ?? null;
                       const currentGroup = groups.find(g => g.id === currentGroupId);
+                      const core = getAgentCoreInstance();
+                      const ai = (core as any)?.getAiService?.();
+                      const eligibleGroups: ModelGroup[] = ai
+                        ? (ai.getEligibleGroupsForOperation?.(op) ?? groups.filter(g => g.isActive))
+                        : groups.filter(g => g.isActive && getGroupOperations(g).includes(op));
+                      const noEligibleReason = eligibleGroups.length === 0
+                        ? (groups.filter(g => g.isActive).length === 0
+                            ? 'No active groups. Create a group and add a provider + model member first.'
+                            : `No active group has an enabled member that supports '${op}'.`)
+                        : null;
                       return (
                         <View key={op} style={styles.card}>
                           <Text style={[styles.cardTitle, { fontSize: 14 }]}>
@@ -1207,7 +1217,7 @@ export default function SettingsScreen() {
                             >
                               <Text style={[styles.chipText, !currentGroupId && styles.chipTextActive]}>None</Text>
                             </Pressable>
-                            {groups.filter(g => g.isActive && getGroupOperations(g).includes(op)).map(g => (
+                            {eligibleGroups.map(g => (
                               <Pressable
                                 key={g.id}
                                 onPress={() => setOperationGroup(op, g.id)}
@@ -1218,8 +1228,8 @@ export default function SettingsScreen() {
                                 </Text>
                               </Pressable>
                             ))}
-                            {groups.filter(g => g.isActive && getGroupOperations(g).includes(op)).length === 0 && (
-                              <Text style={{ color: '#444', fontSize: 11, alignSelf: 'center' }}>No eligible groups</Text>
+                            {noEligibleReason && (
+                              <Text style={{ color: DIM, fontSize: 11, alignSelf: 'center', maxWidth: 260 }}>{noEligibleReason}</Text>
                             )}
                           </ScrollView>
                         </View>
