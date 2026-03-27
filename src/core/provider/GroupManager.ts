@@ -76,6 +76,10 @@ export class GroupManager {
     return { ...this.userDefaults };
   }
 
+  getOperationMapping(): Record<string, string> {
+    return { ...this.userDefaults.groupAssignments };
+  }
+
   async createGroup(input: {
     name: string;
     description?: string;

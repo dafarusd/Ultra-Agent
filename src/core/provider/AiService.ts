@@ -100,6 +100,7 @@ export class AiService {
   private router: GroupRouter;
   private routeHistory: RouteHistoryStore;
   private groupManager: GroupManager;
+  private providerManager: ProviderManager;
   private userDefaultsGetter: () => { notifyOnRouteSwitch: boolean };
   private lastRouteByConversation: Map<string, ResolvedRoute> = new Map();
 
@@ -111,33 +112,39 @@ export class AiService {
     this.router = new GroupRouter(providerManager, groupManager, routeHistory);
     this.routeHistory = routeHistory;
     this.groupManager = groupManager;
+    this.providerManager = providerManager;
     this.userDefaultsGetter = () => groupManager.getUserDefaults();
   }
 
   getOperationMapping(): Record<string, string> {
-    return { ...this.groupManager.getUserDefaults().groupAssignments };
+    return this.groupManager.getOperationMapping();
   }
 
   async setOperationGroup(op: AllowedOperation, groupId: string | null): Promise<void> {
-    const defaults = this.groupManager.getUserDefaults();
-    const updated: Record<string, string> = { ...defaults.groupAssignments };
     if (groupId === null) {
-      delete updated[op];
-    } else {
-      const group = this.groupManager.getAll().find(g => g.id === groupId);
-      if (!group) throw new Error(`Group '${groupId}' not found`);
-      if (!group.isActive) throw new Error(`Group '${group.name}' is disabled`);
-      if (!group.members.some(m => m.enabled && m.allowedOperations.includes(op))) {
-        throw new Error(`Group '${group.name}' has no enabled member that supports '${op}'. Open the group, add a member, and select '${op}' in its allowed operations.`);
-      }
-      updated[op] = groupId;
+      await this.groupManager.setOperationGroup(op, null);
+      UltraDevLog.push('SYSTEM', { event: 'routing_operation_group_changed', success: true, operation: op, groupId: null });
+      return;
     }
-    await this.groupManager.saveUserDefaults({ groupAssignments: updated });
-    UltraDevLog.push('SYSTEM', { event: 'operation_group_set', op, groupId, assignmentCount: Object.keys(updated).length });
+    const group = this.groupManager.getById(groupId);
+    if (!group) throw new Error('Group not found.');
+    if (!group.isActive) throw new Error('Selected group is inactive.');
+    const eligible = this.getEligibleGroupsForOperation(op);
+    if (!eligible.some(g => g.id === groupId)) {
+      throw new Error(`Selected group has no active member that can handle ${op}.`);
+    }
+    try {
+      await this.groupManager.setOperationGroup(op, groupId);
+      UltraDevLog.push('SYSTEM', { event: 'routing_operation_group_changed', success: true, operation: op, groupId });
+    } catch (err: any) {
+      UltraDevLog.push('SYSTEM', { event: 'routing_operation_group_changed', success: false, operation: op, groupId, error: err.message });
+      throw err;
+    }
   }
 
   getEligibleGroupsForOperation(op: AllowedOperation): import('../../types/provider').ModelGroup[] {
-    return this.groupManager.getEligibleGroupsForOperation(op);
+    const activeProviders = this.providerManager.getActive();
+    return this.groupManager.getEligibleGroupsForOperation(op, activeProviders);
   }
 
   private async resolveRoute(

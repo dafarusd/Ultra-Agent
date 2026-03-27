@@ -277,8 +277,10 @@ export default function SettingsScreen() {
     if (!core) return;
     try {
       const ai = (core as any).getAiService?.();
-      if (ai) setOperationMapping(ai.getOperationMapping?.() || {});
-    } catch {}
+      if (ai) setOperationMapping(ai.getOperationMapping());
+    } catch (err: any) {
+      UltraDevLog.push('SETTINGS_LOAD', { event: 'load_defaults_error', error: err?.message });
+    }
   }, []);
 
   const loadCostData = useCallback(() => {
@@ -581,10 +583,11 @@ export default function SettingsScreen() {
 
       setGroupDraft(null);
       loadGroups();
+      loadDefaults();
     } catch (err: any) {
       Alert.alert('Error', err.message);
     }
-  }, [groupDraft, isNewGroup, loadGroups]);
+  }, [groupDraft, isNewGroup, loadGroups, loadDefaults]);
 
   const deleteGroup = useCallback(async (id: string, name: string) => {
     Alert.alert('Delete Group', `Remove "${name}"?`, [
@@ -644,14 +647,15 @@ export default function SettingsScreen() {
   const setOperationGroup = useCallback(async (op: AllowedOperation, groupId: string | null) => {
     const core = getAgentCoreInstance();
     const ai = (core as any)?.getAiService?.();
-    if (!ai) return;
+    if (!ai) { Alert.alert('Error', 'AI service not available.'); return; }
     try {
-      await ai.setOperationGroup?.(op, groupId);
-      setOperationMapping(ai.getOperationMapping?.() || {});
+      await ai.setOperationGroup(op, groupId);
+      setOperationMapping(ai.getOperationMapping());
       // Re-wire bridge so runtime routing reflects the new group immediately.
       (core as any)?.wireModelRouterBridge?.();
-      DebugLog.push('SETTINGS_SAVE', { event: 'routing_operation_group_changed', op, groupId });
+      UltraDevLog.push('SETTINGS_SAVE', { event: 'routing_operation_group_ui_saved', op, groupId });
     } catch (err: any) {
+      UltraDevLog.push('SETTINGS_SAVE', { event: 'routing_operation_group_ui_error', op, groupId, error: err?.message });
       Alert.alert('Error', err.message);
     }
   }, []);
@@ -1195,12 +1199,13 @@ export default function SettingsScreen() {
                       const core = getAgentCoreInstance();
                       const ai = (core as any)?.getAiService?.();
                       const eligibleGroups: ModelGroup[] = ai
-                        ? (ai.getEligibleGroupsForOperation?.(op) ?? groups.filter(g => g.isActive))
-                        : groups.filter(g => g.isActive && getGroupOperations(g).includes(op));
+                        ? ai.getEligibleGroupsForOperation(op)
+                        : groups.filter(g => g.isActive);
+                      const opLabel = op.charAt(0).toUpperCase() + op.slice(1);
                       const noEligibleReason = eligibleGroups.length === 0
                         ? (groups.filter(g => g.isActive).length === 0
                             ? 'No active groups. Create a group and add a provider + model member first.'
-                            : `No active group has an enabled member that supports '${op}'.`)
+                            : `No active group has a member that supports ${opLabel}.`)
                         : null;
                       return (
                         <View key={op} style={styles.card}>
