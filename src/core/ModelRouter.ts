@@ -202,23 +202,42 @@ export class ModelRouter {
     return 'empty';
   }
 
+  async ensureResolvedDefaultModel(): Promise<void> {
+    const available = this.providerBackedModels.length > 0
+      ? this.providerBackedModels
+      : [...this.models.values()];
+    if (available.length === 0) return;
+    // Already resolved — no action needed
+    if (this.defaultModel && available.some(m => m.id === this.defaultModel)) return;
+    // Try to restore from vault
+    const savedModel = await this.vault.get('preferred_model');
+    if (savedModel && available.some(m => m.id === savedModel)) {
+      const prev = this.defaultModel;
+      this.defaultModel = savedModel;
+      DebugLog.modelSetDefault(savedModel, prev, 'vault_restore_ensured');
+      this.logger.info(`ensureResolvedDefaultModel: restored from vault: ${savedModel}`);
+      return;
+    }
+    // Auto-pick stable fallback — prefer first text model, else first available
+    const fallback = available.find(m => m.type === 'text') ?? available[0];
+    const prev = this.defaultModel;
+    this.defaultModel = fallback.id;
+    await this.vault.set('preferred_model', fallback.id);
+    DebugLog.modelSetDefault(fallback.id, prev, 'auto_pick_fallback_ensured');
+    this.logger.info(`ensureResolvedDefaultModel: auto-picked fallback: ${fallback.id}`);
+  }
+
   async initialize(): Promise<void> {
     await this.refreshApiKey();
   }
 
   async refreshApiKey(): Promise<void> {
     // When a bridge is installed the new provider system is authoritative —
-    // skip all legacy vault reads; the bridge provides hasActiveProvider().
+    // skip all legacy vault reads; bridge sync will call ensureResolvedDefaultModel().
     if (this.bridge) {
       DebugLog.push('SYSTEM', { event: 'refresh_api_key_skipped_bridge_active' });
-      this.logger.info('ModelRouter refreshApiKey: bridge is active, skipping legacy vault reads');
-      // Still restore preferred_model from vault so model selection persists.
-      const savedModel = await this.vault.get('preferred_model');
-      if (savedModel && this.models.has(savedModel)) {
-        const prev = this.defaultModel;
-        this.defaultModel = savedModel;
-        DebugLog.modelSetDefault(savedModel, prev, 'vault_restore_bridge');
-      }
+      this.logger.info('ModelRouter refreshApiKey: bridge is active, delegating to ensureResolvedDefaultModel');
+      await this.ensureResolvedDefaultModel();
       return;
     }
 

@@ -8,6 +8,13 @@ export interface ModelCapabilities {
   supportsWebSearch?: boolean;
   supportsMultipleImages?: boolean;
   isUncensored?: boolean;
+  // Provider-backed capability fields
+  supportsImageGeneration?: boolean;
+  supportsAudioGeneration?: boolean;
+  supportsVideoGeneration?: boolean;
+  supportsEmbeddings?: boolean;
+  supportsReasoningHints?: boolean;
+  supportsToolCalls?: boolean;
 }
 
 const IMAGE_PATTERNS = ["flux", "stable-diffusion", "sdxl", "dall-e", "imagen", "pony-realism", "z-image", "qwen-image", "qwen-edit", "image-turbo", "nano-banana"];
@@ -32,7 +39,11 @@ export function classifyModelType(
   if (rawType === "embedding") return "text";
 
   if (capabilities) {
-    if (capabilities.supportsReasoning) return "reasoning";
+    if (capabilities.supportsImageGeneration) return "image";
+    if (capabilities.supportsVideoGeneration) return "video";
+    if (capabilities.supportsAudioGeneration) return "audio";
+    if (capabilities.supportsEmbeddings) return "text";
+    if (capabilities.supportsReasoning || capabilities.supportsReasoningHints) return "reasoning";
     if (capabilities.optimizedForCode) return "code";
   }
 

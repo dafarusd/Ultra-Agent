@@ -1691,21 +1691,30 @@ You are always on. Always capable. Always direct.`;
         for (const p of activeProviders) {
           const models = pm.getModelsForProvider(p.id);
           for (const m of models) {
+            const hint = m.capabilityHints ?? {};
+            const rawModelType = (m.raw as any)?.type;
+            const validRawTypes = new Set(['text', 'image', 'video', 'audio', 'embedding']);
+            const derivedType: 'text' | 'image' | 'video' | 'audio' | 'embedding' =
+              hint.supportsImageGeneration ? 'image'
+              : hint.supportsVideoGeneration ? 'video'
+              : hint.supportsAudioGeneration ? 'audio'
+              : hint.supportsEmbeddings ? 'embedding'
+              : (validRawTypes.has(rawModelType) ? rawModelType : 'text');
             providerBackedModels.push({
               id: m.id,
               name: m.name || m.id,
-              type: 'text',
+              type: derivedType,
               providerId: p.id,
               providerName: p.name,
-              costPer1kInput: m.pricing?.inputPer1k ?? 0,
-              costPer1kOutput: m.pricing?.outputPer1k ?? 0,
+              costPer1kInput: m.pricing?.inputPer1kTokens ?? m.pricing?.inputPer1k ?? 0,
+              costPer1kOutput: m.pricing?.outputPer1kTokens ?? m.pricing?.outputPer1k ?? 0,
               maxTokens: m.maxTokens ?? 4096,
               contextWindow: m.contextWindow ?? 0,
               speedTier: 'balanced' as const,
               capabilities: {
-                supportsVision: false,
-                supportsReasoning: false,
-                supportsFunctionCalling: true,
+                supportsVision: hint.supportsVision ?? false,
+                supportsReasoning: hint.supportsReasoningHints ?? false,
+                supportsFunctionCalling: hint.supportsToolCalls ?? p.capabilities?.supportsToolCalls ?? false,
                 supportsWebSearch: false,
                 supportsMultipleImages: false,
                 isUncensored: false,
@@ -1716,6 +1725,7 @@ You are always on. Always capable. Always direct.`;
         }
 
         this.ai.syncRuntimeProviders(providerBackedModels);
+        await this.ai.ensureResolvedDefaultModel();
 
         // ── Snapshot AFTER sync ─────────────────────────────────────────────
         const opMapAfter = this.aiService.getOperationMapping() as Record<string, string | null>;
