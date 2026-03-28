@@ -101,7 +101,8 @@ export type UltraLogCat =
   | 'MODEL_INVENTORY_SYNC'        // Model inventory refresh event
   | 'PERMISSION_SNAPSHOT_STARTUP' // Permission states at startup
   | 'PERMISSION_RECHECK_RUNTIME'  // Permission re-read before capability
-  | 'PERMISSION_CONTRADICTION';   // Startup vs runtime permission mismatch
+  | 'PERMISSION_CONTRADICTION'    // Startup vs runtime permission mismatch
+  | 'BUG_REPORT_WRITE';           // Bug report generation event with session metadata
 
 interface UltraLogEntry {
   ts: string;
@@ -283,11 +284,22 @@ export class UltraDevLog {
   }
 
   static userMessage(conversationId: string, content: string): void {
-    UltraDevLog.push('USER_MSG', { conversationId, content });
+    const wordCount = content.trim().split(/\s+/).filter(Boolean).length;
+    const hasImage = content.includes('[image]') || content.includes('data:image');
+    UltraDevLog.push('USER_MSG', {
+      conversationId,
+      userInputSummary: `${hasImage ? 'image request' : 'text request'}, ${wordCount} words`,
+      contentLength: content.length,
+    });
   }
 
   static aiResponse(conversationId: string, model: string, content: string, cost: number | undefined, tokens?: { input?: number; output?: number }): void {
-    UltraDevLog.push('AI_RESPONSE', { conversationId, model, content, cost, tokens });
+    UltraDevLog.push('AI_RESPONSE', {
+      conversationId, model,
+      responseSummary: `assistant replied, ${content.length} chars`,
+      responseLength: content.length,
+      cost, tokens,
+    });
   }
 
   static agentStep(taskId: string, phase: string, detail: string, success: boolean): void {
@@ -1038,6 +1050,7 @@ export class UltraDevLog {
     displayedCount: number;
     fallbackUsed: boolean;
     source: 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty';
+    /** What the router/ModelRouter reports as the current model (may differ from UI) */
     selectedModel: string | null;
     defaultModel: string | null;
     assignedGroupId: string | null;
@@ -1045,9 +1058,20 @@ export class UltraDevLog {
     routeRestricted: boolean;
     slideAnimCurrentValue: number;
     note: string;
+    /** The model displayed in the UI pill (React state activeModelId) — distinct source from router */
+    uiSelectedModel?: string | null;
+    /** The model the router/ModelRouter would resolve for this operation */
+    routerSelectedModel?: string | null;
+    selectedModelMismatch?: boolean;
   }): void {
+    const uiSel = params.uiSelectedModel ?? params.selectedModel;
+    const routerSel = params.routerSelectedModel ?? params.selectedModel;
+    const mismatch = params.selectedModelMismatch ?? (uiSel !== routerSel && uiSel !== null && routerSel !== null);
     UltraDevLog.push('PICKER_OPEN', {
       ...params,
+      uiSelectedModel: uiSel,
+      routerSelectedModel: routerSel,
+      selectedModelMismatch: mismatch,
     });
   }
 
@@ -1060,15 +1084,27 @@ export class UltraDevLog {
     totalModels: number;
     fallbackUsed: boolean;
     source: 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty';
+    /** What the router/ModelRouter reports as the current model (may differ from UI) */
     selectedModel: string | null;
     defaultModel: string | null;
     assignedGroupId: string | null;
     eligibleGroupIds: string[];
     routeRestricted: boolean;
     note: string;
+    /** The model displayed in the UI pill (React state activeModelId) — distinct source from router */
+    uiSelectedModel?: string | null;
+    /** The model the router/ModelRouter would resolve for this operation */
+    routerSelectedModel?: string | null;
+    selectedModelMismatch?: boolean;
   }): void {
+    const uiSel = params.uiSelectedModel ?? params.selectedModel;
+    const routerSel = params.routerSelectedModel ?? params.selectedModel;
+    const mismatch = params.selectedModelMismatch ?? (uiSel !== routerSel && uiSel !== null && routerSel !== null);
     UltraDevLog.push('PICKER_CONTENT', {
       ...params,
+      uiSelectedModel: uiSel,
+      routerSelectedModel: routerSel,
+      selectedModelMismatch: mismatch,
     });
   }
 
@@ -1259,8 +1295,8 @@ export class UltraDevLog {
       (typeof s === 'string' && (s.startsWith('WARN') || s.startsWith('BUG'))) ? ' *** ' : ' ';
 
     switch (cat) {
-      case 'USER_MSG': return `${t} [USER    ]${c} "${d.content}"`;
-      case 'AI_RESPONSE': return `${t} [AI      ]${c} model=${d.model} cost=$${d.cost} | ${(d.content as string).slice(0, 500)}`;
+      case 'USER_MSG': return `${t} [USER    ]${c} ${d.userInputSummary ?? `[${d.contentLength ?? '?'} chars]`}`;
+      case 'AI_RESPONSE': return `${t} [AI      ]${c} model=${d.model} cost=$${d.cost} | ${d.responseSummary ?? `${d.responseLength ?? '?'} chars`}`;
       case 'AGENT_STEP':
         if (d.event === 'execute_start') return `${t} [EXEC_ST ]${c} task=${d.taskId} len=${d.inputLength} replay=${d.isReplay}`;
         return `${t} [STEP    ]${c} [${d.phase}] ${d.success ? 'OK' : 'FAIL'} ${d.detail}`;
@@ -1300,7 +1336,8 @@ export class UltraDevLog {
       case 'PARSE_COMPOUND': return `${t} [COMPOUND]${c} "${d.input}"`;
       case 'PICKER_OPEN': {
         if (d.requestedFilter !== undefined) {
-          return `${t} [PICKER> ] req=${d.requestedFilter} eff=${d.effectiveFilter} total=${d.totalModels} raw=${d.rawFilteredCount} shown=${d.displayedCount} fallback=${d.fallbackUsed} src=${d.source} assigned=${d.assignedGroupId ?? 'none'} routeRestricted=${d.routeRestricted} anim=${d.slideAnimCurrentValue} ${d.note}`;
+          const mismatch = d.selectedModelMismatch ? ' *** MODEL_MISMATCH' : '';
+          return `${t} [PICKER> ] req=${d.requestedFilter} eff=${d.effectiveFilter} total=${d.totalModels} raw=${d.rawFilteredCount} shown=${d.displayedCount} fallback=${d.fallbackUsed} src=${d.source} assigned=${d.assignedGroupId ?? 'none'} routeRestricted=${d.routeRestricted} ui=${d.uiSelectedModel ?? 'none'} router=${d.routerSelectedModel ?? 'none'} default=${d.defaultModel ?? 'none'} anim=${d.slideAnimCurrentValue}${mismatch} ${d.note}`;
         }
         return `${t} [PICKER> ] ${d.modelCount} models filter=${d.filter} anim=${d.slideAnimCurrentValue} ${d.note}`;
       }
@@ -1347,7 +1384,8 @@ export class UltraDevLog {
       case 'PROCESS_RESTART': return `${t} [PROC_RS ] ${d.event}${d.backgroundDurationMs ? ` bg=${d.backgroundDurationMs}ms` : ''} ${d.note}`;
       case 'PICKER_CONTENT': {
         if (d.requestedFilter !== undefined) {
-          return `${t} [PICK_CT ] req=${d.requestedFilter} eff=${d.effectiveFilter} raw=${d.rawFilteredCount} shown=${d.displayedCount} total=${d.totalModels} fallback=${d.fallbackUsed} src=${d.source} routeRestricted=${d.routeRestricted} assigned=${d.assignedGroupId ?? 'none'}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+          const mismatch = d.selectedModelMismatch ? ' *** MODEL_MISMATCH' : '';
+          return `${t} [PICK_CT ] req=${d.requestedFilter} eff=${d.effectiveFilter} raw=${d.rawFilteredCount} shown=${d.displayedCount} total=${d.totalModels} fallback=${d.fallbackUsed} src=${d.source} routeRestricted=${d.routeRestricted} assigned=${d.assignedGroupId ?? 'none'} ui=${d.uiSelectedModel ?? 'none'} router=${d.routerSelectedModel ?? 'none'} default=${d.defaultModel ?? 'none'}${mismatch}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
         }
         return `${t} [PICK_CT ] filter=${d.activeFilter} ${d.filteredCount}/${d.totalCount}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
       }
@@ -1381,13 +1419,79 @@ export class UltraDevLog {
       case 'SLASH_CMD': return `${t} [SLASH   ]${c} ${d.command} ${d.durationMs}ms result=${d.resultPreview}`;
       case 'CHAIN': return `${t} [CHAIN   ]${c} ${d.component}.${d.action} → ${d.outcome}`;
       case 'EFFECT': return `${t} [EFFECT  ]${c} ${d.component}.${d.action} ${d.success !== undefined ? (d.success ? 'OK' : 'FAIL') : ''} ${JSON.stringify(d).slice(0, 200)}`;
+      case 'BUG_REPORT_WRITE': return `${t} [BUG_RPT ] ${d.success ? 'OK' : 'FAIL'} mode=${d.mode} src=${d.source} entries=${d.entryCount} sessions=${d.distinctSessionCount} target=${d.targetSessionId}`;
       default: return `${t} [${cat.padEnd(8)}]${c} ${JSON.stringify(d).slice(0, 300)}`;
     }
   }
 
-  static generateBugReport(entriesOverride?: UltraLogEntry[], sourceLabel?: string): string {
+  // ─── Session helpers ───────────────────────────────────────────────────────
+
+  static getSessionId(): string { return UltraDevLog.sessionId; }
+  static getLastFlushedSeq(): number { return UltraDevLog.lastFlushedSeq; }
+
+  /**
+   * Parse all entries in the durable session file, group by session_id, and
+   * return a map from sessionId → entries[], ordered oldest-first within each session.
+   */
+  static async buildSessionIndexFromDurableFile(): Promise<{
+    allEntries: UltraLogEntry[];
+    sessionIndex: Map<string, UltraLogEntry[]>;
+    sessionIds: string[];
+    currentSessionId: string;
+    prevSessionId: string | null;
+  }> {
+    const currentSessionId = UltraDevLog.sessionId;
+    const empty = {
+      allEntries: [] as UltraLogEntry[],
+      sessionIndex: new Map<string, UltraLogEntry[]>(),
+      sessionIds: [],
+      currentSessionId,
+      prevSessionId: null,
+    };
+    if (Platform.OS === 'web' || !FileSystem) return empty;
+    try {
+      const sessionPath = UltraDevLog.getSessionFilePath();
+      if (!sessionPath) return empty;
+      const info = await FileSystem.getInfoAsync(sessionPath);
+      if (!info.exists) return empty;
+      const content = await FileSystem.readAsStringAsync(sessionPath);
+      const allEntries: UltraLogEntry[] = content
+        .split('\n')
+        .filter(Boolean)
+        .map((line: string) => { try { return JSON.parse(line) as UltraLogEntry; } catch { return null; } })
+        .filter((e: UltraLogEntry | null): e is UltraLogEntry => e !== null);
+
+      const sessionIndex = new Map<string, UltraLogEntry[]>();
+      for (const e of allEntries) {
+        const sid: string = (e.data?.session_id as string) ?? (e.data?.payload as any)?.session_id ?? 'unknown';
+        if (!sessionIndex.has(sid)) sessionIndex.set(sid, []);
+        sessionIndex.get(sid)!.push(e);
+      }
+      const sessionIds = [...sessionIndex.keys()];
+      // "previous" = most recent session that is NOT the current session
+      const prevSessionId = sessionIds.filter(s => s !== currentSessionId).slice(-1)[0] ?? null;
+      return { allEntries, sessionIndex, sessionIds, currentSessionId, prevSessionId };
+    } catch {
+      return empty;
+    }
+  }
+
+  static generateBugReport(
+    entriesOverride?: UltraLogEntry[],
+    sourceLabel?: string,
+    opts?: {
+      targetSessionId?: string;
+      mode?: 'current_session_only' | 'previous_session_only' | 'combined';
+      allSessionIds?: string[];
+      otherSessionPickerEvidence?: Array<{ sessionId: string; pickerCount: number }>;
+    },
+  ): string {
     const entries = entriesOverride ?? [...UltraDevLog.entries];
     const source = sourceLabel ?? 'memory_fallback';
+    const mode = opts?.mode ?? 'current_session_only';
+    const targetSessionId = opts?.targetSessionId ?? UltraDevLog.sessionId;
+    const allSessionIds = opts?.allSessionIds ?? [UltraDevLog.sessionId];
+    const otherSessionPickerEvidence = opts?.otherSessionPickerEvidence ?? [];
     const lines: string[] = [];
     const hr = '='.repeat(52);
     // Helper: reads original payload regardless of envelope wrapping
@@ -1412,30 +1516,55 @@ export class UltraDevLog {
     const allPermContradictions = entries.filter(e => e.cat === 'PERMISSION_CONTRADICTION');
 
     lines.push(hr);
-    lines.push(`AGENT ULTRA -- BUG REPORT v4`);
-    lines.push(`Generated:      ${new Date().toISOString()}`);
-    lines.push(`SessionId:      ${UltraDevLog.sessionId}`);
-    lines.push(`EntryCount:     ${entries.length}`);
-    lines.push(`SeqRange:       ${minSeq}..${maxSeq} (expected=${expectedCount} missing≈${missingSeqEstimate})`);
-    lines.push(`Source:         ${source}`);
-    lines.push(`CoveredTime:    ${coveredTimeStart} → ${coveredTimeEnd}`);
-    lines.push(`ReportLimits:   picker=ALL settings=ALL routing=ALL (no arbitrary caps)`);
+    lines.push(`AGENT ULTRA -- BUG REPORT v5`);
+    lines.push(`Generated:         ${new Date().toISOString()}`);
+    lines.push(`Target session:    ${targetSessionId}`);
+    lines.push(`Report mode:       ${mode}`);
+    lines.push(`Source:            ${source}`);
+    lines.push(`Durable sessions:  ${allSessionIds.length} distinct session(s) in durable file`);
+    lines.push(`All session ids:   [${allSessionIds.join(', ')}]`);
+    lines.push(`EntryCount:        ${entries.length}`);
+    lines.push(`SeqRange:          ${minSeq}..${maxSeq} (expected=${expectedCount} missing≈${missingSeqEstimate})`);
+    lines.push(`CoveredTime:       ${coveredTimeStart} → ${coveredTimeEnd}`);
+    lines.push(`ReportLimits:      picker=ALL settings=ALL routing=ALL (no arbitrary caps)`);
     lines.push(hr);
 
     lines.push('');
     lines.push('-- COVERAGE STATEMENT --------------------------------');
-    lines.push(`  Source:         ${source === 'session_file' ? 'Session file on disk (full durable log)' : 'In-memory entries (session file unavailable or unread)'}`);
-    lines.push(`  Entries:        ${entries.length} entries, seq ${minSeq}..${maxSeq}`);
-    lines.push(`  Missing seqs:   ≈${missingSeqEstimate} (cap evictions or gaps)`);
-    lines.push(`  Picker trace:   ${allPickerEntries.length} entries — ALL included, uncapped`);
-    lines.push(`  Settings trace: ${allSettingsEntries.length} entries — ALL included, uncapped`);
-    lines.push(`  Routing trace:  ${allRoutingEntries.length} entries — ALL included, uncapped`);
-    lines.push(`  API/sync trace: ${allApiSyncEntries.length} entries — ALL included (API_STATE_SNAPSHOT + MODEL_INVENTORY_SYNC + ROUTING_ASSIGNMENT)`);
-    lines.push(`  Perm contradict:${allPermContradictions.length} entries`);
-    lines.push(`  Categories:     ${coveredCats}`);
+    lines.push(`  Source:            ${source === 'session_file' ? 'Session file on disk (full durable log)' : 'In-memory entries (session file unavailable or unread)'}`);
+    lines.push(`  Target session:    ${targetSessionId}`);
+    lines.push(`  Report mode:       ${mode}`);
+    lines.push(`  Entries:           ${entries.length} entries, seq ${minSeq}..${maxSeq}`);
+    lines.push(`  Missing seqs:      ≈${missingSeqEstimate} (cap evictions or gaps)`);
+    lines.push(`  Picker trace in selected session: ${allPickerEntries.length} entries — ALL included, uncapped`);
+    if (allPickerEntries.length === 0 && otherSessionPickerEvidence.length > 0) {
+      lines.push(`  NOTE: Picker trace is 0 in this session but other sessions in the durable file contain picker evidence:`);
+      otherSessionPickerEvidence.forEach(ev => {
+        lines.push(`    Session ${ev.sessionId}: ${ev.pickerCount} picker entries`);
+      });
+      lines.push(`  To see those entries, generate a Previous Session Bug Report.`);
+    }
+    lines.push(`  Settings trace:    ${allSettingsEntries.length} entries — ALL included, uncapped`);
+    lines.push(`  Routing trace:     ${allRoutingEntries.length} entries — ALL included, uncapped`);
+    lines.push(`  API/sync trace:    ${allApiSyncEntries.length} entries — ALL included (API_STATE_SNAPSHOT + MODEL_INVENTORY_SYNC + ROUTING_ASSIGNMENT)`);
+    lines.push(`  Perm contradict:   ${allPermContradictions.length} entries`);
+    lines.push(`  Categories:        ${coveredCats}`);
+
+    // ── Failure classification ────────────────────────────────────────────────
+    // RULE: Only true runtime failures belong in the FAILURES section.
+    // Expected / normal conditions (warm_restart, camera_cancelled, etc.) go to EXPECTED CONDITIONS.
+
+    const EXPECTED_CONDITION_EVENTS = new Set([
+      'warm_restart', 'camera_cancelled', 'picker_cancelled', 'user_cancelled',
+      'app_backgrounded', 'app_foregrounded',
+    ]);
 
     const failures = entries.filter(e => {
       const d = p(e);
+      // Explicitly excluded from failures: PROCESS_RESTART (any variant), camera/user cancel
+      if (e.cat === 'PROCESS_RESTART') return false;
+      if (typeof d.event === 'string' && EXPECTED_CONDITION_EVENTS.has(d.event)) return false;
+      if (d.cancelled === true) return false;
       return (
         e.cat === 'ERROR' ||
         e.cat === 'APP_LAUNCH_FAIL' ||
@@ -1451,7 +1580,6 @@ export class UltraDevLog {
         (e.cat === 'PICKER_FILTER_CHANGE' && (d.note as string)?.startsWith('WARN')) ||
         (e.cat === 'UI_MESSAGE_RENDERED' && (d.tallWarning || (d.note as string)?.includes('listHeightPx=0'))) ||
         (e.cat === 'VAULT_WRITE' && d.success === false) ||
-        (e.cat === 'PROCESS_RESTART' && d.event === 'warm_restart') ||
         (e.cat === 'FOCUS_EFFECT_DEPS' && (d.changedDeps as string[])?.includes('currentMode')) ||
         (e.cat === 'EFFECT' && d.success === false) ||
         (e.cat === 'PERMISSION_CONTRADICTION') ||
@@ -1460,8 +1588,23 @@ export class UltraDevLog {
       );
     });
 
-    lines.push(''); lines.push(`-- FAILURES & WARNINGS (${failures.length}) -----------------`);
+    const expectedConditions = entries.filter(e => {
+      const d = p(e);
+      return (
+        e.cat === 'PROCESS_RESTART' ||
+        (typeof d.event === 'string' && EXPECTED_CONDITION_EVENTS.has(d.event)) ||
+        (d.cancelled === true && e.cat !== 'ERROR')
+      );
+    });
+
+    lines.push(''); lines.push(`-- FAILURES (${failures.length}) --- only true runtime failures ---`);
     failures.length === 0 ? lines.push('  None.') : failures.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+
+    if (expectedConditions.length > 0) {
+      lines.push(''); lines.push(`-- EXPECTED CONDITIONS (${expectedConditions.length}) --- not failures ---`);
+      lines.push('  (warm restart, user cancel, background/foreground — these are informational)');
+      expectedConditions.forEach(e => lines.push('  ' + UltraDevLog.formatEntry(e)));
+    }
 
     const lastUser = [...entries].reverse().find(e => e.cat === 'USER_MSG');
     lines.push(''); lines.push('-- LAST USER INPUT --------------------------------');
@@ -1615,57 +1758,111 @@ export class UltraDevLog {
   static async forceFlush(): Promise<void> { await UltraDevLog.doFlush(); }
 
   static writeBugReportFile(): void {
-    setTimeout(() => UltraDevLog.doWriteBugReport(), 0);
+    setTimeout(() => UltraDevLog.doWriteBugReport('current'), 0);
   }
 
   static async generateBugReportFile(): Promise<boolean> {
-    return UltraDevLog.doWriteBugReport();
+    return UltraDevLog.doWriteBugReport('current');
   }
 
-  private static async doWriteBugReport(): Promise<boolean> {
+  /** Generate a bug report covering the PREVIOUS session in the durable file.
+   *  Returns ok=false and prevSessionId=null if no prior session exists. */
+  static async generateBugReportFilePrevSession(): Promise<{ ok: boolean; prevSessionId: string | null }> {
+    const idx = await UltraDevLog.buildSessionIndexFromDurableFile();
+    if (!idx.prevSessionId) return { ok: false, prevSessionId: null };
+    const ok = await UltraDevLog.doWriteBugReport('previous', idx.prevSessionId);
+    return { ok, prevSessionId: idx.prevSessionId };
+  }
+
+  private static async doWriteBugReport(
+    targetMode: 'current' | 'previous' | 'combined' = 'current',
+    explicitTargetSessionId?: string,
+  ): Promise<boolean> {
     if (Platform.OS === 'web' || !FileSystem) return false;
     try {
-      // Flush first so session file is up to date before reading it
+      // 1. Flush first so session file is up to date
       await UltraDevLog.doFlush();
 
-      // Try to read from durable session file for a truth-complete report
+      // 2. Read durable session file and build session index
+      const { sessionIndex, sessionIds, currentSessionId, prevSessionId } =
+        await UltraDevLog.buildSessionIndexFromDurableFile();
+
+      const mode: 'current_session_only' | 'previous_session_only' | 'combined' =
+        targetMode === 'previous' ? 'previous_session_only' :
+        targetMode === 'combined' ? 'combined' : 'current_session_only';
+
+      const targetSessionId =
+        explicitTargetSessionId ??
+        (targetMode === 'previous' ? prevSessionId : currentSessionId) ??
+        currentSessionId;
+
+      // 3. Select entries for the chosen session
       let reportEntries: UltraLogEntry[] | undefined;
       let sourceLabel = 'memory_fallback';
-      const sessionPath = UltraDevLog.getSessionFilePath();
-      if (sessionPath) {
-        try {
-          const info = await FileSystem.getInfoAsync(sessionPath);
-          if (info.exists) {
-            const content = await FileSystem.readAsStringAsync(sessionPath);
-            const parsed = content
-              .split('\n')
-              .filter(Boolean)
-              .map((line: string) => { try { return JSON.parse(line) as UltraLogEntry; } catch { return null; } })
-              .filter((e: UltraLogEntry | null): e is UltraLogEntry => e !== null);
-            if (parsed.length > 0) {
-              reportEntries = parsed;
-              sourceLabel = 'session_file';
-            }
-          }
-        } catch {}
+
+      if (sessionIndex.size > 0) {
+        if (mode === 'combined') {
+          reportEntries = [...sessionIndex.values()].flat().sort((a, b) => a.seq - b.seq);
+        } else {
+          reportEntries = sessionIndex.get(targetSessionId) ??
+            (mode === 'current_session_only' ? [...UltraDevLog.entries] : []);
+        }
+        sourceLabel = 'session_file';
+      } else {
+        // Fallback to in-memory entries for current session
+        reportEntries = mode === 'current_session_only' ? [...UltraDevLog.entries] : [];
+        sourceLabel = 'memory_fallback';
       }
 
-      const report = UltraDevLog.generateBugReport(reportEntries, sourceLabel);
-      const ok = await LogFolder.writeLog('bug-report.txt', report);
-      UltraDevLog.push('SYSTEM', {
+      // 4. Build other-session picker evidence disclosure
+      const pickerCats = new Set(['PICKER_OPEN','PICKER_CLOSE','PICKER_ANIMATE','PICKER_SELECT','PICKER_CONTENT','PICKER_FILTER_CHANGE']);
+      const otherSessionPickerEvidence: Array<{ sessionId: string; pickerCount: number }> = [];
+      for (const [sid, entries] of sessionIndex.entries()) {
+        if (sid === targetSessionId) continue;
+        const pc = entries.filter(e => pickerCats.has(e.cat)).length;
+        if (pc > 0) otherSessionPickerEvidence.push({ sessionId: sid, pickerCount: pc });
+      }
+
+      // 5. Generate the report
+      const report = UltraDevLog.generateBugReport(reportEntries, sourceLabel, {
+        targetSessionId,
+        mode,
+        allSessionIds: sessionIds.length > 0 ? sessionIds : [currentSessionId],
+        otherSessionPickerEvidence,
+      });
+
+      // 6. Write to file
+      const filename = targetMode === 'previous'
+        ? `bug-report-prev-${targetSessionId.slice(-8)}.txt`
+        : 'bug-report.txt';
+      const ok = await LogFolder.writeLog(filename, report);
+
+      // 7. Emit BUG_REPORT_WRITE durable event with all required fields
+      UltraDevLog.push('BUG_REPORT_WRITE', {
         event: 'bug_report_write',
         success: ok,
-        trigger: 'doWriteBugReport',
+        targetSessionId,
+        mode,
+        source: sourceLabel,
+        entryCount: reportEntries?.length ?? 0,
+        distinctSessionCount: sessionIds.length > 0 ? sessionIds.length : 1,
+        allSessionIds: sessionIds.length > 0 ? sessionIds : [currentSessionId],
         reportChars: report.length,
-        note: ok ? 'bug-report.txt written ok' : 'WARN: bug-report.txt write failed',
+        filename,
+        note: ok ? `${filename} written ok` : `WARN: ${filename} write failed`,
       });
       return ok;
     } catch (err: any) {
-      UltraDevLog.push('SYSTEM', {
+      UltraDevLog.push('BUG_REPORT_WRITE', {
         event: 'bug_report_write',
         success: false,
-        trigger: 'doWriteBugReport',
-        note: `WARN: bug-report.txt write threw: ${err?.message ?? 'unknown'}`,
+        targetSessionId: explicitTargetSessionId ?? UltraDevLog.sessionId,
+        mode: targetMode === 'previous' ? 'previous_session_only' : 'current_session_only',
+        source: 'error',
+        entryCount: 0,
+        distinctSessionCount: 0,
+        allSessionIds: [],
+        note: `WARN: bug report write threw: ${err?.message ?? 'unknown'}`,
       });
       return false;
     }

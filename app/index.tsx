@@ -140,7 +140,10 @@ export default function ChatScreen() {
     effectiveFilterAtOpen: "all"|"text"|"image"|"code"|"reasoning"|"video";
     assignedGroupId: string | null; eligibleGroupIds: string[];
     routeRestricted: boolean; defaultModel: string | null;
-    selectedModel: string | null; source: 'provider_bridge'|'legacy_cache'|'mixed'|'empty';
+    selectedModel: string | null;
+    uiSelectedModel: string | null;
+    routerSelectedModel: string | null;
+    source: 'provider_bridge'|'legacy_cache'|'mixed'|'empty';
   } | null>(null);
   const [plusMenuVisible, setPlusMenuVisible] = useState(false);
 
@@ -1630,6 +1633,8 @@ export default function ChatScreen() {
                   routeRestricted: false,
                   defaultModel: resolvedDefaultModel,
                   selectedModel: resolvedModelId,
+                  uiSelectedModel: activeModelId,
+                  routerSelectedModel: (agentCore as any)?.ai?.getDefaultModelId?.() ?? agentCore?.getDefaultModel() ?? null,
                   source: pickerSource,
                 };
                 setModelPickerInitialFilter(filter);
@@ -1839,6 +1844,8 @@ export default function ChatScreen() {
               routeRestricted: false,
               defaultModel: plusResolvedDefaultModel,
               selectedModel: plusResolvedModelId,
+              uiSelectedModel: activeModelId,
+              routerSelectedModel: (agentCore as any)?.ai?.getDefaultModelId?.() ?? agentCore?.getDefaultModel() ?? null,
               source: plusSource,
             };
             setModelPickerInitialFilter(plusFilter);

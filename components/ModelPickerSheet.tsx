@@ -59,7 +59,12 @@ interface ModelPickerSheetProps {
     eligibleGroupIds: string[];
     routeRestricted: boolean;
     defaultModel: string | null;
+    /** What is displayed in the UI model pill (React state activeModelId) */
     selectedModel: string | null;
+    /** What the router/ModelRouter resolves — distinct source from UI pill */
+    routerSelectedModel?: string | null;
+    /** Explicit UI-selected model (alias for selectedModel; use when both are available) */
+    uiSelectedModel?: string | null;
     source: 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty';
   };
 }
@@ -95,6 +100,8 @@ export default function ModelPickerSheet({
   const ctxRouteRestricted = ctx?.routeRestricted ?? false;
   const ctxDefaultModel = ctx?.defaultModel ?? null;
   const ctxSelectedModel = ctx?.selectedModel ?? currentModelId ?? null;
+  const ctxUiSelectedModel = ctx?.uiSelectedModel ?? ctxSelectedModel;
+  const ctxRouterSelectedModel = ctx?.routerSelectedModel ?? null;
   const ctxSource = ctx?.source ?? (models.length === 0 ? 'empty' : 'provider_bridge');
 
   const mountedAtRef = React.useRef(Date.now());
@@ -115,6 +122,8 @@ export default function ModelPickerSheet({
         fallbackUsed: sheetFallback,
         source: ctxSource,
         selectedModel: ctxSelectedModel,
+        uiSelectedModel: ctxUiSelectedModel,
+        routerSelectedModel: ctxRouterSelectedModel,
         defaultModel: ctxDefaultModel,
         assignedGroupId: ctxAssignedGroupId,
         eligibleGroupIds: ctxEligibleGroupIds,
@@ -170,6 +179,8 @@ export default function ModelPickerSheet({
           fallbackUsed: usingFallback,
           source: ctxSource,
           selectedModel: ctxSelectedModel,
+          uiSelectedModel: ctxUiSelectedModel,
+          routerSelectedModel: ctxRouterSelectedModel,
           defaultModel: ctxDefaultModel,
           assignedGroupId: ctxAssignedGroupId,
           eligibleGroupIds: ctxEligibleGroupIds,

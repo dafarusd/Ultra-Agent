@@ -228,6 +228,15 @@ export default function SettingsScreen() {
   // ── Logs ────────────────────────────────────────────────
   const [logFiles, setLogFiles] = useState<LogFile[]>([]);
   const [logsLoaded, setLogsLoaded] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState<{
+    currentSessionId: string;
+    distinctSessions: number;
+    allSessionIds: string[];
+    lastFlushedSeq: number;
+    durableAvailable: boolean;
+    prevSessionId: string | null;
+    lastBugReportTs: string | null;
+  } | null>(null);
 
   // ── Security ─────────────────────────────────────────────
   const [backupExporting, setBackupExporting] = useState(false);
@@ -333,6 +342,33 @@ export default function SettingsScreen() {
     } catch {
       setLogFiles([]);
       setLogsLoaded(true);
+    }
+    // Refresh session status whenever logs load
+    try {
+      const { sessionIndex, sessionIds, currentSessionId, prevSessionId } =
+        await UltraDevLog.buildSessionIndexFromDurableFile();
+      const bugReportFile = (await LogFolder.listLogs()).find(f => f.name === 'bug-report.txt');
+      setSessionStatus({
+        currentSessionId,
+        distinctSessions: sessionIds.length > 0 ? sessionIds.length : 1,
+        allSessionIds: sessionIds.length > 0 ? sessionIds : [currentSessionId],
+        lastFlushedSeq: UltraDevLog.getLastFlushedSeq(),
+        durableAvailable: sessionIndex.size > 0,
+        prevSessionId: prevSessionId ?? null,
+        lastBugReportTs: bugReportFile
+          ? new Date(bugReportFile.createdAt).toISOString().slice(11, 19)
+          : null,
+      });
+    } catch {
+      setSessionStatus({
+        currentSessionId: UltraDevLog.getSessionId(),
+        distinctSessions: 1,
+        allSessionIds: [UltraDevLog.getSessionId()],
+        lastFlushedSeq: UltraDevLog.getLastFlushedSeq(),
+        durableAvailable: false,
+        prevSessionId: null,
+        lastBugReportTs: null,
+      });
     }
   }, []);
 
@@ -1609,20 +1645,67 @@ export default function SettingsScreen() {
               )}
             </View>
             <View style={styles.card}>
+              <Text style={styles.cardTitle}>Session Status</Text>
+              {sessionStatus ? (
+                <View style={{ gap: 3, marginTop: 6 }}>
+                  <Text style={{ color: DIM, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                    Session: <Text style={{ color: TEXT }}>{sessionStatus.currentSessionId}</Text>
+                  </Text>
+                  <Text style={{ color: DIM, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                    Sessions in log: <Text style={{ color: TEXT }}>{sessionStatus.distinctSessions}</Text>
+                    {sessionStatus.prevSessionId ? <Text style={{ color: SUCCESS }}>  (prev: {sessionStatus.prevSessionId.slice(-8)})</Text> : <Text style={{ color: DIM }}>  (no prior session)</Text>}
+                  </Text>
+                  <Text style={{ color: DIM, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                    Last flushed seq: <Text style={{ color: TEXT }}>{sessionStatus.lastFlushedSeq}</Text>
+                  </Text>
+                  <Text style={{ color: DIM, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                    Durable source: <Text style={{ color: sessionStatus.durableAvailable ? SUCCESS : DANGER }}>{sessionStatus.durableAvailable ? 'available' : 'unavailable'}</Text>
+                  </Text>
+                  {sessionStatus.lastBugReportTs && (
+                    <Text style={{ color: DIM, fontSize: 11, fontFamily: 'Inter_400Regular' }}>
+                      Last bug report: <Text style={{ color: TEXT }}>{sessionStatus.lastBugReportTs}</Text>
+                    </Text>
+                  )}
+                </View>
+              ) : (
+                <Text style={styles.emptyText}>Load logs to refresh status.</Text>
+              )}
+            </View>
+            <View style={styles.card}>
               <Text style={styles.cardTitle}>Bug Report</Text>
               <Text style={styles.cardSubtitle}>
-                Generates a summary of failures, traces, and key events. Share with diagnostics.
+                Generates a session-scoped summary of failures, traces, and key events.
               </Text>
               <Pressable
                 style={[styles.btn, styles.primaryBtn, { marginTop: 4 }]}
                 onPress={async () => {
                   const ok = await UltraDevLog.generateBugReportFile();
-                  if (ok) { await loadLogs(); Alert.alert('Done', 'bug-report.txt created.'); }
+                  if (ok) { await loadLogs(); Alert.alert('Done', 'bug-report.txt created (current session).'); }
                   else Alert.alert('Error', 'Could not write bug-report.txt');
                 }}
               >
                 <Ionicons name="bug-outline" size={16} color={BG} />
-                <Text style={styles.primaryBtnText}>Generate Report</Text>
+                <Text style={styles.primaryBtnText}>Current Session Report</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.btn, sessionStatus?.prevSessionId ? styles.secondaryBtn : styles.secondaryBtn, { marginTop: 8, opacity: sessionStatus?.prevSessionId ? 1 : 0.4 }]}
+                disabled={!sessionStatus?.prevSessionId}
+                onPress={async () => {
+                  const { ok, prevSessionId } = await UltraDevLog.generateBugReportFilePrevSession();
+                  if (ok) {
+                    await loadLogs();
+                    Alert.alert('Done', `Previous session report created.\nSession: ${prevSessionId?.slice(-8)}`);
+                  } else if (!prevSessionId) {
+                    Alert.alert('No Prior Session', 'No previous session found in the durable log file.');
+                  } else {
+                    Alert.alert('Error', 'Could not write previous session report.');
+                  }
+                }}
+              >
+                <Ionicons name="time-outline" size={16} color={sessionStatus?.prevSessionId ? ACCENT : DIM} />
+                <Text style={[styles.secondaryBtnText, { color: sessionStatus?.prevSessionId ? ACCENT : DIM }]}>
+                  Previous Session Report{sessionStatus?.prevSessionId ? ` (…${sessionStatus.prevSessionId.slice(-8)})` : ' (none)'}
+                </Text>
               </Pressable>
             </View>
           </>

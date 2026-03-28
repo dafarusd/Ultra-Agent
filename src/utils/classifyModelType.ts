@@ -29,6 +29,35 @@ function matchesAny(value: string, patterns: string[]): boolean {
   return patterns.some((p) => value.includes(p));
 }
 
+// ── Summary accumulator (replaces per-call durable log) ─────────────────────
+let _summaryCount = 0;
+const _categoryCounts: Record<string, number> = {};
+const _ruleCounts: Record<string, number> = {};
+let _unknownFallbackCount = 0;
+
+/**
+ * Emit a SYSTEM summary of all classify_model_type calls since last reset.
+ * Call this at meaningful boundaries (provider bridge sync, picker open, picker filter change).
+ * Has no effect if zero classifications have occurred since last reset.
+ */
+export function classifyBatchSummary(trigger: string): void {
+  if (_summaryCount === 0) return;
+  UltraDevLog.push('SYSTEM', {
+    event: 'classify_model_type_summary',
+    trigger,
+    totalClassified: _summaryCount,
+    byCategoryCount: { ..._categoryCounts },
+    byRuleCount: { ..._ruleCounts },
+    unknownFallbackCount: _unknownFallbackCount,
+    note: `ok — ${_summaryCount} models classified, fallback=${_unknownFallbackCount}`,
+  });
+  // Reset
+  _summaryCount = 0;
+  Object.keys(_categoryCounts).forEach(k => delete _categoryCounts[k]);
+  Object.keys(_ruleCounts).forEach(k => delete _ruleCounts[k]);
+  _unknownFallbackCount = 0;
+}
+
 export function classifyModelType(
   id: string,
   name: string,
@@ -60,23 +89,11 @@ export function classifyModelType(
     else { result = "text"; matchedRule = "default_text_fallback"; }
   }
 
-  UltraDevLog.push('SYSTEM', {
-    event: 'classify_model_type',
-    modelId: id,
-    modelName: name,
-    rawType: rawType ?? null,
-    capabilityFlags: capabilities ? {
-      supportsImageGeneration: capabilities.supportsImageGeneration,
-      supportsVideoGeneration: capabilities.supportsVideoGeneration,
-      supportsAudioGeneration: capabilities.supportsAudioGeneration,
-      supportsEmbeddings: capabilities.supportsEmbeddings,
-      supportsReasoning: capabilities.supportsReasoning,
-      supportsReasoningHints: capabilities.supportsReasoningHints,
-      optimizedForCode: capabilities.optimizedForCode,
-    } : null,
-    matchedRule,
-    result,
-  });
+  // Accumulate into summary — no per-call durable log to avoid noise
+  _summaryCount++;
+  _categoryCounts[result] = (_categoryCounts[result] ?? 0) + 1;
+  _ruleCounts[matchedRule] = (_ruleCounts[matchedRule] ?? 0) + 1;
+  if (matchedRule === 'default_text_fallback') _unknownFallbackCount++;
 
   return result;
 }
