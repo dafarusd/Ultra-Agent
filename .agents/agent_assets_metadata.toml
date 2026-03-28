@@ -36,3 +36,9 @@ id = "r5n-RII6NZ3bHJPw5bbX-"
 uri = "file://ultra-full-source-dump.txt"
 type = "text"
 title = "Agent Ultra — Full Source Dump"
+
+[[outputs]]
+id = "wSaV-MxwVQahf_RBCZBmB"
+uri = "file://REPLIT_VERIFICATION_PROOF.md"
+type = "text"
+title = "REPLIT_VERIFICATION_PROOF.md"
