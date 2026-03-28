@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback } from "react";
 import {
   View,
   Text,
@@ -9,17 +9,14 @@ import {
   Animated,
   TouchableWithoutFeedback,
   Dimensions,
-  Platform,
-  ScrollView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { UltraDevLog } from "@/src/utils/UltraDevLog";
 
 const ACCENT = "#e5e5e5";
 const BG = "#000000";
 const SURFACE = "#111111";
-const SURFACE2 = "#1a1a1a";
 const SURFACE3 = "#222222";
 const DIM = "#666666";
 const TEXT = "#e0e0e0";
@@ -42,41 +39,21 @@ export interface PickerModel {
   isSelected: boolean;
 }
 
-type FilterTab = "all" | "text" | "image" | "code" | "reasoning" | "video";
-
 interface ModelPickerSheetProps {
   visible: boolean;
   models: PickerModel[];
   currentModelId: string;
   onSelect: (modelId: string) => void;
   onClose: () => void;
-  initialFilter?: FilterTab;
   logContext?: {
     currentMode: string;
-    requestedFilter: FilterTab;
-    effectiveFilterAtOpen: FilterTab;
-    assignedGroupId: string | null;
-    eligibleGroupIds: string[];
-    routeRestricted: boolean;
     defaultModel: string | null;
-    /** What is displayed in the UI model pill (React state activeModelId) */
     selectedModel: string | null;
-    /** What the router/ModelRouter resolves — distinct source from UI pill */
     routerSelectedModel?: string | null;
-    /** Explicit UI-selected model (alias for selectedModel; use when both are available) */
     uiSelectedModel?: string | null;
-    source: 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty';
+    source: "provider_bridge" | "legacy_cache" | "mixed" | "empty";
   };
 }
-
-const FILTER_TABS: { key: FilterTab; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "text", label: "Chat" },
-  { key: "image", label: "Image" },
-  { key: "code", label: "Code" },
-  { key: "reasoning", label: "Reasoning" },
-  { key: "video", label: "Video" },
-];
 
 export default function ModelPickerSheet({
   visible,
@@ -84,68 +61,66 @@ export default function ModelPickerSheet({
   currentModelId,
   onSelect,
   onClose,
-  initialFilter,
   logContext,
 }: ModelPickerSheetProps) {
   const insets = useSafeAreaInsets();
-  const [filter, setFilter] = useState<FilterTab>("all");
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const slideAnim = React.useRef(new Animated.Value(SHEET_MAX_HEIGHT)).current;
 
-  // Context extraction with safe fallbacks — parent is source of truth
   const ctx = logContext;
-  const ctxCurrentMode = ctx?.currentMode ?? 'unknown';
-  const ctxAssignedGroupId = ctx?.assignedGroupId ?? null;
-  const ctxEligibleGroupIds = ctx?.eligibleGroupIds ?? [];
-  const ctxRouteRestricted = ctx?.routeRestricted ?? false;
+  const ctxCurrentMode = ctx?.currentMode ?? "unknown";
   const ctxDefaultModel = ctx?.defaultModel ?? null;
   const ctxSelectedModel = ctx?.selectedModel ?? currentModelId ?? null;
   const ctxUiSelectedModel = ctx?.uiSelectedModel ?? ctxSelectedModel;
   const ctxRouterSelectedModel = ctx?.routerSelectedModel ?? null;
-  const ctxSource = ctx?.source ?? (models.length === 0 ? 'empty' : 'provider_bridge');
+  const ctxSource = ctx?.source ?? (models.length === 0 ? "empty" : "provider_bridge");
 
   const mountedAtRef = React.useRef(Date.now());
+
   React.useEffect(() => {
     if (visible) {
-      if (initialFilter) setFilter(initialFilter);
       const slideVal = (slideAnim as any)._value ?? SHEET_MAX_HEIGHT;
-      const initFilter = initialFilter ?? 'all';
-      const rawForFilter = initFilter === 'all' ? models : models.filter(m => m.type === initFilter);
-      const sheetFallback = initFilter !== 'all' && rawForFilter.length === 0;
       UltraDevLog.pickerOpenDetailed({
-        requestedFilter: initFilter,
-        effectiveFilter: sheetFallback ? 'all' : initFilter,
+        requestedFilter: "all",
+        effectiveFilter: "all",
         currentMode: ctxCurrentMode,
         totalModels: models.length,
-        rawFilteredCount: rawForFilter.length,
-        displayedCount: sheetFallback ? models.length : rawForFilter.length,
-        fallbackUsed: sheetFallback,
+        rawFilteredCount: models.length,
+        displayedCount: models.length,
+        fallbackUsed: false,
         source: ctxSource,
         selectedModel: ctxSelectedModel,
         uiSelectedModel: ctxUiSelectedModel,
         routerSelectedModel: ctxRouterSelectedModel,
         defaultModel: ctxDefaultModel,
-        assignedGroupId: ctxAssignedGroupId,
-        eligibleGroupIds: ctxEligibleGroupIds,
-        routeRestricted: ctxRouteRestricted,
         slideAnimCurrentValue: slideVal,
-        note: slideVal > 0 && slideVal < 100 ? 'WARN: slideAnim partially open before reset' : 'ok',
+        note: slideVal > 0 && slideVal < 100 ? "WARN: slideAnim partially open before reset" : "ok",
       });
       slideAnim.setValue(SHEET_MAX_HEIGHT);
       fadeAnim.setValue(0);
       const currentSlide = (slideAnim as any)._value ?? -1;
-      UltraDevLog.pickerAnimate('open', currentSlide, 0, 'spring');
+      UltraDevLog.pickerAnimate("open", currentSlide, 0, "spring");
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
         Animated.spring(slideAnim, { toValue: 0, tension: 65, friction: 11, useNativeDriver: true }),
       ]).start((result) => {
         if (!result.finished) {
-          UltraDevLog.error('ModelPickerSheet', 'Open animation did not finish', `started=${currentSlide} visible=${visible}`);
+          UltraDevLog.error(
+            "ModelPickerSheet",
+            "Open animation did not finish",
+            `started=${currentSlide} visible=${visible}`
+          );
         }
       });
     } else {
       const currentSlide = (slideAnim as any)._value ?? -1;
-      UltraDevLog.pickerAnimate('close', currentSlide, SHEET_MAX_HEIGHT, 'timing', mountedAtRef.current);
+      UltraDevLog.pickerAnimate(
+        "close",
+        currentSlide,
+        SHEET_MAX_HEIGHT,
+        "timing",
+        mountedAtRef.current
+      );
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
         Animated.timing(slideAnim, { toValue: SHEET_MAX_HEIGHT, duration: 150, useNativeDriver: true }),
@@ -153,14 +128,8 @@ export default function ModelPickerSheet({
     }
   }, [visible]);
 
-  const filteredRaw = filter === "all"
-    ? models
-    : models.filter((m) => m.type === filter);
-  const usingFallback = filter !== "all" && filteredRaw.length === 0;
-  // When usingFallback, displayedModels is the complete model list — not the empty filtered set.
-  // This ensures the FlatList data always matches what the banner text claims.
-  const filteredSource = usingFallback ? models : filteredRaw;
-  const displayedModels = [...filteredSource].sort((a, b) => {
+  // Sort so the currently-selected model appears first.
+  const displayedModels = [...models].sort((a, b) => {
     const aActive = a.id === currentModelId ? 1 : 0;
     const bActive = b.id === currentModelId ? 1 : 0;
     return bActive - aActive;
@@ -170,46 +139,56 @@ export default function ModelPickerSheet({
     ({ item, index }: { item: PickerModel; index: number }) => {
       if (index === 0) {
         UltraDevLog.pickerContentDetailed({
-          requestedFilter: filter,
-          effectiveFilter: usingFallback ? 'all' : filter,
+          requestedFilter: "all",
+          effectiveFilter: "all",
           currentMode: ctxCurrentMode,
-          rawFilteredCount: filteredRaw.length,
+          rawFilteredCount: models.length,
           displayedCount: displayedModels.length,
           totalModels: models.length,
-          fallbackUsed: usingFallback,
+          fallbackUsed: false,
           source: ctxSource,
           selectedModel: ctxSelectedModel,
           uiSelectedModel: ctxUiSelectedModel,
           routerSelectedModel: ctxRouterSelectedModel,
           defaultModel: ctxDefaultModel,
-          assignedGroupId: ctxAssignedGroupId,
-          eligibleGroupIds: ctxEligibleGroupIds,
-          routeRestricted: ctxRouteRestricted,
-          note: usingFallback
-            ? `WARN: 0 models for filter "${filter}" -- showing all ${models.length}`
-            : `ok — ${displayedModels.length}/${models.length} for "${filter}"`,
+          note: `ok — ${displayedModels.length} models`,
         });
-        UltraDevLog.push('PICKER_RENDER' as any, {
-          event: 'picker_content_rendered',
-          filter,
+        UltraDevLog.push("PICKER_RENDER" as any, {
+          event: "picker_content_rendered",
           rawCount: models.length,
-          filteredRawCount: filteredRaw.length,
           displayedCount: displayedModels.length,
-          usingFallback,
           currentModelId,
-          currentModelInList: displayedModels.some(m => m.id === currentModelId),
+          currentModelInList: displayedModels.some((m) => m.id === currentModelId),
         });
       }
       const isActive = item.id === currentModelId;
       return (
         <Pressable
           onPress={() => {
-            UltraDevLog.push('CHAIN', { component: 'ModelPickerSheet', action: 'model_select', trigger: { modelId: item.id }, state: { prev: currentModelId, filter }, data: { modelName: item.name, type: item.type }, outcome: item.id === currentModelId ? 'same_model_reselected' : 'model_changed' });
+            UltraDevLog.push("CHAIN", {
+              component: "ModelPickerSheet",
+              action: "model_select",
+              trigger: { modelId: item.id },
+              state: { prev: currentModelId },
+              data: { modelName: item.name, type: item.type },
+              outcome: item.id === currentModelId ? "same_model_reselected" : "model_changed",
+            });
             try {
               onSelect(item.id);
-              UltraDevLog.push('EFFECT', { component: 'ModelPickerSheet', action: 'model_select_dispatched', modelId: item.id, dispatched: true });
+              UltraDevLog.push("EFFECT", {
+                component: "ModelPickerSheet",
+                action: "model_select_dispatched",
+                modelId: item.id,
+                dispatched: true,
+              });
             } catch (selErr: any) {
-              UltraDevLog.push('EFFECT', { component: 'ModelPickerSheet', action: 'model_select_dispatched', modelId: item.id, dispatched: false, error: selErr?.message });
+              UltraDevLog.push("EFFECT", {
+                component: "ModelPickerSheet",
+                action: "model_select_dispatched",
+                modelId: item.id,
+                dispatched: false,
+                error: selErr?.message,
+              });
             }
             onClose();
           }}
@@ -245,7 +224,13 @@ export default function ModelPickerSheet({
   );
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
       <View style={styles.root} testID="ModelPickerSheet">
         <TouchableWithoutFeedback onPress={onClose}>
           <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]} />
@@ -272,54 +257,6 @@ export default function ModelPickerSheet({
               <Ionicons name="close" size={20} color={DIM} />
             </Pressable>
           </View>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={{ gap: 6, paddingHorizontal: 16, paddingBottom: 10 }}>
-            {FILTER_TABS.map((tab) => {
-              const isActive = filter === tab.key;
-              return (
-                <Pressable
-                  key={tab.key}
-                  onPress={() => {
-                    const prevFilter = filter;
-                    const rawCountBefore = prevFilter === 'all' ? models.length : models.filter(m => m.type === prevFilter).length;
-                    const rawCountAfter = tab.key === 'all' ? models.length : models.filter(m => m.type === tab.key).length;
-                    const fallbackAfter = tab.key !== 'all' && rawCountAfter === 0;
-                    const displayedCountAfter = fallbackAfter ? models.length : rawCountAfter;
-                    UltraDevLog.push('CHAIN', { component: 'ModelPickerSheet', action: 'filter_tab', trigger: { tab: tab.key }, state: { prev: filter }, data: {}, outcome: `filter_set_${tab.key}` });
-                    UltraDevLog.pickerFilterChange({
-                      fromFilter: prevFilter,
-                      toFilter: tab.key,
-                      rawCountBefore,
-                      rawCountAfter,
-                      displayedCountAfter,
-                      sourceOfModels: ctxSource,
-                      routeRestrictionActive: ctxRouteRestricted,
-                      routeAssignedGroupId: ctxAssignedGroupId,
-                      routeAssignedModelId: ctxSelectedModel,
-                    });
-                    setFilter(tab.key);
-                    UltraDevLog.push('EFFECT', {
-                      component: 'ModelPickerSheet', action: 'filter_result',
-                      filter: tab.key, modelsShown: rawCountAfter, totalModels: models.length,
-                      empty: rawCountAfter === 0,
-                      note: rawCountAfter === 0 ? `WARN: 0 models for "${tab.key}"` : `ok — ${rawCountAfter} models`,
-                    });
-                  }}
-                  style={[styles.filterTab, isActive && styles.filterTabActive]}
-                >
-                  <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>
-                    {tab.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          {usingFallback && (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>No models for this category yet — showing all available models.</Text>
-            </View>
-          )}
 
           <FlatList
             data={displayedModels}
@@ -364,28 +301,6 @@ const styles = StyleSheet.create({
     color: TEXT,
     fontSize: 18,
     fontFamily: "Inter_700Bold",
-  },
-  filterRow: {
-    flexDirection: "row",
-    paddingBottom: 0,
-  },
-  filterTab: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: SURFACE2,
-  },
-  filterTabActive: {
-    backgroundColor: ACCENT,
-  },
-  filterTabText: {
-    color: DIM,
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-  },
-  filterTabTextActive: {
-    color: BG,
-    fontFamily: "Inter_600SemiBold",
   },
   list: { flex: 1, paddingHorizontal: 12 },
   modelRow: {

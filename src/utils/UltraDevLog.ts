@@ -908,9 +908,6 @@ export class UltraDevLog {
     rawCountAfter: number;
     displayedCountAfter: number;
     sourceOfModels: string;
-    routeRestrictionActive: boolean;
-    routeAssignedGroupId: string | null;
-    routeAssignedModelId: string | null;
   }): void {
     UltraDevLog.push('PICKER_FILTER_CHANGE', {
       ...params,
@@ -1053,9 +1050,6 @@ export class UltraDevLog {
     /** What the router/ModelRouter reports as the current model (may differ from UI) */
     selectedModel: string | null;
     defaultModel: string | null;
-    assignedGroupId: string | null;
-    eligibleGroupIds: string[];
-    routeRestricted: boolean;
     slideAnimCurrentValue: number;
     note: string;
     /** The model displayed in the UI pill (React state activeModelId) — distinct source from router */
@@ -1087,9 +1081,6 @@ export class UltraDevLog {
     /** What the router/ModelRouter reports as the current model (may differ from UI) */
     selectedModel: string | null;
     defaultModel: string | null;
-    assignedGroupId: string | null;
-    eligibleGroupIds: string[];
-    routeRestricted: boolean;
     note: string;
     /** The model displayed in the UI pill (React state activeModelId) — distinct source from router */
     uiSelectedModel?: string | null;

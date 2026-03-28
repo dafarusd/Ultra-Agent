@@ -1,4 +1,5 @@
-// AiService — all AI/media operations route through GroupRouter + AdapterRegistry
+// AiService — all AI/media operations route through TaskDefaultsManager + AdapterRegistry
+// Replaces GroupRouter-based routing with fail-closed task-default routing.
 
 import type {
   AllowedOperation,
@@ -10,11 +11,10 @@ import type {
   NormalizedEmbeddingsResponse,
   AdapterResult,
   ResolvedRoute,
+  ApiProvider,
 } from '../../types/provider';
 import type { ProviderManager } from './ProviderManager';
-import type { GroupManager } from './GroupManager';
-import type { RouteHistoryStore } from './RouteHistoryStore';
-import { GroupRouter, type RouterContext } from './GroupRouter';
+import type { TaskDefaultsManager, TaskModelCandidate } from './TaskDefaultsManager';
 import { getAdapterRegistry } from './AdapterRegistry';
 import type {
   ChatMessage,
@@ -24,19 +24,18 @@ import type {
   VideoOptions,
   EmbeddingsOptions,
 } from './CapabilityAdapters';
-import { RouteToast } from './RouteToast';
 import { UltraDevLog } from '../../utils/UltraDevLog';
+
+const FAIL_CLOSED_MSG =
+  'No model is configured for this task. Open Settings → AI Providers → Task Defaults and assign a provider + model.';
 
 function routeLogFields(route: ResolvedRoute): Record<string, unknown> {
   return {
     providerId: route.providerId,
     providerName: route.providerName,
-    groupId: route.groupId,
-    groupName: route.groupName,
     modelId: route.modelId,
     adapterId: route.adapterId,
     operation: route.operation,
-    selectionStrategy: route.selectionStrategy,
   };
 }
 
@@ -46,7 +45,7 @@ export interface TextCompletionInput {
   maxTokens?: number;
   temperature?: number;
   conversationId?: string;
-  groupId?: string;
+  groupId?: string; // legacy field — ignored, kept for API compat
   tags?: string[];
   taskId?: string;
   agentId?: string;
@@ -97,87 +96,144 @@ export interface EmbeddingsInput {
 }
 
 export class AiService {
-  private router: GroupRouter;
-  private routeHistory: RouteHistoryStore;
-  private groupManager: GroupManager;
   private providerManager: ProviderManager;
-  private userDefaultsGetter: () => { notifyOnRouteSwitch: boolean };
-  private lastRouteByConversation: Map<string, ResolvedRoute> = new Map();
+  private taskDefaults: TaskDefaultsManager;
 
-  constructor(
-    providerManager: ProviderManager,
-    groupManager: GroupManager,
-    routeHistory: RouteHistoryStore
-  ) {
-    this.router = new GroupRouter(providerManager, groupManager, routeHistory);
-    this.routeHistory = routeHistory;
-    this.groupManager = groupManager;
+  constructor(providerManager: ProviderManager, taskDefaults: TaskDefaultsManager) {
     this.providerManager = providerManager;
-    this.userDefaultsGetter = () => groupManager.getUserDefaults();
+    this.taskDefaults = taskDefaults;
   }
 
-  getOperationMapping(): Record<string, string> {
-    return this.groupManager.getOperationMapping();
+  getTaskDefaultsManager(): TaskDefaultsManager {
+    return this.taskDefaults;
   }
 
-  async setOperationGroup(op: AllowedOperation, groupId: string | null): Promise<void> {
-    if (groupId === null) {
-      await this.groupManager.setOperationGroup(op, null);
-      UltraDevLog.push('SYSTEM', { event: 'routing_operation_group_changed', success: true, operation: op, groupId: null });
-      return;
-    }
-    const group = this.groupManager.getById(groupId);
-    if (!group) throw new Error('Group not found.');
-    if (!group.isActive) throw new Error('Selected group is inactive.');
-    const eligible = this.getEligibleGroupsForOperation(op);
-    if (!eligible.some(g => g.id === groupId)) {
-      throw new Error(`Selected group has no active member that can handle ${op}.`);
-    }
-    try {
-      await this.groupManager.setOperationGroup(op, groupId);
-      UltraDevLog.push('SYSTEM', { event: 'routing_operation_group_changed', success: true, operation: op, groupId });
-    } catch (err: any) {
-      UltraDevLog.push('SYSTEM', { event: 'routing_operation_group_changed', success: false, operation: op, groupId, error: err.message });
-      throw err;
-    }
+  // Build a ResolvedRoute for the given provider + model + operation.
+  // Returns null if the provider lacks a valid adapter or API key.
+  private async buildRoute(
+    provider: ApiProvider,
+    modelId: string,
+    operation: AllowedOperation
+  ): Promise<ResolvedRoute | null> {
+    const apiKey = await this.providerManager.getApiKey(provider);
+    if (!apiKey && provider.authMode !== 'none') return null;
+    const password = provider.authMode === 'basic'
+      ? await this.providerManager.getPassword(provider)
+      : null;
+    const registry = getAdapterRegistry();
+    const adapter = registry.getForOperation(provider.capabilities.adapterIds, operation);
+    if (!adapter) return null;
+    return {
+      providerId: provider.id,
+      providerName: provider.name,
+      modelId,
+      adapterId: adapter.id,
+      operation,
+      selectionStrategy: 'priority',
+      apiKey: apiKey ?? '',
+      baseUrl: provider.baseUrl,
+      authMode: provider.authMode,
+      customAuthHeaderName: provider.customAuthHeaderName,
+      customAuthHeaderPrefix: provider.customAuthHeaderPrefix,
+      password,
+    };
   }
 
-  getEligibleGroupsForOperation(op: AllowedOperation): import('../../types/provider').ModelGroup[] {
-    const activeProviders = this.providerManager.getActive();
-    return this.groupManager.getEligibleGroupsForOperation(op, activeProviders);
-  }
-
+  // Resolve a route for the given operation. Resolution order:
+  //   1. Manual model override (input.model) → find provider that has this model
+  //   2. Task defaults primary candidate
+  //   3. Task defaults fallback candidates (in order)
+  //   4. Fail closed — throw visible error
   private async resolveRoute(
     operation: AllowedOperation,
-    opts: { conversationId?: string; groupId?: string; tags?: string[] }
+    opts: { manualModelId?: string; conversationId?: string }
   ): Promise<ResolvedRoute> {
-    const ctx: RouterContext = {
+    const activeProviders = this.providerManager.getActive();
+    if (activeProviders.length === 0) {
+      throw new Error(
+        'No active providers configured. Open Settings → AI Providers and add a provider with an API key.'
+      );
+    }
+
+    // Path A — manual model override (selected via chat picker)
+    if (opts.manualModelId) {
+      for (const provider of activeProviders) {
+        const discoveredModels = this.providerManager.getModelsForProvider(provider.id);
+        const hasModel =
+          discoveredModels.some(m => m.id === opts.manualModelId) ||
+          (provider.manualModelIds ?? []).includes(opts.manualModelId!);
+        if (!hasModel) continue;
+        const route = await this.buildRoute(provider, opts.manualModelId, operation);
+        if (route) {
+          UltraDevLog.push('ROUTE', {
+            event: 'route_resolved',
+            step: 'manual_override',
+            ...routeLogFields(route),
+          });
+          return route;
+        }
+      }
+      // Manual model not found in any provider — fall through to task defaults
+      UltraDevLog.push('ROUTE', {
+        event: 'manual_model_not_matched',
+        manualModelId: opts.manualModelId,
+        operation,
+        note: 'falling through to task defaults',
+      });
+    }
+
+    // Path B — task defaults (primary + fallbacks)
+    const candidates: TaskModelCandidate[] = this.taskDefaults.getCandidates(operation);
+    UltraDevLog.push('ROUTE', {
+      event: 'route_attempt_task_defaults',
       operation,
-      conversationId: opts.conversationId,
-      requestedGroupId: opts.groupId,
-      requestedTags: opts.tags,
-    };
-    const result = await this.router.resolve(ctx);
-    if (!result.ok) {
-      throw new Error(result.error.userMessage);
+      candidateCount: candidates.length,
+      candidates: candidates.map(c => `${c.providerId}/${c.modelId}`),
+    });
+
+    for (const candidate of candidates) {
+      const provider = activeProviders.find(p => p.id === candidate.providerId);
+      if (!provider) {
+        UltraDevLog.push('ROUTE', {
+          event: 'candidate_skip',
+          reason: 'provider_not_active',
+          ...candidate,
+          operation,
+        });
+        continue;
+      }
+      const route = await this.buildRoute(provider, candidate.modelId, operation);
+      if (route) {
+        UltraDevLog.push('ROUTE', {
+          event: 'route_resolved',
+          step: 'task_default',
+          ...routeLogFields(route),
+        });
+        return route;
+      }
+      UltraDevLog.push('ROUTE', {
+        event: 'candidate_skip',
+        reason: 'no_adapter_or_key',
+        ...candidate,
+        operation,
+      });
     }
-    const route = result.route;
-    // Notify on route switch
-    const defaults = this.userDefaultsGetter();
-    if (defaults.notifyOnRouteSwitch && opts.conversationId) {
-      const prev = this.lastRouteByConversation.get(opts.conversationId ?? '') ?? null;
-      RouteToast.notify(prev, route);
-      this.lastRouteByConversation.set(opts.conversationId ?? '', route);
-    }
-    // Update route history
-    if (opts.conversationId) {
-      await this.routeHistory.update(opts.conversationId, route).catch(() => {});
-    }
-    return route;
+
+    // Fail closed
+    UltraDevLog.push('ROUTE', {
+      event: 'route_fail_closed',
+      operation,
+      candidateCount: candidates.length,
+      activeProviderCount: activeProviders.length,
+    });
+    throw new Error(FAIL_CLOSED_MSG);
   }
 
   async completeText(input: TextCompletionInput): Promise<NormalizedAiResponse> {
-    const route = await this.resolveRoute('chat', { conversationId: input.conversationId, groupId: input.groupId, tags: input.tags });
+    const route = await this.resolveRoute('chat', {
+      manualModelId: input.model,
+      conversationId: input.conversationId,
+    });
     const registry = getAdapterRegistry();
     const adapter = registry.get(route.adapterId);
     if (!adapter) throw new Error(`Adapter '${route.adapterId}' not found`);
@@ -194,10 +250,22 @@ export class AiService {
     const t0 = Date.now();
     const result: AdapterResult<NormalizedAiResponse> = await adapter.invokeChat(route, opts);
     if (!result.ok) {
-      UltraDevLog.push('ERROR', { event: 'ai_text_failed', ...routeLogFields(route), error: result.error.message, code: result.error.code });
+      UltraDevLog.push('ERROR', {
+        event: 'ai_text_failed',
+        ...routeLogFields(route),
+        error: result.error.message,
+        code: result.error.code,
+      });
       throw new Error(`AI request failed [${result.error.code}]: ${result.error.message}`);
     }
-    UltraDevLog.push('AI_RESPONSE', { event: 'ai_text_done', ...routeLogFields(route), model, inputTokens: result.value.inputTokens, outputTokens: result.value.outputTokens, latencyMs: Date.now() - t0 });
+    UltraDevLog.push('AI_RESPONSE', {
+      event: 'ai_text_done',
+      ...routeLogFields(route),
+      model,
+      inputTokens: result.value.inputTokens,
+      outputTokens: result.value.outputTokens,
+      latencyMs: Date.now() - t0,
+    });
     return result.value;
   }
 
@@ -206,7 +274,9 @@ export class AiService {
   }
 
   async generateImage(input: ImageGenerationInput): Promise<NormalizedImageResponse> {
-    const route = await this.resolveRoute('image_generate', { conversationId: input.conversationId, groupId: input.groupId, tags: input.tags });
+    const route = await this.resolveRoute('image_generate', {
+      conversationId: input.conversationId,
+    });
     const registry = getAdapterRegistry();
     const adapter = registry.get(route.adapterId);
     if (!adapter) throw new Error(`Adapter '${route.adapterId}' not found`);
@@ -221,27 +291,52 @@ export class AiService {
       stylePreset: input.stylePreset,
       taskId: input.taskId,
     };
-    UltraDevLog.push('AI_REQUEST', { event: 'ai_image_start', ...routeLogFields(route), model, promptLen: input.prompt.length });
+    UltraDevLog.push('AI_REQUEST', {
+      event: 'ai_image_start',
+      ...routeLogFields(route),
+      model,
+      promptLen: input.prompt.length,
+    });
     const result: AdapterResult<NormalizedImageResponse> = await adapter.invokeImage(route, opts);
     if (!result.ok) {
-      UltraDevLog.push('ERROR', { event: 'ai_image_failed', ...routeLogFields(route), error: result.error.message });
+      UltraDevLog.push('ERROR', {
+        event: 'ai_image_failed',
+        ...routeLogFields(route),
+        error: result.error.message,
+      });
       throw new Error(`Image generation failed [${result.error.code}]: ${result.error.message}`);
     }
-    UltraDevLog.push('AI_RESPONSE', { event: 'ai_image_done', ...routeLogFields(route), model, count: result.value.images.length });
+    UltraDevLog.push('AI_RESPONSE', {
+      event: 'ai_image_done',
+      ...routeLogFields(route),
+      model,
+      count: result.value.images.length,
+    });
     return result.value;
   }
 
   async generateSpeech(input: SpeechInput): Promise<NormalizedAudioResponse> {
-    const route = await this.resolveRoute('audio_generate', { conversationId: input.conversationId, groupId: input.groupId, tags: input.tags });
+    const route = await this.resolveRoute('audio_generate', {
+      conversationId: input.conversationId,
+    });
     const registry = getAdapterRegistry();
     const adapter = registry.get(route.adapterId);
     if (!adapter) throw new Error(`Adapter '${route.adapterId}' not found`);
     const model = input.model ?? route.modelId;
     const opts: SpeechOptions = { model, text: input.text, voice: input.voice, taskId: input.taskId };
-    UltraDevLog.push('AI_REQUEST', { event: 'ai_speech_start', ...routeLogFields(route), model, textLen: input.text.length });
+    UltraDevLog.push('AI_REQUEST', {
+      event: 'ai_speech_start',
+      ...routeLogFields(route),
+      model,
+      textLen: input.text.length,
+    });
     const result: AdapterResult<NormalizedAudioResponse> = await adapter.invokeAudio(route, opts);
     if (!result.ok) {
-      UltraDevLog.push('ERROR', { event: 'ai_speech_failed', ...routeLogFields(route), error: result.error.message });
+      UltraDevLog.push('ERROR', {
+        event: 'ai_speech_failed',
+        ...routeLogFields(route),
+        error: result.error.message,
+      });
       throw new Error(`Speech generation failed [${result.error.code}]: ${result.error.message}`);
     }
     UltraDevLog.push('AI_RESPONSE', { event: 'ai_speech_done', ...routeLogFields(route), model });
@@ -249,42 +344,78 @@ export class AiService {
   }
 
   async generateVideo(input: VideoInput): Promise<NormalizedVideoResult> {
-    const route = await this.resolveRoute('video_generate', { conversationId: input.conversationId, groupId: input.groupId, tags: input.tags });
+    const route = await this.resolveRoute('video_generate', {
+      conversationId: input.conversationId,
+    });
     const registry = getAdapterRegistry();
     const adapter = registry.get(route.adapterId);
     if (!adapter) throw new Error(`Adapter '${route.adapterId}' not found`);
     const model = input.model ?? route.modelId;
-    const opts: VideoOptions = { model, prompt: input.prompt, imageBase64: input.imageBase64, duration: input.duration, taskId: input.taskId };
+    const opts: VideoOptions = {
+      model,
+      prompt: input.prompt,
+      imageBase64: input.imageBase64,
+      duration: input.duration,
+      taskId: input.taskId,
+    };
     UltraDevLog.push('AI_REQUEST', { event: 'ai_video_start', ...routeLogFields(route), model });
     const jobResult: AdapterResult<NormalizedVideoJob> = await adapter.invokeVideoQueue(route, opts);
     if (!jobResult.ok) {
-      UltraDevLog.push('ERROR', { event: 'ai_video_queue_failed', ...routeLogFields(route), error: jobResult.error.message });
+      UltraDevLog.push('ERROR', {
+        event: 'ai_video_queue_failed',
+        ...routeLogFields(route),
+        error: jobResult.error.message,
+      });
       throw new Error(`Video queue failed [${jobResult.error.code}]: ${jobResult.error.message}`);
     }
     const { jobId } = jobResult.value;
     UltraDevLog.push('SYSTEM', { event: 'ai_video_queued', ...routeLogFields(route), jobId });
     const pollResult: AdapterResult<NormalizedVideoResult> = await adapter.invokeVideoPoll(route, jobId);
     if (!pollResult.ok) {
-      UltraDevLog.push('ERROR', { event: 'ai_video_poll_failed', ...routeLogFields(route), jobId, error: pollResult.error.message });
-      throw new Error(`Video polling failed [${pollResult.error.code}]: ${pollResult.error.message}`);
+      UltraDevLog.push('ERROR', {
+        event: 'ai_video_poll_failed',
+        ...routeLogFields(route),
+        jobId,
+        error: pollResult.error.message,
+      });
+      throw new Error(
+        `Video polling failed [${pollResult.error.code}]: ${pollResult.error.message}`
+      );
     }
-    UltraDevLog.push('AI_RESPONSE', { event: 'ai_video_done', ...routeLogFields(route), model, jobId });
+    UltraDevLog.push('AI_RESPONSE', {
+      event: 'ai_video_done',
+      ...routeLogFields(route),
+      model,
+      jobId,
+    });
     return pollResult.value;
   }
 
   async embed(input: EmbeddingsInput): Promise<NormalizedEmbeddingsResponse> {
-    const route = await this.resolveRoute('embeddings', { conversationId: input.conversationId, groupId: input.groupId, tags: input.tags });
+    const route = await this.resolveRoute('embeddings', {
+      conversationId: input.conversationId,
+    });
     const registry = getAdapterRegistry();
     const adapter = registry.get(route.adapterId);
     if (!adapter) throw new Error(`Adapter '${route.adapterId}' not found`);
     const model = input.model ?? route.modelId;
     const opts: EmbeddingsOptions = { model, input: input.input, taskId: input.taskId };
-    const result: AdapterResult<NormalizedEmbeddingsResponse> = await adapter.invokeEmbeddings(route, opts);
-    if (!result.ok) throw new Error(`Embeddings failed [${result.error.code}]: ${result.error.message}`);
+    const result: AdapterResult<NormalizedEmbeddingsResponse> = await adapter.invokeEmbeddings(
+      route,
+      opts
+    );
+    if (!result.ok)
+      throw new Error(`Embeddings failed [${result.error.code}]: ${result.error.message}`);
     return result.value;
   }
 
-  async transcribeAudio(_input: { audioUri: string; model?: string; taskId?: string }): Promise<string> {
-    throw new Error('Audio transcription: assign a model to an active group with audio_transcribe operation allowed, then configure a transcription adapter.');
+  async transcribeAudio(_input: {
+    audioUri: string;
+    model?: string;
+    taskId?: string;
+  }): Promise<string> {
+    throw new Error(
+      'Audio transcription: configure a task default for audio_transcribe and ensure the provider has a transcription adapter.'
+    );
   }
 }

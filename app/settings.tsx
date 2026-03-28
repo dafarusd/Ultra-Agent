@@ -25,10 +25,7 @@ import BlockedAppsTab from "@/components/BlockedAppsTab";
 import { BiometricGate } from "@/src/security/BiometricGate";
 import type {
   ApiProvider,
-  ModelGroup,
-  GroupMember,
   AllowedOperation,
-  SelectionStrategy,
   AuthMode,
   ProviderCapabilities,
 } from "@/src/types/provider";
@@ -47,7 +44,7 @@ const SUCCESS = "#22c55e";
 
 // ── Types ────────────────────────────────────────────────
 type SettingsTab = "apis" | "costs" | "security" | "devtools" | "blocked";
-type ApisSubTab = "providers" | "groups" | "defaults";
+type ApisSubTab = "providers" | "task_defaults";
 
 const ALL_OPERATIONS: AllowedOperation[] = [
   'chat', 'reason', 'vision', 'image_generate', 'audio_generate',
@@ -88,32 +85,6 @@ function operationsToProviderCapabilities(
   };
 }
 
-function getGroupOperations(
-  group: ModelGroup | GroupDraft | null | undefined,
-): AllowedOperation[] {
-  if (!group) return [];
-  const directOps = (group as GroupDraft).operations;
-  if (Array.isArray(directOps) && directOps.length > 0) {
-    return ALL_OPERATIONS.filter(op => new Set(directOps).has(op));
-  }
-  const ops = new Set<AllowedOperation>();
-  for (const member of group.members ?? []) {
-    for (const op of member.allowedOperations ?? []) {
-      ops.add(op);
-    }
-  }
-  return ALL_OPERATIONS.filter(op => ops.has(op));
-}
-
-const STRATEGY_LABELS: Record<SelectionStrategy, string> = {
-  priority: 'Priority',
-  round_robin: 'Round Robin',
-  cheapest_first: 'Cheapest First',
-  fastest_first: 'Fastest First',
-  highest_context: 'Most Context',
-  last_known_good: 'Last Known Good',
-  fallback_chain: 'Fallback Chain',
-};
 
 const AUTH_MODES: AuthMode[] = ['bearer', 'api_key_header', 'basic', 'custom_header', 'none'];
 
@@ -156,28 +127,6 @@ function emptyDraft(): ProviderDraft {
   };
 }
 
-// ── GroupForm state ──────────────────────────────────────
-interface GroupDraft {
-  id: string;
-  name: string;
-  operations: AllowedOperation[];
-  strategy: SelectionStrategy;
-  enabled: boolean;
-  members: GroupMember[];
-  tags: string[];
-}
-
-function emptyGroupDraft(): GroupDraft {
-  return {
-    id: `g_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    name: '',
-    operations: ['chat'],
-    strategy: 'priority',
-    enabled: true,
-    members: [],
-    tags: [],
-  };
-}
 
 // ── Main Component ────────────────────────────────────────
 export default function SettingsScreen() {
@@ -202,15 +151,8 @@ export default function SettingsScreen() {
   const [isNewProvider, setIsNewProvider] = useState(false);
   const [probingId, setProbingId] = useState<string | null>(null);
 
-  // ── Group state ─────────────────────────────────────────
-  const [groups, setGroups] = useState<ModelGroup[]>([]);
-  const [groupDraft, setGroupDraft] = useState<GroupDraft | null>(null);
-  const [isNewGroup, setIsNewGroup] = useState(false);
-  const [memberModelInput, setMemberModelInput] = useState('');
-  const [memberProviderInput, setMemberProviderInput] = useState('');
-
-  // ── Defaults state ──────────────────────────────────────
-  const [operationMapping, setOperationMapping] = useState<Record<string, string | null>>({});
+  // ── Task Defaults state ──────────────────────────────────
+  const [taskDefaults, setTaskDefaults] = useState<Record<string, { primary: string | null; fallbacks: string[] }>>({});
 
   // ── Cost state ──────────────────────────────────────────
   const [dailyLimit, setDailyLimit] = useState('0');
@@ -248,8 +190,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     AppStorage.get('dev_mode_enabled').then(v => { if (v === '1') setIsDevMode(true); });
     loadProviders();
-    loadGroups();
-    loadDefaults();
+    loadTaskDefaults();
     loadCostData();
     loadLimits();
     initBiometric();
@@ -276,23 +217,20 @@ export default function SettingsScreen() {
     } catch {}
   }, []);
 
-  const loadGroups = useCallback(() => {
+  const loadTaskDefaults = useCallback(() => {
     const core = getAgentCoreInstance();
     if (!core) return;
     try {
-      const gm = (core as any).getGroupManager?.();
-      if (gm) setGroups(gm.getAll());
-    } catch {}
-  }, []);
-
-  const loadDefaults = useCallback(() => {
-    const core = getAgentCoreInstance();
-    if (!core) return;
-    try {
-      const ai = (core as any).getAiService?.();
-      if (ai) setOperationMapping(ai.getOperationMapping());
+      const tdm = (core as any).getTaskDefaultsManager?.();
+      if (!tdm) return;
+      const snapshot: Record<string, { primary: string | null; fallbacks: string[] }> = {};
+      for (const op of ALL_OPERATIONS) {
+        const candidates: string[] = tdm.getCandidates(op);
+        snapshot[op] = { primary: candidates[0] ?? null, fallbacks: candidates.slice(1) };
+      }
+      setTaskDefaults(snapshot);
     } catch (err: any) {
-      UltraDevLog.push('SETTINGS_LOAD', { event: 'load_defaults_error', error: err?.message });
+      UltraDevLog.push('SETTINGS_LOAD', { event: 'load_task_defaults_error', error: err?.message });
     }
   }, []);
 
@@ -502,12 +440,11 @@ export default function SettingsScreen() {
       // Sync provider-backed model list so the picker reflects the new state.
       await (core as any)?.refreshBridgeState?.().catch(() => {});
       loadProviders();
-      loadGroups();
       DebugLog.push('SETTINGS_SAVE', { event: 'provider_reloaded_after_save', providerId: savedId });
     } catch (err: any) {
       Alert.alert('Error', err.message);
     }
-  }, [providerDraft, isNewProvider, loadProviders, loadGroups]);
+  }, [providerDraft, isNewProvider, loadProviders]);
 
   const deleteProvider = useCallback(async (id: string, name: string) => {
     Alert.alert('Delete Provider', `Remove "${name}"? Groups using this provider will need updating.`, [
@@ -549,273 +486,24 @@ export default function SettingsScreen() {
     }
   }, [loadProviders]);
 
-  // ── Group CRUD ───────────────────────────────────────────
-  const startNewGroup = useCallback(() => {
-    setGroupDraft(emptyGroupDraft());
-    setIsNewGroup(true);
-    setMemberModelInput('');
-    setMemberProviderInput('');
-  }, []);
-
-  const startEditGroup = useCallback((g: ModelGroup) => {
-    setGroupDraft({
-      id: g.id,
-      name: g.name,
-      operations: getGroupOperations(g),
-      strategy: g.selectionStrategy ?? 'priority',
-      enabled: g.isActive,
-      members: [...(g.members ?? [])],
-      tags: [...(g.tags ?? [])],
-    });
-    setIsNewGroup(false);
-    setMemberModelInput('');
-    setMemberProviderInput('');
-  }, []);
-
-  const saveGroup = useCallback(async () => {
-    if (!groupDraft?.name.trim()) {
-      Alert.alert('Error', 'Group name is required.');
-      return;
-    }
-    if (!groupDraft.members.length) {
-      Alert.alert('Error', 'Add at least one model member to the group.');
-      return;
-    }
+  // ── Task Defaults CRUD ────────────────────────────────────
+  const setTaskDefault = useCallback(async (op: AllowedOperation, primary: string | null, fallbacks: string[] = []) => {
     const core = getAgentCoreInstance();
-    const gm = (core as any)?.getGroupManager?.();
-    if (!gm) { Alert.alert('Error', 'Group manager not available.'); return; }
+    const tdm = (core as any)?.getTaskDefaultsManager?.();
+    if (!tdm) { Alert.alert('Error', 'Task defaults manager not available.'); return; }
     try {
-      let groupId = groupDraft.id;
-
-      if (isNewGroup) {
-        const created = await gm.createGroup({
-          name: groupDraft.name.trim(),
-          selectionStrategy: groupDraft.strategy,
-          tags: groupDraft.tags,
-        });
-        groupId = created.id;
+      if (primary) {
+        await tdm.setDefault(op, primary, fallbacks);
       } else {
-        await gm.updateGroup(groupDraft.id, {
-          name: groupDraft.name.trim(),
-          selectionStrategy: groupDraft.strategy,
-          isActive: groupDraft.enabled,
-          tags: groupDraft.tags,
-        });
+        await tdm.clearDefault(op);
       }
-
-      const storedMembers: GroupMember[] = isNewGroup ? [] : (gm.getById?.(groupId)?.members ?? []);
-      const storedIds = new Set(storedMembers.map((m: GroupMember) => m.id));
-      const draftIds = new Set(groupDraft.members.map(m => m.id).filter(Boolean));
-
-      for (const stored of storedMembers) {
-        if (!draftIds.has(stored.id)) {
-          await gm.removeMember(groupId, stored.id);
-        }
-      }
-
-      for (const [index, member] of groupDraft.members.entries()) {
-        const payload = {
-          providerId: member.providerId,
-          modelId: member.modelId,
-          enabled: member.enabled,
-          priority: member.priority ?? index + 1,
-          weight: member.weight ?? 1,
-          costRank: member.costRank,
-          speedRank: member.speedRank,
-          contextRank: member.contextRank,
-          allowedOperations: [...groupDraft.operations],
-          adapterOverrideId: member.adapterOverrideId,
-          metadata: member.metadata ?? {},
-        };
-        if (storedIds.has(member.id)) {
-          await gm.updateMember(groupId, member.id, payload);
-        } else {
-          await gm.addMember(groupId, payload);
-        }
-      }
-
-      setGroupDraft(null);
-      loadGroups();
-      loadDefaults();
+      loadTaskDefaults();
     } catch (err: any) {
-      Alert.alert('Error', err.message);
+      Alert.alert('Error', err?.message ?? 'Failed to save task default.');
     }
-  }, [groupDraft, isNewGroup, loadGroups, loadDefaults]);
+  }, [loadTaskDefaults]);
 
-  const deleteGroup = useCallback(async (id: string, name: string) => {
-    Alert.alert('Delete Group', `Remove "${name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        const core = getAgentCoreInstance();
-        const gm = (core as any)?.getGroupManager?.();
-        if (!gm) return;
-        try {
-          await gm.deleteGroup(id);
-          loadGroups();
-        } catch (err: any) { Alert.alert('Error', err.message); }
-      }},
-    ]);
-  }, [loadGroups]);
 
-  const toggleGroup = useCallback(async (id: string, enabled: boolean) => {
-    const core = getAgentCoreInstance();
-    const gm = (core as any)?.getGroupManager?.();
-    if (!gm) return;
-    try {
-      await gm.updateGroup(id, { isActive: enabled });
-      loadGroups();
-    } catch {}
-  }, [loadGroups]);
-
-  const addMemberToGroupDraft = useCallback(() => {
-    if (!groupDraft) return;
-    const modelId = memberModelInput.trim();
-    const providerId = memberProviderInput.trim();
-    if (!modelId || !providerId) {
-      Alert.alert('Error', 'Enter both a provider ID and a model ID.');
-      return;
-    }
-    const member: GroupMember = {
-      id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      providerId,
-      modelId,
-      priority: groupDraft.members.length + 1,
-      weight: 1,
-      enabled: true,
-      allowedOperations: [...groupDraft.operations],
-      metadata: {},
-    };
-    setGroupDraft({ ...groupDraft, members: [...groupDraft.members, member] });
-    setMemberModelInput('');
-    setMemberProviderInput('');
-  }, [groupDraft, memberModelInput, memberProviderInput]);
-
-  const removeMemberFromGroupDraft = useCallback((idx: number) => {
-    if (!groupDraft) return;
-    const members = groupDraft.members.filter((_, i) => i !== idx);
-    setGroupDraft({ ...groupDraft, members });
-  }, [groupDraft]);
-
-  // ── Defaults ─────────────────────────────────────────────
-  const setOperationGroup = useCallback(async (op: AllowedOperation, groupId: string | null) => {
-    const core = getAgentCoreInstance();
-    const ai = (core as any)?.getAiService?.();
-    if (!ai) { Alert.alert('Error', 'AI service not available.'); return; }
-    const beforeMapping = ai.getOperationMapping?.() ?? {};
-    const beforeGroupId = beforeMapping[op] ?? null;
-    const eligibleGroupIds = (ai.getEligibleGroupsForOperation?.(op) ?? []).map((g: any) => g.id).filter(Boolean);
-    const t0 = Date.now();
-    UltraDevLog.settingsSaveStart({
-      screen: 'settings',
-      section: 'routing',
-      action: 'set_operation_group',
-      targetKey: op,
-      before: beforeGroupId,
-      after: groupId,
-    });
-    try {
-      await ai.setOperationGroup(op, groupId);
-      const durationMs = Date.now() - t0;
-      setOperationMapping(ai.getOperationMapping());
-      // Re-wire bridge so runtime routing reflects the new group immediately.
-      (core as any)?.wireModelRouterBridge?.();
-      await (core as any)?.refreshBridgeState?.().catch(() => {});
-      const mappingAfter = ai.getOperationMapping() as Record<string, string | null>;
-      UltraDevLog.routingAssignmentChange({
-        operation: op,
-        beforeGroupId,
-        afterGroupId: groupId,
-        eligibleGroupIds,
-        success: true,
-        saveSource: 'settings_defaults_ui',
-      });
-      UltraDevLog.routingAssignment({
-        reason: 'settings_save',
-        operation: op,
-        groupId,
-        success: true,
-        eligibleGroupIds,
-        mappingAfter,
-      });
-      UltraDevLog.settingsSaveResult2({
-        screen: 'settings',
-        section: 'routing',
-        action: 'set_operation_group',
-        targetKey: op,
-        success: true,
-        persistedValue: groupId,
-        durationMs,
-      });
-      // Emit rich state snapshots so next audit can verify routing truth
-      const mr = (core as any)?.ai as any;
-      const pm = (core as any)?.providerManager;
-      const activeProviders = pm?.getActive?.() ?? [];
-      const providerModelCounts: Record<string, number> = {};
-      for (const p of activeProviders) { providerModelCounts[p.id] = pm?.getModelsForProvider?.(p.id)?.length ?? 0; }
-      UltraDevLog.apiStateSnapshot({
-        reason: 'routing_change',
-        sourceOfTruth: 'routing_change',
-        providerCount: activeProviders.length,
-        activeProviderCount: activeProviders.filter((p: any) => p.isActive !== false).length,
-        providerIds: activeProviders.map((p: any) => p.id),
-        activeProviderIds: activeProviders.filter((p: any) => p.isActive !== false).map((p: any) => p.id),
-        providerModelCounts,
-        providerBackedModelCount: mr?.getProviderBackedModelCount?.() ?? 0,
-        legacyModelCount: mr?.getLegacyModelCount?.() ?? 0,
-        defaultModel: mr?.getDefaultModelId?.() ?? null,
-        selectedModel: mr?.getDefaultModelId?.() ?? null,
-        bridgeAttached: mr?.isBridgeAttached?.() ?? false,
-        bridgeHasActiveProvider: activeProviders.some((p: any) => p.isActive !== false),
-        operationMapping: mappingAfter,
-        assignedGroupForCurrentOperation: mappingAfter[op] ?? null,
-        eligibleGroupIdsForCurrentOperation: eligibleGroupIds,
-        routeRestricted: false,
-      });
-      UltraDevLog.modelInventorySync({
-        reason: 'routing_change',
-        source: (mr?.getProviderBackedModelCount?.() ?? 0) > 0 ? 'provider_bridge' : 'legacy_cache',
-        providerBackedModelCount: mr?.getProviderBackedModelCount?.() ?? 0,
-        legacyModelCount: mr?.getLegacyModelCount?.() ?? 0,
-        returnedToPickerCount: mr?.getProviderBackedModelCount?.() ?? 0,
-        assignedGroupId: groupId,
-        eligibleGroupIds,
-        routeRestricted: false,
-        defaultModel: mr?.getDefaultModelId?.() ?? null,
-        selectedModel: mr?.getDefaultModelId?.() ?? null,
-      });
-    } catch (err: any) {
-      const durationMs = Date.now() - t0;
-      const mappingAfterErr = ai.getOperationMapping() as Record<string, string | null>;
-      UltraDevLog.routingAssignmentChange({
-        operation: op,
-        beforeGroupId,
-        afterGroupId: groupId,
-        eligibleGroupIds,
-        success: false,
-        errorMessage: err?.message,
-        saveSource: 'settings_defaults_ui',
-      });
-      UltraDevLog.routingAssignment({
-        reason: 'settings_save',
-        operation: op,
-        groupId,
-        success: false,
-        eligibleGroupIds,
-        mappingAfter: mappingAfterErr,
-        error: err?.message,
-      });
-      UltraDevLog.settingsSaveResult2({
-        screen: 'settings',
-        section: 'routing',
-        action: 'set_operation_group',
-        targetKey: op,
-        success: false,
-        errorMessage: err?.message,
-        durationMs,
-      });
-      Alert.alert('Error', err.message);
-    }
-  }, []);
 
   // ── Cost limits ───────────────────────────────────────────
   const saveLimits = useCallback(async () => {
@@ -906,14 +594,14 @@ export default function SettingsScreen() {
               <>
                 {/* Sub-tab bar */}
                 <View style={styles.subTabBar}>
-                  {(['providers', 'groups', 'defaults'] as ApisSubTab[]).map(st => (
+                  {(['providers', 'task_defaults'] as ApisSubTab[]).map(st => (
                     <Pressable
                       key={st}
-                      onPress={() => { setProviderDraft(null); setGroupDraft(null); setApisSubTab(st); }}
+                      onPress={() => { setProviderDraft(null); setApisSubTab(st); }}
                       style={[styles.subTab, apisSubTab === st && styles.subTabActive]}
                     >
                       <Text style={[styles.subTabText, apisSubTab === st && styles.subTabTextActive]}>
-                        {st === 'providers' ? 'Providers' : st === 'groups' ? 'Groups' : 'Routing'}
+                        {st === 'providers' ? 'Providers' : 'Task Defaults'}
                       </Text>
                     </Pressable>
                   ))}
@@ -1184,281 +872,53 @@ export default function SettingsScreen() {
                   </>
                 )}
 
-                {/* ─ Groups sub-tab ─ */}
-                {apisSubTab === 'groups' && (
-                  <>
-                    {groupDraft ? (
-                      <View style={styles.card}>
-                        <Text style={styles.cardTitle}>{isNewGroup ? 'Create Group' : 'Edit Group'}</Text>
-
-                        <Text style={styles.fieldLabel}>Group Name *</Text>
-                        <TextInput
-                          value={groupDraft.name}
-                          onChangeText={t => setGroupDraft({ ...groupDraft, name: t })}
-                          placeholder='e.g. "Primary Chat", "Image Gen"'
-                          placeholderTextColor="#444"
-                          style={styles.textInput}
-                        />
-
-                        <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Operations</Text>
-                        <View style={styles.chipRow}>
-                          {ALL_OPERATIONS.map(op => {
-                            const active = groupDraft.operations.includes(op);
-                            return (
-                              <Pressable
-                                key={op}
-                                onPress={() => {
-                                  const ops = active
-                                    ? groupDraft.operations.filter(o => o !== op)
-                                    : [...groupDraft.operations, op];
-                                  setGroupDraft({ ...groupDraft, operations: ops });
-                                }}
-                                style={[styles.chip, active && styles.chipActive]}
-                              >
-                                <Text style={[styles.chipText, active && styles.chipTextActive]}>{op}</Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-
-                        <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Selection Strategy</Text>
-                        <View style={styles.chipRow}>
-                          {(Object.keys(STRATEGY_LABELS) as SelectionStrategy[]).map(s => (
-                            <Pressable
-                              key={s}
-                              onPress={() => setGroupDraft({ ...groupDraft, strategy: s })}
-                              style={[styles.chip, groupDraft.strategy === s && styles.chipActive]}
-                            >
-                              <Text style={[styles.chipText, groupDraft.strategy === s && styles.chipTextActive]}>
-                                {STRATEGY_LABELS[s]}
-                              </Text>
-                            </Pressable>
-                          ))}
-                        </View>
-
-                        <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Members</Text>
-                        {groupDraft.members.map((m, idx) => (
-                          <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                            <View style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 8, padding: 8 }}>
-                              <Text style={{ color: ACCENT, fontSize: 12 }}>{m.modelId}</Text>
-                              <Text style={{ color: DIM, fontSize: 11 }}>via {m.providerId}</Text>
-                            </View>
-                            <Pressable onPress={() => removeMemberFromGroupDraft(idx)}>
-                              <Ionicons name="close-circle" size={20} color={DANGER} />
-                            </Pressable>
-                          </View>
-                        ))}
-
-                        <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add Member</Text>
-
-                        {providers.length === 0 ? (
-                          <View style={{ backgroundColor: SURFACE, borderRadius: 8, padding: 12, marginBottom: 8 }}>
-                            <Text style={{ color: DIM, fontSize: 12, textAlign: 'center' }}>
-                              No providers configured. Add a provider first.
-                            </Text>
-                          </View>
-                        ) : (
-                          <>
-                            <Text style={{ color: DIM, fontSize: 11, marginBottom: 6 }}>Step 1 — Select provider</Text>
-                            <View style={[styles.chipRow, { marginBottom: 10 }]}>
-                              {providers.filter(p => p.isActive).map(p => (
-                                <Pressable
-                                  key={p.id}
-                                  onPress={() => { setMemberProviderInput(p.id); setMemberModelInput(''); }}
-                                  style={[styles.chip, memberProviderInput === p.id && styles.chipActive]}
-                                >
-                                  <Text style={[styles.chipText, memberProviderInput === p.id && styles.chipTextActive]}>{p.name}</Text>
-                                </Pressable>
-                              ))}
-                            </View>
-
-                            {memberProviderInput ? (() => {
-                              const core = getAgentCoreInstance();
-                              const pm = (core as any)?.getProviderManager?.();
-                              const discoveredModels: Array<{ id: string; name: string }> = pm ? pm.getModels(memberProviderInput) : [];
-                              const selectedProvider = providers.find(p => p.id === memberProviderInput);
-                              const manualIds: string[] = selectedProvider?.manualModelIds ?? [];
-                              const allModels: Array<{ id: string; name: string }> = [
-                                ...discoveredModels.map((m: any) => ({ id: m.id, name: m.name || m.id })),
-                                ...manualIds.filter(id => !discoveredModels.some((m: any) => m.id === id)).map(id => ({ id, name: id })),
-                              ];
-                              return allModels.length === 0 ? (
-                                <View style={{ marginBottom: 10 }}>
-                                  <Text style={{ color: DIM, fontSize: 11, marginBottom: 6 }}>Step 2 — Enter model ID manually</Text>
-                                  <TextInput
-                                    value={memberModelInput}
-                                    onChangeText={setMemberModelInput}
-                                    placeholder="e.g. llama-3.3-70b"
-                                    placeholderTextColor="#444"
-                                    style={[styles.textInput, { marginBottom: 0 }]}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                  />
-                                  <Text style={{ color: DIM, fontSize: 11, marginTop: 4 }}>
-                                    Probe this provider first to discover available models.
-                                  </Text>
-                                </View>
-                              ) : (
-                                <View style={{ marginBottom: 10 }}>
-                                  <Text style={{ color: DIM, fontSize: 11, marginBottom: 6 }}>Step 2 — Select model</Text>
-                                  <View style={styles.chipRow}>
-                                    {allModels.map(m => (
-                                      <Pressable
-                                        key={m.id}
-                                        onPress={() => setMemberModelInput(m.id)}
-                                        style={[styles.chip, memberModelInput === m.id && styles.chipActive]}
-                                      >
-                                        <Text style={[styles.chipText, memberModelInput === m.id && styles.chipTextActive]} numberOfLines={1}>
-                                          {m.name}
-                                        </Text>
-                                      </Pressable>
-                                    ))}
-                                  </View>
-                                </View>
-                              );
-                            })() : null}
-
-                            <Pressable
-                              onPress={addMemberToGroupDraft}
-                              disabled={!memberProviderInput || !memberModelInput}
-                              style={[styles.btn, styles.secondaryBtn, { alignSelf: 'flex-start', opacity: (!memberProviderInput || !memberModelInput) ? 0.4 : 1 }]}
-                            >
-                              <Ionicons name="add" size={14} color={TEXT} />
-                              <Text style={styles.secondaryBtnText}>Add Model</Text>
-                            </Pressable>
-                          </>
-                        )}
-
-                        <View style={styles.btnRow}>
-                          <Pressable onPress={saveGroup} style={[styles.btn, styles.primaryBtn]}>
-                            <Ionicons name="save-outline" size={16} color={BG} />
-                            <Text style={styles.primaryBtnText}>Save Group</Text>
-                          </Pressable>
-                          <Pressable onPress={() => setGroupDraft(null)} style={[styles.btn, styles.secondaryBtn]}>
-                            <Text style={styles.secondaryBtnText}>Cancel</Text>
-                          </Pressable>
-                        </View>
-                      </View>
-                    ) : (
-                      <>
-                        {groups.length === 0 && (
-                          <View style={[styles.card, { alignItems: 'center', paddingVertical: 24 }]}>
-                            <Ionicons name="layers-outline" size={28} color={DIM} />
-                            <Text style={[styles.emptyText, { marginTop: 8 }]}>No groups yet</Text>
-                            <Text style={{ color: '#444', fontSize: 12, marginTop: 4, textAlign: 'center' }}>
-                              Groups let you route operations to specific models.
-                            </Text>
-                          </View>
-                        )}
-                        {groups.map(g => (
-                          <View key={g.id} style={[styles.card, !g.isActive && { opacity: 0.55 }]}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <Text style={styles.apiName}>{g.name}</Text>
-                              <View style={{ flexDirection: 'row', gap: 12 }}>
-                                <Pressable onPress={() => startEditGroup(g)}>
-                                  <Ionicons name="pencil-outline" size={16} color={DIM} />
-                                </Pressable>
-                                <Pressable onPress={() => deleteGroup(g.id, g.name)}>
-                                  <Ionicons name="trash-outline" size={16} color={DANGER} />
-                                </Pressable>
-                              </View>
-                            </View>
-                            <Text style={{ color: DIM, fontSize: 12, marginTop: 2 }}>
-                              {STRATEGY_LABELS[g.selectionStrategy] ?? g.selectionStrategy} · {g.members?.length ?? 0} model{(g.members?.length ?? 0) !== 1 ? 's' : ''}
-                            </Text>
-                            <View style={[styles.chipRow, { marginTop: 6 }]}>
-                              {getGroupOperations(g).map(op => (
-                                <View key={op} style={styles.capBadge}>
-                                  <Text style={styles.capBadgeText}>{op}</Text>
-                                </View>
-                              ))}
-                            </View>
-                            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                              <Pressable
-                                onPress={() => toggleGroup(g.id, !g.isActive)}
-                                style={[styles.btn, g.isActive ? styles.secondaryBtn : styles.primaryBtn, { paddingVertical: 6, paddingHorizontal: 14 }]}
-                              >
-                                <Text style={[g.isActive ? styles.secondaryBtnText : styles.primaryBtnText, { fontSize: 12 }]}>
-                                  {g.isActive ? 'Disable' : 'Enable'}
-                                </Text>
-                              </Pressable>
-                            </View>
-                          </View>
-                        ))}
-                        <Pressable
-                          onPress={startNewGroup}
-                          style={[styles.btn, styles.secondaryBtn, { alignSelf: 'stretch', justifyContent: 'center' }]}
-                        >
-                          <Ionicons name="add-circle-outline" size={16} color={ACCENT} />
-                          <Text style={[styles.secondaryBtnText, { color: ACCENT }]}>Create Group</Text>
-                        </Pressable>
-                      </>
-                    )}
-                  </>
-                )}
-
-                {/* ─ Defaults/Routing sub-tab ─ */}
-                {apisSubTab === 'defaults' && (
+                {/* ─ Task Defaults sub-tab ─ */}
+                {apisSubTab === 'task_defaults' && (
                   <>
                     <View style={styles.card}>
-                      <Text style={styles.cardTitle}>Operation Routing</Text>
+                      <Text style={styles.cardTitle}>Task Defaults</Text>
                       <Text style={styles.cardSubtitle}>
-                        Map each AI operation to a model group. The agent is fail-closed — if no group is assigned or no model is reachable, it throws a visible error instead of silently failing. Tap a group chip to assign it; tap "None" to clear.
-                      </Text>
-                      <Text style={[styles.cardSubtitle, { marginTop: 6, color: DIM }]}>
-                        Route: <Text style={{ color: '#e5e5e5' }}>chat</Text> is the primary conversation operation. Assign at least one group here to enable the assistant.
+                        Choose which model handles each type of operation by default. The agent picks models from your active providers. Tap a model to set it as primary; tap the active model again to clear.
                       </Text>
                     </View>
                     {ALL_OPERATIONS.map(op => {
-                      const currentGroupId = operationMapping[op] ?? null;
-                      const currentGroup = groups.find(g => g.id === currentGroupId);
+                      const def = taskDefaults[op] ?? { primary: null, fallbacks: [] };
                       const core = getAgentCoreInstance();
-                      const ai = (core as any)?.getAiService?.();
-                      const eligibleGroups: ModelGroup[] = ai
-                        ? ai.getEligibleGroupsForOperation(op)
-                        : groups.filter(g => g.isActive);
-                      const opLabel = op.charAt(0).toUpperCase() + op.slice(1);
-                      const noEligibleReason = eligibleGroups.length === 0
-                        ? (groups.filter(g => g.isActive).length === 0
-                            ? 'No active groups. Create a group and add a provider + model member first.'
-                            : `No active group has a member that supports ${opLabel}.`)
-                        : null;
+                      const allModels: Array<{ id: string; name: string; apiName: string }> =
+                        (core as any)?.getAllModelsWithProvider?.() ?? [];
+                      const opLabel = op.charAt(0).toUpperCase() + op.slice(1).replace(/_/g, ' ');
                       return (
                         <View key={op} style={styles.card}>
-                          <Text style={[styles.cardTitle, { fontSize: 14 }]}>
-                            {op.charAt(0).toUpperCase() + op.slice(1)}
-                          </Text>
+                          <Text style={[styles.cardTitle, { fontSize: 14 }]}>{opLabel}</Text>
                           <Text style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>
-                            {currentGroup ? `→ ${currentGroup.name}` : 'Not mapped — will throw error if called'}
+                            {def.primary ? `Primary: ${def.primary}` : 'No default — will use provider fallback'}
                           </Text>
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
-                            {/* "None" chip only: explicitly clears the mapping */}
-                            <Pressable
-                              onPress={() => {
-                                if (currentGroupId !== null) setOperationGroup(op, null);
-                              }}
-                              style={[styles.chip, !currentGroupId && styles.chipActive]}
-                            >
-                              <Text style={[styles.chipText, !currentGroupId && styles.chipTextActive]}>None</Text>
-                            </Pressable>
-                            {eligibleGroups.map(g => (
+                          {allModels.length === 0 ? (
+                            <Text style={{ color: '#444', fontSize: 12 }}>Add a provider to see available models.</Text>
+                          ) : (
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
                               <Pressable
-                                key={g.id}
-                                onPress={() => {
-                                  // Guard: skip if this group is already assigned to prevent accidental clears.
-                                  if (currentGroupId !== g.id) setOperationGroup(op, g.id);
-                                }}
-                                style={[styles.chip, currentGroupId === g.id && styles.chipActive]}
+                                onPress={() => { if (def.primary !== null) setTaskDefault(op as AllowedOperation, null); }}
+                                style={[styles.chip, def.primary === null && styles.chipActive]}
                               >
-                                <Text style={[styles.chipText, currentGroupId === g.id && styles.chipTextActive]}>
-                                  {g.name}
-                                </Text>
+                                <Text style={[styles.chipText, def.primary === null && styles.chipTextActive]}>None</Text>
                               </Pressable>
-                            ))}
-                            {noEligibleReason && (
-                              <Text style={{ color: DIM, fontSize: 11, alignSelf: 'center', maxWidth: 260 }}>{noEligibleReason}</Text>
-                            )}
-                          </ScrollView>
+                              {allModels.map(m => (
+                                <Pressable
+                                  key={m.id}
+                                  onPress={() => {
+                                    if (def.primary !== m.id) setTaskDefault(op as AllowedOperation, m.id);
+                                    else setTaskDefault(op as AllowedOperation, null);
+                                  }}
+                                  style={[styles.chip, def.primary === m.id && styles.chipActive]}
+                                >
+                                  <Text style={[styles.chipText, def.primary === m.id && styles.chipTextActive]} numberOfLines={1}>
+                                    {m.name || m.id}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </ScrollView>
+                          )}
                         </View>
                       );
                     })}

@@ -176,8 +176,8 @@ export interface ResolvedRoute {
   providerId: string;
   providerName: string;
   modelId: string;
-  groupId: string;
-  groupName: string;
+  groupId?: string;
+  groupName?: string;
   adapterId: string;
   operation: AllowedOperation;
   selectionStrategy: SelectionStrategy;
@@ -191,7 +191,7 @@ export interface ResolvedRoute {
 }
 
 export interface RouteError {
-  code: 'no_providers' | 'no_groups' | 'no_valid_route' | 'adapter_missing' | 'provider_inactive' | 'key_missing';
+  code: 'no_providers' | 'no_valid_route' | 'adapter_missing' | 'provider_inactive' | 'key_missing' | 'no_task_default';
   message: string;
   userMessage: string;
 }

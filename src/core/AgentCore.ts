@@ -10,6 +10,7 @@ import { ProviderManager } from './provider/ProviderManager';
 import { GroupManager } from './provider/GroupManager';
 import { RouteHistoryStore } from './provider/RouteHistoryStore';
 import { AiService } from './provider/AiService';
+import { TaskDefaultsManager } from './provider/TaskDefaultsManager';
 import { PreferenceLearner } from '../utils/PreferenceLearner';
 import { CostTracker } from '../services/CostTracker';
 import { StorageManager } from '../services/StorageManager';
@@ -103,6 +104,7 @@ export class AgentCore extends SimpleEmitter {
   private providerManager: ProviderManager;
   private groupManager: GroupManager;
   private routeHistoryStore: RouteHistoryStore;
+  private taskDefaultsManager: TaskDefaultsManager;
   private aiService: AiService;
   private logger: Logger;
   private ready: boolean;
@@ -129,7 +131,8 @@ export class AgentCore extends SimpleEmitter {
     this.providerManager = new ProviderManager(vault);
     this.groupManager = new GroupManager();
     this.routeHistoryStore = new RouteHistoryStore();
-    this.aiService = new AiService(this.providerManager, this.groupManager, this.routeHistoryStore);
+    this.taskDefaultsManager = new TaskDefaultsManager();
+    this.aiService = new AiService(this.providerManager, this.taskDefaultsManager);
     this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai, this.probe);
     this.executor.setPreferenceLearner(this.learner);
     this.executor.setAiService(this.aiService);
@@ -191,11 +194,16 @@ export class AgentCore extends SimpleEmitter {
       safeInit('ProviderManager', () => this.providerManager.initialize()),
       safeInit('GroupManager', () => this.groupManager.initialize()),
       safeInit('RouteHistory', () => this.routeHistoryStore.initialize()),
+      safeInit('TaskDefaultsManager', () => this.taskDefaultsManager.initialize()),
       safeInit('CredentialVault', () => this.credentialVault.initialize()),
     ]);
 
     await safeInit('ModelRouter', () => this.ai.initialize());
     await safeInit('ModelProviders', () => this.ai.loadProviders());
+    // One-time migration: group assignments → task defaults.
+    await safeInit('TaskDefaultsMigration', () =>
+      this.taskDefaultsManager.runMigrationIfNeeded(this.groupManager)
+    );
     // Wire the runtime bridge so ModelRouter delegates to the new provider system.
     this.wireModelRouterBridge();
     // Immediately populate the provider-backed model list so the picker shows real data.
@@ -1664,7 +1672,6 @@ You are always on. Always capable. Always direct.`;
         const activeProviders = pm.getActive();
 
         // ── Snapshot BEFORE sync ────────────────────────────────────────────
-        const opMapBefore = this.aiService.getOperationMapping() as Record<string, string | null>;
         const providerModelCountsBefore: Record<string, number> = {};
         for (const p of activeProviders) { providerModelCountsBefore[p.id] = pm.getModelsForProvider(p.id).length; }
         DebugLog.apiStateSnapshot({
@@ -1681,8 +1688,8 @@ You are always on. Always capable. Always direct.`;
           selectedModel: this.ai.getDefaultModelId(),
           bridgeAttached: this.ai.isBridgeAttached(),
           bridgeHasActiveProvider: bridge.hasActiveProvider(),
-          operationMapping: opMapBefore,
-          assignedGroupForCurrentOperation: opMapBefore['chat'] ?? null,
+          operationMapping: {},
+          assignedGroupForCurrentOperation: null,
           eligibleGroupIdsForCurrentOperation: [],
           routeRestricted: false,
         });
@@ -1728,7 +1735,6 @@ You are always on. Always capable. Always direct.`;
         await this.ai.ensureResolvedDefaultModel();
 
         // ── Snapshot AFTER sync ─────────────────────────────────────────────
-        const opMapAfter = this.aiService.getOperationMapping() as Record<string, string | null>;
         const providerModelCountsAfter: Record<string, number> = {};
         for (const p of activeProviders) { providerModelCountsAfter[p.id] = pm.getModelsForProvider(p.id).length; }
         DebugLog.modelInventorySync({
@@ -1754,8 +1760,8 @@ You are always on. Always capable. Always direct.`;
           selectedModel: this.ai.getDefaultModelId(),
           bridgeAttached: this.ai.isBridgeAttached(),
           bridgeHasActiveProvider: bridge.hasActiveProvider(),
-          operationMapping: opMapAfter,
-          assignedGroupForCurrentOperation: opMapAfter['chat'] ?? null,
+          operationMapping: {},
+          assignedGroupForCurrentOperation: null,
           eligibleGroupIdsForCurrentOperation: [],
           routeRestricted: false,
         });
@@ -1771,6 +1777,7 @@ You are always on. Always capable. Always direct.`;
   async refreshBridgeState(): Promise<void> { await this.ai.refreshBridgeState().catch(() => {}); }
   getGroupManager(): GroupManager { return this.groupManager; }
   getRouteHistoryStore(): RouteHistoryStore { return this.routeHistoryStore; }
+  getTaskDefaultsManager(): TaskDefaultsManager { return this.taskDefaultsManager; }
   getAiService(): AiService { return this.aiService; }
   abortCurrentRequest(): void { this.ai.abortCurrentRequest(); }
   hasApiKey(): boolean { return this.ai.hasApiKey() || this.providerManager.getActive().length > 0; }
