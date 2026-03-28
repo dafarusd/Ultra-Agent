@@ -95,6 +95,17 @@ export interface EmbeddingsInput {
   taskId?: string;
 }
 
+export interface VisionCompletionInput {
+  textPrompt: string;
+  imageBase64: string;
+  mimeType?: string;
+  model?: string;
+  maxTokens?: number;
+  conversationId?: string;
+  taskId?: string;
+  agentId?: string;
+}
+
 export class AiService {
   private providerManager: ProviderManager;
   private taskDefaults: TaskDefaultsManager;
@@ -106,6 +117,14 @@ export class AiService {
 
   getTaskDefaultsManager(): TaskDefaultsManager {
     return this.taskDefaults;
+  }
+
+  private providerHasModel(provider: ApiProvider, modelId: string): boolean {
+    const discoveredModels = this.providerManager.getModelsForProvider(provider.id);
+    return (
+      discoveredModels.some(m => m.id === modelId) ||
+      (provider.manualModelIds ?? []).includes(modelId)
+    );
   }
 
   // Build a ResolvedRoute for the given provider + model + operation.
@@ -158,14 +177,10 @@ export class AiService {
     // Path A — manual model override (selected via chat picker)
     if (opts.manualModelId) {
       for (const provider of activeProviders) {
-        const discoveredModels = this.providerManager.getModelsForProvider(provider.id);
-        const hasModel =
-          discoveredModels.some(m => m.id === opts.manualModelId) ||
-          (provider.manualModelIds ?? []).includes(opts.manualModelId!);
-        if (!hasModel) continue;
+        if (!this.providerHasModel(provider, opts.manualModelId)) continue;
         const route = await this.buildRoute(provider, opts.manualModelId, operation);
         if (route) {
-          UltraDevLog.push('ROUTE', {
+          UltraDevLog.push('ROUTE' as any, {
             event: 'route_resolved',
             step: 'manual_override',
             ...routeLogFields(route),
@@ -174,7 +189,7 @@ export class AiService {
         }
       }
       // Manual model not found in any provider — fall through to task defaults
-      UltraDevLog.push('ROUTE', {
+      UltraDevLog.push('ROUTE' as any, {
         event: 'manual_model_not_matched',
         manualModelId: opts.manualModelId,
         operation,
@@ -183,50 +198,124 @@ export class AiService {
     }
 
     // Path B — task defaults (primary + fallbacks)
+    // Candidates may be exact {providerId, modelId} or legacy {providerId:'', modelId}.
     const candidates: TaskModelCandidate[] = this.taskDefaults.getCandidates(operation);
-    UltraDevLog.push('ROUTE', {
+    UltraDevLog.push('ROUTE' as any, {
       event: 'route_attempt_task_defaults',
       operation,
       candidateCount: candidates.length,
-      candidates: candidates.map(c => `${c.providerId}/${c.modelId}`),
+      candidates: candidates.map(c => `${c.providerId || '(any)'}/${c.modelId}`),
     });
 
     for (const candidate of candidates) {
-      const provider = activeProviders.find(p => p.id === candidate.providerId);
-      if (!provider) {
-        UltraDevLog.push('ROUTE', {
+      // Exact match: candidate specifies a provider. Providerless: search all active providers.
+      const providerMatches = candidate.providerId
+        ? activeProviders.filter(p => p.id === candidate.providerId)
+        : activeProviders.filter(p => this.providerHasModel(p, candidate.modelId));
+      if (providerMatches.length === 0) {
+        UltraDevLog.push('ROUTE' as any, {
           event: 'candidate_skip',
-          reason: 'provider_not_active',
-          ...candidate,
+          reason: candidate.providerId ? 'provider_not_active' : 'provider_not_found_for_model',
+          providerId: candidate.providerId || null,
+          modelId: candidate.modelId,
           operation,
         });
         continue;
       }
-      const route = await this.buildRoute(provider, candidate.modelId, operation);
-      if (route) {
-        UltraDevLog.push('ROUTE', {
-          event: 'route_resolved',
-          step: 'task_default',
-          ...routeLogFields(route),
+      for (const provider of providerMatches) {
+        if (!this.providerHasModel(provider, candidate.modelId)) {
+          UltraDevLog.push('ROUTE' as any, {
+            event: 'candidate_skip',
+            reason: 'model_not_available_on_provider',
+            providerId: provider.id,
+            modelId: candidate.modelId,
+            operation,
+          });
+          continue;
+        }
+        const route = await this.buildRoute(provider, candidate.modelId, operation);
+        if (route) {
+          UltraDevLog.push('ROUTE' as any, {
+            event: 'route_resolved',
+            step: 'task_default',
+            candidateSource: candidate.providerId ? 'task_default_exact' : 'task_default_model_only_legacy',
+            ...routeLogFields(route),
+          });
+          return route;
+        }
+        UltraDevLog.push('ROUTE' as any, {
+          event: 'candidate_skip',
+          reason: 'no_adapter_or_key',
+          providerId: provider.id,
+          modelId: candidate.modelId,
+          operation,
         });
-        return route;
       }
-      UltraDevLog.push('ROUTE', {
-        event: 'candidate_skip',
-        reason: 'no_adapter_or_key',
-        ...candidate,
-        operation,
-      });
     }
 
     // Fail closed
-    UltraDevLog.push('ROUTE', {
+    UltraDevLog.push('ROUTE' as any, {
       event: 'route_fail_closed',
       operation,
       candidateCount: candidates.length,
       activeProviderCount: activeProviders.length,
     });
     throw new Error(FAIL_CLOSED_MSG);
+  }
+
+  async completeVision(input: VisionCompletionInput): Promise<NormalizedAiResponse> {
+    const route = await this.resolveRoute('vision', {
+      manualModelId: input.model,
+      conversationId: input.conversationId,
+    });
+    const registry = getAdapterRegistry();
+    const adapter = registry.get(route.adapterId);
+    if (!adapter) throw new Error(`Adapter '${route.adapterId}' not found`);
+    const model = input.model ?? route.modelId;
+    const messages: ChatMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: `data:${input.mimeType || 'image/jpeg'};base64,${input.imageBase64}` } },
+          { type: 'text', text: input.textPrompt || 'What do you see in this image?' },
+        ] as any,
+      },
+    ];
+    const opts: ChatOptions = {
+      model,
+      messages,
+      maxTokens: input.maxTokens,
+      temperature: 0.4,
+      taskId: input.taskId,
+      agentId: input.agentId,
+    };
+    UltraDevLog.push('AI_REQUEST' as any, {
+      event: 'ai_vision_start',
+      ...routeLogFields(route),
+      model,
+      promptLen: input.textPrompt.length,
+      imageBytes: input.imageBase64.length,
+    });
+    const t0 = Date.now();
+    const result: AdapterResult<NormalizedAiResponse> = await adapter.invokeChat(route, opts);
+    if (!result.ok) {
+      UltraDevLog.push('ERROR', {
+        event: 'ai_vision_failed',
+        ...routeLogFields(route),
+        error: result.error.message,
+        code: result.error.code,
+      });
+      throw new Error(`Vision request failed [${result.error.code}]: ${result.error.message}`);
+    }
+    UltraDevLog.push('AI_RESPONSE', {
+      event: 'ai_vision_done',
+      ...routeLogFields(route),
+      model,
+      inputTokens: result.value.inputTokens,
+      outputTokens: result.value.outputTokens,
+      latencyMs: Date.now() - t0,
+    });
+    return result.value;
   }
 
   async completeText(input: TextCompletionInput): Promise<NormalizedAiResponse> {

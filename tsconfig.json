@@ -17,5 +17,10 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
+  ],
+  "exclude": [
+    "attached_assets",
+    ".local",
+    "node_modules"
   ]
 }

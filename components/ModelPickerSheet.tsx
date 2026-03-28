@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -135,32 +135,35 @@ export default function ModelPickerSheet({
     return bActive - aActive;
   });
 
+  // Log picker content state once when the picker becomes visible or model list changes.
+  useEffect(() => {
+    if (!visible) return;
+    UltraDevLog.pickerContentDetailed({
+      requestedFilter: "all",
+      effectiveFilter: "all",
+      currentMode: ctxCurrentMode,
+      rawFilteredCount: models.length,
+      displayedCount: displayedModels.length,
+      totalModels: models.length,
+      fallbackUsed: false,
+      source: ctxSource,
+      selectedModel: ctxSelectedModel,
+      uiSelectedModel: ctxUiSelectedModel,
+      routerSelectedModel: ctxRouterSelectedModel,
+      defaultModel: ctxDefaultModel,
+      note: `ok — ${displayedModels.length} models`,
+    });
+    UltraDevLog.push("PICKER_RENDER" as any, {
+      event: "picker_content_rendered",
+      rawCount: models.length,
+      displayedCount: displayedModels.length,
+      currentModelId,
+      currentModelInList: displayedModels.some((m) => m.id === currentModelId),
+    });
+  }, [visible, models.length, currentModelId]);
+
   const renderModel = useCallback(
-    ({ item, index }: { item: PickerModel; index: number }) => {
-      if (index === 0) {
-        UltraDevLog.pickerContentDetailed({
-          requestedFilter: "all",
-          effectiveFilter: "all",
-          currentMode: ctxCurrentMode,
-          rawFilteredCount: models.length,
-          displayedCount: displayedModels.length,
-          totalModels: models.length,
-          fallbackUsed: false,
-          source: ctxSource,
-          selectedModel: ctxSelectedModel,
-          uiSelectedModel: ctxUiSelectedModel,
-          routerSelectedModel: ctxRouterSelectedModel,
-          defaultModel: ctxDefaultModel,
-          note: `ok — ${displayedModels.length} models`,
-        });
-        UltraDevLog.push("PICKER_RENDER" as any, {
-          event: "picker_content_rendered",
-          rawCount: models.length,
-          displayedCount: displayedModels.length,
-          currentModelId,
-          currentModelInList: displayedModels.some((m) => m.id === currentModelId),
-        });
-      }
+    ({ item }: { item: PickerModel }) => {
       const isActive = item.id === currentModelId;
       return (
         <Pressable

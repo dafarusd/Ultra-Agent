@@ -25,6 +25,56 @@ interface TaskDefaultsStorage {
 const STORAGE_KEY = 'task_defaults_v1';
 const MIGRATION_KEY = 'task_defaults_migration_v1';
 
+// ── Normalization helpers ─────────────────────────────────────────────────────
+
+function candidateKey(candidate: TaskModelCandidate): string {
+  return `${candidate.providerId || '(any)'}::${candidate.modelId}`;
+}
+
+function normalizeCandidate(raw: unknown): TaskModelCandidate | null {
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    const modelId = raw.trim();
+    if (!modelId) return null;
+    return { providerId: '', modelId };
+  }
+  if (typeof raw !== 'object') return null;
+  const rec = raw as Record<string, unknown>;
+  const modelId = typeof rec.modelId === 'string' ? rec.modelId.trim() : '';
+  const providerId = typeof rec.providerId === 'string' ? rec.providerId.trim() : '';
+  if (!modelId) return null;
+  return { providerId, modelId };
+}
+
+function normalizeCandidateList(raw: unknown): TaskModelCandidate[] {
+  const items = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  const result: TaskModelCandidate[] = [];
+  for (const item of items) {
+    const candidate = normalizeCandidate(item);
+    if (!candidate) continue;
+    const key = candidateKey(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(candidate);
+  }
+  return result;
+}
+
+function normalizeTaskDefault(raw: unknown): TaskDefault | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const rec = raw as Record<string, unknown>;
+  const primary = normalizeCandidate(rec.primary);
+  const fallbacks = normalizeCandidateList(rec.fallbacks);
+  const filteredFallbacks = primary
+    ? fallbacks.filter((candidate) => candidateKey(candidate) !== candidateKey(primary))
+    : fallbacks;
+  if (!primary && filteredFallbacks.length === 0) return { primary: null, fallbacks: [] };
+  return { primary, fallbacks: filteredFallbacks };
+}
+
+// ── Class ─────────────────────────────────────────────────────────────────────
+
 export class TaskDefaultsManager {
   private entries: Record<string, TaskDefault> = {};
   private initialized = false;
@@ -62,13 +112,24 @@ export class TaskDefaultsManager {
     primary: TaskModelCandidate | null,
     fallbacks: TaskModelCandidate[] = []
   ): Promise<void> {
-    this.entries[operation] = { primary, fallbacks: fallbacks ?? [] };
+    const normalizedPrimary = normalizeCandidate(primary);
+    const normalizedFallbacks = normalizeCandidateList(fallbacks).filter((candidate) => {
+      return !normalizedPrimary || candidateKey(candidate) !== candidateKey(normalizedPrimary);
+    });
+    this.entries[operation] = { primary: normalizedPrimary, fallbacks: normalizedFallbacks };
     await this.save();
     UltraDevLog.push('SYSTEM', {
       event: 'task_default_set',
       operation,
-      primary,
-      fallbackCount: fallbacks.length,
+      primary: normalizedPrimary,
+      fallbackCount: normalizedFallbacks.length,
+    });
+    UltraDevLog.push('SETTINGS_SAVE', {
+      event: 'task_default_write_result',
+      operation,
+      success: true,
+      primary: normalizedPrimary ? `${normalizedPrimary.providerId || '(any)'}/${normalizedPrimary.modelId}` : null,
+      fallbackCount: normalizedFallbacks.length,
     });
   }
 
@@ -76,6 +137,14 @@ export class TaskDefaultsManager {
     delete this.entries[operation];
     await this.save();
     UltraDevLog.push('SYSTEM', { event: 'task_default_cleared', operation });
+    UltraDevLog.push('SETTINGS_SAVE', {
+      event: 'task_default_write_result',
+      operation,
+      success: true,
+      primary: null,
+      fallbackCount: 0,
+      note: 'cleared',
+    });
   }
 
   // One-time migration: reads groupAssignments from a GroupManager and populates task defaults.
@@ -129,9 +198,34 @@ export class TaskDefaultsManager {
     try {
       const raw = await AppStorage.get(STORAGE_KEY);
       if (!raw) return;
-      const parsed: TaskDefaultsStorage = JSON.parse(raw);
-      if (parsed?.version === 1 && parsed.entries && typeof parsed.entries === 'object') {
-        this.entries = { ...parsed.entries };
+      const parsed = JSON.parse(raw) as TaskDefaultsStorage | Record<string, unknown>;
+      const sourceEntries =
+        parsed && typeof parsed === 'object' && 'entries' in parsed && typeof parsed.entries === 'object'
+          ? parsed.entries as Record<string, unknown>
+          : {};
+      let normalizedCount = 0;
+      let droppedCount = 0;
+      const nextEntries: Record<string, TaskDefault> = {};
+      for (const [operation, value] of Object.entries(sourceEntries)) {
+        const normalized = normalizeTaskDefault(value);
+        if (!normalized) {
+          droppedCount++;
+          continue;
+        }
+        const keyBefore = JSON.stringify(value);
+        const keyAfter = JSON.stringify(normalized);
+        if (keyBefore !== keyAfter) normalizedCount++;
+        nextEntries[operation] = normalized;
+      }
+      this.entries = nextEntries;
+      if (normalizedCount > 0 || droppedCount > 0) {
+        await this.save();
+        UltraDevLog.push('SYSTEM', {
+          event: 'task_defaults_storage_normalized',
+          normalizedCount,
+          droppedCount,
+          taskCount: Object.keys(this.entries).length,
+        });
       }
     } catch {
       this.entries = {};
@@ -142,7 +236,7 @@ export class TaskDefaultsManager {
     const data: TaskDefaultsStorage = {
       version: 1,
       updatedAt: Date.now(),
-      entries: this.entries,
+      entries: this.getAllDefaults(),
     };
     await AppStorage.set(STORAGE_KEY, JSON.stringify(data));
   }

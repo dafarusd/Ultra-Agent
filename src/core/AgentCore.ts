@@ -1666,6 +1666,24 @@ You are always on. Always capable. Always direct.`;
           cost: 0,
         };
       },
+      completeVision: async (textPrompt, imageBase64, mimeType, opts) => {
+        const resp = await aiSvc.completeVision({
+          textPrompt,
+          imageBase64,
+          mimeType,
+          model: opts.model,
+          maxTokens: opts.maxTokens,
+          taskId: opts.taskId,
+          agentId: opts.agentId,
+        });
+        return {
+          content: resp.content,
+          model: resp.model,
+          inputTokens: resp.inputTokens,
+          outputTokens: resp.outputTokens,
+          cost: 0,
+        };
+      },
       refreshBridgeState: async () => {
         await pm.initialize().catch(() => {});
         // Rebuild the provider-backed model inventory so the picker reflects reality.

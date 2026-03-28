@@ -18,6 +18,12 @@ export interface ModelRouterBridge {
       conversationId?: string;
     }
   ): Promise<{ content: string; model: string; inputTokens: number; outputTokens: number; cost: number }>;
+  completeVision?(
+    textPrompt: string,
+    imageBase64: string,
+    mimeType: string,
+    opts: { model?: string; maxTokens?: number; taskId?: string; agentId?: string }
+  ): Promise<{ content: string; model: string; inputTokens: number; outputTokens: number; cost: number }>;
   refreshBridgeState(): Promise<void>;
 }
 
@@ -884,6 +890,15 @@ export class ModelRouter {
       agentId?: string;
     } = {}
   ): Promise<CompletionResult> {
+    if (this.bridge?.completeVision) {
+      if (!this.bridge.hasActiveProvider()) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
+      return this.bridge.completeVision(textPrompt, imageBase64, mimeType, {
+        model: options.model,
+        maxTokens: options.maxTokens,
+        taskId: options.taskId,
+        agentId: options.agentId,
+      });
+    }
     if (!this.apiKey) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
 
     let model = options.model || '';

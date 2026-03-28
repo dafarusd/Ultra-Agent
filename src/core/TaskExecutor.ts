@@ -1854,14 +1854,15 @@ export class TaskExecutor {
         const prompt = request;
         if (!prompt) return { error: 'No image prompt specified' };
         try {
-          const imageModel = (params as any).model ||
-            (this.ai.getDefaultModelForMode ? this.ai.getDefaultModelForMode('image') : undefined) ||
-            'fluently-xl';
+          const explicitImageModel = (params as any).model as string | undefined;
           let result: { images: string[]; model: string };
           if (this.aiServiceProvider) {
-            const aiResult = await this.aiServiceProvider.generateImage({ prompt, model: imageModel, taskId });
+            const aiResult = await this.aiServiceProvider.generateImage({ prompt, model: explicitImageModel, taskId });
             result = { images: aiResult.images, model: aiResult.model };
           } else {
+            const imageModel = explicitImageModel ||
+              (this.ai.getDefaultModelId ? this.ai.getDefaultModelId() ?? undefined : undefined) ||
+              'fluently-xl';
             result = await this.ai.generateImage(prompt, { taskId, model: imageModel });
           }
           if (result.images.length === 0) return { error: 'No images generated' };

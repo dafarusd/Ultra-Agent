@@ -30,6 +30,7 @@ import type {
   ProviderCapabilities,
 } from "@/src/types/provider";
 import { DEFAULT_PROVIDER_CAPABILITIES } from "@/src/types/provider";
+import type { TaskModelCandidate } from "@/src/core/provider/TaskDefaultsManager";
 
 // ── Palette ──────────────────────────────────────────────
 const ACCENT = "#e5e5e5";
@@ -85,6 +86,34 @@ function operationsToProviderCapabilities(
   };
 }
 
+
+interface ProviderBackedModel {
+  id: string;
+  name?: string;
+  providerId: string;
+  providerName: string;
+  capabilities?: ProviderCapabilities | null;
+}
+
+type TaskDefaultUiState = Partial<Record<AllowedOperation, {
+  primary: TaskModelCandidate | null;
+  fallbacks: TaskModelCandidate[];
+}>>;
+
+function taskCandidateKey(c: TaskModelCandidate): string {
+  return `${c.providerId || '(any)'}::${c.modelId}`;
+}
+
+function formatTaskCandidateLabel(c: TaskModelCandidate, models: ProviderBackedModel[]): string {
+  const match = models.find(m => m.id === c.modelId && (c.providerId === '' || m.providerId === c.providerId));
+  if (match) return match.name || match.id;
+  return c.modelId;
+}
+
+function isModelEligibleForOperation(model: ProviderBackedModel, op: AllowedOperation): boolean {
+  const ops = providerCapabilitiesToOperations(model.capabilities);
+  return ops.includes(op);
+}
 
 const AUTH_MODES: AuthMode[] = ['bearer', 'api_key_header', 'basic', 'custom_header', 'none'];
 
@@ -152,7 +181,7 @@ export default function SettingsScreen() {
   const [probingId, setProbingId] = useState<string | null>(null);
 
   // ── Task Defaults state ──────────────────────────────────
-  const [taskDefaults, setTaskDefaults] = useState<Record<string, { primary: string | null; fallbacks: string[] }>>({});
+  const [taskDefaults, setTaskDefaults] = useState<TaskDefaultUiState>({});
 
   // ── Cost state ──────────────────────────────────────────
   const [dailyLimit, setDailyLimit] = useState('0');
@@ -223,14 +252,18 @@ export default function SettingsScreen() {
     try {
       const tdm = (core as any).getTaskDefaultsManager?.();
       if (!tdm) return;
-      const snapshot: Record<string, { primary: string | null; fallbacks: string[] }> = {};
+      const snapshot: TaskDefaultUiState = {};
       for (const op of ALL_OPERATIONS) {
-        const candidates: string[] = tdm.getCandidates(op);
-        snapshot[op] = { primary: candidates[0] ?? null, fallbacks: candidates.slice(1) };
+        const candidates: TaskModelCandidate[] = tdm.getCandidates(op);
+        if (candidates.length === 0) {
+          snapshot[op] = { primary: null, fallbacks: [] };
+        } else {
+          snapshot[op] = { primary: candidates[0], fallbacks: candidates.slice(1) };
+        }
       }
       setTaskDefaults(snapshot);
     } catch (err: any) {
-      UltraDevLog.push('SETTINGS_LOAD', { event: 'load_task_defaults_error', error: err?.message });
+      UltraDevLog.push('SETTINGS_LOAD' as any, { event: 'load_task_defaults_error', error: err?.message });
     }
   }, []);
 
@@ -487,7 +520,11 @@ export default function SettingsScreen() {
   }, [loadProviders]);
 
   // ── Task Defaults CRUD ────────────────────────────────────
-  const setTaskDefault = useCallback(async (op: AllowedOperation, primary: string | null, fallbacks: string[] = []) => {
+  const setTaskDefault = useCallback(async (
+    op: AllowedOperation,
+    primary: TaskModelCandidate | null,
+    fallbacks: TaskModelCandidate[] = []
+  ) => {
     const core = getAgentCoreInstance();
     const tdm = (core as any)?.getTaskDefaultsManager?.();
     if (!tdm) { Alert.alert('Error', 'Task defaults manager not available.'); return; }
@@ -884,39 +921,50 @@ export default function SettingsScreen() {
                     {ALL_OPERATIONS.map(op => {
                       const def = taskDefaults[op] ?? { primary: null, fallbacks: [] };
                       const core = getAgentCoreInstance();
-                      const allModels: Array<{ id: string; name: string; apiName: string }> =
+                      const allModels: ProviderBackedModel[] =
                         (core as any)?.getAllModelsWithProvider?.() ?? [];
+                      const eligibleModels = allModels.filter(m => isModelEligibleForOperation(m, op as AllowedOperation));
                       const opLabel = op.charAt(0).toUpperCase() + op.slice(1).replace(/_/g, ' ');
+                      const primaryKey = def.primary ? taskCandidateKey(def.primary) : null;
                       return (
                         <View key={op} style={styles.card}>
                           <Text style={[styles.cardTitle, { fontSize: 14 }]}>{opLabel}</Text>
                           <Text style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>
-                            {def.primary ? `Primary: ${def.primary}` : 'No default — will use provider fallback'}
+                            {def.primary
+                              ? `Primary: ${formatTaskCandidateLabel(def.primary, allModels)}`
+                              : 'No default — will use provider fallback'}
                           </Text>
                           {allModels.length === 0 ? (
                             <Text style={{ color: '#444', fontSize: 12 }}>Add a provider to see available models.</Text>
+                          ) : eligibleModels.length === 0 ? (
+                            <Text style={{ color: '#444', fontSize: 12 }}>No active provider supports this operation.</Text>
                           ) : (
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
                               <Pressable
                                 onPress={() => { if (def.primary !== null) setTaskDefault(op as AllowedOperation, null); }}
-                                style={[styles.chip, def.primary === null && styles.chipActive]}
+                                style={[styles.chip, primaryKey === null && styles.chipActive]}
                               >
-                                <Text style={[styles.chipText, def.primary === null && styles.chipTextActive]}>None</Text>
+                                <Text style={[styles.chipText, primaryKey === null && styles.chipTextActive]}>None</Text>
                               </Pressable>
-                              {allModels.map(m => (
-                                <Pressable
-                                  key={m.id}
-                                  onPress={() => {
-                                    if (def.primary !== m.id) setTaskDefault(op as AllowedOperation, m.id);
-                                    else setTaskDefault(op as AllowedOperation, null);
-                                  }}
-                                  style={[styles.chip, def.primary === m.id && styles.chipActive]}
-                                >
-                                  <Text style={[styles.chipText, def.primary === m.id && styles.chipTextActive]} numberOfLines={1}>
-                                    {m.name || m.id}
-                                  </Text>
-                                </Pressable>
-                              ))}
+                              {eligibleModels.map(m => {
+                                const candidate: TaskModelCandidate = { providerId: m.providerId, modelId: m.id };
+                                const key = taskCandidateKey(candidate);
+                                const isActive = primaryKey === key;
+                                return (
+                                  <Pressable
+                                    key={key}
+                                    onPress={() => {
+                                      if (!isActive) setTaskDefault(op as AllowedOperation, candidate);
+                                      else setTaskDefault(op as AllowedOperation, null);
+                                    }}
+                                    style={[styles.chip, isActive && styles.chipActive]}
+                                  >
+                                    <Text style={[styles.chipText, isActive && styles.chipTextActive]} numberOfLines={1}>
+                                      {m.name || m.id}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })}
                             </ScrollView>
                           )}
                         </View>
