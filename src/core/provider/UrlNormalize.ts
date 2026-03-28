@@ -1,5 +1,7 @@
 // URL normalization — always store base URL, never operation endpoints
 
+import { UltraDevLog } from '../../utils/UltraDevLog';
+
 const OPERATION_SUFFIXES = [
   '/chat/completions',
   '/responses',
@@ -24,7 +26,10 @@ export interface NormalizeResult {
 
 export function normalizeProviderUrl(raw: string): NormalizeResult {
   const trimmed = (raw || '').trim();
-  if (!trimmed) return { ok: false, url: '', error: 'URL is empty.' };
+  if (!trimmed) {
+    UltraDevLog.push('SYSTEM', { event: 'url_normalize_fail', raw: '[empty]', reason: 'empty' });
+    return { ok: false, url: '', error: 'URL is empty.' };
+  }
 
   let url = trimmed;
 
@@ -46,9 +51,11 @@ export function normalizeProviderUrl(raw: string): NormalizeResult {
   try {
     new URL(url);
   } catch {
+    UltraDevLog.push('SYSTEM', { event: 'url_normalize_fail', raw: trimmed, normalized: url, reason: 'invalid_url' });
     return { ok: false, url: '', error: `Invalid URL: ${trimmed}` };
   }
 
+  UltraDevLog.push('SYSTEM', { event: 'url_normalize_ok', normalized: url, strippedSuffix: strippedSuffix || null });
   return { ok: true, url, strippedSuffix };
 }
 

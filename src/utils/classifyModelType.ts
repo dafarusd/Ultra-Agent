@@ -1,3 +1,5 @@
+import { UltraDevLog } from './UltraDevLog';
+
 export type PickerCategory = "text" | "image" | "code" | "video" | "audio" | "reasoning";
 
 export interface ModelCapabilities {
@@ -33,28 +35,48 @@ export function classifyModelType(
   rawType?: string,
   capabilities?: ModelCapabilities | null,
 ): PickerCategory {
-  if (rawType === "image") return "image";
-  if (rawType === "video") return "video";
-  if (rawType === "audio") return "audio";
-  if (rawType === "embedding") return "text";
+  let result: PickerCategory;
+  let matchedRule: string;
 
-  if (capabilities) {
-    if (capabilities.supportsImageGeneration) return "image";
-    if (capabilities.supportsVideoGeneration) return "video";
-    if (capabilities.supportsAudioGeneration) return "audio";
-    if (capabilities.supportsEmbeddings) return "text";
-    if (capabilities.supportsReasoning || capabilities.supportsReasoningHints) return "reasoning";
-    if (capabilities.optimizedForCode) return "code";
+  if (rawType === "image") { result = "image"; matchedRule = "rawType:image"; }
+  else if (rawType === "video") { result = "video"; matchedRule = "rawType:video"; }
+  else if (rawType === "audio") { result = "audio"; matchedRule = "rawType:audio"; }
+  else if (rawType === "embedding") { result = "text"; matchedRule = "rawType:embedding→text"; }
+  else if (capabilities?.supportsImageGeneration) { result = "image"; matchedRule = "capability:supportsImageGeneration"; }
+  else if (capabilities?.supportsVideoGeneration) { result = "video"; matchedRule = "capability:supportsVideoGeneration"; }
+  else if (capabilities?.supportsAudioGeneration) { result = "audio"; matchedRule = "capability:supportsAudioGeneration"; }
+  else if (capabilities?.supportsEmbeddings) { result = "text"; matchedRule = "capability:supportsEmbeddings→text"; }
+  else if (capabilities?.supportsReasoning || capabilities?.supportsReasoningHints) { result = "reasoning"; matchedRule = "capability:supportsReasoning"; }
+  else if (capabilities?.optimizedForCode) { result = "code"; matchedRule = "capability:optimizedForCode"; }
+  else {
+    const idLower = (id || "").toLowerCase();
+    const nameLower = (name || "").toLowerCase();
+
+    if (matchesAny(idLower, IMAGE_PATTERNS) || matchesAny(nameLower, IMAGE_PATTERNS)) { result = "image"; matchedRule = "pattern:image"; }
+    else if (matchesAny(idLower, VIDEO_PATTERNS) || nameLower.includes("video gen")) { result = "video"; matchedRule = "pattern:video"; }
+    else if (matchesAny(idLower, AUDIO_PATTERNS) || matchesAny(nameLower, AUDIO_PATTERNS)) { result = "audio"; matchedRule = "pattern:audio"; }
+    else if (matchesAny(idLower, CODE_PATTERNS) || matchesAny(nameLower, CODE_PATTERNS)) { result = "code"; matchedRule = "pattern:code"; }
+    else if (matchesAny(idLower, REASONING_PATTERNS) || matchesAny(nameLower, REASONING_PATTERNS)) { result = "reasoning"; matchedRule = "pattern:reasoning"; }
+    else { result = "text"; matchedRule = "default_text_fallback"; }
   }
 
-  const idLower = (id || "").toLowerCase();
-  const nameLower = (name || "").toLowerCase();
+  UltraDevLog.push('SYSTEM', {
+    event: 'classify_model_type',
+    modelId: id,
+    modelName: name,
+    rawType: rawType ?? null,
+    capabilityFlags: capabilities ? {
+      supportsImageGeneration: capabilities.supportsImageGeneration,
+      supportsVideoGeneration: capabilities.supportsVideoGeneration,
+      supportsAudioGeneration: capabilities.supportsAudioGeneration,
+      supportsEmbeddings: capabilities.supportsEmbeddings,
+      supportsReasoning: capabilities.supportsReasoning,
+      supportsReasoningHints: capabilities.supportsReasoningHints,
+      optimizedForCode: capabilities.optimizedForCode,
+    } : null,
+    matchedRule,
+    result,
+  });
 
-  if (matchesAny(idLower, IMAGE_PATTERNS) || matchesAny(nameLower, IMAGE_PATTERNS)) return "image";
-  if (matchesAny(idLower, VIDEO_PATTERNS) || nameLower.includes("video gen")) return "video";
-  if (matchesAny(idLower, AUDIO_PATTERNS) || matchesAny(nameLower, AUDIO_PATTERNS)) return "audio";
-  if (matchesAny(idLower, CODE_PATTERNS) || matchesAny(nameLower, CODE_PATTERNS)) return "code";
-  if (matchesAny(idLower, REASONING_PATTERNS) || matchesAny(nameLower, REASONING_PATTERNS)) return "reasoning";
-
-  return "text";
+  return result;
 }

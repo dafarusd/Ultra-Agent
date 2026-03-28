@@ -1,5 +1,6 @@
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Logger } from '../utils/Logger';
+import { UltraDevLog } from '../utils/UltraDevLog';
 import { SecureVault } from './SecureVault';
 
 const LOCK_TIMEOUT_KEY = 'biometric_lock_timeout_minutes';
@@ -12,6 +13,7 @@ export class BiometricGate {
 
   constructor() {
     this.logger = new Logger('BiometricGate');
+    UltraDevLog.push('SYSTEM', { event: 'biometric_gate_construct' });
   }
 
   async init(vault: SecureVault): Promise<void> {
@@ -21,8 +23,10 @@ export class BiometricGate {
       if (saved !== null) {
         this.lockTimeoutMinutes = parseInt(saved, 10) || 0;
       }
-    } catch {
+      UltraDevLog.push('SYSTEM', { event: 'biometric_gate_init_ok', lockTimeoutMinutes: this.lockTimeoutMinutes, restored: saved !== null });
+    } catch (err: any) {
       this.lockTimeoutMinutes = 0;
+      UltraDevLog.push('SYSTEM', { event: 'biometric_gate_init_timeout_restore_fail', error: err?.message, fallbackTimeout: 0 });
     }
   }
 
@@ -30,8 +34,11 @@ export class BiometricGate {
     try {
       const hardware = await LocalAuthentication.hasHardwareAsync();
       const enrolled = await LocalAuthentication.isEnrolledAsync();
-      return hardware && enrolled;
-    } catch {
+      const available = hardware && enrolled;
+      UltraDevLog.push('SYSTEM', { event: 'biometric_availability_check', hardware, enrolled, available });
+      return available;
+    } catch (err: any) {
+      UltraDevLog.push('SYSTEM', { event: 'biometric_availability_check_fail', error: err?.message });
       return false;
     }
   }
@@ -46,6 +53,7 @@ export class BiometricGate {
 
   markUnlocked(): void {
     this.lastUnlockTime = Date.now();
+    UltraDevLog.push('SYSTEM', { event: 'biometric_mark_unlocked', ts: this.lastUnlockTime });
   }
 
   async setLockTimeout(minutes: number): Promise<void> {
@@ -53,6 +61,7 @@ export class BiometricGate {
     if (this.vault) {
       await this.vault.set(LOCK_TIMEOUT_KEY, String(minutes));
     }
+    UltraDevLog.push('SYSTEM', { event: 'biometric_lock_timeout_set', minutes, persisted: !!this.vault });
   }
 
   getLockTimeout(): number {
@@ -67,11 +76,13 @@ export class BiometricGate {
   }
 
   async authenticate(reason: string = 'Authenticate to proceed'): Promise<boolean> {
+    UltraDevLog.push('SYSTEM', { event: 'biometric_auth_start', reason });
     try {
       const available = await this.isAvailable();
       if (!available) {
         this.logger.warn('Biometrics unavailable, granting access');
         this.markUnlocked();
+        UltraDevLog.push('SYSTEM', { event: 'biometric_auth_result', outcome: 'skipped_unavailable', granted: true });
         return true;
       }
       const result = await LocalAuthentication.authenticateAsync({
@@ -82,12 +93,15 @@ export class BiometricGate {
       if (result.success) {
         this.logger.info('Authentication successful');
         this.markUnlocked();
+        UltraDevLog.push('SYSTEM', { event: 'biometric_auth_result', outcome: 'success', granted: true });
       } else {
         this.logger.warn('Authentication denied');
+        UltraDevLog.push('SYSTEM', { event: 'biometric_auth_result', outcome: 'denied', granted: false, errorCode: (result as any).error ?? null });
       }
       return result.success;
     } catch (error: any) {
       this.logger.error('Auth error: ' + error.message);
+      UltraDevLog.push('SYSTEM', { event: 'biometric_auth_result', outcome: 'error', granted: false, error: error?.message });
       return false;
     }
   }
@@ -96,6 +110,7 @@ export class BiometricGate {
     const locked = this.lockTimeoutMinutes <= 0
       ? this.lastUnlockTime === 0
       : (Date.now() - this.lastUnlockTime) > this.lockTimeoutMinutes * 60 * 1000;
+    UltraDevLog.push('SYSTEM', { event: 'biometric_needs_auth_check', locked, lastUnlockTime: this.lastUnlockTime, lockTimeoutMinutes: this.lockTimeoutMinutes });
     return locked;
   }
 
@@ -105,7 +120,10 @@ export class BiometricGate {
 
   async authenticateIfNeeded(reason: string = 'Unlock Agent Ultra'): Promise<boolean> {
     const locked = await this.isLocked();
-    if (!locked && this.lastUnlockTime > 0) return true;
+    if (!locked && this.lastUnlockTime > 0) {
+      UltraDevLog.push('SYSTEM', { event: 'biometric_auth_skipped', reason: 'not_locked', lastUnlockTime: this.lastUnlockTime });
+      return true;
+    }
     const result = await this.authenticate(reason);
     if (result) this.markUnlocked();
     return result;

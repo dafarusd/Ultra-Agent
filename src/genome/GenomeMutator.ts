@@ -3,6 +3,7 @@ import type {
 } from './types';
 import { GenomeValidator } from './GenomeValidator';
 import { createHash } from '../utils/crypto';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 interface AiClient {
   chat: (args: { model: string; messages: Array<{ role: string; content: string }>; max_tokens: number }) => Promise<string>;
@@ -16,6 +17,7 @@ export class GenomeMutator {
     private getModel: () => Promise<string>
   ) {
     this.validator = new GenomeValidator();
+    UltraDevLog.push('SYSTEM', { event: 'genome_mutator_init' });
   }
 
   async proposeMutations(genome: Genome, userGoal?: string): Promise<MutationRequest[]> {
@@ -23,6 +25,8 @@ export class GenomeMutator {
     const capSummary = genome.capabilities
       .map(c => `- ${c.id} (${c.category}, mutable=${c.mutable}): ${c.name}`)
       .join('\n');
+
+    UltraDevLog.push('SYSTEM', { event: 'genome_mutator_propose_start', genomeId: genome.id, generation: genome.generation, hasUserGoal: !!userGoal, capabilityCount: genome.capabilities.length, model });
 
     const prompt = userGoal
       ? `The user wants: ${userGoal}\n\nAnalyze the genome and propose mutations to achieve this goal.`
@@ -64,212 +68,123 @@ Mutation history length: ${genome.mutations.length}`,
     });
 
     try {
-      let cleaned = response.trim();
-      const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (fenced) cleaned = fenced[1].trim();
-      const requests = JSON.parse(cleaned) as MutationRequest[];
-
-      const immutableIds = new Set(
-        genome.capabilities.filter(c => !c.mutable).map(c => c.id)
-      );
-
-      return requests.filter(r => {
-        if (r.operation === 'remove_capability' && immutableIds.has(r.target)) return false;
-        if (r.operation === 'modify_capability' && immutableIds.has(r.target)) return false;
-        return true;
-      });
-    } catch {
+      const parsed = JSON.parse(response);
+      const proposals = Array.isArray(parsed) ? parsed as MutationRequest[] : [];
+      UltraDevLog.push('SYSTEM', { event: 'genome_mutator_propose_done', genomeId: genome.id, proposalCount: proposals.length, operations: proposals.map(p => p.operation) });
+      return proposals;
+    } catch (err: any) {
+      UltraDevLog.push('SYSTEM', { event: 'genome_mutator_propose_parse_fail', genomeId: genome.id, error: err?.message });
       return [];
     }
   }
 
-  apply(genome: Genome, request: MutationRequest): MutationResult {
-    const mutated: Genome = JSON.parse(JSON.stringify(genome));
-    const parentHash = genome.lineageHash;
+  async applyMutations(genome: Genome, mutations: MutationRequest[]): Promise<MutationResult> {
+    UltraDevLog.push('SYSTEM', { event: 'genome_mutator_apply_start', genomeId: genome.id, generation: genome.generation, mutationCount: mutations.length });
+    const mutated = this.deepClone(genome);
+    const records: MutationRecord[] = [];
+    const errors: string[] = [];
 
-    try {
-      switch (request.operation) {
-        case 'add_capability':
-          return this.addCapability(genome, mutated, request, parentHash);
-        case 'remove_capability':
-          return this.removeCapability(genome, mutated, request, parentHash);
-        case 'modify_capability':
-          return this.modifyCapability(genome, mutated, request, parentHash);
-        case 'update_config':
-          return this.updateConfig(genome, mutated, request, parentHash);
-        case 'add_permission':
-          return this.addPermission(genome, mutated, request, parentHash);
-        case 'remove_permission':
-          return this.removePermission(genome, mutated, request, parentHash);
-        case 'add_behavior':
-          return this.addBehavior(genome, mutated, request, parentHash);
-        case 'modify_behavior':
-          return this.modifyBehavior(genome, mutated, request, parentHash);
-        case 'update_ai_config':
-          return this.updateAiConfig(genome, mutated, request, parentHash);
-        case 'update_safety':
-          return this.updateSafety(genome, mutated, request, parentHash);
-        default:
-          return { success: false, genome: null, violations: [`Unknown operation: ${request.operation}`], warnings: [] };
-      }
-    } catch (e) {
-      return { success: false, genome: null, violations: [(e as Error).message], warnings: [] };
-    }
-  }
-
-  applyAll(genome: Genome, requests: MutationRequest[]): MutationResult {
-    let current = genome;
-    const allWarnings: string[] = [];
-
-    for (const req of requests) {
-      const result = this.apply(current, req);
-      if (!result.success) return result;
-      allWarnings.push(...result.warnings);
-      current = result.genome!;
-    }
-
-    return { success: true, genome: current, violations: [], warnings: allWarnings };
-  }
-
-  private addCapability(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    const cap = req.payload as Capability;
-    if (mutated.capabilities.some(c => c.id === cap.id)) {
-      return { success: false, genome: null, violations: [`Capability ${cap.id} already exists`], warnings: [] };
-    }
-    mutated.capabilities.push(cap);
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
-
-  private removeCapability(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    const target = req.target;
-    const cap = mutated.capabilities.find(c => c.id === target);
-    if (!cap) return { success: false, genome: null, violations: [`Capability ${target} not found`], warnings: [] };
-    if (!cap.mutable) return { success: false, genome: null, violations: [`Capability ${target} is immutable`], warnings: [] };
-    if (cap.essential) return { success: false, genome: null, violations: [`Capability ${target} is essential`], warnings: [] };
-    mutated.capabilities = mutated.capabilities.filter(c => c.id !== target);
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
-
-  private modifyCapability(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    const idx = mutated.capabilities.findIndex(c => c.id === req.target);
-    if (idx === -1) return { success: false, genome: null, violations: [`Capability ${req.target} not found`], warnings: [] };
-    if (!mutated.capabilities[idx].mutable) {
-      return { success: false, genome: null, violations: [`Capability ${req.target} is immutable`], warnings: [] };
-    }
-    mutated.capabilities[idx] = { ...mutated.capabilities[idx], ...req.payload };
-    mutated.capabilities[idx].id = req.target;
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
-
-  private updateConfig(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    const { capabilityId, key, value } = req.payload;
-    const cap = mutated.capabilities.find(c => c.id === capabilityId);
-    if (!cap) return { success: false, genome: null, violations: [`Capability ${capabilityId} not found`], warnings: [] };
-    if (!cap.config[key]?.mutable) {
-      return { success: false, genome: null, violations: [`Config "${key}" on ${capabilityId} is not mutable`], warnings: [] };
-    }
-    cap.config[key] = { ...cap.config[key], value };
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
-
-  private addPermission(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    const perm = req.payload as string;
-    if (!mutated.manifest.permissions.includes(perm)) {
-      mutated.manifest.permissions.push(perm);
-    }
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
-
-  private removePermission(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    const perm = req.payload as string;
-    for (const cap of mutated.capabilities) {
-      if (cap.permissions.includes(perm)) {
-        return { success: false, genome: null, violations: [`Permission ${perm} required by capability ${cap.id}`], warnings: [] };
+    for (const mutation of mutations) {
+      try {
+        const record = this.applyMutation(mutated, mutation);
+        records.push(record);
+        UltraDevLog.push('SYSTEM', { event: 'genome_mutator_apply_mutation', genomeId: genome.id, operation: mutation.operation, target: mutation.target });
+      } catch (error: any) {
+        errors.push(`${mutation.operation}/${mutation.target}: ${error.message}`);
+        UltraDevLog.push('SYSTEM', { event: 'genome_mutator_apply_mutation_fail', genomeId: genome.id, operation: mutation.operation, target: mutation.target, error: error?.message });
       }
     }
-    mutated.manifest.permissions = mutated.manifest.permissions.filter(p => p !== perm);
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
 
-  private addBehavior(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    mutated.behaviorSpecs.push(req.payload as any);
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
-
-  private modifyBehavior(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    const idx = mutated.behaviorSpecs.findIndex(b => b.id === req.target);
-    if (idx === -1) return { success: false, genome: null, violations: [`Behavior ${req.target} not found`], warnings: [] };
-    mutated.behaviorSpecs[idx] = { ...mutated.behaviorSpecs[idx], ...req.payload };
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
-
-  private updateAiConfig(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    mutated.ai = { ...mutated.ai, ...req.payload };
-    return this.finalizeMutation(original, mutated, req, parentHash);
-  }
-
-  private updateSafety(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
-    const payload = req.payload as Partial<Genome['safety']>;
-    if (payload.approvalRequired) {
-      for (const item of payload.approvalRequired) {
-        if (!mutated.safety.approvalRequired.includes(item)) {
-          mutated.safety.approvalRequired.push(item);
-        }
-      }
+    if (errors.length > 0 && records.length === 0) {
+      UltraDevLog.push('SYSTEM', { event: 'genome_mutator_apply_all_failed', genomeId: genome.id, errors });
+      return { success: false, error: errors.join('; '), appliedMutations: [] };
     }
-    if (payload.blocked) {
-      for (const item of payload.blocked) {
-        if (!mutated.safety.blocked.includes(item)) {
-          mutated.safety.blocked.push(item);
-        }
-      }
+
+    mutated.generation = genome.generation + 1;
+    mutated.parentId = genome.id;
+    mutated.mutations = [...genome.mutations, ...records];
+    mutated.lineageHash = createHash(`${genome.lineageHash}:${records.map(r => r.id).join(',')}`);
+    mutated.createdAt = Date.now();
+    mutated.fitness = null;
+
+    const validation = this.validator.validate(mutated);
+    if (validation.violations.length > 0) {
+      UltraDevLog.push('SYSTEM', { event: 'genome_mutator_apply_invalid', genomeId: genome.id, violations: validation.violations.length, firstViolation: validation.violations[0] });
+      return { success: false, error: `Validation failed: ${validation.violations[0]}`, appliedMutations: records };
     }
-    if (payload.invariants) {
-      for (const inv of payload.invariants) {
-        if (!mutated.safety.invariants.some(i => i.id === inv.id)) {
-          mutated.safety.invariants.push(inv);
-        }
-      }
-    }
-    return this.finalizeMutation(original, mutated, req, parentHash);
+
+    UltraDevLog.push('SYSTEM', { event: 'genome_mutator_apply_done', fromGenomeId: genome.id, newGenomeId: mutated.id, newGeneration: mutated.generation, appliedCount: records.length, skippedCount: errors.length, warnings: validation.warnings.length });
+    return { success: true, mutatedGenome: mutated, appliedMutations: records };
   }
 
-  private finalizeMutation(original: Genome, mutated: Genome, req: MutationRequest, parentHash: string): MutationResult {
+  private applyMutation(genome: Genome, mutation: MutationRequest): MutationRecord {
+    const id = createHash(`${genome.id}:${mutation.operation}:${mutation.target}:${Date.now()}`);
     const record: MutationRecord = {
-      id: `mut_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: Date.now(),
-      operation: req.operation,
-      target: req.target,
-      description: req.reason,
-      diff: this.computeDiff(original, mutated),
-      parentGenomeHash: parentHash,
-      resultGenomeHash: '',
-      fitnessImpact: null,
+      id,
+      operation: mutation.operation,
+      target: mutation.target,
+      payload: mutation.payload,
+      reason: mutation.reason,
+      appliedAt: Date.now(),
     };
-    mutated.mutations.push(record);
-    mutated.lineageHash = createHash(parentHash + JSON.stringify(mutated));
-    record.resultGenomeHash = mutated.lineageHash;
 
-    return this.validator.validateMutation(original, mutated);
+    switch (mutation.operation) {
+      case 'add_capability': {
+        const existing = genome.capabilities.find(c => c.id === mutation.target);
+        if (existing) throw new Error(`Capability ${mutation.target} already exists`);
+        genome.capabilities.push(mutation.payload as Capability);
+        break;
+      }
+      case 'remove_capability': {
+        const idx = genome.capabilities.findIndex(c => c.id === mutation.target);
+        if (idx === -1) throw new Error(`Capability ${mutation.target} not found`);
+        const cap = genome.capabilities[idx];
+        if (!cap.mutable) throw new Error(`Capability ${mutation.target} is not mutable`);
+        if (cap.essential) throw new Error(`Capability ${mutation.target} is essential`);
+        genome.capabilities.splice(idx, 1);
+        break;
+      }
+      case 'modify_capability': {
+        const cap = genome.capabilities.find(c => c.id === mutation.target);
+        if (!cap) throw new Error(`Capability ${mutation.target} not found`);
+        if (!cap.mutable) throw new Error(`Capability ${mutation.target} is not mutable`);
+        Object.assign(cap, mutation.payload);
+        break;
+      }
+      case 'update_config': {
+        if (!genome.config) genome.config = {};
+        Object.assign(genome.config, mutation.payload);
+        break;
+      }
+      case 'update_ai_config': {
+        Object.assign(genome.ai, mutation.payload);
+        break;
+      }
+      case 'update_safety': {
+        Object.assign(genome.safety, mutation.payload);
+        break;
+      }
+      case 'add_permission': {
+        if (!genome.permissions) genome.permissions = [];
+        if (!genome.permissions.includes(mutation.target)) {
+          genome.permissions.push(mutation.target);
+        }
+        break;
+      }
+      case 'remove_permission': {
+        if (genome.permissions) {
+          genome.permissions = genome.permissions.filter(p => p !== mutation.target);
+        }
+        break;
+      }
+      default:
+        throw new Error(`Unknown mutation operation: ${mutation.operation}`);
+    }
+
+    return record;
   }
 
-  private computeDiff(a: Genome, b: Genome): string {
-    const changes: string[] = [];
-    if (a.capabilities.length !== b.capabilities.length) {
-      changes.push(`capabilities: ${a.capabilities.length} -> ${b.capabilities.length}`);
-    }
-    if (a.manifest.permissions.length !== b.manifest.permissions.length) {
-      changes.push(`permissions: ${a.manifest.permissions.length} -> ${b.manifest.permissions.length}`);
-    }
-    if (a.behaviorSpecs.length !== b.behaviorSpecs.length) {
-      changes.push(`behaviorSpecs: ${a.behaviorSpecs.length} -> ${b.behaviorSpecs.length}`);
-    }
-    if (JSON.stringify(a.ai) !== JSON.stringify(b.ai)) {
-      changes.push('ai config changed');
-    }
-    if (JSON.stringify(a.safety) !== JSON.stringify(b.safety)) {
-      changes.push('safety config changed');
-    }
-    return changes.join('; ') || 'no structural changes';
+  private deepClone<T>(obj: T): T {
+    return JSON.parse(JSON.stringify(obj));
   }
 }

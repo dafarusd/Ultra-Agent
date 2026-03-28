@@ -1,3 +1,5 @@
+import { UltraDevLog } from '../utils/UltraDevLog';
+
 export interface TaskNode {
   id: string;
   description: string;
@@ -13,10 +15,20 @@ export class TaskGraph {
 
   constructor() {
     this.nodes = new Map();
+    UltraDevLog.push('SYSTEM', { event: 'task_graph_init' });
   }
 
-  addNode(node: TaskNode): void { this.nodes.set(node.id, node); }
-  getNode(id: string): TaskNode | undefined { return this.nodes.get(id); }
+  addNode(node: TaskNode): void {
+    this.nodes.set(node.id, node);
+    UltraDevLog.push('SYSTEM', { event: 'task_graph_add_node', nodeId: node.id, deps: node.dependencies, status: node.status, model: node.assignedModel });
+  }
+
+  getNode(id: string): TaskNode | undefined {
+    const n = this.nodes.get(id);
+    if (!n) UltraDevLog.push('SYSTEM', { event: 'task_graph_node_not_found', nodeId: id });
+    return n;
+  }
+
   getAllNodes(): TaskNode[] { return Array.from(this.nodes.values()); }
   getSize(): number { return this.nodes.size; }
 
@@ -33,9 +45,31 @@ export class TaskGraph {
   getRunning(): TaskNode[] { return this.getAllNodes().filter((n) => n.status === 'running'); }
   isComplete(): boolean { return this.getAllNodes().every((n) => n.status === 'completed' || n.status === 'failed'); }
 
-  markRunning(id: string): void { const n = this.nodes.get(id); if (n) n.status = 'running'; }
-  markCompleted(id: string, result: any): void { const n = this.nodes.get(id); if (n) { n.status = 'completed'; n.result = result; } }
-  markFailed(id: string, error: string): void { const n = this.nodes.get(id); if (n) { n.status = 'failed'; n.error = error; } }
+  markRunning(id: string): void {
+    const n = this.nodes.get(id);
+    if (n) {
+      n.status = 'running';
+      UltraDevLog.push('SYSTEM', { event: 'task_graph_mark_running', nodeId: id });
+    }
+  }
+
+  markCompleted(id: string, result: any): void {
+    const n = this.nodes.get(id);
+    if (n) {
+      n.status = 'completed';
+      n.result = result;
+      UltraDevLog.push('SYSTEM', { event: 'task_graph_mark_completed', nodeId: id });
+    }
+  }
+
+  markFailed(id: string, error: string): void {
+    const n = this.nodes.get(id);
+    if (n) {
+      n.status = 'failed';
+      n.error = error;
+      UltraDevLog.push('SYSTEM', { event: 'task_graph_mark_failed', nodeId: id, error: error.slice(0, 200) });
+    }
+  }
 
   getDependencyResults(nodeId: string): Record<string, any> {
     const node = this.nodes.get(nodeId);
@@ -61,6 +95,7 @@ export class TaskGraph {
       batch.forEach((id) => visited.add(id));
       order.push(batch);
     }
+    UltraDevLog.push('SYSTEM', { event: 'task_graph_execution_order', batchCount: order.length, totalNodes: this.nodes.size });
     return order;
   }
 

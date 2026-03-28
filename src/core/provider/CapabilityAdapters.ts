@@ -2,6 +2,7 @@
 
 import { buildAuthHeaders } from './AuthHeaders';
 import { buildEndpointUrl } from './UrlNormalize';
+import { UltraDevLog } from '../../utils/UltraDevLog';
 import type {
   AllowedOperation,
   AdapterResult,
@@ -112,6 +113,7 @@ async function openaiChatInvoke(
     stream: false,
   };
   const t0 = Date.now();
+  UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_start', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, msgCount: opts.messages.length, url });
   try {
     const resp = await safeFetch(url, { method: 'POST', headers, body: JSON.stringify(body) }, REQUEST_TIMEOUT_MS);
     if (!resp.ok) {
@@ -120,13 +122,19 @@ async function openaiChatInvoke(
         resp.status === 401 ? 'unauthorized' :
         resp.status === 429 ? 'rate_limited' :
         isRetryableStatus(resp.status) ? 'server_error' : 'server_error';
+      UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_fail', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, httpStatus: resp.status, errorCode: code, latencyMs: Date.now() - t0 });
       return { ok: false, error: makeError(code, `HTTP ${resp.status}: ${text.slice(0, 200)}`, resp.status, isRetryableStatus(resp.status)) };
     }
     const data = await resp.json();
     const choice = data?.choices?.[0];
-    if (!choice) return { ok: false, error: makeError('parse', 'No choices in response') };
+    if (!choice) {
+      UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_fail', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, errorCode: 'parse', reason: 'no_choices', latencyMs: Date.now() - t0 });
+      return { ok: false, error: makeError('parse', 'No choices in response') };
+    }
     const content = choice.message?.content ?? '';
     const usage = data.usage || {};
+    const latencyMs = Date.now() - t0;
+    UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_ok', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, inputTokens: usage.prompt_tokens ?? 0, outputTokens: usage.completion_tokens ?? 0, latencyMs, finishReason: choice.finish_reason });
     return {
       ok: true,
       value: {
@@ -136,12 +144,17 @@ async function openaiChatInvoke(
         adapterId: 'openai_compatible_chat',
         inputTokens: usage.prompt_tokens ?? 0,
         outputTokens: usage.completion_tokens ?? 0,
-        latencyMs: Date.now() - t0,
+        latencyMs,
         finishReason: choice.finish_reason,
       },
     };
   } catch (e: any) {
-    if (e?.name === 'AbortError') return { ok: false, error: makeError('timeout', 'Request timed out', undefined, true) };
+    const latencyMs = Date.now() - t0;
+    if (e?.name === 'AbortError') {
+      UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_fail', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, errorCode: 'timeout', latencyMs });
+      return { ok: false, error: makeError('timeout', 'Request timed out', undefined, true) };
+    }
+    UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_fail', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, errorCode: 'network', error: e?.message, latencyMs });
     return { ok: false, error: makeError('network', e?.message || 'Network error', undefined, true) };
   }
 }

@@ -1,6 +1,7 @@
 import type { AppSpec, FileSpec, BuildProgress } from '../types/appspec';
 import { ModelRouter } from './ModelRouter';
 import { Logger } from '../utils/Logger';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 type ProgressCallback = (progress: BuildProgress) => void;
 
@@ -19,6 +20,7 @@ export class ProjectGenerator {
     let count = 0;
 
     this.logger.info(`Generating ${order.length} files in dependency order`);
+    UltraDevLog.push('SYSTEM', { event: 'project_generator_start', appName: spec.appName, fileCount: order.length });
 
     for (const filePath of order) {
       const file = spec.files.find(f => f.path === filePath);

@@ -1021,6 +1021,9 @@ export class CommandParser {
     let trimmed = input.trim();
     if (!trimmed) return null;
     trimmed = trimmed.replace(/^ultra[\s,]+/i, '');
+    // UltraDevLog imported lazily to avoid adding to top-level (circular risk with rules array)
+    let _log: any = null;
+    try { _log = require('../utils/UltraDevLog').UltraDevLog; } catch { _log = null; }
 
     const VERB_CORRECTIONS: Record<string, string> = {
       'opin':'open','ipon':'open','opne':'open','oped':'open','ope':'open','opem':'open','opeen':'open',
@@ -1069,12 +1072,15 @@ export class CommandParser {
 
       const validation = validatePlan(plan);
       if (!validation.valid) {
+        try { _log?.push('SYSTEM', { event: 'command_parse_invalid_plan', capability: rule.capability, validationErrors: validation.errors }); } catch {}
         return null;
       }
 
+      try { _log?.push('SYSTEM', { event: 'command_parse_match', capability: plan.capability, inputLen: input.length, matched: true }); } catch {}
       return plan;
     }
 
+    try { _log?.push('SYSTEM', { event: 'command_parse_no_match', inputLen: input.length, matched: false }); } catch {}
     return null;
   }
 }

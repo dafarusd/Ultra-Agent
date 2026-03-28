@@ -7,6 +7,8 @@
  * against the device's installed app list instead of first-partial-match.
  */
 
+import { UltraDevLog } from '../utils/UltraDevLog';
+
 // ── Common Apps Directory ──────────────────────────────
 // This covers the top ~150 apps by installs. Names are lowercase.
 // Multiple aliases map to the same package.
@@ -180,7 +182,7 @@ const KNOWN_APPS: Record<string, string> = {
   'pokemon go': 'com.nianticlabs.pokemongo',
   'among us': 'com.innersloth.spacemafia',
 
-  // Weather (device-brand-agnostic — use first installed at runtime, not hardcoded)
+  // Weather
   'weather': 'com.google.android.googlequicksearchbox',
   'samsung weather': 'com.sec.android.daemonapp',
   'oneplus weather': 'net.oneplus.weather',
@@ -206,7 +208,9 @@ export function lookupPackage(appName: string): string | undefined {
   const key = appName.toLowerCase().trim()
     .replace(/^(the|a|an|my)\s+/i, '')
     .replace(/\s+app$/i, '');
-  return KNOWN_APPS[key];
+  const pkg = KNOWN_APPS[key];
+  UltraDevLog.push('SYSTEM', { event: 'app_directory_lookup', query: key, found: !!pkg, pkg: pkg ?? null });
+  return pkg;
 }
 
 // ── Fuzzy Name Matching ────────────────────────────────
@@ -238,20 +242,17 @@ export function findBestMatch(
 
   if (!q) return null;
 
-  // Trust KNOWN_APPS without requiring launcher list verification.
-  // launchApp() uses getLaunchIntentForPackage() which checks CATEGORY_INFO
-  // and CATEGORY_LAUNCHER — broader than getInstalledApps(). Widget-only
-  // apps (Samsung Weather = com.sec.android.daemonapp) won't appear in
-  // getInstalledApps() but ARE launchable.
   const knownPkg = KNOWN_APPS[q];
   if (knownPkg) {
     const installed = installedApps.find(a => a.packageName === knownPkg);
-    return {
+    const result: MatchResult = {
       packageName: knownPkg,
       appName: installed?.appName || q,
       score: 100,
       matchType: 'directory',
     };
+    UltraDevLog.push('SYSTEM', { event: 'app_fuzzy_match', query: q, matchType: 'directory', pkg: knownPkg, score: 100 });
+    return result;
   }
 
   let best: MatchResult | null = null;
@@ -263,38 +264,27 @@ export function findBestMatch(
     let score = 0;
     let matchType: MatchResult['matchType'] = 'word_overlap';
 
-    // Exact match
     if (name === q || pkg === q) {
       score = 100;
       matchType = 'exact';
-    }
-    // Starts with query
-    else if (name.startsWith(q + ' ') || name.startsWith(q)) {
+    } else if (name.startsWith(q + ' ') || name.startsWith(q)) {
       score = 80 + Math.min(15, (q.length / name.length) * 15);
       matchType = 'starts_with';
-    }
-    // Query starts with app name (e.g., query="youtube music" matches app="youtube")
-    // But penalize heavily — we want the more specific match
-    else if (q.startsWith(name + ' ') || q.startsWith(name)) {
+    } else if (q.startsWith(name + ' ') || q.startsWith(name)) {
       score = 55 + Math.min(10, (name.length / q.length) * 10);
       matchType = 'starts_with';
-    }
-    // Contains
-    else if (name.includes(q) || q.includes(name)) {
+    } else if (name.includes(q) || q.includes(name)) {
       const longer = Math.max(name.length, q.length);
       const shorter = Math.min(name.length, q.length);
       score = 40 + (shorter / longer) * 20;
       matchType = 'contains';
-    }
-    // Word overlap (Jaccard-like)
-    else {
+    } else {
       const qWords = new Set(q.split(/\s+/));
       const nWords = new Set(name.split(/[\s\-:]+/));
       let overlap = 0;
       for (const w of qWords) {
         if (nWords.has(w)) overlap++;
-        // Also check partial word matches (e.g., "tube" in "youtube")
-        else if (w.length >= 4) { // ignore short words in partial matching
+        else if (w.length >= 4) {
           for (const nw of nWords) {
             if (nw.length >= 4 && (nw.includes(w) || w.includes(nw))) {
               overlap += 0.5;
@@ -310,7 +300,6 @@ export function findBestMatch(
       }
     }
 
-    // Package name partial match bonus (e.g., "spotify" matches "com.spotify.music")
     const pkgQuery = q.replace(/\s+/g, '');
     if (score < 50 && pkgQuery.length >= 5 && pkg.includes(pkgQuery)) {
       score = Math.max(score, 60);
@@ -323,23 +312,24 @@ export function findBestMatch(
     }
   }
 
-  return best && best.score >= threshold ? best : null;
+  const finalResult = best && best.score >= threshold ? best : null;
+  UltraDevLog.push('SYSTEM', { event: 'app_fuzzy_match', query: q, installedCount: installedApps.length, found: !!finalResult, matchType: finalResult?.matchType ?? null, score: finalResult?.score ?? 0, pkg: finalResult?.packageName ?? null });
+  return finalResult;
 }
 
 /**
- * Packages that should NEVER be launched directly — they are system services
- * or background daemons that crash or misbehave when opened like regular apps.
+ * Packages that should NEVER be launched directly.
  */
 export const UNLAUNCHABLE_PACKAGES = new Set([
-  'com.sec.android.daemonapp',       // Samsung weather daemon (not an app)
-  'com.android.systemui',            // Android SystemUI
-  'com.android.settings',            // Use SettingsDirectory intents instead
-  'com.android.providers.calendar',  // Calendar provider
-  'com.android.providers.contacts',  // Contacts provider
-  'android',                         // Base Android OS
-  'com.google.android.gms',          // Google Play Services (background)
-  'com.google.android.gsf',          // Google Services Framework
-  'com.android.phone',               // Phone background service
+  'com.sec.android.daemonapp',
+  'com.android.systemui',
+  'com.android.settings',
+  'com.android.providers.calendar',
+  'com.android.providers.contacts',
+  'android',
+  'com.google.android.gms',
+  'com.google.android.gsf',
+  'com.android.phone',
 ]);
 
 export default { lookupPackage, findBestMatch, KNOWN_APPS, UNLAUNCHABLE_PACKAGES };

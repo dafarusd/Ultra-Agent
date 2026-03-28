@@ -5,11 +5,13 @@ import { FIXED_BUILD_SOURCES } from './templates/BuildTemplates';
 import { AGENT_TEMPLATES } from './templates/AgentTemplates';
 import { GENOME_TEMPLATES } from './templates/GenomeTemplates';
 import { createHash } from '../utils/crypto';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 const VERSION = '1.0.0';
 const SCHEMA_VERSION = '1';
 
 export function createDefaultGenome(): Genome {
+  UltraDevLog.push('SYSTEM', { event: 'genome_factory_create_default_start' });
   const genome: Genome = {
     id: generateId(),
     schemaVersion: SCHEMA_VERSION,

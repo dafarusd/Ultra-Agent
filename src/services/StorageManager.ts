@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 import { Logger } from '../utils/Logger';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
@@ -32,11 +33,13 @@ export class StorageManager {
     this.logger = new Logger('StorageManager');
     this.budgetMB = budgetMB;
     this.baseDir = (isNative && FileSystem?.documentDirectory) || '';
+    UltraDevLog.push('SYSTEM', { event: 'storage_manager_init', platform: Platform.OS, budgetMB, hasBaseDir: !!this.baseDir });
   }
 
   async initialize(): Promise<void> {
     if (!isNative) {
       this.logger.info('StorageManager initialized (web mode - no file ops)');
+      UltraDevLog.push('SYSTEM', { event: 'storage_manager_init_ok', mode: 'web_noop' });
       return;
     }
     for (const dir of Object.values(StorageManager.DIRS)) {
@@ -47,6 +50,7 @@ export class StorageManager {
       }
     }
     this.logger.info('StorageManager initialized');
+    UltraDevLog.push('SYSTEM', { event: 'storage_manager_init_ok', mode: 'native', dirCount: Object.keys(StorageManager.DIRS).length });
     await this.enforceBudget();
   }
 
@@ -106,30 +110,51 @@ export class StorageManager {
     const totalMB = bd.total / (1024 * 1024);
     if (totalMB > this.budgetMB) {
       this.logger.warn(`Storage over budget: ${totalMB.toFixed(1)}MB / ${this.budgetMB}MB`);
+      UltraDevLog.push('SYSTEM', { event: 'storage_budget_exceeded', totalMB: totalMB.toFixed(2), budgetMB: this.budgetMB });
       await this.cleanTemp();
       await this.cleanOldBuilds(1);
       await Logger.cleanOldLogs(3);
       const after = await this.getBreakdown();
-      this.logger.info(`After cleanup: ${(after.total / 1048576).toFixed(1)}MB`);
+      const afterMB = (after.total / 1048576).toFixed(1);
+      this.logger.info(`After cleanup: ${afterMB}MB`);
+      UltraDevLog.push('SYSTEM', { event: 'storage_budget_cleanup_done', afterMB });
+    } else {
+      UltraDevLog.push('SYSTEM', { event: 'storage_budget_ok', totalMB: totalMB.toFixed(2), budgetMB: this.budgetMB });
     }
   }
 
   async writeFile(category: string, filename: string, content: string): Promise<string> {
     if (!isNative) return '';
     const filePath = this.getPath(category, filename);
-    await FileSystem.writeAsStringAsync(filePath, content);
-    return filePath;
+    try {
+      await FileSystem.writeAsStringAsync(filePath, content);
+      UltraDevLog.push('SYSTEM', { event: 'storage_write_ok', category, filename, sizeBytes: content.length });
+      return filePath;
+    } catch (err: any) {
+      UltraDevLog.push('SYSTEM', { event: 'storage_write_fail', category, filename, error: err?.message });
+      throw err;
+    }
   }
 
   async readFile(filePath: string): Promise<string> {
     if (!isNative) return '';
-    return FileSystem.readAsStringAsync(filePath);
+    try {
+      const content = await FileSystem.readAsStringAsync(filePath);
+      UltraDevLog.push('SYSTEM', { event: 'storage_read_ok', filePath, sizeBytes: content.length });
+      return content;
+    } catch (err: any) {
+      UltraDevLog.push('SYSTEM', { event: 'storage_read_fail', filePath, error: err?.message });
+      throw err;
+    }
   }
 
   async deleteFile(filePath: string): Promise<void> {
     if (!isNative) return;
     const info = await FileSystem.getInfoAsync(filePath);
-    if (info.exists) await FileSystem.deleteAsync(filePath);
+    if (info.exists) {
+      await FileSystem.deleteAsync(filePath);
+      UltraDevLog.push('SYSTEM', { event: 'storage_delete_ok', filePath });
+    }
   }
 
   async listFiles(category: string): Promise<string[]> {
@@ -158,6 +183,7 @@ export class StorageManager {
     try {
       const files = await FileSystem.readDirectoryAsync(dirPath);
       for (const file of files) await FileSystem.deleteAsync(dirPath + file);
+      UltraDevLog.push('SYSTEM', { event: 'storage_clean_dir', dirPath, fileCount: files.length });
       return files.length;
     } catch {
       return 0;
@@ -178,6 +204,7 @@ export class StorageManager {
           cleaned++;
         }
       }
+      if (cleaned > 0) UltraDevLog.push('SYSTEM', { event: 'storage_clean_old', dirPath, maxAgeDays, cleanedCount: cleaned });
       return cleaned;
     } catch {
       return 0;

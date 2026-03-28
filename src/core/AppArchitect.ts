@@ -1,6 +1,7 @@
 import type { AppSpec } from '../types/appspec';
 import { ModelRouter } from './ModelRouter';
 import { Logger } from '../utils/Logger';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 export class AppArchitect {
   private modelRouter: ModelRouter;
@@ -13,6 +14,7 @@ export class AppArchitect {
 
   async designApp(userDescription: string, conversationContext?: string): Promise<AppSpec> {
     this.logger.info(`Designing app from description: ${userDescription.substring(0, 100)}...`);
+    UltraDevLog.push('SYSTEM', { event: 'app_architect_design_start', descriptionLen: userDescription.length, hasContext: !!conversationContext });
 
     const systemPrompt = `You are an expert Android application architect. The user will describe an app they want built.
 You must produce a COMPLETE AppSpec as JSON. This spec will be used by an automated build system to generate, compile, and package a real APK.

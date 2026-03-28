@@ -4,6 +4,7 @@ import * as MediaLibrary from 'expo-media-library';
 import * as Camera from 'expo-camera';
 import * as Location from 'expo-location';
 import { Logger } from '../utils/Logger';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 export interface ProbeResult {
   capability: string;
@@ -32,6 +33,7 @@ export class CapabilityProbe {
   async probe(): Promise<CapabilityProbeResults> {
     if (this.probed) return this.results;
     const isNative = Platform.OS !== 'web';
+    UltraDevLog.push('SYSTEM', { event: 'capability_probe_start', platform: Platform.OS, isNative });
 
     const checks: Array<() => Promise<void>> = [
       async () => {
@@ -150,6 +152,10 @@ export class CapabilityProbe {
     await Promise.allSettled(checks.map(fn => fn()));
     this.probed = true;
     this.logger.info(`Capability probe complete: ${Object.keys(this.results).length} capabilities checked`);
+    const granted = Object.values(this.results).filter(r => r.granted).length;
+    const denied = Object.values(this.results).filter(r => !r.granted && !r.unavailable).length;
+    const unavailable = Object.values(this.results).filter(r => r.unavailable).length;
+    UltraDevLog.push('SYSTEM', { event: 'capability_probe_done', platform: Platform.OS, checked: Object.keys(this.results).length, granted, denied, unavailable });
     return this.results;
   }
 

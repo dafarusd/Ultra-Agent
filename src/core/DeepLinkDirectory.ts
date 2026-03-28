@@ -1,4 +1,5 @@
 import { ActivityAction } from 'expo-intent-launcher';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 export interface DeepLinkEntry {
   triggers: string[];
@@ -62,5 +63,6 @@ export function resolveDeepLink(query: string): DeepLinkEntry | null {
       }
     }
   }
+  UltraDevLog.push('SYSTEM', { event: 'deep_link_resolve', query: q, found: !!best, label: best?.label ?? null, uri: best?.uri ?? null, packageHint: best?.packageHint ?? null });
   return best;
 }

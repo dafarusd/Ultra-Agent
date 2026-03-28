@@ -13,6 +13,14 @@ interface LogEntry {
   metadata?: Record<string, unknown>;
 }
 
+// Bridge: set by UltraDevLog init to avoid circular imports.
+// Only warn/error levels are mirrored to durable truth.
+type UltraBridgeFn = (level: LogLevel, context: string, message: string, metadata?: Record<string, unknown>) => void;
+let _ultraBridge: UltraBridgeFn | null = null;
+export function setLoggerUltraBridge(fn: UltraBridgeFn): void {
+  _ultraBridge = fn;
+}
+
 export class Logger {
   private static entries: LogEntry[] = [];
   private static readonly MAX_ENTRIES = 500;
@@ -61,6 +69,15 @@ export class Logger {
         error: console.error,
       };
       methods[level](`${prefix} ${message}`, metadata || '');
+    }
+
+    // Mirror warn/error to durable UltraDevLog truth via bridge (avoids circular import)
+    if ((level === 'warn' || level === 'error') && _ultraBridge) {
+      try {
+        _ultraBridge(level, this.context, message, metadata);
+      } catch {
+        // never let bridge failure break logging
+      }
     }
   }
 

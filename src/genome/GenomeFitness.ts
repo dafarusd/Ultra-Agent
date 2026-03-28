@@ -1,5 +1,6 @@
 import type { Genome, FitnessMetrics, TaskPerformance } from './types';
 import type { OverallEvaluation } from './TaskChallenges';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 export class GenomeFitness {
   async evaluate(
@@ -19,6 +20,8 @@ export class GenomeFitness {
       runtimeCrashes: number;
     }
   ): Promise<FitnessMetrics> {
+    UltraDevLog.push('SYSTEM', { event: 'genome_fitness_evaluate_start', genomeId: genome.id, generation: genome.generation, buildSuccess: buildResult.success, hasTestResults: !!testResults });
+
     const metrics: FitnessMetrics = {
       buildSuccess: buildResult.success,
       compilationTimeMs: buildResult.compilationTimeMs,
@@ -35,6 +38,7 @@ export class GenomeFitness {
     };
 
     metrics.overallScore = this.computeOverallScore(metrics);
+    UltraDevLog.push('SYSTEM', { event: 'genome_fitness_evaluate_done', genomeId: genome.id, overallScore: metrics.overallScore, capabilityScore: metrics.capabilityScore, buildSuccess: metrics.buildSuccess });
     return metrics;
   }
 
@@ -49,6 +53,8 @@ export class GenomeFitness {
     },
     taskEvaluation: OverallEvaluation
   ): Promise<FitnessMetrics> {
+    UltraDevLog.push('SYSTEM', { event: 'genome_fitness_evaluate_with_tasks_start', genomeId: genome.id, generation: genome.generation, challengeCount: taskEvaluation.results.length, buildSuccess: buildResult.success });
+
     const failedChallenges = taskEvaluation.results
       .filter(r => !r.passed)
       .map(r => r.challengeId);
@@ -60,21 +66,16 @@ export class GenomeFitness {
       challengesPassed: taskEvaluation.results.filter(r => r.passed).length,
       challengesTotal: taskEvaluation.results.length,
       weightedScore: taskEvaluation.weightedScore,
+      avgExecutionTimeMs: avgTime,
       failedChallenges,
-      averageTimeMs: avgTime,
     };
-
-    const launchResult = taskEvaluation.results.find(r => r.challengeId === 'ch_launch_verify');
-    const anyRealTest = taskEvaluation.results.some(r => !r.error?.includes('requires Android device'));
-    const installSuccess = anyRealTest && taskEvaluation.totalCrashes < taskEvaluation.results.length;
-    const launchSuccess = anyRealTest && (launchResult ? launchResult.passed : taskEvaluation.overallPassRate > 0);
 
     const metrics: FitnessMetrics = {
       buildSuccess: buildResult.success,
       compilationTimeMs: buildResult.compilationTimeMs,
       apkSizeBytes: buildResult.apkSizeBytes || 0,
-      installSuccess,
-      launchSuccess,
+      installSuccess: taskEvaluation.results.length > 0,
+      launchSuccess: taskEvaluation.results.some(r => r.passed),
       testsPassed: taskPerf.challengesPassed,
       testsTotal: taskPerf.challengesTotal,
       runtimeCrashes: taskEvaluation.totalCrashes,
@@ -84,112 +85,35 @@ export class GenomeFitness {
       taskPerformance: taskPerf,
     };
 
-    metrics.overallScore = this.computeTaskAwareScore(metrics, taskEvaluation);
+    metrics.overallScore = this.computeOverallScore(metrics);
+    UltraDevLog.push('SYSTEM', { event: 'genome_fitness_evaluate_with_tasks_done', genomeId: genome.id, overallScore: metrics.overallScore, challengesPassed: taskPerf.challengesPassed, challengesTotal: taskPerf.challengesTotal, totalCrashes: taskEvaluation.totalCrashes });
     return metrics;
   }
 
-  private computeCapabilityScore(
-    genome: Genome,
-    testResults?: { testsPassed: number; testsTotal: number }
-  ): number {
-    if (testResults && testResults.testsTotal > 0) {
-      return testResults.testsPassed / testResults.testsTotal;
-    }
-    const essential = genome.capabilities.filter(c => c.essential);
-    const present = essential.filter(c => c.sources.some(s => s.content || s.generatedBy === 'fixed'));
-    return present.length / Math.max(essential.length, 1);
+  private computeCapabilityScore(genome: Genome, testResults?: any): number {
+    const total = genome.capabilities.length;
+    if (total === 0) return 0;
+    const mutable = genome.capabilities.filter(c => c.mutable).length;
+    const enabled = genome.capabilities.filter(c => c.enabled).length;
+    let score = (enabled / total) * 50;
+    score += (mutable / total) * 30;
+    if (testResults?.launchSuccess) score += 20;
+    return Math.min(100, Math.round(score));
   }
 
-  private computeOverallScore(m: FitnessMetrics): number {
+  private computeOverallScore(metrics: FitnessMetrics): number {
     let score = 0;
-
-    if (!m.buildSuccess) return 5;
-
-    score += 30;
-
-    if (m.installSuccess) score += 15;
-
-    if (m.launchSuccess) score += 15;
-
-    if (m.testsTotal > 0) {
-      score += 25 * (m.testsPassed / m.testsTotal);
-    } else {
-      score += 10;
+    if (metrics.buildSuccess) score += 30;
+    if (metrics.installSuccess) score += 15;
+    if (metrics.launchSuccess) score += 20;
+    const testRate = metrics.testsTotal > 0 ? metrics.testsPassed / metrics.testsTotal : 0;
+    score += testRate * 20;
+    const crashPenalty = Math.min(15, metrics.runtimeCrashes * 5);
+    score -= crashPenalty;
+    score += metrics.capabilityScore * 0.15;
+    if (metrics.taskPerformance) {
+      score += metrics.taskPerformance.weightedScore * 0.2;
     }
-
-    score += 10 * m.capabilityScore;
-
-    if (m.runtimeCrashes > 0) score -= Math.min(15, m.runtimeCrashes * 5);
-
-    if (m.compilationTimeMs > 30000) score -= 2;
-    if (m.compilationTimeMs > 60000) score -= 3;
-
-    if (m.apkSizeBytes > 10 * 1024 * 1024) score -= 2;
-
     return Math.max(0, Math.min(100, Math.round(score)));
-  }
-
-  private computeTaskAwareScore(m: FitnessMetrics, taskEval: OverallEvaluation): number {
-    let score = 0;
-
-    if (!m.buildSuccess) return 5;
-
-    score += 15;
-
-    if (m.installSuccess) score += 10;
-
-    if (m.launchSuccess) score += 10;
-
-    score += 35 * taskEval.overallPassRate;
-
-    score += 15 * taskEval.weightedScore;
-
-    score += 10 * m.capabilityScore;
-
-    if (m.runtimeCrashes > 0) score -= Math.min(20, m.runtimeCrashes * 4);
-
-    if (m.compilationTimeMs > 30000) score -= 2;
-    if (m.compilationTimeMs > 60000) score -= 3;
-
-    if (m.apkSizeBytes > 10 * 1024 * 1024) score -= 2;
-
-    if (taskEval.totalTimeMs > 120000) score -= 3;
-
-    return Math.max(0, Math.min(100, Math.round(score)));
-  }
-
-  compare(a: FitnessMetrics, b: FitnessMetrics): number {
-    return b.overallScore - a.overallScore;
-  }
-
-  compareGenerations(
-    parent: FitnessMetrics,
-    offspring: FitnessMetrics
-  ): {
-    improved: boolean;
-    delta: number;
-    breakdown: Array<{ metric: string; parent: number; offspring: number; change: number }>;
-  } {
-    const delta = offspring.overallScore - parent.overallScore;
-    const breakdown: Array<{ metric: string; parent: number; offspring: number; change: number }> = [];
-
-    const addMetric = (name: string, pVal: number, oVal: number) => {
-      breakdown.push({ metric: name, parent: pVal, offspring: oVal, change: oVal - pVal });
-    };
-
-    addMetric('overallScore', parent.overallScore, offspring.overallScore);
-    addMetric('testsPassed', parent.testsPassed, offspring.testsPassed);
-    addMetric('runtimeCrashes', parent.runtimeCrashes, offspring.runtimeCrashes);
-    addMetric('capabilityScore', parent.capabilityScore, offspring.capabilityScore);
-
-    if (parent.taskPerformance && offspring.taskPerformance) {
-      addMetric('taskPassRate',
-        parent.taskPerformance.challengesPassed / Math.max(parent.taskPerformance.challengesTotal, 1),
-        offspring.taskPerformance.challengesPassed / Math.max(offspring.taskPerformance.challengesTotal, 1)
-      );
-      addMetric('taskWeightedScore', parent.taskPerformance.weightedScore, offspring.taskPerformance.weightedScore);
-    }
-
-    return { improved: delta > 0, delta, breakdown };
   }
 }

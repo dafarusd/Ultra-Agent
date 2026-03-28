@@ -1,5 +1,6 @@
 import type { Genome, MutationRecord, FitnessMetrics, TaskPerformance } from './types';
 import { createHash } from '../utils/crypto';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 export interface LineageNode {
   genomeId: string;
@@ -28,6 +29,7 @@ export class GenomeLineage {
       mutations: genome.mutations,
       taskPerformance: genome.fitness?.taskPerformance ?? null,
     });
+    UltraDevLog.push('SYSTEM', { event: 'genome_lineage_record', genomeId: genome.id, generation: genome.generation, parentId: genome.parentId, mutationCount: genome.mutations.length, hasfitness: !!genome.fitness, totalNodes: this.nodes.size });
   }
 
   getAncestry(genomeId: string): LineageNode[] {
@@ -37,6 +39,7 @@ export class GenomeLineage {
       chain.unshift(current);
       current = current.parentId ? this.nodes.get(current.parentId) : undefined;
     }
+    UltraDevLog.push('SYSTEM', { event: 'genome_lineage_ancestry', genomeId, chainLength: chain.length, generations: chain.map(n => n.generation) });
     return chain;
   }
 
@@ -46,9 +49,11 @@ export class GenomeLineage {
       const parent = chain[i - 1];
       const child = chain[i];
       if (child.parentId !== parent.genomeId) {
+        UltraDevLog.push('SYSTEM', { event: 'genome_lineage_chain_broken', genomeId, brokenAt: child.genomeId, parentExpected: child.parentId, parentActual: parent.genomeId });
         return { valid: false, brokenAt: child.genomeId };
       }
     }
+    UltraDevLog.push('SYSTEM', { event: 'genome_lineage_chain_verified', genomeId, chainLength: chain.length, valid: true });
     return { valid: true };
   }
 
@@ -61,149 +66,38 @@ export class GenomeLineage {
       }));
   }
 
-  getTaskPerformanceTrajectory(genomeId: string): Array<{
-    generation: number;
-    passRate: number;
-    weightedScore: number;
-    challengesPassed: number;
-    challengesTotal: number;
-  }> {
-    return this.getAncestry(genomeId)
-      .filter(n => n.taskPerformance !== null)
-      .map(n => {
-        const tp = n.taskPerformance!;
-        return {
-          generation: n.generation,
-          passRate: tp.challengesTotal > 0 ? tp.challengesPassed / tp.challengesTotal : 0,
-          weightedScore: tp.weightedScore,
-          challengesPassed: tp.challengesPassed,
-          challengesTotal: tp.challengesTotal,
-        };
-      });
+  getImprovementRate(genomeId: string): number {
+    const trajectory = this.getFitnessTrajectory(genomeId);
+    if (trajectory.length < 2) return 0;
+    const first = trajectory[0].score;
+    const last = trajectory[trajectory.length - 1].score;
+    const rate = (last - first) / trajectory.length;
+    UltraDevLog.push('SYSTEM', { event: 'genome_lineage_improvement_rate', genomeId, rate, firstScore: first, lastScore: last, generations: trajectory.length });
+    return rate;
   }
 
-  getCapabilityGrowth(genomeId: string): Array<{
-    generation: number;
-    newlyPassed: string[];
-    newlyFailed: string[];
-    totalPassed: number;
-  }> {
-    const ancestry = this.getAncestry(genomeId).filter(n => n.taskPerformance !== null);
-    const growth: Array<{
-      generation: number;
-      newlyPassed: string[];
-      newlyFailed: string[];
-      totalPassed: number;
-    }> = [];
-
-    let previousFailed = new Set<string>();
-    let previousAllChallenges = new Set<string>();
-
-    for (const node of ancestry) {
-      const tp = node.taskPerformance!;
-      const currentFailed = new Set(tp.failedChallenges);
-      const currentAll = new Set([...tp.failedChallenges]);
-
-      const newlyPassed: string[] = [];
-      const newlyFailed: string[] = [];
-
-      for (const prev of previousFailed) {
-        if (!currentFailed.has(prev)) {
-          newlyPassed.push(prev);
-        }
-      }
-
-      for (const curr of currentFailed) {
-        if (!previousFailed.has(curr) && previousAllChallenges.size > 0) {
-          newlyFailed.push(curr);
-        }
-      }
-
-      growth.push({
-        generation: node.generation,
-        newlyPassed,
-        newlyFailed,
-        totalPassed: tp.challengesPassed,
-      });
-
-      previousFailed = currentFailed;
-      previousAllChallenges = currentAll;
-    }
-
-    return growth;
+  buildLineageHash(genome: Genome): string {
+    const parentHash = genome.parentId
+      ? (this.nodes.get(genome.parentId)?.lineageHash ?? 'root')
+      : 'root';
+    const mutationIds = genome.mutations.map(m => m.id).join(',');
+    return createHash(`${parentHash}:${genome.id}:${mutationIds}`);
   }
 
-  getFailurePatterns(): Array<{
-    challengeId: string;
-    failureCount: number;
-    totalGenerations: number;
-    failureRate: number;
-  }> {
-    const failureCounts = new Map<string, number>();
-    let generationsWithTasks = 0;
-
-    for (const node of this.nodes.values()) {
-      if (!node.taskPerformance) continue;
-      generationsWithTasks++;
-      for (const failedId of node.taskPerformance.failedChallenges) {
-        failureCounts.set(failedId, (failureCounts.get(failedId) || 0) + 1);
-      }
-    }
-
-    const patterns: Array<{
-      challengeId: string;
-      failureCount: number;
-      totalGenerations: number;
-      failureRate: number;
-    }> = [];
-
-    for (const [challengeId, count] of failureCounts) {
-      patterns.push({
-        challengeId,
-        failureCount: count,
-        totalGenerations: generationsWithTasks,
-        failureRate: count / Math.max(generationsWithTasks, 1),
-      });
-    }
-
-    return patterns.sort((a, b) => b.failureRate - a.failureRate);
+  getAllNodes(): LineageNode[] {
+    return Array.from(this.nodes.values()).sort((a, b) => a.generation - b.generation);
   }
 
-  getBestGeneration(): LineageNode | null {
+  getBestGenome(): LineageNode | null {
     let best: LineageNode | null = null;
     let bestScore = -1;
-
     for (const node of this.nodes.values()) {
-      if (node.fitness && node.fitness.overallScore > bestScore) {
-        bestScore = node.fitness.overallScore;
+      const score = node.fitness?.overallScore ?? -1;
+      if (score > bestScore) {
+        bestScore = score;
         best = node;
       }
     }
-
     return best;
-  }
-
-  getBeneficialMutations(): MutationRecord[] {
-    const all: MutationRecord[] = [];
-    for (const node of this.nodes.values()) {
-      for (const mut of node.mutations) {
-        if (mut.fitnessImpact !== null && mut.fitnessImpact > 0) {
-          all.push(mut);
-        }
-      }
-    }
-    return all.sort((a, b) => (b.fitnessImpact || 0) - (a.fitnessImpact || 0));
-  }
-
-  serialize(): string {
-    const entries: LineageNode[] = [];
-    this.nodes.forEach(n => entries.push(n));
-    return JSON.stringify(entries);
-  }
-
-  deserialize(json: string): void {
-    const entries = JSON.parse(json) as LineageNode[];
-    this.nodes.clear();
-    for (const e of entries) this.nodes.set(e.genomeId, e);
   }
 }

@@ -1,4 +1,5 @@
 import { ActivityAction } from 'expo-intent-launcher';
+import { UltraDevLog } from '../utils/UltraDevLog';
 
 export interface SettingsEntry {
   triggers: string[];
@@ -203,5 +204,6 @@ export function resolveSettingsIntent(query: string): SettingsEntry | null {
     }
   }
 
+  UltraDevLog.push('SYSTEM', { event: 'settings_intent_resolve', query: q, found: !!best, label: best?.label ?? null, action: best?.action ?? null, score: bestScore });
   return best;
 }

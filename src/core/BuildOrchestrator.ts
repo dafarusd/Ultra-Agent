@@ -4,6 +4,7 @@ import { ProjectGenerator } from './ProjectGenerator';
 import { MavenResolver } from './MavenResolver';
 import AgentNative from '../native/AgentNative';
 import { Logger } from '../utils/Logger';
+import { UltraDevLog } from '../utils/UltraDevLog';
 import { Platform } from 'react-native';
 import * as ExpoFileSystem from 'expo-file-system/legacy';
 
@@ -57,6 +58,7 @@ export class BuildOrchestrator {
     this.emit(onProgress, 'specifying', 'Designing app architecture...');
     const spec = await this.architect.designApp(description, conversationContext);
     this.logger.info(`Spec created: ${spec.appName} (${spec.files.length} files)`);
+    UltraDevLog.push('SYSTEM', { event: 'build_orchestrator_spec_created', appName: spec.appName, packageName: spec.packageName, fileCount: spec.files.length, depCount: spec.dependencies?.length ?? 0 });
     return this.buildFromSpec(spec, onProgress);
   }
 

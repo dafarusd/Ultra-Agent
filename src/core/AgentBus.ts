@@ -1,3 +1,5 @@
+import { UltraDevLog } from '../utils/UltraDevLog';
+
 interface BusMessage {
   id: string;
   fromAgent: string;
@@ -17,15 +19,18 @@ export class AgentBus {
   constructor() {
     this.subscribers = new Map();
     this.messageLog = [];
+    UltraDevLog.push('SYSTEM', { event: 'agent_bus_init' });
   }
 
   subscribe(agentId: string, handler: MessageHandler): void {
     if (!this.subscribers.has(agentId)) this.subscribers.set(agentId, []);
     this.subscribers.get(agentId)!.push(handler);
+    UltraDevLog.push('SYSTEM', { event: 'agent_bus_subscribe', agentId, listenerCount: this.subscribers.get(agentId)!.length });
   }
 
   unsubscribe(agentId: string): void {
     this.subscribers.delete(agentId);
+    UltraDevLog.push('SYSTEM', { event: 'agent_bus_unsubscribe', agentId });
   }
 
   send(from: string, to: string, type: BusMessage['type'], payload: any): void {
@@ -42,16 +47,21 @@ export class AgentBus {
       this.messageLog = this.messageLog.slice(0, AgentBus.MAX_LOG);
     }
     const handlers = this.subscribers.get(to);
+    const handlerCount = handlers?.length ?? 0;
+    let dispatchErrors = 0;
     if (handlers) {
       for (const h of handlers) {
-        try { h(message); } catch { /* bus isolation */ }
+        try { h(message); } catch { dispatchErrors++; /* bus isolation */ }
       }
     }
+    UltraDevLog.push('SYSTEM', { event: 'agent_bus_send', msgId: message.id, from, to, type, handlerCount, dispatchErrors, hasHandlers: handlerCount > 0 });
   }
 
   broadcast(from: string, type: BusMessage['type'], payload: any): void {
-    for (const agentId of this.subscribers.keys()) {
-      if (agentId !== from) this.send(from, agentId, type, payload);
+    const targets = Array.from(this.subscribers.keys()).filter(id => id !== from);
+    UltraDevLog.push('SYSTEM', { event: 'agent_bus_broadcast', from, type, targetCount: targets.length });
+    for (const agentId of targets) {
+      this.send(from, agentId, type, payload);
     }
   }
 
@@ -62,5 +72,6 @@ export class AgentBus {
   clear(): void {
     this.messageLog = [];
     this.subscribers.clear();
+    UltraDevLog.push('SYSTEM', { event: 'agent_bus_clear' });
   }
 }
