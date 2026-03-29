@@ -20,7 +20,6 @@ const TEXT = '#e0e0e0';
 interface ActionGridProps {
   collapsed: boolean;
   onToggle: () => void;
-  currentMode: string;
   onExecute: (capability: string, params: Record<string, any>) => void;
   onRunTask: (template: TaskTemplate) => void;
   savedTasks: TaskTemplate[];
@@ -37,7 +36,6 @@ interface InputState {
 export default function ActionGrid({
   collapsed,
   onToggle,
-  currentMode,
   onExecute,
   onRunTask,
   savedTasks,
@@ -75,7 +73,7 @@ export default function ActionGrid({
     UltraDevLog.push('GRID_SAVE', { favCount: newConfig.favorites.length, hiddenCount: newConfig.hiddenCategories.length });
   }, []);
 
-  const allCategories = getGridForMode(currentMode, DEFAULT_CATEGORIES.map(c => {
+  const allCategories = getGridForMode("chat", DEFAULT_CATEGORIES.map(c => {
     if (c.id === 'quick') {
       return {
         ...c,

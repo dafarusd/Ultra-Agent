@@ -980,10 +980,10 @@ export class UltraDevLog {
     selectedModel: string | null;
     bridgeAttached: boolean;
     bridgeHasActiveProvider: boolean;
-    operationMapping: Record<string, string | null>;
-    assignedGroupForCurrentOperation: string | null;
-    eligibleGroupIdsForCurrentOperation: string[];
-    routeRestricted: boolean;
+    operationMapping?: Record<string, string | null>;
+    assignedGroupForCurrentOperation?: string | null;
+    eligibleGroupIdsForCurrentOperation?: string[];
+    routeRestricted?: boolean;
     currentMode?: string;
     note?: string;
   }): void {

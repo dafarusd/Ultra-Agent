@@ -25,12 +25,8 @@ import BlockedAppsTab from "@/components/BlockedAppsTab";
 import { BiometricGate } from "@/src/security/BiometricGate";
 import type {
   ApiProvider,
-  AllowedOperation,
   AuthMode,
-  ProviderCapabilities,
 } from "@/src/types/provider";
-import { DEFAULT_PROVIDER_CAPABILITIES } from "@/src/types/provider";
-import type { TaskModelCandidate } from "@/src/core/provider/TaskDefaultsManager";
 
 // ── Palette ──────────────────────────────────────────────
 const ACCENT = "#e5e5e5";
@@ -45,75 +41,6 @@ const SUCCESS = "#22c55e";
 
 // ── Types ────────────────────────────────────────────────
 type SettingsTab = "apis" | "costs" | "security" | "devtools" | "blocked";
-type ApisSubTab = "providers" | "task_defaults";
-
-const ALL_OPERATIONS: AllowedOperation[] = [
-  'chat', 'reason', 'vision', 'image_generate', 'audio_generate',
-  'audio_transcribe', 'video_generate', 'embeddings', 'tool_use', 'generic_text',
-];
-
-function providerCapabilitiesToOperations(
-  capabilities?: ProviderCapabilities | null,
-): AllowedOperation[] {
-  const c = capabilities ?? DEFAULT_PROVIDER_CAPABILITIES;
-  const ops = new Set<AllowedOperation>(['chat', 'generic_text']);
-  if (c.supportsReasoningHints) ops.add('reason');
-  if (c.supportsVision) ops.add('vision');
-  if (c.supportsImageGeneration) ops.add('image_generate');
-  if (c.supportsAudioGeneration) ops.add('audio_generate');
-  if (c.supportsVideoGeneration) ops.add('video_generate');
-  if (c.supportsEmbeddings) ops.add('embeddings');
-  if (c.supportsToolCalls) ops.add('tool_use');
-  return ALL_OPERATIONS.filter(op => ops.has(op));
-}
-
-function operationsToProviderCapabilities(
-  operations: AllowedOperation[],
-  base?: ProviderCapabilities | null,
-): ProviderCapabilities {
-  const source = base ?? DEFAULT_PROVIDER_CAPABILITIES;
-  const opSet = new Set(operations);
-  return {
-    ...source,
-    adapterIds: [...(source.adapterIds ?? DEFAULT_PROVIDER_CAPABILITIES.adapterIds)],
-    supportsReasoningHints: opSet.has('reason'),
-    supportsVision: opSet.has('vision'),
-    supportsImageGeneration: opSet.has('image_generate'),
-    supportsAudioGeneration: opSet.has('audio_generate') || opSet.has('audio_transcribe'),
-    supportsVideoGeneration: opSet.has('video_generate'),
-    supportsEmbeddings: opSet.has('embeddings'),
-    supportsToolCalls: opSet.has('tool_use'),
-  };
-}
-
-
-interface ProviderBackedModel {
-  id: string;
-  name?: string;
-  providerId: string;
-  providerName: string;
-  capabilities?: ProviderCapabilities | null;
-}
-
-type TaskDefaultUiState = Partial<Record<AllowedOperation, {
-  primary: TaskModelCandidate | null;
-  fallbacks: TaskModelCandidate[];
-}>>;
-
-function taskCandidateKey(c: TaskModelCandidate): string {
-  return `${c.providerId || '(any)'}::${c.modelId}`;
-}
-
-function formatTaskCandidateLabel(c: TaskModelCandidate, models: ProviderBackedModel[]): string {
-  const match = models.find(m => m.id === c.modelId && (c.providerId === '' || m.providerId === c.providerId));
-  if (match) return match.name || match.id;
-  return c.modelId;
-}
-
-function isModelEligibleForOperation(model: ProviderBackedModel, op: AllowedOperation): boolean {
-  const ops = providerCapabilitiesToOperations(model.capabilities);
-  return ops.includes(op);
-}
 
 const AUTH_MODES: AuthMode[] = ['bearer', 'api_key_header', 'basic', 'custom_header', 'none'];
 
@@ -135,7 +62,6 @@ interface ProviderDraft {
   password: string;
   customAuthHeaderName: string;
   customAuthHeaderPrefix: string;
-  capabilities: AllowedOperation[];
   enabled: boolean;
   hasStoredKey?: boolean;
   hasStoredPassword?: boolean;
@@ -151,7 +77,6 @@ function emptyDraft(): ProviderDraft {
     password: '',
     customAuthHeaderName: '',
     customAuthHeaderPrefix: '',
-    capabilities: ['chat'],
     enabled: true,
   };
 }
@@ -172,16 +97,12 @@ export default function SettingsScreen() {
     ? params.tab as SettingsTab
     : 'apis';
   const [tab, setTab] = useState<SettingsTab>(initialTab);
-  const [apisSubTab, setApisSubTab] = useState<ApisSubTab>('providers');
 
   // ── Provider state ──────────────────────────────────────
   const [providers, setProviders] = useState<ApiProvider[]>([]);
   const [providerDraft, setProviderDraft] = useState<ProviderDraft | null>(null);
   const [isNewProvider, setIsNewProvider] = useState(false);
   const [probingId, setProbingId] = useState<string | null>(null);
-
-  // ── Task Defaults state ──────────────────────────────────
-  const [taskDefaults, setTaskDefaults] = useState<TaskDefaultUiState>({});
 
   // ── Cost state ──────────────────────────────────────────
   const [dailyLimit, setDailyLimit] = useState('0');
@@ -219,7 +140,6 @@ export default function SettingsScreen() {
   useEffect(() => {
     AppStorage.get('dev_mode_enabled').then(v => { if (v === '1') setIsDevMode(true); });
     loadProviders();
-    loadTaskDefaults();
     loadCostData();
     loadLimits();
     initBiometric();
@@ -246,26 +166,6 @@ export default function SettingsScreen() {
     } catch {}
   }, []);
 
-  const loadTaskDefaults = useCallback(() => {
-    const core = getAgentCoreInstance();
-    if (!core) return;
-    try {
-      const tdm = (core as any).getTaskDefaultsManager?.();
-      if (!tdm) return;
-      const snapshot: TaskDefaultUiState = {};
-      for (const op of ALL_OPERATIONS) {
-        const candidates: TaskModelCandidate[] = tdm.getCandidates(op);
-        if (candidates.length === 0) {
-          snapshot[op] = { primary: null, fallbacks: [] };
-        } else {
-          snapshot[op] = { primary: candidates[0], fallbacks: candidates.slice(1) };
-        }
-      }
-      setTaskDefaults(snapshot);
-    } catch (err: any) {
-      UltraDevLog.push('SETTINGS_LOAD' as any, { event: 'load_task_defaults_error', error: err?.message });
-    }
-  }, []);
 
   const loadCostData = useCallback(() => {
     const core = getAgentCoreInstance();
@@ -376,7 +276,6 @@ export default function SettingsScreen() {
       d.name = preset.name;
       d.baseUrl = preset.baseUrl;
       d.authMode = preset.authMode;
-      d.capabilities = [...(preset.capabilities || d.capabilities || [])];
     }
     setProviderDraft(d);
     setIsNewProvider(true);
@@ -393,7 +292,6 @@ export default function SettingsScreen() {
       password: '',
       customAuthHeaderName: p.customAuthHeaderName ?? '',
       customAuthHeaderPrefix: p.customAuthHeaderPrefix ?? '',
-      capabilities: providerCapabilitiesToOperations(p.capabilities),
       enabled: p.isActive,
       hasStoredKey: !!p.apiKeyRef,
       hasStoredPassword: !!p.passwordRef,
@@ -425,12 +323,6 @@ export default function SettingsScreen() {
           customAuthHeaderPrefix: providerDraft.authMode === 'custom_header' ? providerDraft.customAuthHeaderPrefix.trim() : undefined,
         });
         savedId = created.id;
-        await pm.updateProvider(created.id, {
-          capabilities: operationsToProviderCapabilities(
-            providerDraft.capabilities,
-            created.capabilities,
-          ),
-        });
         DebugLog.push('SETTINGS_SAVE', { event: 'provider_created', providerId: created.id });
       } else {
         await pm.updateProvider(providerDraft.id, {
@@ -440,10 +332,6 @@ export default function SettingsScreen() {
           isActive: providerDraft.enabled,
           customAuthHeaderName: providerDraft.customAuthHeaderName.trim() || undefined,
           customAuthHeaderPrefix: providerDraft.customAuthHeaderPrefix.trim() || undefined,
-          capabilities: operationsToProviderCapabilities(
-            providerDraft.capabilities,
-            existingProvider?.capabilities,
-          ),
         });
         if (keyReplaced) {
           await pm.updateApiKey(providerDraft.id, providerDraft.apiKey.trim());
@@ -519,26 +407,6 @@ export default function SettingsScreen() {
     }
   }, [loadProviders]);
 
-  // ── Task Defaults CRUD ────────────────────────────────────
-  const setTaskDefault = useCallback(async (
-    op: AllowedOperation,
-    primary: TaskModelCandidate | null,
-    fallbacks: TaskModelCandidate[] = []
-  ) => {
-    const core = getAgentCoreInstance();
-    const tdm = (core as any)?.getTaskDefaultsManager?.();
-    if (!tdm) { Alert.alert('Error', 'Task defaults manager not available.'); return; }
-    try {
-      if (primary) {
-        await tdm.setDefault(op, primary, fallbacks);
-      } else {
-        await tdm.clearDefault(op);
-      }
-      loadTaskDefaults();
-    } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Failed to save task default.');
-    }
-  }, [loadTaskDefaults]);
 
 
 
@@ -629,25 +497,7 @@ export default function SettingsScreen() {
 
             {isApiUnlocked() && (
               <>
-                {/* Sub-tab bar */}
-                <View style={styles.subTabBar}>
-                  {(['providers', 'task_defaults'] as ApisSubTab[]).map(st => (
-                    <Pressable
-                      key={st}
-                      onPress={() => { setProviderDraft(null); setApisSubTab(st); }}
-                      style={[styles.subTab, apisSubTab === st && styles.subTabActive]}
-                    >
-                      <Text style={[styles.subTabText, apisSubTab === st && styles.subTabTextActive]}>
-                        {st === 'providers' ? 'Providers' : 'Task Defaults'}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-
-                {/* ─ Providers sub-tab ─ */}
-                {apisSubTab === 'providers' && (
-                  <>
-                    {/* Provider form */}
+                {/* Provider form */}
                     {providerDraft ? (
                       <View style={styles.card}>
                         <Text style={styles.cardTitle}>{isNewProvider ? 'Add Provider' : 'Edit Provider'}</Text>
@@ -766,27 +616,6 @@ export default function SettingsScreen() {
                           </>
                         )}
 
-                        <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Capabilities</Text>
-                        <View style={styles.chipRow}>
-                          {ALL_OPERATIONS.map(op => {
-                            const active = providerDraft.capabilities.includes(op);
-                            return (
-                              <Pressable
-                                key={op}
-                                onPress={() => {
-                                  const caps = active
-                                    ? providerDraft.capabilities.filter(c => c !== op)
-                                    : [...providerDraft.capabilities, op];
-                                  setProviderDraft({ ...providerDraft, capabilities: caps });
-                                }}
-                                style={[styles.chip, active && styles.chipActive]}
-                              >
-                                <Text style={[styles.chipText, active && styles.chipTextActive]}>{op}</Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-
                         <View style={styles.btnRow}>
                           <Pressable onPress={saveProvider} style={[styles.btn, styles.primaryBtn]}>
                             <Ionicons name="save-outline" size={16} color={BG} />
@@ -830,15 +659,6 @@ export default function SettingsScreen() {
                             </View>
 
                             <Text style={styles.apiUrl} numberOfLines={1}>{p.baseUrl}</Text>
-
-                            {/* Capabilities */}
-                            <View style={[styles.chipRow, { marginTop: 6 }]}>
-                              {providerCapabilitiesToOperations(p.capabilities).map(c => (
-                                <View key={c} style={styles.capBadge}>
-                                  <Text style={styles.capBadgeText}>{c}</Text>
-                                </View>
-                              ))}
-                            </View>
 
                             {/* Probe result */}
                             {p.probeError && (
@@ -906,72 +726,6 @@ export default function SettingsScreen() {
                         </View>
                       </>
                     )}
-                  </>
-                )}
-
-                {/* ─ Task Defaults sub-tab ─ */}
-                {apisSubTab === 'task_defaults' && (
-                  <>
-                    <View style={styles.card}>
-                      <Text style={styles.cardTitle}>Task Defaults</Text>
-                      <Text style={styles.cardSubtitle}>
-                        Choose which model handles each type of operation by default. The agent picks models from your active providers. Tap a model to set it as primary; tap the active model again to clear.
-                      </Text>
-                    </View>
-                    {ALL_OPERATIONS.map(op => {
-                      const def = taskDefaults[op] ?? { primary: null, fallbacks: [] };
-                      const core = getAgentCoreInstance();
-                      const allModels: ProviderBackedModel[] =
-                        (core as any)?.getAllModelsWithProvider?.() ?? [];
-                      const eligibleModels = allModels.filter(m => isModelEligibleForOperation(m, op as AllowedOperation));
-                      const opLabel = op.charAt(0).toUpperCase() + op.slice(1).replace(/_/g, ' ');
-                      const primaryKey = def.primary ? taskCandidateKey(def.primary) : null;
-                      return (
-                        <View key={op} style={styles.card}>
-                          <Text style={[styles.cardTitle, { fontSize: 14 }]}>{opLabel}</Text>
-                          <Text style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>
-                            {def.primary
-                              ? `Primary: ${formatTaskCandidateLabel(def.primary, allModels)}`
-                              : 'No default — will use provider fallback'}
-                          </Text>
-                          {allModels.length === 0 ? (
-                            <Text style={{ color: '#444', fontSize: 12 }}>Add a provider to see available models.</Text>
-                          ) : eligibleModels.length === 0 ? (
-                            <Text style={{ color: '#444', fontSize: 12 }}>No active provider supports this operation.</Text>
-                          ) : (
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} keyboardShouldPersistTaps="handled">
-                              <Pressable
-                                onPress={() => { if (def.primary !== null) setTaskDefault(op as AllowedOperation, null); }}
-                                style={[styles.chip, primaryKey === null && styles.chipActive]}
-                              >
-                                <Text style={[styles.chipText, primaryKey === null && styles.chipTextActive]}>None</Text>
-                              </Pressable>
-                              {eligibleModels.map(m => {
-                                const candidate: TaskModelCandidate = { providerId: m.providerId, modelId: m.id };
-                                const key = taskCandidateKey(candidate);
-                                const isActive = primaryKey === key;
-                                return (
-                                  <Pressable
-                                    key={key}
-                                    onPress={() => {
-                                      if (!isActive) setTaskDefault(op as AllowedOperation, candidate);
-                                      else setTaskDefault(op as AllowedOperation, null);
-                                    }}
-                                    style={[styles.chip, isActive && styles.chipActive]}
-                                  >
-                                    <Text style={[styles.chipText, isActive && styles.chipTextActive]} numberOfLines={1}>
-                                      {m.name || m.id}
-                                    </Text>
-                                  </Pressable>
-                                );
-                              })}
-                            </ScrollView>
-                          )}
-                        </View>
-                      );
-                    })}
-                  </>
-                )}
               </>
             )}
           </>

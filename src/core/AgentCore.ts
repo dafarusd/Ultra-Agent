@@ -10,7 +10,6 @@ import { ProviderManager } from './provider/ProviderManager';
 import { GroupManager } from './provider/GroupManager';
 import { RouteHistoryStore } from './provider/RouteHistoryStore';
 import { AiService } from './provider/AiService';
-import { TaskDefaultsManager } from './provider/TaskDefaultsManager';
 import { PreferenceLearner } from '../utils/PreferenceLearner';
 import { CostTracker } from '../services/CostTracker';
 import { StorageManager } from '../services/StorageManager';
@@ -104,7 +103,6 @@ export class AgentCore extends SimpleEmitter {
   private providerManager: ProviderManager;
   private groupManager: GroupManager;
   private routeHistoryStore: RouteHistoryStore;
-  private taskDefaultsManager: TaskDefaultsManager;
   private aiService: AiService;
   private logger: Logger;
   private ready: boolean;
@@ -131,8 +129,7 @@ export class AgentCore extends SimpleEmitter {
     this.providerManager = new ProviderManager(vault);
     this.groupManager = new GroupManager();
     this.routeHistoryStore = new RouteHistoryStore();
-    this.taskDefaultsManager = new TaskDefaultsManager();
-    this.aiService = new AiService(this.providerManager, this.taskDefaultsManager);
+    this.aiService = new AiService(this.providerManager);
     this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai, this.probe);
     this.executor.setPreferenceLearner(this.learner);
     this.executor.setAiService(this.aiService);
@@ -194,16 +191,11 @@ export class AgentCore extends SimpleEmitter {
       safeInit('ProviderManager', () => this.providerManager.initialize()),
       safeInit('GroupManager', () => this.groupManager.initialize()),
       safeInit('RouteHistory', () => this.routeHistoryStore.initialize()),
-      safeInit('TaskDefaultsManager', () => this.taskDefaultsManager.initialize()),
       safeInit('CredentialVault', () => this.credentialVault.initialize()),
     ]);
 
     await safeInit('ModelRouter', () => this.ai.initialize());
     await safeInit('ModelProviders', () => this.ai.loadProviders());
-    // One-time migration: group assignments → task defaults.
-    await safeInit('TaskDefaultsMigration', () =>
-      this.taskDefaultsManager.runMigrationIfNeeded(this.groupManager)
-    );
     // Wire the runtime bridge so ModelRouter delegates to the new provider system.
     this.wireModelRouterBridge();
     // Immediately populate the provider-backed model list so the picker shows real data.
@@ -1692,38 +1684,21 @@ You are always on. Always capable. Always direct.`;
         // ── Snapshot BEFORE sync ────────────────────────────────────────────
         const providerModelCountsBefore: Record<string, number> = {};
         for (const p of activeProviders) { providerModelCountsBefore[p.id] = pm.getModelsForProvider(p.id).length; }
-        {
-          const allDefs = this.taskDefaultsManager.getAllDefaults();
-          const opMapping: Record<string, string | null> = {};
-          for (const [op, def] of Object.entries(allDefs)) {
-            opMapping[op] = def.primary
-              ? `${def.primary.providerId || '(any)'}/${def.primary.modelId}`
-              : null;
-          }
-          const chatCandidates = this.taskDefaultsManager.getCandidates('chat');
-          const hasAnyDefaults = Object.values(allDefs).some(d => d.primary !== null);
-          DebugLog.apiStateSnapshot({
-            reason: 'bridge_refresh_before_sync',
-            sourceOfTruth: 'bridge_refresh',
-            providerCount: activeProviders.length,
-            activeProviderCount: activeProviders.filter(p => p.isActive !== false).length,
-            providerIds: activeProviders.map(p => p.id),
-            activeProviderIds: activeProviders.filter(p => p.isActive !== false).map(p => p.id),
-            providerModelCounts: providerModelCountsBefore,
-            providerBackedModelCount: this.ai.getProviderBackedModelCount(),
-            legacyModelCount: this.ai.getLegacyModelCount(),
-            defaultModel: this.ai.getDefaultModelId(),
-            selectedModel: this.ai.getDefaultModelId(),
-            bridgeAttached: this.ai.isBridgeAttached(),
-            bridgeHasActiveProvider: bridge.hasActiveProvider(),
-            operationMapping: opMapping,
-            assignedGroupForCurrentOperation: opMapping['chat'] ?? null,
-            eligibleGroupIdsForCurrentOperation: chatCandidates.map(
-              c => `${c.providerId || '(any)'}/${c.modelId}`
-            ),
-            routeRestricted: hasAnyDefaults,
-          });
-        }
+        DebugLog.apiStateSnapshot({
+          reason: 'bridge_refresh_before_sync',
+          sourceOfTruth: 'bridge_refresh',
+          providerCount: activeProviders.length,
+          activeProviderCount: activeProviders.filter(p => p.isActive !== false).length,
+          providerIds: activeProviders.map(p => p.id),
+          activeProviderIds: activeProviders.filter(p => p.isActive !== false).map(p => p.id),
+          providerModelCounts: providerModelCountsBefore,
+          providerBackedModelCount: this.ai.getProviderBackedModelCount(),
+          legacyModelCount: this.ai.getLegacyModelCount(),
+          defaultModel: this.ai.getDefaultModelId(),
+          selectedModel: this.ai.getDefaultModelId(),
+          bridgeAttached: this.ai.isBridgeAttached(),
+          bridgeHasActiveProvider: bridge.hasActiveProvider(),
+        });
 
         const providerBackedModels: Array<any> = [];
         for (const p of activeProviders) {
@@ -1777,38 +1752,21 @@ You are always on. Always capable. Always direct.`;
           defaultModel: this.ai.getDefaultModelId(),
           selectedModel: this.ai.getDefaultModelId(),
         });
-        {
-          const allDefs = this.taskDefaultsManager.getAllDefaults();
-          const opMapping: Record<string, string | null> = {};
-          for (const [op, def] of Object.entries(allDefs)) {
-            opMapping[op] = def.primary
-              ? `${def.primary.providerId || '(any)'}/${def.primary.modelId}`
-              : null;
-          }
-          const chatCandidates = this.taskDefaultsManager.getCandidates('chat');
-          const hasAnyDefaults = Object.values(allDefs).some(d => d.primary !== null);
-          DebugLog.apiStateSnapshot({
-            reason: 'bridge_refresh_after_sync',
-            sourceOfTruth: 'bridge_refresh',
-            providerCount: activeProviders.length,
-            activeProviderCount: activeProviders.filter(p => p.isActive !== false).length,
-            providerIds: activeProviders.map(p => p.id),
-            activeProviderIds: activeProviders.filter(p => p.isActive !== false).map(p => p.id),
-            providerModelCounts: providerModelCountsAfter,
-            providerBackedModelCount: providerBackedModels.length,
-            legacyModelCount: this.ai.getLegacyModelCount(),
-            defaultModel: this.ai.getDefaultModelId(),
-            selectedModel: this.ai.getDefaultModelId(),
-            bridgeAttached: this.ai.isBridgeAttached(),
-            bridgeHasActiveProvider: bridge.hasActiveProvider(),
-            operationMapping: opMapping,
-            assignedGroupForCurrentOperation: opMapping['chat'] ?? null,
-            eligibleGroupIdsForCurrentOperation: chatCandidates.map(
-              c => `${c.providerId || '(any)'}/${c.modelId}`
-            ),
-            routeRestricted: hasAnyDefaults,
-          });
-        }
+        DebugLog.apiStateSnapshot({
+          reason: 'bridge_refresh_after_sync',
+          sourceOfTruth: 'bridge_refresh',
+          providerCount: activeProviders.length,
+          activeProviderCount: activeProviders.filter(p => p.isActive !== false).length,
+          providerIds: activeProviders.map(p => p.id),
+          activeProviderIds: activeProviders.filter(p => p.isActive !== false).map(p => p.id),
+          providerModelCounts: providerModelCountsAfter,
+          providerBackedModelCount: providerBackedModels.length,
+          legacyModelCount: this.ai.getLegacyModelCount(),
+          defaultModel: this.ai.getDefaultModelId(),
+          selectedModel: this.ai.getDefaultModelId(),
+          bridgeAttached: this.ai.isBridgeAttached(),
+          bridgeHasActiveProvider: bridge.hasActiveProvider(),
+        });
         DebugLog.push('SYSTEM', { event: 'bridge_refresh_complete', providerCount: activeProviders.length, modelCount: providerBackedModels.length });
       },
     };
@@ -1821,7 +1779,6 @@ You are always on. Always capable. Always direct.`;
   async refreshBridgeState(): Promise<void> { await this.ai.refreshBridgeState().catch(() => {}); }
   getGroupManager(): GroupManager { return this.groupManager; }
   getRouteHistoryStore(): RouteHistoryStore { return this.routeHistoryStore; }
-  getTaskDefaultsManager(): TaskDefaultsManager { return this.taskDefaultsManager; }
   getAiService(): AiService { return this.aiService; }
   abortCurrentRequest(): void { this.ai.abortCurrentRequest(); }
   hasApiKey(): boolean { return this.ai.hasApiKey() || this.providerManager.getActive().length > 0; }

@@ -1,5 +1,4 @@
-// AiService — all AI/media operations route through TaskDefaultsManager + AdapterRegistry
-// Replaces GroupRouter-based routing with fail-closed task-default routing.
+// AiService — all AI/media operations route through AdapterRegistry with first-available provider fallback.
 
 import type {
   AllowedOperation,
@@ -14,7 +13,6 @@ import type {
   ApiProvider,
 } from '../../types/provider';
 import type { ProviderManager } from './ProviderManager';
-import type { TaskDefaultsManager, TaskModelCandidate } from './TaskDefaultsManager';
 import { getAdapterRegistry } from './AdapterRegistry';
 import type {
   ChatMessage,
@@ -108,15 +106,9 @@ export interface VisionCompletionInput {
 
 export class AiService {
   private providerManager: ProviderManager;
-  private taskDefaults: TaskDefaultsManager;
 
-  constructor(providerManager: ProviderManager, taskDefaults: TaskDefaultsManager) {
+  constructor(providerManager: ProviderManager) {
     this.providerManager = providerManager;
-    this.taskDefaults = taskDefaults;
-  }
-
-  getTaskDefaultsManager(): TaskDefaultsManager {
-    return this.taskDefaults;
   }
 
   private providerHasModel(provider: ApiProvider, modelId: string): boolean {
@@ -160,9 +152,8 @@ export class AiService {
 
   // Resolve a route for the given operation. Resolution order:
   //   1. Manual model override (input.model) → find provider that has this model
-  //   2. Task defaults primary candidate
-  //   3. Task defaults fallback candidates (in order)
-  //   4. Fail closed — throw visible error
+  //   2. First available: scan active providers, use first working route
+  //   3. Fail closed — throw visible error
   private async resolveRoute(
     operation: AllowedOperation,
     opts: { manualModelId?: string; conversationId?: string }
@@ -174,7 +165,7 @@ export class AiService {
       );
     }
 
-    // Path A — manual model override (selected via chat picker)
+    // Path A — manual model override (selected via model picker)
     if (opts.manualModelId) {
       for (const provider of activeProviders) {
         if (!this.providerHasModel(provider, opts.manualModelId)) continue;
@@ -188,68 +179,31 @@ export class AiService {
           return route;
         }
       }
-      // Manual model not found in any provider — fall through to task defaults
+      // Manual model not found in any provider — fall through to first-available
       UltraDevLog.push('ROUTE' as any, {
         event: 'manual_model_not_matched',
         manualModelId: opts.manualModelId,
         operation,
-        note: 'falling through to task defaults',
+        note: 'falling through to first-available provider',
       });
     }
 
-    // Path B — task defaults (primary + fallbacks)
-    // Candidates may be exact {providerId, modelId} or legacy {providerId:'', modelId}.
-    const candidates: TaskModelCandidate[] = this.taskDefaults.getCandidates(operation);
-    UltraDevLog.push('ROUTE' as any, {
-      event: 'route_attempt_task_defaults',
-      operation,
-      candidateCount: candidates.length,
-      candidates: candidates.map(c => `${c.providerId || '(any)'}/${c.modelId}`),
-    });
-
-    for (const candidate of candidates) {
-      // Exact match: candidate specifies a provider. Providerless: search all active providers.
-      const providerMatches = candidate.providerId
-        ? activeProviders.filter(p => p.id === candidate.providerId)
-        : activeProviders.filter(p => this.providerHasModel(p, candidate.modelId));
-      if (providerMatches.length === 0) {
-        UltraDevLog.push('ROUTE' as any, {
-          event: 'candidate_skip',
-          reason: candidate.providerId ? 'provider_not_active' : 'provider_not_found_for_model',
-          providerId: candidate.providerId || null,
-          modelId: candidate.modelId,
-          operation,
-        });
-        continue;
-      }
-      for (const provider of providerMatches) {
-        if (!this.providerHasModel(provider, candidate.modelId)) {
-          UltraDevLog.push('ROUTE' as any, {
-            event: 'candidate_skip',
-            reason: 'model_not_available_on_provider',
-            providerId: provider.id,
-            modelId: candidate.modelId,
-            operation,
-          });
-          continue;
-        }
-        const route = await this.buildRoute(provider, candidate.modelId, operation);
+    // Path B — first available: scan active providers, use first working route
+    for (const provider of activeProviders) {
+      const models = this.providerManager.getModelsForProvider(provider.id);
+      const modelIds = models.length > 0
+        ? models.map(m => m.id)
+        : (provider.manualModelIds ?? []);
+      for (const modelId of modelIds) {
+        const route = await this.buildRoute(provider, modelId, operation);
         if (route) {
           UltraDevLog.push('ROUTE' as any, {
             event: 'route_resolved',
-            step: 'task_default',
-            candidateSource: candidate.providerId ? 'task_default_exact' : 'task_default_model_only_legacy',
+            step: 'first_available',
             ...routeLogFields(route),
           });
           return route;
         }
-        UltraDevLog.push('ROUTE' as any, {
-          event: 'candidate_skip',
-          reason: 'no_adapter_or_key',
-          providerId: provider.id,
-          modelId: candidate.modelId,
-          operation,
-        });
       }
     }
 
@@ -257,7 +211,6 @@ export class AiService {
     UltraDevLog.push('ROUTE' as any, {
       event: 'route_fail_closed',
       operation,
-      candidateCount: candidates.length,
       activeProviderCount: activeProviders.length,
     });
     throw new Error(FAIL_CLOSED_MSG);

@@ -7,15 +7,14 @@ import { UltraDevLog } from '@/src/utils/UltraDevLog';
 
 interface ContextBarProps {
   message: ChatMessage;
-  currentMode: string;
   onExecutePlan: (capability: string, params: Record<string, any>) => void;
   onSendPrompt: (text: string) => void;
 }
 
-export default function ContextBar({ message, currentMode, onExecutePlan, onSendPrompt }: ContextBarProps) {
+export default function ContextBar({ message, onExecutePlan, onSendPrompt }: ContextBarProps) {
   const capability = message.meta?.capability as string | undefined;
   const content = message.content || '';
-  const actions = getContextActions(capability, content, currentMode);
+  const actions = getContextActions(capability, content, "chat");
 
   if (actions.length === 0) return null;
 

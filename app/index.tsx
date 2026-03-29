@@ -35,7 +35,6 @@ import ConversationList from "@/components/ConversationList";
 import PromptViewer from "@/components/PromptViewer";
 import ActionMenu, { ActionMenuItem } from "@/components/ActionMenu";
 import ModelPickerSheet, { PickerModel } from "@/components/ModelPickerSheet";
-import PlusMenu, { ActionType } from "@/components/PlusMenu";
 import ActionGrid from "@/components/ActionGrid";
 import ZoneEditor from "@/components/ZoneEditor";
 import { ZoneConfig, loadZoneConfig } from "@/src/data/ZoneConfig";
@@ -142,11 +141,7 @@ export default function ChatScreen() {
     routerSelectedModel: string | null;
     source: 'provider_bridge'|'legacy_cache'|'mixed'|'empty';
   } | null>(null);
-  const [plusMenuVisible, setPlusMenuVisible] = useState(false);
-  const activePickerModelsRef = React.useRef<PickerModel[]>([]);
 
-  // Current mode & replay
-  const [currentMode, setCurrentMode] = useState<ActionType>("chat");
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
   const [contextBarDismissed, setContextBarDismissed] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ uri: string; base64: string; mimeType: string } | null>(null);
@@ -227,7 +222,6 @@ export default function ChatScreen() {
   const uiStateRef = useRef<Record<string, unknown>>({});
   useEffect(() => {
     uiStateRef.current = {
-      currentMode,
       activeModelId,
       isProcessing,
       conversationId,
@@ -239,7 +233,6 @@ export default function ChatScreen() {
       genomePhase,
       pendingReplay: !!pendingReplay,
       pickerVisible: modelPickerVisible,
-      plusMenuVisible: plusMenuVisible,
       convListVisible: convListVisible,
     };
   });
@@ -523,7 +516,6 @@ export default function ChatScreen() {
         await refreshConversations(core);
         DebugLog.uiInit("complete", `Ready. Conv: ${activeId}, Model: ${core.getDefaultModel()}`);
         DebugLog.uiState("init_complete", {
-          currentMode: "chat",
           activeModelId: core.getDefaultModel(),
           isProcessing: false,
           conversationId: activeId,
@@ -609,7 +601,7 @@ export default function ChatScreen() {
         return;
       }
       lastFocusTime.current = now;
-      DebugLog.uiFocusEffect("triggered", currentMode, [], activeModelId);
+      DebugLog.uiFocusEffect("triggered", "chat", [], activeModelId);
       snapUI("focus_effect");
       agentCore.refreshApiKey().then(() => {
         if (agentCore.hasApiKey()) setStatus("Ready");
@@ -720,8 +712,8 @@ export default function ChatScreen() {
     }
 
     UltraDevLog.newRun();
-    UltraDevLog.sendAttempt(text, currentMode, activeModelId || '', conversationId, messages.length, isProcessing);
-    DebugLog.uiSendMessage(text.length, currentMode, activeModelId, isProcessing);
+    UltraDevLog.sendAttempt(text, "chat", activeModelId || '', conversationId, messages.length, isProcessing);
+    DebugLog.uiSendMessage(text.length, "chat", activeModelId, isProcessing);
     snapUI("before_send");
     if (!overrideText) setInput("");
     setIsProcessing(true);
@@ -781,7 +773,7 @@ export default function ChatScreen() {
       setBuildPhase(null);
       setGenomePhase(null);
     }
-  }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages, messages.length, currentMode, activeModelId]);
+  }, [input, isProcessing, agentCore, conversationId, handleResult, reloadMessages, messages.length, activeModelId]);
 
   // ── Gap 16G: Notification tap handler (proactive suggestion) ──────
   useEffect(() => {
@@ -1011,49 +1003,9 @@ export default function ChatScreen() {
     return tierFiltered;
   }, [agentCore, activeModelId, getResolvedCurrentModelId]);
 
-  // ── Operation-aware picker filter ──────────────────
-  const buildPickerForMode = useCallback((mode: ActionType, allModels: PickerModel[]): {
-    models: PickerModel[];
-    fallbackUsed: boolean;
-    requestedOp: string;
-    entryPoint: 'operation_restricted' | 'fallback_all';
-  } => {
-    type Cat = 'text' | 'image' | 'code' | 'video' | 'audio' | 'reasoning';
-    let allowedTypes: Cat[];
-    let requestedOp: string;
-    switch (mode) {
-      case 'image':
-        allowedTypes = ['image'];
-        requestedOp = 'image_generate';
-        break;
-      case 'video':
-        allowedTypes = ['video'];
-        requestedOp = 'video_generate';
-        break;
-      case 'reasoning':
-        allowedTypes = ['reasoning'];
-        requestedOp = 'reason';
-        break;
-      case 'code':
-        allowedTypes = ['code', 'text'];
-        requestedOp = 'chat';
-        break;
-      default:
-        allowedTypes = ['text', 'code', 'reasoning'];
-        requestedOp = 'chat';
-        break;
-    }
-    const filtered = allModels.filter(m => allowedTypes.includes(m.type as Cat));
-    if (filtered.length === 0) {
-      return { models: allModels, fallbackUsed: true, requestedOp, entryPoint: 'fallback_all' };
-    }
-    return { models: filtered, fallbackUsed: false, requestedOp, entryPoint: 'operation_restricted' };
-  }, []);
-
   const handleModelSelect = useCallback(async (modelId: string) => {
     if (!agentCore) return;
     const resolvedPrev = getResolvedCurrentModelId();
-    activePickerModelsRef.current = [];
     UltraDevLog.pickerSelect(modelId, modelId, resolvedPrev || '');
     UltraDevLog.pickerClose('model_select');
     const prev = resolvedPrev;
@@ -1423,7 +1375,6 @@ export default function ChatScreen() {
             <View style={{ flex: 1 }}>
               <ContextBar
                 message={item}
-                currentMode={currentMode}
                 onExecutePlan={handleContextPlan}
                 onSendPrompt={(text) => handleSend(text)}
               />
@@ -1440,7 +1391,7 @@ export default function ChatScreen() {
       </>
       );
     },
-    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, expandedMsgs, currentMode, handleContextPlan, handleSend, contextBarDismissed]
+    [pendingReplay, messages, isProcessing, openPromptViewer, handleApprove, handleDeny, handleCopyMessage, copiedId, expandedMsgs, handleContextPlan, handleSend, contextBarDismissed]
   );
 
   // ── Layout values ──────────────────────────────────
@@ -1559,7 +1510,6 @@ export default function ChatScreen() {
           <ActionGrid
             collapsed={gridCollapsed}
             onToggle={() => setGridCollapsed(prev => !prev)}
-            currentMode={currentMode}
             onExecute={handleGridExecute}
             onRunTask={handleRunTask}
             savedTasks={savedTasks}
@@ -1590,19 +1540,7 @@ export default function ChatScreen() {
                 const mr = (agentCore as any)?.ai as any;
                 const resolvedModelId = getResolvedCurrentModelId();
                 const resolvedDefaultModel = mr?.getDefaultModelId?.() ?? agentCore?.getDefaultModel() ?? null;
-                const tdm = (agentCore as any)?.taskDefaultsManager;
-                const allDefs = tdm?.getAllDefaults?.() ?? {};
-                const opMapping: Record<string, string | null> = {};
-                for (const [op, def] of Object.entries(allDefs)) {
-                  opMapping[op] = (def as any)?.primary
-                    ? `${(def as any).primary.providerId || '(any)'}/${(def as any).primary.modelId}`
-                    : null;
-                }
-                const chatCandidates: any[] = tdm?.getCandidates?.('chat') ?? [];
-                const hasAnyDefaults = Object.values(allDefs).some((d: any) => d?.primary !== null);
-                // ── Manual model browser: intentionally unrestricted inventory ──
-                activePickerModelsRef.current = allModels;
-                DebugLog.uiPickerOpen('all', currentMode, resolvedModelId);
+                DebugLog.uiPickerOpen('all', 'chat', resolvedModelId);
                 UltraDevLog.apiStateSnapshot({
                   reason: 'picker_open',
                   sourceOfTruth: 'picker_open',
@@ -1617,13 +1555,6 @@ export default function ChatScreen() {
                   selectedModel: resolvedModelId,
                   bridgeAttached: mr?.isBridgeAttached?.() ?? false,
                   bridgeHasActiveProvider: (agentCore as any)?.hasApiKey?.() ?? false,
-                  operationMapping: opMapping,
-                  assignedGroupForCurrentOperation: opMapping['chat'] ?? null,
-                  eligibleGroupIdsForCurrentOperation: chatCandidates.map(
-                    (c: any) => `${c.providerId || '(any)'}/${c.modelId}`
-                  ),
-                  routeRestricted: hasAnyDefaults,
-                  currentMode,
                 });
                 UltraDevLog.modelInventorySync({
                   reason: 'picker_open',
@@ -1638,7 +1569,7 @@ export default function ChatScreen() {
                   entryPoint: 'manual_model_browser',
                   requestedFilter: 'unrestricted',
                   effectiveFilter: 'all',
-                  currentMode,
+                  currentMode: 'chat',
                   totalModels: allModels.length,
                   rawFilteredCount: allModels.length,
                   displayedCount: allModels.length,
@@ -1647,17 +1578,12 @@ export default function ChatScreen() {
                   selectedModel: resolvedModelId,
                   defaultModel: resolvedDefaultModel,
                   slideAnimCurrentValue: 0,
-                  routeRestricted: hasAnyDefaults,
-                  assignedTaskDefaultCandidates: chatCandidates.map(
-                    (c: any) => `${c.providerId || '(any)'}/${c.modelId}`
-                  ),
-                  eligibleCandidateCount: chatCandidates.length,
                   note: 'ok — manual model browser, intentionally unrestricted',
                 });
                 UltraDevLog.modalEvent('modelPicker', 'open', { modelCount: allModels.length });
                 snapUI("picker_open");
                 pickerLogCtxRef.current = {
-                  currentMode,
+                  currentMode: 'chat',
                   defaultModel: resolvedDefaultModel,
                   selectedModel: resolvedModelId,
                   uiSelectedModel: activeModelId,
@@ -1686,15 +1612,8 @@ export default function ChatScreen() {
             </View>
           )}
 
-          {/* Input row: + button | image button | text input | send button */}
+          {/* Input row: image button | text input | send button */}
           <View style={styles.inputRow}>
-            <Pressable
-              onPress={() => setPlusMenuVisible(true)}
-              style={({ pressed }) => [styles.plusBtn, pressed && styles.plusBtnPressed]}
-            >
-              <Ionicons name="add" size={22} color={DIM} />
-            </Pressable>
-
             <Pressable
               onPress={async () => {
                 try {
@@ -1802,82 +1721,15 @@ export default function ChatScreen() {
 
       <ModelPickerSheet
         visible={modelPickerVisible}
-        models={activePickerModelsRef.current.length > 0 ? activePickerModelsRef.current : getPickerModels()}
+        models={getPickerModels()}
         currentModelId={getResolvedCurrentModelId() || agentCore?.getDefaultModel() || ""}
         onSelect={handleModelSelect}
         onClose={() => {
           UltraDevLog.pickerClose('close_button');
           UltraDevLog.modalEvent('modelPicker', 'close', { how: 'close_button' });
-          activePickerModelsRef.current = [];
           setModelPickerVisible(false);
         }}
         logContext={pickerLogCtxRef.current ?? undefined}
-      />
-
-      <PlusMenu
-        visible={plusMenuVisible}
-        currentType={currentMode}
-        onSelect={async (type) => {
-          DebugLog.uiModeSwitch(currentMode, type, "plusMenu");
-          DebugLog.uiPlusMenuSelect(type, false, null);
-          snapUI("plus_menu_select");
-          setCurrentMode(type);
-          setPlusMenuVisible(false);
-          if (agentCore) {
-            const allModels = getPickerModels();
-            const plusRoutedModels = (agentCore as any)?.getAllModelsWithProvider?.() || [];
-            const plusSource: 'provider_bridge' | 'legacy_cache' | 'empty' = plusRoutedModels.length > 0 ? 'provider_bridge' : allModels.length > 0 ? 'legacy_cache' : 'empty';
-            const plusResolvedModelId = getResolvedCurrentModelId();
-            const plusResolvedDefaultModel = (agentCore as any)?.ai?.getDefaultModelId?.() ?? agentCore?.getDefaultModel() ?? null;
-            const tdm = (agentCore as any)?.taskDefaultsManager;
-            const allDefs = tdm?.getAllDefaults?.() ?? {};
-            const opMapping: Record<string, string | null> = {};
-            for (const [op, def] of Object.entries(allDefs)) {
-              opMapping[op] = (def as any)?.primary
-                ? `${(def as any).primary.providerId || '(any)'}/${(def as any).primary.modelId}`
-                : null;
-            }
-            // ── Operation-restricted picker: filter models to those eligible for this mode ──
-            const { models: filteredModels, fallbackUsed, requestedOp, entryPoint } = buildPickerForMode(type, allModels);
-            const opCandidates: any[] = tdm?.getCandidates?.(requestedOp) ?? [];
-            const hasAnyDefaults = Object.values(allDefs).some((d: any) => d?.primary !== null);
-            activePickerModelsRef.current = filteredModels;
-            DebugLog.uiPickerOpen("auto_from_plus", type, activeModelId);
-            UltraDevLog.pickerOpenDetailed({
-              entryPoint,
-              requestedOperation: requestedOp,
-              requestedFilter: requestedOp,
-              effectiveFilter: fallbackUsed ? 'all' : requestedOp,
-              currentMode: type,
-              totalModels: allModels.length,
-              rawFilteredCount: filteredModels.length,
-              displayedCount: filteredModels.length,
-              fallbackUsed,
-              source: plusSource,
-              selectedModel: plusResolvedModelId,
-              defaultModel: plusResolvedDefaultModel,
-              slideAnimCurrentValue: 0,
-              routeRestricted: hasAnyDefaults,
-              assignedTaskDefaultCandidates: opCandidates.map(
-                (c: any) => `${c.providerId || '(any)'}/${c.modelId}`
-              ),
-              eligibleCandidateCount: opCandidates.length,
-              note: fallbackUsed
-                ? `WARN: no ${requestedOp} models found, showing all ${allModels.length}`
-                : `ok — operation_restricted op=${requestedOp} showing ${filteredModels.length}/${allModels.length}`,
-            });
-            pickerLogCtxRef.current = {
-              currentMode: type,
-              defaultModel: plusResolvedDefaultModel,
-              selectedModel: plusResolvedModelId,
-              uiSelectedModel: activeModelId,
-              routerSelectedModel: plusResolvedDefaultModel,
-              source: plusSource,
-            };
-            setModelPickerVisible(true);
-          }
-        }}
-        onClose={() => { UltraDevLog.modalEvent('plusMenu', 'close'); setPlusMenuVisible(false); }}
       />
 
       {Platform.OS !== "web" && (
