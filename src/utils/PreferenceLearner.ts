@@ -174,6 +174,20 @@ export class PreferenceLearner {
   }
 
   /**
+   * Remove a permanently learned app alias when it is discovered to be poisoned
+   * or misleading (for example, a generic noun mapped to a search surface).
+   */
+  async forgetAppAlias(appName: string): Promise<boolean> {
+    const key = `app_alias:${appName.toLowerCase().trim()}`;
+    const existed = this.preferences.delete(key);
+    if (existed) {
+      await this.persist();
+      UltraDevLog.systemEvent('PreferenceLearner', `Forgot alias: "${appName}"`);
+    }
+    return existed;
+  }
+
+  /**
    * Get all learned app aliases (app_alias:* keys).
    */
   getLearnedAliases(): Array<{ appName: string; packageName: string }> {

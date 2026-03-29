@@ -897,9 +897,34 @@ const rules: ParseRule[] = [
     extractParams: () => ({ action: 'pick' }),
   },
   {
+    pattern: /^(?:count|scan|total)\s+(?:all\s+)?(?:my\s+)?(?:photos|images|pictures|gallery)(?:\s+(?:images|photos|pictures))?$/i,
+    capability: 'media_access',
+    extractParams: () => ({ action: 'count' }),
+  },
+  {
+    pattern: /^(?:how\s+many)\s+(?:photos|images|pictures|gallery\s+items?|gallery\s+images?|pictures\s+do\s+i\s+have)(?:\s+(?:do\s+i\s+have|are\s+there))?\??$/i,
+    capability: 'media_access',
+    extractParams: () => ({ action: 'count' }),
+  },
+  {
     pattern: /^(?:show|list)\s+(?:my\s+)?(?:photos|images|pictures|gallery)/i,
     capability: 'media_access',
-    extractParams: () => ({}),
+    extractParams: () => ({ action: 'list' }),
+  },
+  {
+    pattern: /^(?:open|launch|show|check|get)\s+(?:the\s+)?weather(?:\s+app)?$/i,
+    capability: 'app_launch',
+    extractParams: () => ({ target: 'weather' }),
+  },
+  {
+    pattern: /^(?:what(?:'s|\s+is)|how(?:'s|\s+is)|can\s+you\s+tell\s+me\s+what(?:'s|\s+is)|tell\s+me\s+what(?:'s|\s+is)|will\s+it\s+be|is\s+it\s+going\s+to\s+be|gonna\s+be)\s+.*(?:weather|forecast|temperature|rain|snow)\b.*\??$/i,
+    capability: 'app_launch',
+    extractParams: () => ({ target: 'weather' }),
+  },
+  {
+    pattern: /^(?:will\s+it|is\s+it\s+gonna|is\s+it|gonna)\s+(?:rain|snow)(?:\s+today|\s+outside|\s+later)?\??$/i,
+    capability: 'app_launch',
+    extractParams: () => ({ target: 'weather' }),
   },
   {
     pattern: /^share\s+(.+)/i,

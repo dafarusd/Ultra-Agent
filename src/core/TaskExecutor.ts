@@ -37,6 +37,24 @@ const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 
 const isNative = Platform.OS !== 'web';
 
+const GENERIC_SEARCH_PACKAGES = new Set([
+  'com.google.android.googlequicksearchbox',
+  'com.android.chrome',
+  'com.sec.android.app.sbrowser',
+]);
+
+function isWeatherLikeTarget(target: string): boolean {
+  return /\b(weather|forecast|temperature|temp|rain|snow)\b/i.test(target);
+}
+
+function normalizeLaunchQuery(target: string): string {
+  const normalized = target.toLowerCase().trim()
+    .replace(/^(the|a|an|my)\s+/i, '')
+    .replace(/\s+app$/i, '');
+  if (isWeatherLikeTarget(normalized)) return 'weather';
+  return normalized;
+}
+
 async function captureStateDelta(taskId: string, capability: string, toggleFn: () => Promise<boolean>): Promise<{ toggled: boolean; before: any; after: any; changed: Record<string, { from: any; to: any }> }> {
   let before: any = {};
   try {
@@ -710,8 +728,12 @@ export class TaskExecutor {
         }
       }
       case 'media_access': {
+        if (!isNative) return { error: 'Gallery access requires a device' };
+        const perm = await MediaLibrary.requestPermissionsAsync();
+        if (perm.status !== 'granted') {
+          return { success: false, error: 'Photos permission not granted. Enable in Settings > Apps > Agent Ultra > Permissions.' };
+        }
         if (params.action === 'pick') {
-          if (!isNative) return { error: 'Gallery picker requires a device' };
           const pickResult = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             quality: 0.8,
@@ -722,8 +744,50 @@ export class TaskExecutor {
           const picked = pickResult.assets[0];
           return { success: true, uri: picked.uri, width: picked.width, height: picked.height, fileSize: picked.fileSize || null };
         }
-        const { assets } = await MediaLibrary.getAssetsAsync({ first: 20, sortBy: [MediaLibrary.SortBy.creationTime] });
-        return { success: true, count: assets.length, recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })) };
+
+        if (params.action === 'count') {
+          const pageSize = 200;
+          let total = 0;
+          let after: string | undefined = undefined;
+          let hasNextPage = true;
+          const recent: Array<{ name: string; type: string }> = [];
+          while (hasNextPage) {
+            const page = await MediaLibrary.getAssetsAsync({
+              first: pageSize,
+              after,
+              sortBy: [MediaLibrary.SortBy.creationTime],
+              mediaType: [MediaLibrary.MediaType.photo],
+            });
+            total += page.assets.length;
+            if (recent.length < 5) {
+              for (const asset of page.assets) {
+                if (recent.length >= 5) break;
+                recent.push({ name: asset.filename, type: asset.mediaType });
+              }
+            }
+            hasNextPage = !!page.hasNextPage;
+            after = page.endCursor || undefined;
+            if (!page.assets.length) break;
+          }
+          return {
+            success: true,
+            count: total,
+            recent,
+            summary: `You have ${total} image${total === 1 ? '' : 's'} in your gallery.`,
+          };
+        }
+
+        const { assets } = await MediaLibrary.getAssetsAsync({
+          first: 20,
+          sortBy: [MediaLibrary.SortBy.creationTime],
+          mediaType: [MediaLibrary.MediaType.photo],
+        });
+        return {
+          success: true,
+          count: assets.length,
+          recent: assets.map((a) => ({ name: a.filename, type: a.mediaType })),
+          summary: assets.length > 0 ? `Showing ${assets.length} recent image${assets.length === 1 ? '' : 's'}.` : 'No images found in your gallery.',
+        };
       }
       case 'app_launch': {
         DebugLog.executorEnter(taskId, 'app_launch');
@@ -961,9 +1025,8 @@ export class TaskExecutor {
           return sysResult;
         }
 
-        const targetLower = target.toLowerCase().trim()
-          .replace(/^(the|a|an|my)\s+/i, '')
-          .replace(/\s+app$/i, '');
+        const targetLower = normalizeLaunchQuery(target);
+        const weatherLikeTarget = isWeatherLikeTarget(target);
 
         DebugLog.appLaunchBegin(taskId, target, targetLower);
 
@@ -1015,10 +1078,16 @@ export class TaskExecutor {
         if (!pkg && this.learner) {
           const aliasedPkg = this.learner.getAppAlias(targetLower);
           if (aliasedPkg) {
-            pkg = aliasedPkg;
-            resolvedViaAlias = true;
-            this.logger.info(`Alias hit: "${targetLower}" → ${aliasedPkg}`);
-            DebugLog.appLaunchMatch(taskId, targetLower, 'exact', targetLower, aliasedPkg);
+            const poisonedWeatherAlias = weatherLikeTarget && GENERIC_SEARCH_PACKAGES.has(aliasedPkg);
+            if (poisonedWeatherAlias) {
+              try { await this.learner.forgetAppAlias(targetLower); } catch {}
+              DebugLog.systemEvent('TaskExecutor', `Ignored poisoned weather alias: "${targetLower}" → ${aliasedPkg}`);
+            } else {
+              pkg = aliasedPkg;
+              resolvedViaAlias = true;
+              this.logger.info(`Alias hit: "${targetLower}" → ${aliasedPkg}`);
+              DebugLog.appLaunchMatch(taskId, targetLower, 'exact', targetLower, aliasedPkg);
+            }
           }
         }
 
@@ -1032,7 +1101,11 @@ export class TaskExecutor {
             const installed = await AgentNativeModule.getInstalledApps();
             DebugLog.appLaunchDeviceQuery(taskId, installed?.length ?? 0, Date.now() - _qStart);
             if (installed && installed.length > 0) {
-              const match = findBestMatch(targetLower, installed);
+              let match = findBestMatch(targetLower, installed);
+              if (!match && weatherLikeTarget) {
+                const weatherCandidates = installed.filter((app: any) => /weather|accuweather|forecast/i.test(`${app.appName} ${app.packageName}`));
+                match = weatherCandidates.length > 0 ? findBestMatch('weather', weatherCandidates, 25) : null;
+              }
               if (match) {
                 fuzzyMatch = match;
                 pkg = match.packageName;
@@ -1082,41 +1155,45 @@ export class TaskExecutor {
 
         // Step 3: AI fallback only if both directory and device query found nothing
         if (!pkg) {
-          if (!this.ai.hasApiKey()) {
+          if (weatherLikeTarget) {
+            DebugLog.appLaunchFail(taskId, target, undefined, 'Weather target unresolved locally; skipping AI package guess', 'ai_fallback');
+          } else if (!this.ai.hasApiKey()) {
             DebugLog.appLaunchFail(taskId, target, undefined, 'No API key configured', 'ai_fallback');
             return { success: false, error: `Could not find "${target}" on this device. Configure an API key to enable AI-assisted app lookup.` };
           }
           const _aiPrompt = `What is the exact Android package name for the app "${target}"? Reply with ONLY the package name, nothing else. If you're not sure, reply "unknown". IMPORTANT: Never suggest com.android.weather — it does not exist. For weather apps use com.google.android.apps.weather, com.accuweather.android, or com.weather.Weather.`;
-          const _aiStart = Date.now();
-          const r = await this.ai.complete(
-            _aiPrompt,
-            { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 }
-          );
-          const aiPkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
-          if (aiPkg && aiPkg.includes('.') && aiPkg !== 'unknown') {
-            // Validate AI-suggested package is actually installed before trusting it
-            try {
-              const AgentNativeModuleValidate = (await import('../native/AgentNative')).default;
-              const allApps = await AgentNativeModuleValidate.getInstalledApps();
-              const aiPkgExists = allApps.some((a: { packageName: string }) => a.packageName === aiPkg);
-              if (aiPkgExists) {
-                pkg = aiPkg;
-              } else {
-                this.logger.warn(`AI suggested "${aiPkg}" but it is not installed on this device`);
-                // Try fuzzy matching the AI's suggestion as an app name against installed list
-                const aiNameMatch = findBestMatch(aiPkg.split('.').pop() || '', allApps, 60);
-                if (aiNameMatch) {
-                  pkg = aiNameMatch.packageName;
-                  this.logger.info(`AI fallback fuzzy recovered: "${aiPkg}" → "${aiNameMatch.appName}" (${aiNameMatch.packageName})`);
+          if (!weatherLikeTarget) {
+            const _aiStart = Date.now();
+            const r = await this.ai.complete(
+              _aiPrompt,
+              { taskId, agentId: 'launch', maxTokens: 100, temperature: 0.1 }
+            );
+            const aiPkg = r.content.trim().replace(/[^a-zA-Z0-9._]/g, '');
+            if (aiPkg && aiPkg.includes('.') && aiPkg !== 'unknown') {
+              // Validate AI-suggested package is actually installed before trusting it
+              try {
+                const AgentNativeModuleValidate = (await import('../native/AgentNative')).default;
+                const allApps = await AgentNativeModuleValidate.getInstalledApps();
+                const aiPkgExists = allApps.some((a: { packageName: string }) => a.packageName === aiPkg);
+                if (aiPkgExists) {
+                  pkg = aiPkg;
+                } else {
+                  this.logger.warn(`AI suggested "${aiPkg}" but it is not installed on this device`);
+                  // Try fuzzy matching the AI's suggestion as an app name against installed list
+                  const aiNameMatch = findBestMatch(aiPkg.split('.').pop() || '', allApps, 60);
+                  if (aiNameMatch) {
+                    pkg = aiNameMatch.packageName;
+                    this.logger.info(`AI fallback fuzzy recovered: "${aiPkg}" → "${aiNameMatch.appName}" (${aiNameMatch.packageName})`);
+                  }
                 }
+              } catch (validateErr: any) {
+                // If validation fails, still use AI suggestion as last resort
+                pkg = aiPkg;
+                this.logger.warn(`Could not validate AI package suggestion: ${validateErr.message}`);
               }
-            } catch (validateErr: any) {
-              // If validation fails, still use AI suggestion as last resort
-              pkg = aiPkg;
-              this.logger.warn(`Could not validate AI package suggestion: ${validateErr.message}`);
             }
+            DebugLog.appLaunchAiFallback(taskId, target, _aiPrompt, pkg || 'NONE', Date.now() - _aiStart);
           }
-          DebugLog.appLaunchAiFallback(taskId, target, _aiPrompt, pkg || 'NONE', Date.now() - _aiStart);
         }
 
         if (!pkg || !pkg.includes('.')) {
@@ -1159,11 +1236,16 @@ export class TaskExecutor {
 
         // Permanently learn the mapping so future launches are instant (skip if already from alias)
         if (!resolvedViaAlias && this.learner && pkg && pkg.includes('.')) {
-          try {
-            await this.learner.learnAppAlias(targetLower, pkg);
-            this.logger.info(`Learned alias permanently: "${targetLower}" → ${pkg}`);
-          } catch (e: any) {
-            this.logger.warn(`Failed to persist alias: ${e.message}`);
+          const suppressGenericAlias = weatherLikeTarget && GENERIC_SEARCH_PACKAGES.has(pkg);
+          if (!suppressGenericAlias) {
+            try {
+              await this.learner.learnAppAlias(targetLower, pkg);
+              this.logger.info(`Learned alias permanently: "${targetLower}" → ${pkg}`);
+            } catch (e: any) {
+              this.logger.warn(`Failed to persist alias: ${e.message}`);
+            }
+          } else {
+            DebugLog.systemEvent('TaskExecutor', `Skipped generic alias learn: "${targetLower}" → ${pkg}`);
           }
         }
 

@@ -313,6 +313,18 @@ export class AgentCore extends SimpleEmitter {
 
   private lastSystemContext: string = '';
 
+  private shouldPromoteConversationalPlan(plan: ActionPlan | null): boolean {
+    if (!plan?.capability) return false;
+    return [
+      'app_launch', 'open_url', 'media_access', 'device_location', 'contacts_read',
+      'sms_read', 'sms_conversation', 'sms_send', 'camera_capture', 'flashlight_toggle',
+      'alarm_set', 'timer_set', 'reminder_create', 'clipboard_read', 'clipboard_write',
+      'wifi_toggle', 'bluetooth_toggle', 'do_not_disturb', 'battery_status', 'system_info',
+      'device_info', 'app_share', 'web_research', 'vision_read'
+    ].includes(plan.capability);
+  }
+
+
   async refreshSystemContext(): Promise<void> {
     try {
       const { SystemInfoService } = await import('../services/SystemInfoService');
@@ -532,6 +544,16 @@ You are always on. Always capable. Always direct.`;
     let mode = this.detectMode(userInput);
     DebugLog.modeDetected(taskId, mode, userInput);
     step('ROUTE', `Detected mode: ${mode}`, true);
+
+    // Salvage conversationally-phrased commands before conversation tier gating.
+    if (mode === 'conversation') {
+      const conversationalPlan = this.parser.parse(userInput);
+      if (this.shouldPromoteConversationalPlan(conversationalPlan)) {
+        mode = 'command';
+        DebugLog.systemEvent('AgentCore', `Conversation salvaged into command via parser: ${conversationalPlan!.capability}`);
+        step('ROUTE', `Conversation upgraded to command via parser: ${conversationalPlan!.capability}`, true);
+      }
+    }
 
     // Tier gate: conversation/AI mode needs AI access
     if (mode === 'conversation' || mode === 'ai_instruction') {
@@ -1118,7 +1140,7 @@ You are always on. Always capable. Always direct.`;
     }
 
     // === DISAMBIGUATION FOLLOW-UP DETECTION ===
-    if (mode === 'conversation') {
+    if (mode === 'conversation' && !plan) {
       try {
         const conv = await this.conversations.loadConversation(conversationId);
         if (conv && conv.messages.length >= 2) {
@@ -1202,18 +1224,33 @@ You are always on. Always capable. Always direct.`;
             lastAssistant.content.includes('requiresDisambiguation') ||
             lastAssistant.content.includes('contacts named')
           )) {
-            // User is answering a disambiguation — extract phone number or name
+            // User is answering a disambiguation — accept explicit numbers, ordinals, or contact names from the assistant list.
             const phoneMatch = userInput.match(/(\+?[\d\s\-\(\)]{7,})/);
-            if (phoneMatch) {
-              const number = phoneMatch[1].replace(/[^\d+]/g, '');
-              DebugLog.systemEvent('DisambiguationResolve', `Resolved to number: ${number}`);
+            const optionRegex = /([^:,]+?)\s*\(([^:]+):\s*([^\)]+)\)/g;
+            const options: Array<{ name: string; label: string; number: string }> = [];
+            let optMatch: RegExpExecArray | null;
+            while ((optMatch = optionRegex.exec(lastAssistant.content)) !== null) {
+              options.push({
+                name: optMatch[1].trim(),
+                label: optMatch[2].trim(),
+                number: optMatch[3].trim().replace(/[^\d+]/g, ''),
+              });
+            }
+            const ordinalMap: Record<string, number> = { first: 0, '1': 0, '1st': 0, second: 1, '2': 1, '2nd': 1, third: 2, '3': 2, '3rd': 2, fourth: 3, '4': 3, '4th': 3 };
+            const ordinalKey = Object.keys(ordinalMap).find(k => new RegExp(`\\b${k}\\b`, 'i').test(userInput));
+            const ordinalChoice = ordinalKey !== undefined ? options[ordinalMap[ordinalKey]] : undefined;
+            const namedChoice = options.find(o => userInput.toLowerCase().includes(o.name.toLowerCase()) || o.name.toLowerCase().includes(userInput.toLowerCase().trim()));
+            const chosenNumber = phoneMatch ? phoneMatch[1].replace(/[^\d+]/g, '') : (namedChoice?.number || ordinalChoice?.number || '');
+            const chosenName = namedChoice?.name || ordinalChoice?.name || '';
+            if (chosenNumber) {
+              DebugLog.systemEvent('DisambiguationResolve', `Resolved to number: ${chosenNumber}`);
               mode = 'command';
               const originalCapability = lastAssistant.meta?.capability as string || '';
               if (originalCapability === 'sms_send') {
                 const originalMessage = (lastAssistant.meta?.originalMessage as string) || '';
                 plan = {
                   capability: 'sms_send',
-                  params: { to: number, message: originalMessage },
+                  params: { to: chosenNumber, message: originalMessage },
                   reason: 'User resolved SMS contact disambiguation',
                 };
               } else {
@@ -1222,29 +1259,26 @@ You are always on. Always capable. Always direct.`;
                   params: {
                     target: 'phone',
                     action: 'android.intent.action.CALL',
-                    data: 'tel:' + number,
+                    data: 'tel:' + chosenNumber,
                   },
                   reason: 'User resolved disambiguation with phone number',
                 };
               }
               planFromParser = true;
-              step('PLAN', `Disambiguation resolved: calling ${number}`, true);
-              // Store the association for future
+              step('PLAN', `Disambiguation resolved: calling ${chosenNumber}`, true);
               try {
                 await this.memory.promoteLongterm(
                   userInput,
                   'contact_resolution',
-                  `User resolved: ${userInput} → tel:${number}`
+                  `User resolved: ${userInput} → tel:${chosenNumber}`
                 );
               } catch (e: any) { DebugLog.error('MemoryPromote', e?.message || 'promoteLongterm failed', e?.stack); }
-              // FIX 3: Permanently store the contact preference so
-              // future calls/texts to this name skip disambiguation.
               try {
                 const nameMatch = lastAssistant.content.match(/contacts?\s+named\s+"([^"]+)"/i);
-                const contactName = nameMatch ? nameMatch[1] : userInput.replace(/[^a-zA-Z\s]/g, '').trim();
+                const contactName = nameMatch ? nameMatch[1] : (chosenName || userInput.replace(/[^a-zA-Z\s]/g, '').trim());
                 if (contactName) {
-                  await this.memory.rememberContact(contactName, number, 'resolved');
-                  DebugLog.systemEvent('AgentCore', `Contact preference stored: "${contactName}" → ${number.slice(0, 6)}****`);
+                  await this.memory.rememberContact(contactName, chosenNumber, 'resolved');
+                  DebugLog.systemEvent('AgentCore', `Contact preference stored: "${contactName}" → ${chosenNumber.slice(0, 6)}****`);
                 }
               } catch (e: any) { DebugLog.error('ContactStore', e?.message || 'rememberContact failed', e?.stack); }
             }
