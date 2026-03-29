@@ -143,6 +143,7 @@ export default function ChatScreen() {
     source: 'provider_bridge'|'legacy_cache'|'mixed'|'empty';
   } | null>(null);
   const [plusMenuVisible, setPlusMenuVisible] = useState(false);
+  const activePickerModelsRef = React.useRef<PickerModel[]>([]);
 
   // Current mode & replay
   const [currentMode, setCurrentMode] = useState<ActionType>("chat");
@@ -1010,9 +1011,49 @@ export default function ChatScreen() {
     return tierFiltered;
   }, [agentCore, activeModelId, getResolvedCurrentModelId]);
 
+  // ── Operation-aware picker filter ──────────────────
+  const buildPickerForMode = useCallback((mode: ActionType, allModels: PickerModel[]): {
+    models: PickerModel[];
+    fallbackUsed: boolean;
+    requestedOp: string;
+    entryPoint: 'operation_restricted' | 'fallback_all';
+  } => {
+    type Cat = 'text' | 'image' | 'code' | 'video' | 'audio' | 'reasoning';
+    let allowedTypes: Cat[];
+    let requestedOp: string;
+    switch (mode) {
+      case 'image':
+        allowedTypes = ['image'];
+        requestedOp = 'image_generate';
+        break;
+      case 'video':
+        allowedTypes = ['video'];
+        requestedOp = 'video_generate';
+        break;
+      case 'reasoning':
+        allowedTypes = ['reasoning'];
+        requestedOp = 'reason';
+        break;
+      case 'code':
+        allowedTypes = ['code', 'text'];
+        requestedOp = 'chat';
+        break;
+      default:
+        allowedTypes = ['text', 'code', 'reasoning'];
+        requestedOp = 'chat';
+        break;
+    }
+    const filtered = allModels.filter(m => allowedTypes.includes(m.type as Cat));
+    if (filtered.length === 0) {
+      return { models: allModels, fallbackUsed: true, requestedOp, entryPoint: 'fallback_all' };
+    }
+    return { models: filtered, fallbackUsed: false, requestedOp, entryPoint: 'operation_restricted' };
+  }, []);
+
   const handleModelSelect = useCallback(async (modelId: string) => {
     if (!agentCore) return;
     const resolvedPrev = getResolvedCurrentModelId();
+    activePickerModelsRef.current = [];
     UltraDevLog.pickerSelect(modelId, modelId, resolvedPrev || '');
     UltraDevLog.pickerClose('model_select');
     const prev = resolvedPrev;
@@ -1543,12 +1584,24 @@ export default function ChatScreen() {
           <View style={styles.modelIndicatorRow}>
             <Pressable
               onPress={() => {
-                const pickerModels = getPickerModels();
+                const allModels = getPickerModels();
                 const routedModels = (agentCore as any)?.getAllModelsWithProvider?.() || [];
-                const pickerSource: 'provider_bridge' | 'legacy_cache' | 'empty' = routedModels.length > 0 ? 'provider_bridge' : pickerModels.length > 0 ? 'legacy_cache' : 'empty';
+                const pickerSource: 'provider_bridge' | 'legacy_cache' | 'empty' = routedModels.length > 0 ? 'provider_bridge' : allModels.length > 0 ? 'legacy_cache' : 'empty';
                 const mr = (agentCore as any)?.ai as any;
                 const resolvedModelId = getResolvedCurrentModelId();
                 const resolvedDefaultModel = mr?.getDefaultModelId?.() ?? agentCore?.getDefaultModel() ?? null;
+                const tdm = (agentCore as any)?.taskDefaultsManager;
+                const allDefs = tdm?.getAllDefaults?.() ?? {};
+                const opMapping: Record<string, string | null> = {};
+                for (const [op, def] of Object.entries(allDefs)) {
+                  opMapping[op] = (def as any)?.primary
+                    ? `${(def as any).primary.providerId || '(any)'}/${(def as any).primary.modelId}`
+                    : null;
+                }
+                const chatCandidates: any[] = tdm?.getCandidates?.('chat') ?? [];
+                const hasAnyDefaults = Object.values(allDefs).some((d: any) => d?.primary !== null);
+                // ── Manual model browser: intentionally unrestricted inventory ──
+                activePickerModelsRef.current = allModels;
                 DebugLog.uiPickerOpen('all', currentMode, resolvedModelId);
                 UltraDevLog.apiStateSnapshot({
                   reason: 'picker_open',
@@ -1564,10 +1617,12 @@ export default function ChatScreen() {
                   selectedModel: resolvedModelId,
                   bridgeAttached: mr?.isBridgeAttached?.() ?? false,
                   bridgeHasActiveProvider: (agentCore as any)?.hasApiKey?.() ?? false,
-                  operationMapping: {},
-                  assignedGroupForCurrentOperation: null,
-                  eligibleGroupIdsForCurrentOperation: [],
-                  routeRestricted: false,
+                  operationMapping: opMapping,
+                  assignedGroupForCurrentOperation: opMapping['chat'] ?? null,
+                  eligibleGroupIdsForCurrentOperation: chatCandidates.map(
+                    (c: any) => `${c.providerId || '(any)'}/${c.modelId}`
+                  ),
+                  routeRestricted: hasAnyDefaults,
                   currentMode,
                 });
                 UltraDevLog.modelInventorySync({
@@ -1575,25 +1630,31 @@ export default function ChatScreen() {
                   source: pickerSource,
                   providerBackedModelCount: routedModels.length,
                   legacyModelCount: mr?.getLegacyModelCount?.() ?? 0,
-                  returnedToPickerCount: pickerModels.length,
+                  returnedToPickerCount: allModels.length,
                   selectedModel: resolvedModelId,
                   defaultModel: resolvedDefaultModel,
                 });
                 UltraDevLog.pickerOpenDetailed({
-                  requestedFilter: 'all',
+                  entryPoint: 'manual_model_browser',
+                  requestedFilter: 'unrestricted',
                   effectiveFilter: 'all',
                   currentMode,
-                  totalModels: pickerModels.length,
-                  rawFilteredCount: pickerModels.length,
-                  displayedCount: pickerModels.length,
+                  totalModels: allModels.length,
+                  rawFilteredCount: allModels.length,
+                  displayedCount: allModels.length,
                   fallbackUsed: false,
                   source: pickerSource,
                   selectedModel: resolvedModelId,
                   defaultModel: resolvedDefaultModel,
                   slideAnimCurrentValue: 0,
-                  note: 'ok',
+                  routeRestricted: hasAnyDefaults,
+                  assignedTaskDefaultCandidates: chatCandidates.map(
+                    (c: any) => `${c.providerId || '(any)'}/${c.modelId}`
+                  ),
+                  eligibleCandidateCount: chatCandidates.length,
+                  note: 'ok — manual model browser, intentionally unrestricted',
                 });
-                UltraDevLog.modalEvent('modelPicker', 'open', { modelCount: pickerModels.length });
+                UltraDevLog.modalEvent('modelPicker', 'open', { modelCount: allModels.length });
                 snapUI("picker_open");
                 pickerLogCtxRef.current = {
                   currentMode,
@@ -1741,12 +1802,13 @@ export default function ChatScreen() {
 
       <ModelPickerSheet
         visible={modelPickerVisible}
-        models={getPickerModels()}
+        models={activePickerModelsRef.current.length > 0 ? activePickerModelsRef.current : getPickerModels()}
         currentModelId={getResolvedCurrentModelId() || agentCore?.getDefaultModel() || ""}
         onSelect={handleModelSelect}
         onClose={() => {
           UltraDevLog.pickerClose('close_button');
           UltraDevLog.modalEvent('modelPicker', 'close', { how: 'close_button' });
+          activePickerModelsRef.current = [];
           setModelPickerVisible(false);
         }}
         logContext={pickerLogCtxRef.current ?? undefined}
@@ -1762,25 +1824,47 @@ export default function ChatScreen() {
           setCurrentMode(type);
           setPlusMenuVisible(false);
           if (agentCore) {
-            const plusModels = getPickerModels();
+            const allModels = getPickerModels();
             const plusRoutedModels = (agentCore as any)?.getAllModelsWithProvider?.() || [];
-            const plusSource: 'provider_bridge' | 'legacy_cache' | 'empty' = plusRoutedModels.length > 0 ? 'provider_bridge' : plusModels.length > 0 ? 'legacy_cache' : 'empty';
+            const plusSource: 'provider_bridge' | 'legacy_cache' | 'empty' = plusRoutedModels.length > 0 ? 'provider_bridge' : allModels.length > 0 ? 'legacy_cache' : 'empty';
             const plusResolvedModelId = getResolvedCurrentModelId();
             const plusResolvedDefaultModel = (agentCore as any)?.ai?.getDefaultModelId?.() ?? agentCore?.getDefaultModel() ?? null;
+            const tdm = (agentCore as any)?.taskDefaultsManager;
+            const allDefs = tdm?.getAllDefaults?.() ?? {};
+            const opMapping: Record<string, string | null> = {};
+            for (const [op, def] of Object.entries(allDefs)) {
+              opMapping[op] = (def as any)?.primary
+                ? `${(def as any).primary.providerId || '(any)'}/${(def as any).primary.modelId}`
+                : null;
+            }
+            // ── Operation-restricted picker: filter models to those eligible for this mode ──
+            const { models: filteredModels, fallbackUsed, requestedOp, entryPoint } = buildPickerForMode(type, allModels);
+            const opCandidates: any[] = tdm?.getCandidates?.(requestedOp) ?? [];
+            const hasAnyDefaults = Object.values(allDefs).some((d: any) => d?.primary !== null);
+            activePickerModelsRef.current = filteredModels;
             DebugLog.uiPickerOpen("auto_from_plus", type, activeModelId);
             UltraDevLog.pickerOpenDetailed({
-              requestedFilter: 'all',
-              effectiveFilter: 'all',
+              entryPoint,
+              requestedOperation: requestedOp,
+              requestedFilter: requestedOp,
+              effectiveFilter: fallbackUsed ? 'all' : requestedOp,
               currentMode: type,
-              totalModels: plusModels.length,
-              rawFilteredCount: plusModels.length,
-              displayedCount: plusModels.length,
-              fallbackUsed: false,
+              totalModels: allModels.length,
+              rawFilteredCount: filteredModels.length,
+              displayedCount: filteredModels.length,
+              fallbackUsed,
               source: plusSource,
               selectedModel: plusResolvedModelId,
               defaultModel: plusResolvedDefaultModel,
               slideAnimCurrentValue: 0,
-              note: 'auto_from_plus',
+              routeRestricted: hasAnyDefaults,
+              assignedTaskDefaultCandidates: opCandidates.map(
+                (c: any) => `${c.providerId || '(any)'}/${c.modelId}`
+              ),
+              eligibleCandidateCount: opCandidates.length,
+              note: fallbackUsed
+                ? `WARN: no ${requestedOp} models found, showing all ${allModels.length}`
+                : `ok — operation_restricted op=${requestedOp} showing ${filteredModels.length}/${allModels.length}`,
             });
             pickerLogCtxRef.current = {
               currentMode: type,

@@ -1057,6 +1057,16 @@ export class UltraDevLog {
     /** The model the router/ModelRouter would resolve for this operation */
     routerSelectedModel?: string | null;
     selectedModelMismatch?: boolean;
+    /** Whether this picker entry point is intentionally unrestricted, operation-restricted, or fallback-all */
+    entryPoint?: 'manual_model_browser' | 'operation_restricted' | 'fallback_all';
+    /** The AllowedOperation this picker was opened for (undefined = intentionally unrestricted) */
+    requestedOperation?: string;
+    /** Whether task defaults exist and restrict which route is taken automatically */
+    routeRestricted?: boolean;
+    /** The primary task-default candidate(s) for this operation, as "providerId/modelId" strings */
+    assignedTaskDefaultCandidates?: string[];
+    /** How many candidates are eligible for this operation from task defaults */
+    eligibleCandidateCount?: number;
   }): void {
     const uiSel = params.uiSelectedModel ?? params.selectedModel;
     const routerSel = params.routerSelectedModel ?? params.selectedModel;
@@ -1087,6 +1097,14 @@ export class UltraDevLog {
     /** The model the router/ModelRouter would resolve for this operation */
     routerSelectedModel?: string | null;
     selectedModelMismatch?: boolean;
+    /** The AllowedOperation this picker was opened for (undefined = intentionally unrestricted) */
+    requestedOperation?: string;
+    /** Whether task defaults exist and restrict which route is taken automatically */
+    routeRestricted?: boolean;
+    /** The primary task-default candidate(s) for this operation, as "providerId/modelId" strings */
+    assignedTaskDefaultCandidates?: string[];
+    /** How many candidates are eligible for this operation from task defaults */
+    eligibleCandidateCount?: number;
   }): void {
     const uiSel = params.uiSelectedModel ?? params.selectedModel;
     const routerSel = params.routerSelectedModel ?? params.selectedModel;
@@ -1328,7 +1346,13 @@ export class UltraDevLog {
       case 'PICKER_OPEN': {
         if (d.requestedFilter !== undefined) {
           const mismatch = d.selectedModelMismatch ? ' *** MODEL_MISMATCH' : '';
-          return `${t} [PICKER> ] req=${d.requestedFilter} eff=${d.effectiveFilter} total=${d.totalModels} raw=${d.rawFilteredCount} shown=${d.displayedCount} fallback=${d.fallbackUsed} src=${d.source} assigned=${d.assignedGroupId ?? 'none'} routeRestricted=${d.routeRestricted} ui=${d.uiSelectedModel ?? 'none'} router=${d.routerSelectedModel ?? 'none'} default=${d.defaultModel ?? 'none'} anim=${d.slideAnimCurrentValue}${mismatch} ${d.note}`;
+          const ep = d.entryPoint ? ` ep=${d.entryPoint}` : '';
+          const op = d.requestedOperation ? ` op=${d.requestedOperation}` : '';
+          const asgn = d.assignedTaskDefaultCandidates?.length
+            ? ` tdAssigned=[${(d.assignedTaskDefaultCandidates as string[]).join(',')}]`
+            : (d.assignedGroupId ? ` assigned=${d.assignedGroupId}` : ' assigned=none');
+          const elig = d.eligibleCandidateCount !== undefined ? ` elig=${d.eligibleCandidateCount}` : '';
+          return `${t} [PICKER> ]${ep}${op} req=${d.requestedFilter} eff=${d.effectiveFilter} total=${d.totalModels} raw=${d.rawFilteredCount} shown=${d.displayedCount} fallback=${d.fallbackUsed} src=${d.source}${asgn}${elig} routeRestricted=${d.routeRestricted ?? false} ui=${d.uiSelectedModel ?? 'none'} router=${d.routerSelectedModel ?? 'none'} default=${d.defaultModel ?? 'none'} anim=${d.slideAnimCurrentValue}${mismatch} ${d.note}`;
         }
         return `${t} [PICKER> ] ${d.modelCount} models filter=${d.filter} anim=${d.slideAnimCurrentValue} ${d.note}`;
       }
@@ -1376,7 +1400,12 @@ export class UltraDevLog {
       case 'PICKER_CONTENT': {
         if (d.requestedFilter !== undefined) {
           const mismatch = d.selectedModelMismatch ? ' *** MODEL_MISMATCH' : '';
-          return `${t} [PICK_CT ] req=${d.requestedFilter} eff=${d.effectiveFilter} raw=${d.rawFilteredCount} shown=${d.displayedCount} total=${d.totalModels} fallback=${d.fallbackUsed} src=${d.source} routeRestricted=${d.routeRestricted} assigned=${d.assignedGroupId ?? 'none'} ui=${d.uiSelectedModel ?? 'none'} router=${d.routerSelectedModel ?? 'none'} default=${d.defaultModel ?? 'none'}${mismatch}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
+          const op = d.requestedOperation ? ` op=${d.requestedOperation}` : '';
+          const asgn = d.assignedTaskDefaultCandidates?.length
+            ? ` tdAssigned=[${(d.assignedTaskDefaultCandidates as string[]).join(',')}]`
+            : (d.assignedGroupId ? ` assigned=${d.assignedGroupId}` : ' assigned=none');
+          const elig = d.eligibleCandidateCount !== undefined ? ` elig=${d.eligibleCandidateCount}` : '';
+          return `${t} [PICK_CT ]${op} req=${d.requestedFilter} eff=${d.effectiveFilter} raw=${d.rawFilteredCount} shown=${d.displayedCount} total=${d.totalModels} fallback=${d.fallbackUsed} src=${d.source}${asgn}${elig} routeRestricted=${d.routeRestricted ?? false} ui=${d.uiSelectedModel ?? 'none'} router=${d.routerSelectedModel ?? 'none'} default=${d.defaultModel ?? 'none'}${mismatch}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
         }
         return `${t} [PICK_CT ] filter=${d.activeFilter} ${d.filteredCount}/${d.totalCount}${(d.note as string)?.startsWith('WARN') ? ' *** ' + d.note : ''}`;
       }

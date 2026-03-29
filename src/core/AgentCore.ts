@@ -1692,25 +1692,38 @@ You are always on. Always capable. Always direct.`;
         // ── Snapshot BEFORE sync ────────────────────────────────────────────
         const providerModelCountsBefore: Record<string, number> = {};
         for (const p of activeProviders) { providerModelCountsBefore[p.id] = pm.getModelsForProvider(p.id).length; }
-        DebugLog.apiStateSnapshot({
-          reason: 'bridge_refresh_before_sync',
-          sourceOfTruth: 'bridge_refresh',
-          providerCount: activeProviders.length,
-          activeProviderCount: activeProviders.filter(p => p.isActive !== false).length,
-          providerIds: activeProviders.map(p => p.id),
-          activeProviderIds: activeProviders.filter(p => p.isActive !== false).map(p => p.id),
-          providerModelCounts: providerModelCountsBefore,
-          providerBackedModelCount: this.ai.getProviderBackedModelCount(),
-          legacyModelCount: this.ai.getLegacyModelCount(),
-          defaultModel: this.ai.getDefaultModelId(),
-          selectedModel: this.ai.getDefaultModelId(),
-          bridgeAttached: this.ai.isBridgeAttached(),
-          bridgeHasActiveProvider: bridge.hasActiveProvider(),
-          operationMapping: {},
-          assignedGroupForCurrentOperation: null,
-          eligibleGroupIdsForCurrentOperation: [],
-          routeRestricted: false,
-        });
+        {
+          const allDefs = this.taskDefaultsManager.getAllDefaults();
+          const opMapping: Record<string, string | null> = {};
+          for (const [op, def] of Object.entries(allDefs)) {
+            opMapping[op] = def.primary
+              ? `${def.primary.providerId || '(any)'}/${def.primary.modelId}`
+              : null;
+          }
+          const chatCandidates = this.taskDefaultsManager.getCandidates('chat');
+          const hasAnyDefaults = Object.values(allDefs).some(d => d.primary !== null);
+          DebugLog.apiStateSnapshot({
+            reason: 'bridge_refresh_before_sync',
+            sourceOfTruth: 'bridge_refresh',
+            providerCount: activeProviders.length,
+            activeProviderCount: activeProviders.filter(p => p.isActive !== false).length,
+            providerIds: activeProviders.map(p => p.id),
+            activeProviderIds: activeProviders.filter(p => p.isActive !== false).map(p => p.id),
+            providerModelCounts: providerModelCountsBefore,
+            providerBackedModelCount: this.ai.getProviderBackedModelCount(),
+            legacyModelCount: this.ai.getLegacyModelCount(),
+            defaultModel: this.ai.getDefaultModelId(),
+            selectedModel: this.ai.getDefaultModelId(),
+            bridgeAttached: this.ai.isBridgeAttached(),
+            bridgeHasActiveProvider: bridge.hasActiveProvider(),
+            operationMapping: opMapping,
+            assignedGroupForCurrentOperation: opMapping['chat'] ?? null,
+            eligibleGroupIdsForCurrentOperation: chatCandidates.map(
+              c => `${c.providerId || '(any)'}/${c.modelId}`
+            ),
+            routeRestricted: hasAnyDefaults,
+          });
+        }
 
         const providerBackedModels: Array<any> = [];
         for (const p of activeProviders) {
@@ -1764,25 +1777,38 @@ You are always on. Always capable. Always direct.`;
           defaultModel: this.ai.getDefaultModelId(),
           selectedModel: this.ai.getDefaultModelId(),
         });
-        DebugLog.apiStateSnapshot({
-          reason: 'bridge_refresh_after_sync',
-          sourceOfTruth: 'bridge_refresh',
-          providerCount: activeProviders.length,
-          activeProviderCount: activeProviders.filter(p => p.isActive !== false).length,
-          providerIds: activeProviders.map(p => p.id),
-          activeProviderIds: activeProviders.filter(p => p.isActive !== false).map(p => p.id),
-          providerModelCounts: providerModelCountsAfter,
-          providerBackedModelCount: providerBackedModels.length,
-          legacyModelCount: this.ai.getLegacyModelCount(),
-          defaultModel: this.ai.getDefaultModelId(),
-          selectedModel: this.ai.getDefaultModelId(),
-          bridgeAttached: this.ai.isBridgeAttached(),
-          bridgeHasActiveProvider: bridge.hasActiveProvider(),
-          operationMapping: {},
-          assignedGroupForCurrentOperation: null,
-          eligibleGroupIdsForCurrentOperation: [],
-          routeRestricted: false,
-        });
+        {
+          const allDefs = this.taskDefaultsManager.getAllDefaults();
+          const opMapping: Record<string, string | null> = {};
+          for (const [op, def] of Object.entries(allDefs)) {
+            opMapping[op] = def.primary
+              ? `${def.primary.providerId || '(any)'}/${def.primary.modelId}`
+              : null;
+          }
+          const chatCandidates = this.taskDefaultsManager.getCandidates('chat');
+          const hasAnyDefaults = Object.values(allDefs).some(d => d.primary !== null);
+          DebugLog.apiStateSnapshot({
+            reason: 'bridge_refresh_after_sync',
+            sourceOfTruth: 'bridge_refresh',
+            providerCount: activeProviders.length,
+            activeProviderCount: activeProviders.filter(p => p.isActive !== false).length,
+            providerIds: activeProviders.map(p => p.id),
+            activeProviderIds: activeProviders.filter(p => p.isActive !== false).map(p => p.id),
+            providerModelCounts: providerModelCountsAfter,
+            providerBackedModelCount: providerBackedModels.length,
+            legacyModelCount: this.ai.getLegacyModelCount(),
+            defaultModel: this.ai.getDefaultModelId(),
+            selectedModel: this.ai.getDefaultModelId(),
+            bridgeAttached: this.ai.isBridgeAttached(),
+            bridgeHasActiveProvider: bridge.hasActiveProvider(),
+            operationMapping: opMapping,
+            assignedGroupForCurrentOperation: opMapping['chat'] ?? null,
+            eligibleGroupIdsForCurrentOperation: chatCandidates.map(
+              c => `${c.providerId || '(any)'}/${c.modelId}`
+            ),
+            routeRestricted: hasAnyDefaults,
+          });
+        }
         DebugLog.push('SYSTEM', { event: 'bridge_refresh_complete', providerCount: activeProviders.length, modelCount: providerBackedModels.length });
       },
     };
