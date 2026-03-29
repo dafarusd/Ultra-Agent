@@ -191,7 +191,7 @@ export interface ResolvedRoute {
 }
 
 export interface RouteError {
-  code: 'no_providers' | 'no_valid_route' | 'adapter_missing' | 'provider_inactive' | 'key_missing' | 'no_task_default';
+  code: 'no_providers' | 'no_valid_route' | 'no_groups' | 'adapter_missing' | 'provider_inactive' | 'key_missing' | 'no_task_default';
   message: string;
   userMessage: string;
 }

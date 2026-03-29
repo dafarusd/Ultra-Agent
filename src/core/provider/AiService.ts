@@ -13,6 +13,7 @@ import type {
   ApiProvider,
 } from '../../types/provider';
 import type { ProviderManager } from './ProviderManager';
+import type { GroupRouter } from './GroupRouter';
 import { getAdapterRegistry } from './AdapterRegistry';
 import type {
   ChatMessage,
@@ -23,17 +24,21 @@ import type {
   EmbeddingsOptions,
 } from './CapabilityAdapters';
 import { UltraDevLog } from '../../utils/UltraDevLog';
+import { CorrIdScope } from '../../utils/CorrIdScope';
 
 const FAIL_CLOSED_MSG =
   'No model is configured for this task. Open Settings → AI Providers → Task Defaults and assign a provider + model.';
 
 function routeLogFields(route: ResolvedRoute): Record<string, unknown> {
   return {
+    corrId: CorrIdScope.current(),
     providerId: route.providerId,
     providerName: route.providerName,
     modelId: route.modelId,
     adapterId: route.adapterId,
     operation: route.operation,
+    groupId: route.groupId,
+    groupName: route.groupName,
   };
 }
 
@@ -110,9 +115,15 @@ export interface VisionCompletionInput {
 
 export class AiService {
   private providerManager: ProviderManager;
+  private groupRouter?: GroupRouter;
 
   constructor(providerManager: ProviderManager) {
     this.providerManager = providerManager;
+  }
+
+  /** Wire in the GroupRouter after construction (avoids circular dependency). */
+  setGroupRouter(gr: GroupRouter): void {
+    this.groupRouter = gr;
   }
 
   private providerHasModel(provider: ApiProvider, modelId: string): boolean {
@@ -155,6 +166,7 @@ export class AiService {
   }
 
   // Resolve a route for the given operation. Resolution order:
+  //   0. GroupRouter — 8-step group/operation-based resolution (only when groups are configured and no manual override)
   //   1. Preferred provider + manual model (provider-qualified selection) — exact hit
   //   2. Manual model override — find any provider that has this model
   //   3. First available: scan active providers, use first working route
@@ -163,11 +175,55 @@ export class AiService {
     operation: AllowedOperation,
     opts: { manualModelId?: string; conversationId?: string; preferredProviderId?: string }
   ): Promise<ResolvedRoute> {
+    const corrId = CorrIdScope.current();
     const activeProviders = this.providerManager.getActive();
     if (activeProviders.length === 0) {
       throw new Error(
         'No active providers configured. Open Settings → AI Providers and add a provider with an API key.'
       );
+    }
+
+    // Path 0 — GroupRouter: 8-step group/operation-based routing.
+    // Only tried when:
+    //   a) groupRouter is wired (AgentCore did the injection), and
+    //   b) the caller has NOT supplied an explicit manual model override.
+    // If no groups are configured (code=no_groups) or no providers (code=no_providers),
+    // we fall through to the legacy provider scan. Any other failure fails closed.
+    if (this.groupRouter && !opts.manualModelId) {
+      const grResult = await this.groupRouter.resolve({
+        operation,
+        conversationId: opts.conversationId,
+      });
+      if (grResult.ok) {
+        UltraDevLog.push('ROUTE' as any, {
+          event: 'route_resolved',
+          step: 'group_router',
+          corrId,
+          operation,
+          ...routeLogFields(grResult.route),
+        });
+        return grResult.route;
+      }
+      // no_groups or no_providers → GroupRouter not applicable; fall through to legacy scan.
+      if (grResult.error.code === 'no_groups' || grResult.error.code === 'no_providers') {
+        UltraDevLog.push('ROUTE' as any, {
+          event: 'group_router_skip',
+          corrId,
+          operation,
+          reason: grResult.error.code,
+          note: 'falling through to provider scan',
+        });
+      } else {
+        // no_valid_route — all groups checked and nothing works; fail closed.
+        UltraDevLog.push('ROUTE' as any, {
+          event: 'route_fail_closed',
+          corrId,
+          operation,
+          via: 'group_router',
+          code: grResult.error.code,
+        });
+        throw new Error(grResult.error.userMessage);
+      }
     }
 
     // Path A — provider-qualified selection (preferred provider + manual model)

@@ -752,6 +752,15 @@ export default function ChatScreen() {
           await agentCore.getConversationManager().addMessage(conversationId, visionMsg);
           result = { type: 'action_result', message: visionResult.content, taskId: `vision_${Date.now().toString(36)}` };
         } catch (visionErr: any) {
+          const vErrMsg: ChatMessage = {
+            id: `msg_err_${Date.now()}`,
+            role: 'assistant',
+            content: `Vision failed: ${visionErr.message}`,
+            createdAt: Date.now(),
+            source: 'ultra' as any,
+            meta: { mode: 'command' as any },
+          };
+          await agentCore.getConversationManager().addMessage(conversationId, vErrMsg).catch(() => {});
           result = { type: 'error', message: `Vision failed: ${visionErr.message}`, taskId: '' };
         }
       } else {
@@ -764,6 +773,16 @@ export default function ChatScreen() {
       const isAbort = err?.message?.includes("aborted") || err?.message?.includes("timed out");
       if (isAbort) {
         setStatus("Stopped");
+      } else if (agentCore && conversationId) {
+        const sendErrMsg: ChatMessage = {
+          id: `msg_err_${Date.now()}`,
+          role: 'assistant',
+          content: `Request failed: ${err?.message || 'unknown error'}`,
+          createdAt: Date.now(),
+          source: 'ultra' as any,
+          meta: { mode: 'command' as any },
+        };
+        await agentCore.getConversationManager().addMessage(conversationId, sendErrMsg).catch(() => {});
       }
       await reloadMessages(agentCore, conversationId);
     } finally {

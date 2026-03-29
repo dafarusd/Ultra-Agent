@@ -182,8 +182,10 @@ const KNOWN_APPS: Record<string, string> = {
   'pokemon go': 'com.nianticlabs.pokemongo',
   'among us': 'com.innersloth.spacemafia',
 
-  // Weather
-  'weather': 'com.google.android.googlequicksearchbox',
+  // Weather — "weather" bare noun is intentionally absent so the device-app
+  // fuzzy search can find the user's actual installed weather app first.
+  // Only map explicit branded names so we never silently launch Google Search
+  // when the user has AccuWeather, Samsung Weather, etc. installed.
   'samsung weather': 'com.sec.android.daemonapp',
   'oneplus weather': 'net.oneplus.weather',
   'xiaomi weather': 'com.miui.weather2',

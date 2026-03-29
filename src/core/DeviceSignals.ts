@@ -57,7 +57,10 @@ export class DeviceSignals {
     snap.inferredActivity = this.inferActivity(snap);
     this.signalHistory.push(snap);
     if (this.signalHistory.length > DeviceSignals.MAX_HISTORY) this.signalHistory = this.signalHistory.slice(-DeviceSignals.MAX_HISTORY);
-    if (this.signalHistory.length % 10 === 0) this.persist().catch(() => {});
+    // Persist on first snapshot (warm-restart survivability), then every 5th to keep cadence
+    // tight enough for short sessions while avoiding excessive I/O on long sessions.
+    const len = this.signalHistory.length;
+    if (len === 1 || len % 5 === 0) this.persist().catch(() => {});
     DebugLog.push('SIGNAL_READ' as any, { event: 'read', activity: snap.inferredActivity, battery: snap.batteryLevel, hasWifi: !!snap.wifiSSID, btDevices: snap.bluetoothDevices.length });
     return snap;
   }
@@ -113,6 +116,8 @@ export class DeviceSignals {
   }
 
   async persist(): Promise<void> {
+    const t0 = Date.now();
+    DebugLog.push('SIGNAL_READ' as any, { event: 'persist_attempt', historySize: this.signalHistory.length, patternCount: this.patterns.length });
     try {
       const trimmed = this.signalHistory.slice(-500);
       await Promise.all([
@@ -121,6 +126,10 @@ export class DeviceSignals {
         AsyncStorage.setItem(SIG_WIFI_KEY, JSON.stringify(Array.from(this.knownWifi.entries()))),
         AsyncStorage.setItem(SIG_BT_KEY, JSON.stringify(Array.from(this.knownBluetooth.entries()))),
       ]);
-    } catch (e: any) { DebugLog.error('DeviceSignals', `Persist failed: ${e.message}`); }
+      DebugLog.push('SIGNAL_READ' as any, { event: 'persist_ok', writtenSnapshots: trimmed.length, durationMs: Date.now() - t0 });
+    } catch (e: any) {
+      DebugLog.error('DeviceSignals', `Persist failed: ${e.message}`);
+      DebugLog.push('SIGNAL_READ' as any, { event: 'persist_fail', error: e.message, durationMs: Date.now() - t0 });
+    }
   }
 }

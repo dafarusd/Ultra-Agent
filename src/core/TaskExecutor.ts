@@ -1974,6 +1974,31 @@ export class TaskExecutor {
           return { success: true, summary: `I know ${allResults.length} entities matching "${query}":\n\n${list}`, data: { matches: allResults.length } };
         } catch (e: any) { return { success: false, summary: `Knowledge query failed: ${e.message}` }; }
       }
+      case 'set_user_name': {
+        try {
+          const rawName = (params.name || '').trim();
+          if (!rawName) return { success: false, summary: 'No name provided.' };
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const graph = core?.getCortex()?.getKnowledgeGraph();
+          const vault = core?.getVault?.();
+          DebugLog.push('KG_ENTITY' as any, { event: 'set_user_name_start', name: rawName });
+          if (graph) {
+            const existing = graph.findEntityByName('self') || graph.findEntityByName('me') || graph.findEntityByName('user');
+            if (existing) {
+              existing.name = rawName;
+              existing.aliases = [...new Set([...(existing.aliases || []), rawName.toLowerCase(), 'me', 'self', 'user'])];
+              existing.updatedAt = Date.now();
+              existing.confidence = 1.0;
+            } else {
+              graph.addEntity({ type: 'person' as any, name: rawName, confidence: 1.0, source: 'user_correction' });
+            }
+            graph.persist().catch(() => {});
+          }
+          if (vault) await vault.set('user_preferred_name', rawName).catch(() => {});
+          DebugLog.push('KG_ENTITY' as any, { event: 'set_user_name_done', name: rawName, graphUpdated: !!graph, vaultUpdated: !!vault });
+          return { success: true, summary: `Got it — I'll call you ${rawName}.` };
+        } catch (e: any) { return { success: false, summary: `Couldn't save name: ${e.message}` }; }
+      }
       case 'user_correction': {
         try {
           const core = (await import('./AgentCore')).getAgentCoreInstance();

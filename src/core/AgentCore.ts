@@ -9,6 +9,7 @@ import { TaskExecutor } from './TaskExecutor';
 import { ProviderManager } from './provider/ProviderManager';
 import { GroupManager } from './provider/GroupManager';
 import { RouteHistoryStore } from './provider/RouteHistoryStore';
+import { GroupRouter } from './provider/GroupRouter';
 import { AiService } from './provider/AiService';
 import { PreferenceLearner } from '../utils/PreferenceLearner';
 import { CostTracker } from '../services/CostTracker';
@@ -130,6 +131,8 @@ export class AgentCore extends SimpleEmitter {
     this.groupManager = new GroupManager();
     this.routeHistoryStore = new RouteHistoryStore();
     this.aiService = new AiService(this.providerManager);
+    const groupRouter = new GroupRouter(this.providerManager, this.groupManager, this.routeHistoryStore);
+    this.aiService.setGroupRouter(groupRouter);
     this.executor = new TaskExecutor(this.buildSystem, this.debugEngine, this.caps, this.perms, this.ai, this.probe);
     this.executor.setPreferenceLearner(this.learner);
     this.executor.setAiService(this.aiService);
@@ -1787,6 +1790,7 @@ You are always on. Always capable. Always direct.`;
   async refreshApiKey(): Promise<void> { await this.ai.refreshApiKey(); }
   getAvailableModels() { return this.ai.getAvailableModels(); }
   getCredentialVault(): CredentialVault { return this.credentialVault; }
+  getVault(): SecureVault { return this.vault; }
   getAllModelsWithProvider() { return this.ai.getAllModelsWithProvider(); }
   async setApiBaseUrl(url: string) { await this.ai.setBaseUrl(url); }
   getApiBaseUrl() { return this.ai.getBaseUrl(); }

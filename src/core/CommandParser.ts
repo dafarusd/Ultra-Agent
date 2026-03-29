@@ -997,6 +997,15 @@ const rules: ParseRule[] = [
   },
 
   // ════════════════════════════════════════════════════
+  // USER NAME SETTING — deterministic, captured before generic correction
+  // ════════════════════════════════════════════════════
+  {
+    pattern: /^(?:call\s+me|my\s+name\s+is|refer\s+to\s+me\s+as)\s+(.+)$/i,
+    capability: 'set_user_name',
+    extractParams: (m) => ({ name: (m[1] || '').trim() }),
+  },
+
+  // ════════════════════════════════════════════════════
   // USER CORRECTIONS
   // ════════════════════════════════════════════════════
   {
