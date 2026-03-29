@@ -47,6 +47,8 @@ export interface TextCompletionInput {
   tags?: string[];
   taskId?: string;
   agentId?: string;
+  /** Provider-qualified routing hint: try this provider first when resolving the model. */
+  preferredProviderId?: string;
 }
 
 export interface ImageGenerationInput {
@@ -102,6 +104,8 @@ export interface VisionCompletionInput {
   conversationId?: string;
   taskId?: string;
   agentId?: string;
+  /** Provider-qualified routing hint: try this provider first when resolving the model. */
+  preferredProviderId?: string;
 }
 
 export class AiService {
@@ -151,12 +155,13 @@ export class AiService {
   }
 
   // Resolve a route for the given operation. Resolution order:
-  //   1. Manual model override (input.model) → find provider that has this model
-  //   2. First available: scan active providers, use first working route
-  //   3. Fail closed — throw visible error
+  //   1. Preferred provider + manual model (provider-qualified selection) — exact hit
+  //   2. Manual model override — find any provider that has this model
+  //   3. First available: scan active providers, use first working route
+  //   4. Fail closed — throw visible error
   private async resolveRoute(
     operation: AllowedOperation,
-    opts: { manualModelId?: string; conversationId?: string }
+    opts: { manualModelId?: string; conversationId?: string; preferredProviderId?: string }
   ): Promise<ResolvedRoute> {
     const activeProviders = this.providerManager.getActive();
     if (activeProviders.length === 0) {
@@ -165,7 +170,33 @@ export class AiService {
       );
     }
 
-    // Path A — manual model override (selected via model picker)
+    // Path A — provider-qualified selection (preferred provider + manual model)
+    // When the user picks "ProviderA::model-x", route directly to ProviderA — even if
+    // ProviderB also exposes model-x. This eliminates provider identity collision.
+    if (opts.manualModelId && opts.preferredProviderId) {
+      const preferred = activeProviders.find(p => p.id === opts.preferredProviderId);
+      if (preferred && this.providerHasModel(preferred, opts.manualModelId)) {
+        const route = await this.buildRoute(preferred, opts.manualModelId, operation);
+        if (route) {
+          UltraDevLog.push('ROUTE' as any, {
+            event: 'route_resolved',
+            step: 'preferred_provider_qualified',
+            preferredProviderId: opts.preferredProviderId,
+            ...routeLogFields(route),
+          });
+          return route;
+        }
+      }
+      // Preferred provider unavailable/missing — log and fall through.
+      UltraDevLog.push('ROUTE' as any, {
+        event: 'preferred_provider_not_matched',
+        preferredProviderId: opts.preferredProviderId,
+        manualModelId: opts.manualModelId,
+        note: 'falling through to any-provider scan',
+      });
+    }
+
+    // Path B — manual model override (unqualified): find any active provider that has this model
     if (opts.manualModelId) {
       for (const provider of activeProviders) {
         if (!this.providerHasModel(provider, opts.manualModelId)) continue;
@@ -188,7 +219,7 @@ export class AiService {
       });
     }
 
-    // Path B — first available: scan active providers, use first working route
+    // Path C — first available: scan active providers, use first working route
     for (const provider of activeProviders) {
       const models = this.providerManager.getModelsForProvider(provider.id);
       const modelIds = models.length > 0
@@ -220,6 +251,7 @@ export class AiService {
     const route = await this.resolveRoute('vision', {
       manualModelId: input.model,
       conversationId: input.conversationId,
+      preferredProviderId: input.preferredProviderId,
     });
     const registry = getAdapterRegistry();
     const adapter = registry.get(route.adapterId);
@@ -275,6 +307,7 @@ export class AiService {
     const route = await this.resolveRoute('chat', {
       manualModelId: input.model,
       conversationId: input.conversationId,
+      preferredProviderId: input.preferredProviderId,
     });
     const registry = getAdapterRegistry();
     const adapter = registry.get(route.adapterId);

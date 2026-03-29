@@ -502,7 +502,7 @@ export default function ChatScreen() {
         DebugLog.uiInit("agentCore", "AgentCore initialized, default model: " + core.getDefaultModel());
         DebugLog.modelState("post_init", { discoveredCount: modelsAvailable, defaultModel: core.getDefaultModel(), hasApiKey: core.hasApiKey() });
 
-        setActiveModelId(core.getDefaultModel());
+        setActiveModelId(core.getDefaultModelId() || core.getDefaultModel());
         setStatus("Ready");
 
         const cm = core.getConversationManager();
@@ -973,7 +973,9 @@ export default function ChatScreen() {
   // ── Model picker data ──────────────────────────────
   const getResolvedCurrentModelId = useCallback((): string | null => {
     if (activeModelId) return activeModelId;
-    const routerDefault = (agentCore as any)?.ai?.getDefaultModelId?.() ?? null;
+    // getDefaultModelId() now returns a composite "providerId::modelId" key.
+    // Prefer it over the bare getDefaultModel() so picker selection is provider-qualified.
+    const routerDefault = agentCore?.getDefaultModelId?.() ?? (agentCore as any)?.ai?.getDefaultModelId?.() ?? null;
     return routerDefault || agentCore?.getDefaultModel?.() || null;
   }, [agentCore, activeModelId]);
 
@@ -985,14 +987,18 @@ export default function ChatScreen() {
       : (agentCore.getAvailableModels?.() || []);
     const currentModel = getResolvedCurrentModelId();
     const result = models.map((m: any) => {
+      // Build a provider-qualified composite key "providerId::modelId" when available.
+      // This guarantees unique picker row identity when two providers share a model ID,
+      // and also ensures isSelected works correctly by comparing full composite keys.
+      const compositeId = m.providerId ? `${m.providerId}::${m.id}` : m.id;
       const pickerType = classifyModelType(m.id, m.name || m.id, m.type, m.capabilities);
       return {
-        id: m.id,
+        id: compositeId,
         name: m.name || m.id,
         type: pickerType,
         apiName: m.providerName || "API",
         costIndicator: m.costPer1kInput > 0 ? `$${m.costPer1kInput.toFixed(4)}/1K` : "Free",
-        isSelected: m.id === currentModel,
+        isSelected: compositeId === currentModel,
       };
     });
     const tierService = agentCore?.getTierService();
@@ -1003,22 +1009,23 @@ export default function ChatScreen() {
     return tierFiltered;
   }, [agentCore, activeModelId, getResolvedCurrentModelId]);
 
-  const handleModelSelect = useCallback(async (modelId: string) => {
+  const handleModelSelect = useCallback(async (compositeKey: string) => {
     if (!agentCore) return;
     const resolvedPrev = getResolvedCurrentModelId();
-    UltraDevLog.pickerSelect(modelId, modelId, resolvedPrev || '');
+    UltraDevLog.pickerSelect(compositeKey, compositeKey, resolvedPrev || '');
     UltraDevLog.pickerClose('model_select');
-    const prev = resolvedPrev;
-    DebugLog.uiPickerSelect(modelId, prev);
+    DebugLog.uiPickerSelect(compositeKey, resolvedPrev);
     snapUI("model_select");
-    await agentCore.setDefaultModel(modelId);
-    setActiveModelId(modelId);
-    const confirmed = agentCore.getDefaultModel();
+    // compositeKey may be "providerId::modelId" or a bare "modelId".
+    // setDefaultModel accepts both; internally it stores the composite key.
+    await agentCore.setDefaultModel(compositeKey);
+    setActiveModelId(compositeKey);
+    const confirmedComposite = agentCore.getDefaultModelId() || agentCore.getDefaultModel();
     UltraDevLog.push('EFFECT', {
       component: 'ChatScreen', action: 'model_select_result',
-      requested: modelId, previous: prev,
-      confirmed, match: confirmed === modelId,
-      note: confirmed === modelId ? 'ok' : `BUG: requested ${modelId} but engine has ${confirmed}`,
+      requested: compositeKey, previous: resolvedPrev,
+      confirmed: confirmedComposite, match: confirmedComposite === compositeKey,
+      note: confirmedComposite === compositeKey ? 'ok' : `BUG: requested ${compositeKey} but engine has ${confirmedComposite}`,
     });
   }, [agentCore, activeModelId, getResolvedCurrentModelId, snapUI]);
 
@@ -1397,7 +1404,9 @@ export default function ChatScreen() {
   // ── Layout values ──────────────────────────────────
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
-  const currentModelName = activeModelId || agentCore?.getDefaultModel() || "No model";
+  // activeModelId may be a composite key "providerId::modelId" — extract bare model ID for display.
+  const _rawModelKey = activeModelId || agentCore?.getDefaultModelId?.() || agentCore?.getDefaultModel() || "No model";
+  const currentModelName = _rawModelKey.includes('::') ? _rawModelKey.slice(_rawModelKey.indexOf('::') + 2) : _rawModelKey;
   const shortModelName = currentModelName.length > 18 ? currentModelName.slice(0, 18) + "…" : currentModelName;
 
   if (showOnboarding) {

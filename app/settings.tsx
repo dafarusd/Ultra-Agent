@@ -376,6 +376,8 @@ export default function SettingsScreen() {
         if (!pm) return;
         try {
           await pm.deleteProvider(id);
+          // Rebuild model inventory so the picker immediately reflects the removal.
+          await (core as any)?.refreshBridgeState?.().catch(() => {});
           loadProviders();
         } catch (err: any) { Alert.alert('Error', err.message); }
       }},
@@ -388,6 +390,8 @@ export default function SettingsScreen() {
     if (!pm) return;
     try {
       await pm.setActive(id, enabled);
+      // Rebuild model inventory so picker adds/removes this provider's models immediately.
+      await (core as any)?.refreshBridgeState?.().catch(() => {});
       loadProviders();
     } catch {}
   }, [loadProviders]);
@@ -399,6 +403,8 @@ export default function SettingsScreen() {
       const pm = (core as any)?.getProviderManager?.();
       if (!pm) return;
       await pm.probe(id);
+      // Rebuild model inventory so newly discovered models appear in the picker.
+      await (core as any)?.refreshBridgeState?.().catch(() => {});
       loadProviders();
     } catch (err: any) {
       Alert.alert('Probe failed', err.message);

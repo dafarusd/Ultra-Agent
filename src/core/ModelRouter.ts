@@ -16,15 +16,29 @@ export interface ModelRouterBridge {
       taskId?: string;
       agentId?: string;
       conversationId?: string;
+      /** Provider-qualified routing: prefer this provider when resolving the model. */
+      preferredProviderId?: string;
     }
   ): Promise<{ content: string; model: string; inputTokens: number; outputTokens: number; cost: number }>;
   completeVision?(
     textPrompt: string,
     imageBase64: string,
     mimeType: string,
-    opts: { model?: string; maxTokens?: number; taskId?: string; agentId?: string }
+    opts: { model?: string; maxTokens?: number; taskId?: string; agentId?: string; preferredProviderId?: string }
   ): Promise<{ content: string; model: string; inputTokens: number; outputTokens: number; cost: number }>;
   refreshBridgeState(): Promise<void>;
+}
+
+/** Parse a composite key "providerId::modelId" or a bare "modelId". */
+function parseCompositeKey(key: string): { providerId: string; modelId: string } {
+  const sep = key.indexOf('::');
+  if (sep === -1) return { providerId: '', modelId: key };
+  return { providerId: key.slice(0, sep), modelId: key.slice(sep + 2) };
+}
+
+/** Build a composite key. Returns bare modelId if no providerId is known. */
+function buildCompositeKey(providerId: string, modelId: string): string {
+  return providerId ? `${providerId}::${modelId}` : modelId;
 }
 
 export interface ModelDef {
@@ -93,6 +107,8 @@ export class ModelRouter {
   private apiKey: string | null = null;
   private models: Map<string, ModelDef>;
   private defaultModel: string;
+  /** Provider ID of the currently selected model — empty string when using legacy/no-provider path. */
+  private defaultProviderId: string = '';
   private baseUrl: string;
   private activeController: AbortController | null = null;
   private hasDiscoveredModels = false;
@@ -163,11 +179,19 @@ export class ModelRouter {
     this.providerBackedModels = models;
     // If the current defaultModel is not in the new list, clear it so the picker
     // doesn't show a stale/unavailable model as selected.
-    if (this.defaultModel && models.length > 0) {
-      const stillValid = models.some(m => m.id === this.defaultModel);
+    // Use provider-qualified check when a provider is recorded: the same model ID on
+    // a different provider is NOT a valid resolution for the previously selected one.
+    if (this.defaultModel) {
+      const stillValid = models.length > 0
+        ? this.defaultProviderId
+          ? models.some(m => m.id === this.defaultModel && m.providerId === this.defaultProviderId)
+          : models.some(m => m.id === this.defaultModel)
+        : false; // zero active providers → always clear
       if (!stillValid) {
-        DebugLog.push('SYSTEM', { event: 'default_model_cleared_after_sync', prev: this.defaultModel });
+        const prevKey = buildCompositeKey(this.defaultProviderId, this.defaultModel);
+        DebugLog.push('SYSTEM', { event: 'default_model_cleared_after_sync', prev: prevKey, reason: models.length === 0 ? 'no_active_providers' : 'provider_or_model_removed' });
         this.defaultModel = '';
+        this.defaultProviderId = '';
       }
     }
     DebugLog.modelInventorySync({
@@ -176,8 +200,8 @@ export class ModelRouter {
       providerBackedModelCount: models.length,
       legacyModelCount: legacyCount,
       returnedToPickerCount: models.length,
-      selectedModel: this.defaultModel || null,
-      defaultModel: this.defaultModel || null,
+      selectedModel: this.getSelectedCompositeKey() || null,
+      defaultModel: this.getSelectedCompositeKey() || null,
     });
   }
 
@@ -195,8 +219,20 @@ export class ModelRouter {
     return this.bridge !== null;
   }
 
+  /** Returns the provider-qualified composite key "providerId::modelId", or bare modelId if no provider is recorded. */
   getDefaultModelId(): string | null {
-    return this.defaultModel || null;
+    if (!this.defaultModel) return null;
+    return buildCompositeKey(this.defaultProviderId, this.defaultModel) || null;
+  }
+
+  /** Returns just the providerId portion of the current selection (empty string if none). */
+  getDefaultProviderId(): string {
+    return this.defaultProviderId;
+  }
+
+  /** Returns the composite key for the currently selected model. Empty string if no selection. */
+  getSelectedCompositeKey(): string {
+    return buildCompositeKey(this.defaultProviderId, this.defaultModel);
   }
 
   debugGetInventorySource(): 'provider_bridge' | 'legacy_cache' | 'mixed' | 'empty' {
@@ -213,24 +249,39 @@ export class ModelRouter {
       ? this.providerBackedModels
       : [...this.models.values()];
     if (available.length === 0) return;
-    // Already resolved — no action needed
-    if (this.defaultModel && available.some(m => m.id === this.defaultModel)) return;
-    // Try to restore from vault
-    const savedModel = await this.vault.get('preferred_model');
-    if (savedModel && available.some(m => m.id === savedModel)) {
-      const prev = this.defaultModel;
-      this.defaultModel = savedModel;
-      DebugLog.modelSetDefault(savedModel, prev, 'vault_restore_ensured');
-      this.logger.info(`ensureResolvedDefaultModel: restored from vault: ${savedModel}`);
-      return;
+    // Already resolved with valid provider-qualified selection — no action needed.
+    if (this.defaultModel) {
+      const stillValid = this.defaultProviderId
+        ? available.some(m => m.id === this.defaultModel && (m as any).providerId === this.defaultProviderId)
+        : available.some(m => m.id === this.defaultModel);
+      if (stillValid) return;
     }
-    // Auto-pick stable fallback — prefer first text model, else first available
+    // Try to restore from vault (may be composite "providerId::modelId" or bare "modelId").
+    const savedKey = await this.vault.get('preferred_model');
+    if (savedKey) {
+      const { providerId: savedProviderId, modelId: savedModelId } = parseCompositeKey(savedKey);
+      const match = savedProviderId
+        ? available.find(m => m.id === savedModelId && (m as any).providerId === savedProviderId)
+        : available.find(m => m.id === savedModelId);
+      if (match) {
+        const prev = this.getSelectedCompositeKey();
+        this.defaultModel = match.id;
+        this.defaultProviderId = (match as any).providerId ?? savedProviderId;
+        const restoredKey = buildCompositeKey(this.defaultProviderId, this.defaultModel);
+        DebugLog.modelSetDefault(restoredKey, prev, 'vault_restore_ensured');
+        this.logger.info(`ensureResolvedDefaultModel: restored from vault: ${restoredKey}`);
+        return;
+      }
+    }
+    // Auto-pick stable fallback — prefer first text model, else first available.
     const fallback = available.find(m => m.type === 'text') ?? available[0];
-    const prev = this.defaultModel;
+    const prev = this.getSelectedCompositeKey();
     this.defaultModel = fallback.id;
-    await this.vault.set('preferred_model', fallback.id);
-    DebugLog.modelSetDefault(fallback.id, prev, 'auto_pick_fallback_ensured');
-    this.logger.info(`ensureResolvedDefaultModel: auto-picked fallback: ${fallback.id}`);
+    this.defaultProviderId = (fallback as any).providerId ?? '';
+    const fallbackKey = buildCompositeKey(this.defaultProviderId, this.defaultModel);
+    await this.vault.set('preferred_model', fallbackKey);
+    DebugLog.modelSetDefault(fallbackKey, prev, 'auto_pick_fallback_ensured');
+    this.logger.info(`ensureResolvedDefaultModel: auto-picked fallback: ${fallbackKey}`);
   }
 
   async initialize(): Promise<void> {
@@ -257,18 +308,21 @@ export class ModelRouter {
         this.hasDiscoveredModels = true;
       }
     }
-    const savedModel = await this.vault.get('preferred_model');
-    if (savedModel) {
-      if (this.models.has(savedModel)) {
-        const prev = this.defaultModel;
-        this.defaultModel = savedModel;
-        DebugLog.modelSetDefault(savedModel, prev, 'vault_restore');
-        this.logger.info(`Using preferred model: ${savedModel}`);
+    const savedKey = await this.vault.get('preferred_model');
+    if (savedKey) {
+      const { modelId: savedModelId } = parseCompositeKey(savedKey);
+      if (this.models.has(savedModelId)) {
+        const prev = this.getSelectedCompositeKey();
+        this.defaultModel = savedModelId;
+        // Legacy (no-bridge) path has no providerId — leave defaultProviderId as ''.
+        this.defaultProviderId = '';
+        DebugLog.modelSetDefault(savedModelId, prev, 'vault_restore');
+        this.logger.info(`Using preferred model: ${savedModelId}`);
       } else {
-        this.logger.warn(`Skipping saved preferred model because it is not discovered: ${savedModel}`);
+        this.logger.warn(`Skipping saved preferred model because it is not discovered: ${savedKey}`);
         DebugLog.push('SYSTEM' as any, {
           event: 'preferred_model_skipped_undiscovered',
-          modelId: savedModel,
+          modelId: savedKey,
         });
       }
     }
@@ -650,7 +704,7 @@ export class ModelRouter {
       const sysPrompt = options.systemPrompt ?? "You are Agent Ultra, an autonomous AI agent on a user's Android phone.";
       return this.bridge.completeConversation(
         [{ role: 'system', content: sysPrompt }, { role: 'user', content: prompt }],
-        { model: options.model, maxTokens: options.maxTokens, temperature: options.temperature, taskId: options.taskId, agentId: options.agentId }
+        { model: options.model || this.defaultModel, maxTokens: options.maxTokens, temperature: options.temperature, taskId: options.taskId, agentId: options.agentId, preferredProviderId: this.defaultProviderId || undefined }
       );
     }
     if (!this.apiKey) {
@@ -764,11 +818,12 @@ export class ModelRouter {
     if (this.bridge) {
       if (!this.bridge.hasActiveProvider()) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
       return this.bridge.completeConversation(messages, {
-        model: options.model,
+        model: options.model || this.defaultModel,
         maxTokens: options.maxTokens,
         temperature: options.temperature,
         taskId: options.taskId,
         agentId: options.agentId,
+        preferredProviderId: this.defaultProviderId || undefined,
       });
     }
     if (!this.apiKey) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');
@@ -861,22 +916,39 @@ export class ModelRouter {
     return this.apiKey !== null;
   }
 
+  /** Returns the bare model ID (no provider prefix) — safe to pass directly to API calls. */
   getDefaultModel(): string {
     return this.defaultModel;
   }
 
-  async setDefaultModel(modelId: string): Promise<void> {
-    const inProviderBacked = this.providerBackedModels.some(m => m.id === modelId);
+  /**
+   * Set the default model. Accepts either:
+   *   - A composite key  "providerId::modelId"  (from the model picker)
+   *   - A bare model ID  "modelId"              (legacy / API-call path)
+   * Stores the composite key in the vault for lossless round-trip.
+   * `getDefaultModel()` always returns the bare model ID for API-call compatibility.
+   */
+  async setDefaultModel(key: string): Promise<void> {
+    const { providerId, modelId } = parseCompositeKey(key);
+    // Validate existence.
+    const inProviderBacked = providerId
+      ? this.providerBackedModels.some(m => m.id === modelId && m.providerId === providerId)
+      : this.providerBackedModels.some(m => m.id === modelId);
     const inLegacy = this.models.has(modelId);
     if (!inProviderBacked && !inLegacy) {
-      DebugLog.modelSetDefaultError(modelId, 'Model not available');
+      DebugLog.modelSetDefaultError(key, 'Model not available');
       throw new Error(`Model ${modelId} not available`);
     }
-    const prev = this.defaultModel;
+    const prev = this.getSelectedCompositeKey();
     this.defaultModel = modelId;
-    await this.vault.set('preferred_model', modelId);
-    DebugLog.modelSetDefault(modelId, prev, 'setDefaultModel');
-    this.logger.info(`Default model set to: ${modelId}`);
+    this.defaultProviderId = providerId
+      ? providerId
+      // Infer provider from inventory when only a bare ID was passed.
+      : (this.providerBackedModels.find(m => m.id === modelId)?.providerId ?? '');
+    const compositeKey = buildCompositeKey(this.defaultProviderId, this.defaultModel);
+    await this.vault.set('preferred_model', compositeKey);
+    DebugLog.modelSetDefault(compositeKey, prev, 'setDefaultModel');
+    this.logger.info(`Default model set to: ${compositeKey}`);
   }
 
   async completeWithVision(
@@ -897,6 +969,7 @@ export class ModelRouter {
         maxTokens: options.maxTokens,
         taskId: options.taskId,
         agentId: options.agentId,
+        preferredProviderId: this.defaultProviderId || undefined,
       });
     }
     if (!this.apiKey) throw new Error('No AI provider configured. Open Settings → AI Providers to add one.');

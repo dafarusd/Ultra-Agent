@@ -1648,6 +1648,7 @@ You are always on. Always capable. Always direct.`;
           taskId: opts.taskId,
           agentId: opts.agentId,
           conversationId: opts.conversationId,
+          preferredProviderId: opts.preferredProviderId,
         };
         const resp = await aiSvc.completeConversation(input);
         return {
@@ -1667,6 +1668,7 @@ You are always on. Always capable. Always direct.`;
           maxTokens: opts.maxTokens,
           taskId: opts.taskId,
           agentId: opts.agentId,
+          preferredProviderId: opts.preferredProviderId,
         });
         return {
           content: resp.content,
@@ -1789,6 +1791,7 @@ You are always on. Always capable. Always direct.`;
   async setApiBaseUrl(url: string) { await this.ai.setBaseUrl(url); }
   getApiBaseUrl() { return this.ai.getBaseUrl(); }
   getDefaultModel() { return this.ai.getDefaultModel(); }
+  getDefaultModelId() { return this.ai.getDefaultModelId(); }
   async setDefaultModel(modelId: string) { await this.ai.setDefaultModel(modelId); }
   getModelRouter() { return this.ai; }
   getTierService(): TierService { return this.tierService; }
