@@ -156,7 +156,11 @@ export class VisionPipeline {
       return { success: true, text: aiResult.content.trim() };
     } catch (err: any) {
       DebugLog.error('VisionPipeline', `readText AI failed: ${err.message}`);
-      return { success: false, text: `Text reading failed: ${err.message}` };
+      const isModelCap = /vision|multimodal|image|not support/i.test(err.message || '');
+      const userMsg = isModelCap
+        ? 'The current AI model does not support image OCR. Switch to a vision-capable model (e.g. GPT-4o, Claude 3, Gemini Pro Vision) to read text from screen.'
+        : `Screen text reading failed: ${err.message}`;
+      return { success: false, text: userMsg };
     }
   }
 

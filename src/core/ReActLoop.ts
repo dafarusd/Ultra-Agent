@@ -81,8 +81,10 @@ export class ReActLoop {
       if (!u || !u.description) return null;
       // confidence < 0.2 means even the a11y tree was empty — nothing useful to offer
       if (u.confidence < 0.2) return null;
-      // confidence === 0.2 means AI vision failed but we have a tree-based fallback
-      const tag = u.confidence <= 0.2 ? '[SCREEN_TREE]' : '[VISUAL]';
+      // confidence === 0.2 means AI vision failed but we have a tree-based fallback.
+      // Always use [VISUAL] as the outer tag for downstream consistency; append
+      // [TREE_FALLBACK] to signal that no image-model analysis was performed.
+      const tag = u.confidence <= 0.2 ? '[VISUAL][TREE_FALLBACK]' : '[VISUAL]';
       return `${tag} ${u.description}${u.textContent.length > 0 ? '\nText visible: ' + u.textContent.slice(0, 5).join(' | ') : ''}`;
     } catch {
       return null;
