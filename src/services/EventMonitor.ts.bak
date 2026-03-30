@@ -210,64 +210,27 @@ export class EventMonitor {
 
   async removeTrigger(id: string): Promise<void> {
     this.triggers = this.triggers.filter(t => t.id !== id);
-    await this.memory.storeLongterm(`trigger:${id}`, 'event_trigger', JSON.stringify({ deleted: true, id, timestamp: Date.now() }));
+    await this.memory.storeLongterm(`trigger:${id}`, 'event_trigger', JSON.stringify({ deleted: true, id }));
   }
 
   getTriggers(): EventTrigger[] {
-    return [...this.triggers].sort((a, b) => a.createdAt - b.createdAt);
-  }
-
-  private parseStoredTrigger(raw: string): Partial<EventTrigger> | null {
-    try {
-      const parsed = JSON.parse(raw) as Partial<EventTrigger> & { deleted?: boolean };
-      if (!parsed || typeof parsed !== 'object') return null;
-      return parsed;
-    } catch (e) {
-      DebugLog.error('EventMonitor', `Failed to parse trigger: ${e instanceof Error ? e.message : 'unknown error'}`);
-      return null;
-    }
-  }
-
-  private extractTriggerId(trigger: Partial<EventTrigger>, recordTrigger: string): string | null {
-    if (trigger.id && typeof trigger.id === 'string') return trigger.id;
-    const match = recordTrigger.match(/trigger:([A-Za-z0-9:_-]+)/);
-    return match ? match[1] : null;
+    return [...this.triggers];
   }
 
   private async loadTriggers(): Promise<void> {
     this.triggers = [];
-    const stored = await this.memory.retrieveRelevant('trigger', 200);
-    const byId = new Map<string, EventTrigger>();
-    const tombstones = new Set<string>();
-    const ordered = [...stored]
-      .filter(record => record.capability === 'event_trigger')
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    for (const record of ordered) {
-      const parsed = this.parseStoredTrigger(record.outcome);
-      if (!parsed) continue;
-      const triggerId = this.extractTriggerId(parsed, record.trigger);
-      if (!triggerId) continue;
-      if ((parsed as any).deleted) {
-        tombstones.add(triggerId);
-        byId.delete(triggerId);
-        continue;
+    const stored = await this.memory.retrieveRelevant('event_trigger', 50);
+    for (const record of stored) {
+      if (record.capability === 'event_trigger') {
+        try {
+          const trigger: EventTrigger = JSON.parse(record.outcome);
+          if (trigger.id && trigger.type && trigger.action && !(trigger as any).deleted) {
+            this.triggers.push(trigger);
+          }
+        } catch (e) {
+          DebugLog.error('EventMonitor', `Failed to parse trigger: ${e instanceof Error ? e.message : 'unknown error'}`);
+        }
       }
-      if (!parsed.type || !parsed.action) continue;
-      byId.set(triggerId, {
-        id: triggerId,
-        type: parsed.type as EventTrigger['type'],
-        condition: typeof parsed.condition === 'string' ? parsed.condition : '',
-        action: typeof parsed.action === 'string' ? parsed.action : '',
-        enabled: parsed.enabled !== false,
-        createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : record.timestamp,
-        lastFired: typeof parsed.lastFired === 'number' ? parsed.lastFired : undefined,
-        metadata: parsed.metadata && typeof parsed.metadata === 'object' ? parsed.metadata : undefined,
-      });
     }
-
-    this.triggers = [...byId.values()]
-      .filter(trigger => !tombstones.has(trigger.id))
-      .sort((a, b) => a.createdAt - b.createdAt);
   }
 }

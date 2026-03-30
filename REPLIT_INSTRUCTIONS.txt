@@ -1,0 +1,81 @@
+APPLY EXACTLY THESE STEPS. DO NOT IMPROVISE. DO NOT REFACTOR. DO NOT CLEAN UP ANYTHING ELSE. DO NOT TOUCH ANY FILE NOT LISTED BELOW.
+
+GOAL
+Replace the exact brain-path files below with the versions from this patch. Then run the exact verification commands below and write the literal outputs into PROOF_mirrorfish_brain_pass.txt.
+
+FILES TO REPLACE
+1. src/core/CommandParser.ts
+2. src/core/ReActLoop.ts
+3. src/core/AppIntelligence.ts
+4. src/core/TaskExecutor.ts
+5. src/core/AgentCore.ts
+6. src/services/EventMonitor.ts
+
+REPLACEMENT RULES
+- Replace each entire file with the patched file from this patch package.
+- Preserve the exact relative paths above.
+- Do not merge manually.
+- Do not keep old code blocks from the prior versions.
+- Do not modify imports, exports, comments, formatting, or logic beyond what is already in the patched files.
+- Do not edit any `.bak` file.
+- Do not touch package.json, app.json, plugins, native Android files, settings screens, or any UI component.
+
+ORDER
+Use this exact order:
+1. Replace src/core/CommandParser.ts
+2. Replace src/core/ReActLoop.ts
+3. Replace src/core/AppIntelligence.ts
+4. Replace src/core/TaskExecutor.ts
+5. Replace src/core/AgentCore.ts
+6. Replace src/services/EventMonitor.ts
+
+AFTER REPLACEMENT, RUN THESE COMMANDS EXACTLY FROM REPO ROOT
+1.
+rg -n "event_trigger_remove" src/core/CommandParser.ts src/core/TaskExecutor.ts src/core/CapabilityRegistry.ts src/core/CapabilitySchemas.ts
+
+2.
+rg -n "allowLLMFallback" src/core/ReActLoop.ts src/core/AppIntelligence.ts src/core/TaskExecutor.ts
+
+3.
+rg -n "getEventMonitor" src/core/AgentCore.ts src/core/TaskExecutor.ts
+
+4.
+rg -n "normalizeCommandInput|LEADING_POLITE_WRAPPERS|TRAILING_FILLER_PATTERNS" src/core/CommandParser.ts
+
+5.
+rg -n "runGoal\(|EnhancedReActLoop|allowLLMFallback: false|extractFromScreen" src/core/AppIntelligence.ts
+
+6.
+rg -n "parseStoredTrigger|extractTriggerId|loadTriggers\(|removeTrigger\(|getTriggers\(" src/services/EventMonitor.ts
+
+7.
+git diff -- src/core/CommandParser.ts src/core/ReActLoop.ts src/core/AppIntelligence.ts src/core/TaskExecutor.ts src/core/AgentCore.ts src/services/EventMonitor.ts
+
+8.
+If the repo has dependencies installed and typecheck/build commands already work in that environment, run the repo's existing validation commands without inventing new ones. Capture literal output only.
+
+REQUIRED PROOF FILE
+Create exactly this file at repo root:
+PROOF_mirrorfish_brain_pass.txt
+
+PUT THE FOLLOWING INTO THE PROOF FILE IN THIS EXACT ORDER
+1. Header line:
+MIRRORFISH BRAIN PASS PROOF
+
+2. The literal output of commands 1 through 7 above.
+
+3. The literal output of the repo's existing typecheck/build command(s), if available in that environment.
+
+4. This exact final checklist with YES/NO answers filled in:
+- Replaced all 6 files and no others: YES/NO
+- event_trigger_remove exists in parser and executor path: YES/NO
+- deterministic ReAct path has allowLLMFallback wiring: YES/NO
+- AppIntelligence runs deterministic-first before hybrid fallback: YES/NO
+- AgentCore exposes getEventMonitor and promotes the patched capabilities: YES/NO
+- EventMonitor reload path includes tombstone-safe trigger loading: YES/NO
+- Typecheck/build run was attempted in this environment: YES/NO
+- Typecheck/build passed in this environment: YES/NO
+
+DO NOT WRITE ANY SUMMARY OUTSIDE THE PROOF FILE
+DO NOT CLAIM SUCCESS WITHOUT THE PROOF FILE
+DO NOT CHANGE ANYTHING BEYOND THE 6 FILES LISTED ABOVE

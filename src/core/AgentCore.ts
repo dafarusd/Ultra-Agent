@@ -320,7 +320,9 @@ export class AgentCore extends SimpleEmitter {
       'sms_read', 'sms_conversation', 'sms_send', 'camera_capture', 'flashlight_toggle',
       'alarm_set', 'timer_set', 'reminder_create', 'clipboard_read', 'clipboard_write',
       'wifi_toggle', 'bluetooth_toggle', 'do_not_disturb', 'battery_status', 'system_info',
-      'device_info', 'app_share', 'web_research', 'vision_read'
+      'device_info', 'app_share', 'web_research', 'vision_read', 'react_navigate',
+      'event_trigger_set', 'event_trigger_list', 'event_trigger_remove', 'note_create',
+      'calendar_create', 'app_info', 'notification_read', 'volume_set', 'brightness_set'
     ].includes(plan.capability);
   }
 
@@ -1847,6 +1849,7 @@ You are always on. Always capable. Always direct.`;
   getCortex(): Cortex { return this.cortex; }
   getProactiveEngine(): ProactiveEngine | null { return this.proactive; }
   getBackgroundOrchestrator(): BackgroundOrchestrator | null { return this.background; }
+  getEventMonitor(): EventMonitor | null { return this.eventMonitor; }
   getKnowledgeGraph(): KnowledgeGraph { return this.cortex.getKnowledgeGraph(); }
   getDeviceSignals(): DeviceSignals { return this.deviceSignals; }
   getCostSummary() { return this.costTracker.getSummary(); }

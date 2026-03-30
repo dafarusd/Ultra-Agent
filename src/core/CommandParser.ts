@@ -741,9 +741,32 @@ const rules: ParseRule[] = [
     }),
   },
   {
+    pattern: /^(?:every|each)\s+(.+?)\s*,\s*(.+)$/i,
+    capability: 'event_trigger_set',
+    extractParams: (m) => ({
+      type: 'schedule',
+      condition: `every ${m[1].trim()}`,
+      action: m[2].trim(),
+    }),
+  },
+  {
+    pattern: /^at\s+(.+?)\s*,\s*(.+)$/i,
+    capability: 'event_trigger_set',
+    extractParams: (m) => ({
+      type: 'schedule',
+      condition: `at ${m[1].trim()}`,
+      action: m[2].trim(),
+    }),
+  },
+  {
     pattern: /^(?:list|show)\s+(?:my\s+)?(?:triggers?|automations?|routines?)$/i,
     capability: 'event_trigger_list',
     extractParams: () => ({}),
+  },
+  {
+    pattern: /^(?:remove|delete|cancel|disable|turn\s+off)\s+(?:the\s+)?(?:trigger|automation|routine)\s+(?:id\s+)?([a-z0-9:_\-]+)$/i,
+    capability: 'event_trigger_remove',
+    extractParams: (m) => ({ id: m[1].trim() }),
   },
 
   // ════════════════════════════════════════════════════
@@ -1056,11 +1079,51 @@ const rules: ParseRule[] = [
   },
 ];
 
+const LEADING_POLITE_WRAPPERS: RegExp[] = [
+  /^(?:hey\s+)?ultra[\s,:-]+/i,
+  /^(?:please\s+)+/i,
+  /^(?:can|could|would|will)\s+you\s+/i,
+  /^(?:i\s+need\s+you\s+to|i\s+want\s+you\s+to|i\s+need\s+to|i\s+want\s+to)\s+/i,
+  /^(?:help\s+me\s+to|help\s+me)\s+/i,
+  /^(?:try\s+to|go\s+ahead\s+and)\s+/i,
+];
+
+const TRAILING_FILLER_PATTERNS: RegExp[] = [
+  /\s+(?:for\s+me|please|right\s+now|real\s+quick|really\s+quick)\s*$/i,
+  /[.!?]+$/,
+];
+
+function normalizeCommandInput(input: string): string {
+  let value = input.trim();
+  if (!value) return value;
+  value = value.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+  value = value.replace(/^ultra[\s,]+/i, '');
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of LEADING_POLITE_WRAPPERS) {
+      const next = value.replace(pattern, '');
+      if (next !== value) {
+        value = next.trim();
+        changed = true;
+      }
+    }
+  }
+  for (const pattern of TRAILING_FILLER_PATTERNS) {
+    value = value.replace(pattern, '').trim();
+  }
+  value = value.replace(/^please\s+/i, '').trim();
+  value = value.replace(/^open\s+up\s+/i, 'open ');
+  value = value.replace(/^look\s+for\s+/i, 'find ');
+  value = value.replace(/^look\s+up\s+/i, 'look up ');
+  value = value.replace(/\s+/g, ' ').trim();
+  return value;
+}
+
 export class CommandParser {
   parse(input: string): ActionPlan | null {
-    let trimmed = input.trim();
+    let trimmed = normalizeCommandInput(input);
     if (!trimmed) return null;
-    trimmed = trimmed.replace(/^ultra[\s,]+/i, '');
     // UltraDevLog imported lazily to avoid adding to top-level (circular risk with rules array)
     let _log: any = null;
     try { _log = require('../utils/UltraDevLog').UltraDevLog; } catch { _log = null; }

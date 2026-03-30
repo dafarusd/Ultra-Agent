@@ -443,6 +443,30 @@ export class TaskExecutor {
     }
   }
 
+  private getEventMonitor(): import('../services/EventMonitor').EventMonitor | null {
+    try {
+      const core = require('./AgentCore').getAgentCoreInstance?.();
+      return core?.getEventMonitor?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private inferTriggerType(condition: string): 'schedule' | 'battery_level' | 'notification' | 'sms_content' {
+    const normalized = condition.toLowerCase();
+    if (/battery|charge/.test(normalized)) return 'battery_level';
+    if (/notification|alert|from\s+app|app\s+opens?/.test(normalized)) return 'notification';
+    if (/sms|text\s+message|message\s+contains|texts?\s+from/.test(normalized)) return 'sms_content';
+    return 'schedule';
+  }
+
+  private summarizeTriggers(triggers: Array<{ id: string; type: string; condition: string; action: string; enabled: boolean }>): string {
+    if (triggers.length === 0) return 'No active triggers.';
+    return triggers
+      .map((trigger) => `• ${trigger.id} [${trigger.type}] ${trigger.enabled ? 'enabled' : 'disabled'} — when ${trigger.condition}, do ${trigger.action}`)
+      .join('\n');
+  }
+
   private async execWithParams(capId: string, params: Record<string, any>, request: string, taskId: string): Promise<any> {
     switch (capId) {
       case 'file_read': {
@@ -1484,7 +1508,7 @@ export class TaskExecutor {
           await AppController.openAccessibilitySettings();
           return { success: false, summary: 'Enable Agent Ultra in Accessibility Settings first' };
         }
-        // If appHint specifies an app, launch it first
+
         if (appHint) {
           const launchTarget = appHint.toLowerCase().trim();
           try {
@@ -1494,37 +1518,37 @@ export class TaskExecutor {
             if (match) {
               const launchResult = await AgentNativeModuleNav.launchApp(match.packageName);
               if (launchResult.success) {
-                // Wait for app to fully open
-                await new Promise(r => setTimeout(r, 2000));
-                // Allow the launched app for accessibility interaction
+                await new Promise((resolve) => setTimeout(resolve, 2000));
                 await AppController.allowPackage(match.packageName);
               }
             } else {
-              // Try launching via the static directory
-              const { lookupPackage } = await import('./AppDirectory');
               const knownPkg = lookupPackage(launchTarget);
               if (knownPkg) {
                 const launchResult = await AgentNativeModuleNav.launchApp(knownPkg);
                 if (launchResult.success) {
-                  await new Promise(r => setTimeout(r, 2000));
+                  await new Promise((resolve) => setTimeout(resolve, 2000));
                   await AppController.allowPackage(knownPkg);
                 }
               }
             }
           } catch (launchErr: any) {
             this.logger.warn(`react_navigate app launch failed: ${launchErr.message}`);
-            // Continue anyway — app might already be open
           }
         }
-        // Ensure whatever app is now in foreground is allowed for interaction
+
         try {
           const currentFg = await AppController.getActivePackage();
           if (currentFg) await AppController.allowPackage(currentFg);
-        } catch (e: any) { DebugLog.error('ReActNav', e?.message || 'foreground allow failed', e?.stack); }
+        } catch (e: any) {
+          DebugLog.error('ReActNav', e?.message || 'foreground allow failed', e?.stack);
+        }
         await AppController.allowPackage('com.android.systemui');
+
+        const hasAiFallback = this.ai.hasApiKey();
         const { ReActLoop } = await import('./ReActLoop');
         const reactLoop = new ReActLoop(
           async (prompt: string) => {
+            if (!hasAiFallback) return 'ACTION: done';
             const aiResult = await this.ai.complete(prompt, {
               taskId,
               agentId: 'react',
@@ -1533,10 +1557,10 @@ export class TaskExecutor {
             });
             return aiResult.content;
           },
-          { maxIterations: 8, iterationDelayMs: 1200 }
+          { maxIterations: hasAiFallback ? 8 : 10, iterationDelayMs: 1200, allowLLMFallback: hasAiFallback }
         );
         const reactResult = await reactLoop.execute(goal, appHint);
-        DebugLog.executorExit(taskId, 'react_navigate', reactResult.goalAchieved, `steps=${reactResult.steps.length}`);
+        DebugLog.executorExit(taskId, 'react_navigate', reactResult.goalAchieved, `steps=${reactResult.steps.length} llmFallback=${hasAiFallback}`);
         return {
           success: reactResult.goalAchieved,
           summary: reactResult.goalAchieved
@@ -1546,6 +1570,7 @@ export class TaskExecutor {
             steps: reactResult.steps.length,
             goalAchieved: reactResult.goalAchieved,
             finalObservation: reactResult.finalObservation.slice(0, 300),
+            llmFallbackUsed: hasAiFallback,
           },
         };
       }
@@ -1613,28 +1638,64 @@ export class TaskExecutor {
       }
 
       case 'event_trigger_set': {
-        const triggerId = `trigger_${Date.now()}`;
-        const triggerData = {
-          id: triggerId,
-          type: params.type || 'schedule',
-          condition: params.condition || '',
-          action: params.action || '',
+        const monitor = this.getEventMonitor();
+        if (!monitor) {
+          return { success: false, summary: 'Event monitor is not running yet.' };
+        }
+        const condition = typeof params.condition === 'string' ? params.condition.trim() : '';
+        const action = typeof params.action === 'string' ? params.action.trim() : '';
+        if (!condition || !action) {
+          return { success: false, summary: 'Trigger requires both a condition and an action.' };
+        }
+        const triggerType = typeof params.type === 'string' && params.type.trim()
+          ? params.type.trim()
+          : this.inferTriggerType(condition);
+        const triggerId = await monitor.addTrigger({
+          type: triggerType as any,
+          condition,
+          action,
           enabled: true,
-          createdAt: Date.now(),
-        };
-        DebugLog.systemEvent('event_trigger_set', `Trigger stored: ${JSON.stringify(triggerData).slice(0, 100)}`);
+        });
+        const triggers = monitor.getTriggers();
+        DebugLog.systemEvent('event_trigger_set', `Trigger stored: ${triggerId} type=${triggerType} condition="${condition.slice(0, 80)}"`);
         return {
           success: true,
-          summary: `Trigger set: when ${params.condition}, will ${params.action}. ID: ${triggerId}`,
-          data: triggerData,
+          summary: `Trigger set: when ${condition}, will ${action}. ID: ${triggerId}`,
+          data: { id: triggerId, type: triggerType, totalTriggers: triggers.length },
         };
       }
 
       case 'event_trigger_list': {
+        const monitor = this.getEventMonitor();
+        if (!monitor) {
+          return { success: false, summary: 'Event monitor is not running yet.' };
+        }
+        const triggers = monitor.getTriggers();
         return {
           success: true,
-          summary: 'Trigger listing available in debug log under EVENT_MONITOR_START entries.',
-          data: {},
+          summary: this.summarizeTriggers(triggers),
+          data: { triggers, count: triggers.length },
+        };
+      }
+
+      case 'event_trigger_remove': {
+        const monitor = this.getEventMonitor();
+        if (!monitor) {
+          return { success: false, summary: 'Event monitor is not running yet.' };
+        }
+        const id = typeof params.id === 'string' ? params.id.trim() : '';
+        if (!id) {
+          return { success: false, summary: 'Which trigger ID should I remove?' };
+        }
+        const existing = monitor.getTriggers().find((trigger) => trigger.id === id);
+        if (!existing) {
+          return { success: false, summary: `No active trigger found with ID ${id}` };
+        }
+        await monitor.removeTrigger(id);
+        return {
+          success: true,
+          summary: `Removed trigger ${id}`,
+          data: { id },
         };
       }
 

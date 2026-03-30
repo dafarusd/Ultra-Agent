@@ -106,7 +106,7 @@ const rules: ParseRule[] = [
   },
   // "call Mom" / "call John Smith" (contact name — executor resolves to tel: URI)
   {
-    pattern: /^call\s+(.+)$/i,
+    pattern: /^call\s+(?!me\b)(.+)$/i,
     capability: 'app_launch',
     extractParams: (m) => {
       const contact = m[1].trim();
@@ -561,6 +561,11 @@ const rules: ParseRule[] = [
   // APP INFO
   // ════════════════════════════════════════════════════
   {
+    pattern: /^(?:app\s+info|info|settings)\s+(?:for\s+)?(?:the\s+)?(?:foreground|current|active)\s+app(?:lication)?$/i,
+    capability: 'app_info',
+    extractParams: () => ({ target: 'foreground_app' }),
+  },
+  {
     pattern: /^(?:app\s+info|info)\s+(?:for\s+)?(.+)$/i,
     capability: 'app_info',
     extractParams: (m) => ({ target: m[1].trim() }),
@@ -803,10 +808,11 @@ const rules: ParseRule[] = [
   // ════════════════════════════════════════════════════
   // BRAIN / CORTEX COMMANDS
   // ════════════════════════════════════════════════════
+  { pattern: /^what\s+(?:do\s+you\s+)?know\s+(?:about\s+)?(?:my\s+)?(?:device\s+activity|activity\s+patterns?)\??$/i, capability: 'behavior_patterns', extractParams: () => ({}) },
   { pattern: /^what\s+(?:do\s+you\s+)?know\s+(?:about\s+)?(.+)$/i, capability: 'knowledge_query', extractParams: (m: RegExpMatchArray) => ({ query: m[1].trim() }) },
   { pattern: /^(?:show|any|get|what\s+are\s+(?:your|the))?\s*(?:proactive\s+)?suggestions?$/i, capability: 'proactive_suggestions', extractParams: () => ({}) },
   { pattern: /^resume\s+(?:my\s+)?(?:last\s+)?task\s*(.*)$/i, capability: 'task_resume', extractParams: (m: RegExpMatchArray) => ({ query: m[1].trim() || '' }) },
-  { pattern: /^(?:show|what\s+are)\s+(?:my\s+)?(?:patterns?|habits?|routines?)$/i, capability: 'behavior_patterns', extractParams: () => ({}) },
+  { pattern: /^(?:show|what\s+are|what\s+do\s+you\s+know\s+about|tell\s+me\s+about)\s+(?:my\s+)?(?:patterns?|habits?|routines?|device\s+activity|activity\s+patterns?)\??$/i, capability: 'behavior_patterns', extractParams: () => ({}) },
   { pattern: /^(?:research|look\s+up|find\s+out\s+about|investigate)\s+(.+)$/i, capability: 'web_research', extractParams: (m: RegExpMatchArray) => ({ query: m[1].trim() }) },
   { pattern: /^(?:what(?:'s|\s+is)\s+on\s+(?:my\s+)?screen|read\s+(?:the\s+)?screen|what\s+do\s+you\s+see)$/i, capability: 'vision_read', extractParams: () => ({}) },
 
