@@ -1082,15 +1082,30 @@ const rules: ParseRule[] = [
 const LEADING_POLITE_WRAPPERS: RegExp[] = [
   /^(?:hey\s+)?ultra[\s,:-]+/i,
   /^(?:please\s+)+/i,
-  /^(?:can|could|would|will)\s+you\s+/i,
+  /^(?:can|could|would|will)\s+you\s+(?:please\s+)?/i,
   /^(?:i\s+need\s+you\s+to|i\s+want\s+you\s+to|i\s+need\s+to|i\s+want\s+to)\s+/i,
+  /^(?:i(?:'d|\s+would)\s+like\s+(?:you\s+to\s+|to\s+)?)/i,
   /^(?:help\s+me\s+to|help\s+me)\s+/i,
   /^(?:try\s+to|go\s+ahead\s+and)\s+/i,
+  /^(?:do\s+me\s+a\s+favor\s+and\s+)/i,
+  /^(?:would\s+you\s+(?:mind\s+)?(?:please\s+)?)/i,
+  /^(?:could\s+you\s+(?:please\s+)?)/i,
 ];
 
 const TRAILING_FILLER_PATTERNS: RegExp[] = [
   /\s+(?:for\s+me|please|right\s+now|real\s+quick|really\s+quick)\s*$/i,
+  /\s+(?:a\.?s\.?a\.?p\.?|as\s+soon\s+as\s+possible|immediately|right\s+away|instantly)\s*$/i,
+  /\s+(?:when\s+you\s+can|if\s+you\s+(?:can|could))\s*$/i,
+  /\s+(?:thank\s*s?|thanks?)\s*$/i,
   /[.!?]+$/,
+];
+
+const SYNONYM_MAP: Array<[RegExp, string]> = [
+  [/\b(?:ping|ring\s+up|give\s+(?:a\s+)?(?:ring|call)|reach\s+out\s+to)\b/i, 'call'],
+  [/\b(?:drop\s+(?:a\s+)?(?:text|message|msg)|shoot\s+(?:a\s+)?(?:text|message|msg))\b/i, 'text'],
+  [/\b(?:fire\s+up|pull\s+up|boot\s+up|spin\s+up|bring\s+up)\b/i, 'open'],
+  [/\b(?:snap\s+(?:a\s+)?(?:pic|photo|picture)|shoot\s+(?:a\s+)?(?:pic|photo))\b/i, 'take a photo'],
+  [/\b(?:jot\s+down|note\s+down|write\s+down)\b/i, 'create a note'],
 ];
 
 function normalizeCommandInput(input: string): string {
@@ -1113,6 +1128,9 @@ function normalizeCommandInput(input: string): string {
     value = value.replace(pattern, '').trim();
   }
   value = value.replace(/^please\s+/i, '').trim();
+  for (const [from, to] of SYNONYM_MAP) {
+    value = value.replace(from, to);
+  }
   value = value.replace(/^open\s+up\s+/i, 'open ');
   value = value.replace(/^look\s+for\s+/i, 'find ');
   value = value.replace(/^look\s+up\s+/i, 'look up ');

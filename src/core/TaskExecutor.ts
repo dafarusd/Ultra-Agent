@@ -1625,9 +1625,26 @@ export class TaskExecutor {
             continue;
           }
 
-          const stepResult = await this.runWithPlan(stepPlan, `${taskId}_ms${idx + 1}`);
-          summaries.push(stepResult.summary || `${stepLabel || stepPlan.capability}: ${stepResult.success ? 'ok' : 'failed'}`);
-          if (!stepResult.success) allSucceeded = false;
+          const stepWatchdogId = `${taskId}_ms${idx + 1}`;
+          DebugLog.watchdogArm(stepWatchdogId, 'multistep_exec', 20000);
+          let stepResult: Awaited<ReturnType<typeof this.runWithPlan>>;
+          try {
+            stepResult = await this.runWithPlan(stepPlan, stepWatchdogId);
+          } finally {
+            DebugLog.watchdogDisarm(stepWatchdogId, 'multistep_exec');
+          }
+          const stepTag = stepResult.success ? '✓' : '✗';
+          const stepSummary = stepResult.summary || `${stepLabel || stepPlan.capability}: ${stepResult.success ? 'ok' : 'failed'}`;
+          summaries.push(`${stepTag} ${stepSummary}`);
+          if (!stepResult.success) {
+            allSucceeded = false;
+            if (params.stopOnFirstFailure === true) {
+              for (let j = idx + 1; j < rawSteps.length; j++) {
+                summaries.push(`⊘ step ${j + 1}: skipped (prior step failed)`);
+              }
+              break;
+            }
+          }
         }
 
         return {

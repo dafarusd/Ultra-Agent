@@ -367,6 +367,7 @@ export class AgentCore extends SimpleEmitter {
       ].join('\n');
     }
     const permReport = this.perms.getStatusReport();
+    const isConvMode = params.mode === 'conversation';
     let behavior: string;
 
     if (params.mode === 'command') {
@@ -400,11 +401,22 @@ When a task spans multiple steps, you execute them in sequence. When you need to
 
 You are always on. Always capable. Always direct.`;
 
+    // In conversation mode: inject a compact capability summary (not the full list) and
+    // only show denied permissions to avoid unnecessary context bloat.
+    const capLine = isConvMode
+      ? `Device capabilities: ${params.capabilities.length} available (switch to command mode to activate them)`
+      : `Available capabilities: ${params.capabilities.join(', ')}`;
+    const deniedMatch = permReport.match(/Denied:\s*(.+)$/i);
+    const deniedStr = deniedMatch ? deniedMatch[1].trim() : '';
+    const permLine = isConvMode
+      ? (deniedStr && deniedStr !== 'none' ? `Denied permissions: ${deniedStr}` : '')
+      : `Device permissions: ${permReport}`;
+
     return [
       persona,
       `Mode: ${params.mode}`,
-      `Available capabilities: ${params.capabilities.join(', ')}`,
-      `Device permissions: ${permReport}`,
+      capLine,
+      permLine,
       this.lastSystemContext ? `Current device state: ${this.sanitizeSystemContext(this.lastSystemContext)}` : '',
       params.summary ? `Conversation memory: ${params.summary}` : '',
       behavior,
@@ -1231,6 +1243,26 @@ You are always on. Always capable. Always direct.`;
             }
           }
 
+          // ── Message body follow-up ──
+          // When we previously asked "What would you like to say?" after resolving a contact,
+          // the user's reply is the message body. Build the sms_send plan directly.
+          if (lastAssistant && !plan && lastAssistant.meta?.requiresMessageBody) {
+            const pendingNumber = lastAssistant.meta.pendingNumber as string || '';
+            const pendingName = lastAssistant.meta.pendingName as string || '';
+            const messageBody = userInput.trim();
+            if (pendingNumber && messageBody) {
+              DebugLog.systemEvent('MessageBodyResolve', `SMS body received for ${pendingNumber}: "${messageBody.slice(0, 40)}"`);
+              mode = 'command';
+              plan = {
+                capability: 'sms_send',
+                params: { to: pendingNumber, message: messageBody },
+                reason: `User provided message body for ${pendingName || pendingNumber}`,
+              };
+              planFromParser = true;
+              step('PLAN', `Message body resolved: sending SMS to ${pendingName || pendingNumber}`, true);
+            }
+          }
+
           // ── Contact disambiguation follow-up ──
           if (lastAssistant && !plan && (
             lastAssistant.content.includes('Which one?') ||
@@ -1257,16 +1289,38 @@ You are always on. Always capable. Always direct.`;
             const chosenName = namedChoice?.name || ordinalChoice?.name || '';
             if (chosenNumber) {
               DebugLog.systemEvent('DisambiguationResolve', `Resolved to number: ${chosenNumber}`);
-              mode = 'command';
               const originalCapability = lastAssistant.meta?.capability as string || '';
               if (originalCapability === 'sms_send') {
                 const originalMessage = (lastAssistant.meta?.originalMessage as string) || '';
+                if (!originalMessage) {
+                  // Null-guard: SMS contact was resolved but message body is missing.
+                  // Ask the user what they want to say rather than sending an empty SMS.
+                  DebugLog.systemEvent('DisambiguationResolve', `SMS body missing for ${chosenNumber} — requesting message content`);
+                  const displayName = chosenName || chosenNumber;
+                  const askMsg: ChatMessage = {
+                    id: uid('msg'),
+                    role: 'assistant',
+                    content: `Got it — I'll send to ${displayName}. What would you like to say?`,
+                    createdAt: Date.now(),
+                    source: 'ultra',
+                    meta: {
+                      requiresMessageBody: true,
+                      pendingNumber: chosenNumber,
+                      pendingName: displayName,
+                      capability: 'sms_send',
+                    },
+                  };
+                  await this.conversations.addMessage(conversationId, askMsg);
+                  return { type: 'text', message: askMsg.content, taskId };
+                }
+                mode = 'command';
                 plan = {
                   capability: 'sms_send',
                   params: { to: chosenNumber, message: originalMessage },
                   reason: 'User resolved SMS contact disambiguation',
                 };
               } else {
+                mode = 'command';
                 plan = {
                   capability: 'app_launch',
                   params: {
@@ -1278,7 +1332,7 @@ You are always on. Always capable. Always direct.`;
                 };
               }
               planFromParser = true;
-              step('PLAN', `Disambiguation resolved: calling ${chosenNumber}`, true);
+              step('PLAN', `Disambiguation resolved: ${originalCapability || 'call'} → ${chosenNumber}`, true);
               try {
                 await this.memory.promoteLongterm(
                   userInput,

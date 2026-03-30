@@ -84,6 +84,9 @@ export interface ChatMessage {
     cortexTaskId?: string;
     subSteps?: number;
     originalMessage?: string;
+    requiresMessageBody?: boolean;
+    pendingNumber?: string;
+    pendingName?: string;
   };
 }
 
