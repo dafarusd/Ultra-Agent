@@ -488,23 +488,14 @@ You are always on. Always capable. Always direct.`;
   private parseActionPlan(text: string): ActionPlan | null {
     const fenced = text.match(/```json\s*([\s\S]*?)```/i);
     const raw = fenced ? fenced[1] : text;
-    const candidates = [raw.trim()];
-    const firstBrace = raw.indexOf('{');
-    const lastBrace = raw.lastIndexOf('}');
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      candidates.push(raw.slice(firstBrace, lastBrace + 1).trim());
+    try {
+      const cleaned = raw.trim();
+      const obj = JSON.parse(cleaned);
+      if (!obj?.capability) return null;
+      return { capability: obj.capability, params: obj.params || {}, reason: obj.reason, raw: text };
+    } catch {
+      return null;
     }
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      try {
-        const obj = JSON.parse(candidate);
-        if (!obj?.capability) return null;
-        return { capability: obj.capability, params: obj.params || {}, reason: obj.reason, raw: text };
-      } catch {
-        // try next candidate
-      }
-    }
-    return null;
   }
 
   async execute(args: ExecuteArgs): Promise<UltraExecutionResult> {
@@ -743,12 +734,12 @@ You are always on. Always capable. Always direct.`;
           }
         }
 
-        if (!plan && !this.ai.hasApiKey()) {
+        if (!this.ai.hasApiKey()) {
           step('PLAN', 'No deterministic match and no API key configured', false);
           const errMsg: ChatMessage = {
             id: uid('msg'),
             role: 'assistant',
-            content: "I understood that as a command but couldn't match it to a specific action. Configure an API provider in Settings to enable AI-assisted command routing.",
+            content: 'I understood that as a command but couldn\'t match it to a specific action. Configure an API provider in Settings to enable AI-assisted command routing.',
             createdAt: Date.now(),
             source: 'system',
             meta: {},
@@ -756,58 +747,56 @@ You are always on. Always capable. Always direct.`;
           await this.conversations.addMessage(conversationId, errMsg);
           return { type: 'error', message: errMsg.content, taskId };
         }
-        if (!plan) {
-          this.emit('log', 'Analyzing command...', 'system');
-          // Task 5: only load device context when we actually need LLM routing
-          await this.refreshSystemContext();
-          const systemPrompt = this.buildDynamicPrompt({
-            mode,
-            userInput,
-            summary: '',
-            capabilities: capList,
+        this.emit('log', 'Analyzing command...', 'system');
+        // Task 5: only load device context when we actually need LLM routing
+        await this.refreshSystemContext();
+        const systemPrompt = this.buildDynamicPrompt({
+          mode,
+          userInput,
+          summary: '',
+          capabilities: capList,
+        });
+        const { payload } = await this.buildContext(conversationId, systemPrompt, 1200, this.ai.getDefaultModel());
+        const framedUserMessage = userInput;
+        const finalMessages = [...payload, { role: 'user', content: framedUserMessage }];
+
+        try {
+          const aiResult = await this.ai.completeWithConversation(finalMessages, {
+            taskId,
+            agentId: 'planner',
+            maxTokens: 1200,
+            temperature: 0.3,
           });
-          const { payload } = await this.buildContext(conversationId, systemPrompt, 1200, this.ai.getDefaultModel());
-          const framedUserMessage = userInput;
-          const finalMessages = [...payload, { role: 'user', content: framedUserMessage }];
 
-          try {
-            const aiResult = await this.ai.completeWithConversation(finalMessages, {
-              taskId,
-              agentId: 'planner',
-              maxTokens: 1200,
-              temperature: 0.3,
-            });
+          plan = this.parseActionPlan(aiResult.content);
 
-            plan = this.parseActionPlan(aiResult.content);
-
-            if (!plan) {
-              step('PLAN', `AI routing failed to produce valid plan. AI response: ${aiResult.content.slice(0, 500)}`, false);
-              const promptTrace = this.buildPromptTrace(this.ai.getDefaultModel(), systemPrompt, framedUserMessage, finalMessages);
-              promptTrace.executionSteps = steps;
-              promptTrace.mode = mode;
-              promptTrace.taskId = taskId;
-              promptTrace.deterministic = false;
-              promptTrace.permissionState = this.perms.getStatusReport();
-              promptTrace.durationMs = Date.now() - startTime;
-              const errMsg: ChatMessage = {
-                id: uid('msg'),
-                role: 'assistant',
-                content: "I understood that as a command, but couldn't determine a specific action. Could you rephrase?",
-                createdAt: Date.now(),
-                source: 'ultra',
-                meta: { mode: 'command', promptTrace },
-              };
-              await this.conversations.addMessage(conversationId, errMsg);
-              return { type: 'clarify', message: errMsg.content, taskId, data: { promptTrace } };
-            }
-          } catch (err: any) {
-            const stack = err.stack || err.message;
-            step('PLAN', `AI routing threw error: ${stack}`, false);
-            return { type: 'error', message: 'Failed to analyze command: ' + err.message, taskId };
+          if (!plan) {
+            step('PLAN', `AI routing failed to produce valid plan. AI response: ${aiResult.content.slice(0, 500)}`, false);
+            const promptTrace = this.buildPromptTrace(this.ai.getDefaultModel(), systemPrompt, framedUserMessage, finalMessages);
+            promptTrace.executionSteps = steps;
+            promptTrace.mode = mode;
+            promptTrace.taskId = taskId;
+            promptTrace.deterministic = false;
+            promptTrace.permissionState = this.perms.getStatusReport();
+            promptTrace.durationMs = Date.now() - startTime;
+            const errMsg: ChatMessage = {
+              id: uid('msg'),
+              role: 'assistant',
+              content: 'I understood that as a command, but couldn\'t determine a specific action. Could you rephrase?',
+              createdAt: Date.now(),
+              source: 'ultra',
+              meta: { mode: 'command', promptTrace },
+            };
+            await this.conversations.addMessage(conversationId, errMsg);
+            return { type: 'clarify', message: errMsg.content, taskId, data: { promptTrace } };
           }
-          DebugLog.planResult(taskId, plan.capability, plan.params, false);
-          step('PLAN', `AI routed to capability: ${plan.capability} — params: ${JSON.stringify(plan.params).slice(0, 300)}`, true);
+        } catch (err: any) {
+          const stack = err.stack || err.message;
+          step('PLAN', `AI routing threw error: ${stack}`, false);
+          return { type: 'error', message: 'Failed to analyze command: ' + err.message, taskId };
         }
+        DebugLog.planResult(taskId, plan.capability, plan.params, false);
+        step('PLAN', `AI routed to capability: ${plan.capability} — params: ${JSON.stringify(plan.params).slice(0, 300)}`, true);
       } else {
         DebugLog.planResult(taskId, plan.capability, plan.params, true);
         step('PLAN', `Deterministic parse matched capability: ${plan.capability} — params: ${JSON.stringify(plan.params).slice(0, 300)}`, true);

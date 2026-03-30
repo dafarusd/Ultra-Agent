@@ -32,22 +32,6 @@ const RUNTIME_PERMISSIONS: Array<{ key: string; perm: string; minApi?: number; m
   { key: 'READ_MEDIA_AUDIO',       perm: 'android.permission.READ_MEDIA_AUDIO', minApi: 33 },
 ];
 
-
-function getApiLevel(): number {
-  return typeof Platform.Version === 'number'
-    ? Platform.Version
-    : parseInt(String(Platform.Version), 10) || 26;
-}
-
-function isPermissionApplicable(key: string): boolean {
-  const apiLevel = getApiLevel();
-  const entry = RUNTIME_PERMISSIONS.find(p => p.key === key);
-  if (!entry) return true;
-  if (entry.minApi && apiLevel < entry.minApi) return false;
-  if (entry.maxApi && apiLevel > entry.maxApi) return false;
-  return true;
-}
-
 export class PermissionBroker {
   private granted = new Set<string>();
   private denied = new Set<string>();
@@ -63,7 +47,9 @@ export class PermissionBroker {
     if (Platform.OS !== 'android') return;
     if (this.initialized) return;
 
-    const apiLevel = getApiLevel();
+    const apiLevel = typeof Platform.Version === 'number'
+      ? Platform.Version
+      : parseInt(String(Platform.Version), 10) || 26;
 
     // Filter permissions applicable to this API level
     const applicable = RUNTIME_PERMISSIONS.filter(p => (!p.minApi || apiLevel >= p.minApi) && (!p.maxApi || apiLevel <= p.maxApi));
@@ -149,7 +135,7 @@ export class PermissionBroker {
 
   getMissing(permissions: string[]): string[] {
     if (Platform.OS !== 'android') return [];
-    return permissions.filter(p => isPermissionApplicable(p) && !this.granted.has(p));
+    return permissions.filter(p => !this.granted.has(p));
   }
 
   /**
@@ -162,7 +148,6 @@ export class PermissionBroker {
     const toRequest: string[] = [];
     for (const key of permissions) {
       if (this.granted.has(key)) continue;
-      if (!isPermissionApplicable(key)) continue;
       const entry = RUNTIME_PERMISSIONS.find(p => p.key === key);
       if (entry) toRequest.push(entry.perm);
     }

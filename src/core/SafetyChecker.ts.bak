@@ -29,7 +29,7 @@ const SCOPE_MAP: Record<string, string[]> = {
   file_organize: ['organize', 'move', 'sort', 'make', 'create', 'folder', 'album'],
   contacts_read: ['contacts', 'contact'],
   camera_capture: ['photo', 'camera', 'picture', 'take a photo', 'selfie', 'take a picture'],
-  media_access: ['photos', 'gallery', 'media', 'images', 'pick', 'choose', 'select', 'count', 'how many', 'show'],
+  media_access: ['photos', 'gallery', 'media', 'images', 'pick', 'choose', 'select'],
   app_share: ['share'],
   device_location: ['location', 'where am i', 'gps', 'coordinates', 'position', 'device location', 'my location'],
   device_info: ['device', 'status', 'info', 'battery', 'ram', 'memory', 'storage', 'phone status', 'device info', 'system info'],
@@ -74,7 +74,7 @@ export class SafetyChecker {
       }
     }
 
-    const scopeOk = this.scopeMatches(userRequest, plan.capability, plan.params || {});
+    const scopeOk = this.scopeMatches(userRequest, plan.capability);
     if (!scopeOk) {
       // Exception: URLs are valid for both app_launch and open_url
       const isUrl = /\S+\.(?:com|org|net|io|co|app|dev|ai|edu|gov|me|tv|us|uk|ca|info)(?:\/\S*)?|https?:\/\/|www\./.test(userRequest);
@@ -151,39 +151,10 @@ export class SafetyChecker {
     }
   }
 
-  private scopeMatches(userRequest: string, capability: string, params: Record<string, any> = {}): boolean {
-    const t = userRequest.toLowerCase().trim();
+  private scopeMatches(userRequest: string, capability: string): boolean {
+    const t = userRequest.toLowerCase();
     const verbs = SCOPE_MAP[capability];
     if (!verbs) return true;
-    if (verbs.some(v => t.includes(v))) return true;
-
-    const target = String(params.target || '').toLowerCase().trim();
-    const action = String(params.action || '').toLowerCase().trim();
-    const data = String(params.data || '').toLowerCase().trim();
-    const query = String(params.query || params.goal || '').toLowerCase().trim();
-    const isOrdinalReply = /\b(first|1st|one|1|second|2nd|two|2|third|3rd|three|3|fourth|4th|four|4)\b/.test(t);
-    const isShortApproval = /^(yes|yeah|yep|ok|okay|sure|do it|that one|this one)$/i.test(t);
-
-    if (capability === 'app_launch') {
-      if (target && (t.includes(target) || target.includes(t))) return true;
-      if (/weather/.test(target) && /weather|forecast|temperature|temp|rain|snow/.test(t)) return true;
-      if (/maps|map|navigation/.test(target) && /map|maps|navigate|navigation|directions|route|drive/.test(t)) return true;
-      if (/call|dial/.test(action) || data.startsWith('tel:')) {
-        if (/call|dial|phone|contact/.test(t) || /\d{3,}/.test(t) || isOrdinalReply || isShortApproval) return true;
-      }
-      if (action.includes('view') && query && (t.includes(query) || query.includes(t))) return true;
-    }
-
-    if (capability === 'media_access') {
-      if (/photo|photos|image|images|gallery|media/.test(t)) return true;
-      if ((params.action === 'count' || params.action === 'list') && /count|how many|number|show|list/.test(t)) return true;
-    }
-
-    if (capability === 'device_location' && /where am i|where i am|my location|current location|gps|coordinates/.test(t)) return true;
-    if ((capability === 'device_info' || capability === 'system_info') && /battery|ram|memory|storage|network|system|device|status|info|temperature|temp/.test(t)) return true;
-    if (capability === 'web_research' && (query ? (t.includes(query) || query.includes(t)) : /research|search|look up|google|find out/.test(t))) return true;
-    if (capability === 'react_navigate' && (query ? (t.includes(query) || query.includes(t)) : /go to|open|navigate|search for|find/.test(t))) return true;
-
-    return false;
+    return verbs.some(v => t.includes(v));
   }
 }

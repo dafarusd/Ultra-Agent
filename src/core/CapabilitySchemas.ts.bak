@@ -463,65 +463,6 @@ const schemas: CapabilitySchema[] = [
     },
     optionalParams: {},
   },
-
-  {
-    capabilityId: 'knowledge_query',
-    version: 1,
-    requiredParams: {
-      query: { type: 'string', description: 'Entity or topic to query in the knowledge graph' },
-    },
-    optionalParams: {},
-  },
-  {
-    capabilityId: 'set_user_name',
-    version: 1,
-    requiredParams: {
-      name: { type: 'string', description: 'Preferred user name' },
-    },
-    optionalParams: {},
-  },
-  {
-    capabilityId: 'user_correction',
-    version: 1,
-    requiredParams: {
-      correction: { type: 'string', description: 'User correction text' },
-    },
-    optionalParams: {},
-  },
-  {
-    capabilityId: 'proactive_suggestions',
-    version: 1,
-    requiredParams: {},
-    optionalParams: {},
-  },
-  {
-    capabilityId: 'task_resume',
-    version: 1,
-    requiredParams: {},
-    optionalParams: {
-      query: { type: 'string', description: 'Task or goal to resume' },
-    },
-  },
-  {
-    capabilityId: 'behavior_patterns',
-    version: 1,
-    requiredParams: {},
-    optionalParams: {},
-  },
-  {
-    capabilityId: 'web_research',
-    version: 1,
-    requiredParams: {
-      query: { type: 'string', description: 'Topic or question to research' },
-    },
-    optionalParams: {},
-  },
-  {
-    capabilityId: 'vision_read',
-    version: 1,
-    requiredParams: {},
-    optionalParams: {},
-  },
   {
     capabilityId: 'tts',
     version: 1,

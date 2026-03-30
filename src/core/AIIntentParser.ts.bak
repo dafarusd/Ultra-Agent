@@ -39,7 +39,6 @@ Common mappings:
 - "whats the weather" / "gonna rain" → open a weather app or web_search depending on capability fit
 - "remind me" / "dont forget" → reminder_create
 - "turn on/off X" → one of flashlight_toggle, wifi_toggle, bluetooth_toggle, or do_not_disturb
-- "open X then do Y" / "first X then Y" → multi_step with steps array when the request clearly has multiple actions
 
 If this is just conversation (greeting, question, opinion, chat) respond with:
 {"capability":null}`;
@@ -53,12 +52,7 @@ If this is just conversation (greeting, question, opinion, chat) respond with:
       });
 
       const cleaned = result.content.replace(/```json|```/g, '').trim();
-      const firstBrace = cleaned.indexOf('{');
-      const lastBrace = cleaned.lastIndexOf('}');
-      const jsonCandidate = firstBrace >= 0 && lastBrace > firstBrace
-        ? cleaned.slice(firstBrace, lastBrace + 1)
-        : cleaned;
-      const parsed = JSON.parse(jsonCandidate);
+      const parsed = JSON.parse(cleaned);
 
       if (!parsed.capability || parsed.capability === 'null' || parsed.capability === null) {
         DebugLog.push('PARSE_INPUT' as any, {
