@@ -427,9 +427,11 @@ const schemas: CapabilitySchema[] = [
     capabilityId: 'multi_step',
     version: 1,
     requiredParams: {
-      steps: { type: 'array', description: 'Array of step descriptions' },
+      steps: { type: 'array', description: 'Array of step descriptions or capability objects to execute in sequence' },
     },
-    optionalParams: {},
+    optionalParams: {
+      stopOnFirstFailure: { type: 'boolean', description: 'If true, halt the chain on the first failed step and mark remaining steps as skipped. Default: false (continue on failure).' },
+    },
   },
   {
     capabilityId: 'event_trigger_set',
