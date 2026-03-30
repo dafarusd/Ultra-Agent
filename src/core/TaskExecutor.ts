@@ -2349,7 +2349,7 @@ export class TaskExecutor {
             return { success: false, summary: 'Could not determine your location. Try "weather in New York".' };
           }
 
-          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation_probability&timezone=auto&temperature_unit=${unit}`;
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation_probability&hourly=temperature_2m,precipitation_probability,weather_code&forecast_days=1&timezone=auto&temperature_unit=${unit}`;
           const res = await fetch(weatherUrl);
           if (!res.ok) return { success: false, summary: `Weather service unavailable (${res.status}). Try again later.` };
           const data = await res.json();
@@ -2362,15 +2362,37 @@ export class TaskExecutor {
           const weatherCode = cur.weather_code ?? cur.weathercode ?? 0;
           const condition = wmoCodeToCondition(weatherCode);
 
+          // Build hourly forecast for the next 6 hours
+          const forecast: Array<{ time: string; temp: number; precipChance: number; condition: string }> = [];
+          const nowIso = cur.time as string | undefined;
+          const hourlyTimes: string[] = data.hourly?.time || [];
+          const hourlyTemps: number[] = data.hourly?.temperature_2m || [];
+          const hourlyPrecip: number[] = data.hourly?.precipitation_probability || [];
+          const hourlyCodes: number[] = data.hourly?.weather_code || [];
+          const startIdx = nowIso ? hourlyTimes.findIndex((t: string) => t >= nowIso) : 0;
+          const from = startIdx >= 0 ? startIdx : 0;
+          for (let i = from + 1; i < Math.min(from + 7, hourlyTimes.length); i++) {
+            forecast.push({
+              time: hourlyTimes[i].slice(11, 16),
+              temp: Math.round(hourlyTemps[i] ?? temp),
+              precipChance: Math.round(hourlyPrecip[i] ?? 0),
+              condition: wmoCodeToCondition(hourlyCodes[i] ?? weatherCode),
+            });
+          }
+
           const locStr = locationName ? ` in ${locationName}` : '';
           let summary = `Weather${locStr}: ${temp}${unitSymbol}, ${condition}. Humidity: ${humidity}%. Wind: ${windspeed} km/h.`;
-          if (precipChance > 20) summary += ` Precipitation chance: ${precipChance}%.`;
+          if (precipChance > 20) summary += ` Current precipitation chance: ${precipChance}%.`;
+          if (forecast.length > 0) {
+            const forecastStr = forecast.map(f => `${f.time}: ${f.temp}${unitSymbol} ${f.condition}${f.precipChance > 20 ? ` (${f.precipChance}% rain)` : ''}`).join(', ');
+            summary += `\nForecast: ${forecastStr}`;
+          }
 
-          DebugLog.push('WEATHER', { lat, lon, location: locationName, temp, humidity, windspeed, weatherCode, condition, precipChance });
+          DebugLog.push('WEATHER', { lat, lon, location: locationName, temp, humidity, windspeed, weatherCode, condition, precipChance, forecastHours: forecast.length });
           return {
             success: true,
             summary,
-            data: { temperature: temp, unit: unitSymbol, condition, windspeed, humidity, location: locationName, precipChance },
+            data: { temperature: temp, unit: unitSymbol, condition, windspeed, humidity, location: locationName, precipChance, forecast },
           };
         } catch (e: any) {
           return { success: false, summary: `Weather error: ${e.message}` };
@@ -2385,7 +2407,7 @@ export class TaskExecutor {
             : [
                 'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en',
                 'https://feeds.bbci.co.uk/news/rss.xml',
-                'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml',
+                'https://feeds.reuters.com/reuters/topNews',
               ];
 
           for (const feedUrl of feeds) {

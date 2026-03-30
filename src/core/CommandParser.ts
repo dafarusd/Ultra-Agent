@@ -967,6 +967,36 @@ const rules: ParseRule[] = [
     capability: 'weather',
     extractParams: () => ({}),
   },
+  // "weather in London" / "weather in Paris" (bare, no what/show/check prefix)
+  {
+    pattern: /^weather\s+(?:like\s+)?(?:in|at|for)\s+(.+)$/i,
+    capability: 'weather',
+    extractParams: (m) => ({ location: m[1].trim() }),
+  },
+  // "weather" / "weather today" / "current weather"
+  {
+    pattern: /^(?:weather(?:\s+today)?|current\s+weather)$/i,
+    capability: 'weather',
+    extractParams: () => ({}),
+  },
+  // "temperature" / "current temperature" / "temperature in Berlin" / "temperature outside"
+  {
+    pattern: /^(?:current\s+)?temperature(?:\s+(?:outside|right\s+now|today))?(?:\s+(?:in|at)\s+(.+))?$/i,
+    capability: 'weather',
+    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
+  },
+  // "is it raining in Seattle" / "will it snow today" / "is it sunny"
+  {
+    pattern: /^(?:is|will)\s+it\s+(?:raining|snowing|rain|snow|sunny|hot|cold|warm)(?:\s+(?:today|outside|right\s+now))?(?:\s+(?:in|at)\s+(.+))?$/i,
+    capability: 'weather',
+    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
+  },
+  // "weather forecast" / "forecast" / "forecast in Berlin"
+  {
+    pattern: /^(?:weather\s+)?forecast(?:\s+(?:for\s+today|today))?(?:\s+(?:in|at|for)\s+(.+))?$/i,
+    capability: 'weather',
+    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
+  },
   {
     pattern: /^share\s+(.+)/i,
     capability: 'app_share',
@@ -1060,40 +1090,6 @@ const rules: ParseRule[] = [
     pattern: /^(?:replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)(?:\s+(.+))?$/i,
     capability: 'self_replicate',
     extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
-  },
-
-  // ════════════════════════════════════════════════════
-  // WEATHER
-  // ════════════════════════════════════════════════════
-  // "what is the weather in Paris" / "weather in London"
-  {
-    pattern: /^(?:what(?:'s|\s+is)?\s+the\s+)?weather\s+(?:like\s+)?(?:in|at|for)\s+(.+)$/i,
-    capability: 'weather',
-    extractParams: (m) => ({ location: m[1].trim() }),
-  },
-  // "what is the weather" / "what's the weather like" / "weather today"
-  {
-    pattern: /^(?:what(?:'s|\s+is)?\s+the\s+weather(?:\s+like)?|weather(?:\s+today)?|current\s+weather)$/i,
-    capability: 'weather',
-    extractParams: () => ({}),
-  },
-  // "current temperature" / "temperature outside" / "temperature in Berlin"
-  {
-    pattern: /^(?:current\s+)?temperature(?:\s+(?:outside|right\s+now|today))?(?:\s+(?:in|at)\s+(.+))?$/i,
-    capability: 'weather',
-    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
-  },
-  // "is it raining" / "is it raining in Seattle" / "will it rain today"
-  {
-    pattern: /^(?:is|will)\s+it\s+(?:raining|snowing|rain|snow|sunny|hot|cold|warm)(?:\s+(?:today|outside|right\s+now))?(?:\s+(?:in|at)\s+(.+))?$/i,
-    capability: 'weather',
-    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
-  },
-  // "forecast for today" / "weather forecast"
-  {
-    pattern: /^(?:weather\s+)?forecast(?:\s+(?:for\s+today|today))?(?:\s+(?:in|at|for)\s+(.+))?$/i,
-    capability: 'weather',
-    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
   },
 
   // ════════════════════════════════════════════════════
