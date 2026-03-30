@@ -2418,7 +2418,7 @@ export class TaskExecutor {
               const headlines = parseRssHeadlines(xml, count);
               if (headlines.length > 0) {
                 const topicStr = topic ? ` about "${topic}"` : '';
-                const summary = `Top headlines${topicStr}:\n${headlines.map((h, i) => `${i + 1}. ${h.title}`).join('\n')}`;
+                const summary = `Top headlines${topicStr}:\n${headlines.map((h, i) => `${i + 1}. ${h.title}${h.link ? `\n   ${h.link}` : ''}`).join('\n')}`;
                 DebugLog.push('NEWS_FETCH', { feedUrl, count: headlines.length, topic });
                 return { success: true, summary, data: { headlines, source: feedUrl } };
               }
