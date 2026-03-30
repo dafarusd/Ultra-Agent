@@ -1109,12 +1109,13 @@ const rules: ParseRule[] = [
     extractParams: () => ({}),
   },
 
-  // TTS — narrow regex so bare "read <topic>" doesn't shadow vision rules above.
-  // Only matches when "say"/"speak" are used, or "read" + explicit "out loud"/"aloud".
+  // TTS — vision rules above are checked first (first-match-wins), so any
+  // screen-reading intents are already routed before this rule runs.
+  // This rule therefore safely handles "say X", "speak X", and "read X" for TTS.
   {
-    pattern: /^(?:say|speak)\s+(.+)|^read\s+(?:out\s+loud|aloud|(?:out)\s+(?:loud))\s+(.+)/i,
+    pattern: /^(?:say|speak|read\s+(?:out\s+)?(?:loud)?)\s+(.+)/i,
     capability: 'tts',
-    extractParams: (m) => ({ text: (m[1] || m[2] || '').trim() }),
+    extractParams: (m) => ({ text: m[1].trim() }),
   },
   {
     pattern: /^generate\s+(?:a\s+)?(?:an?\s+)?video\s+(?:of\s+)?(.+)/i,
