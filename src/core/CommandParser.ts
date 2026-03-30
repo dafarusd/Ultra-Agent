@@ -941,19 +941,24 @@ const rules: ParseRule[] = [
     extractParams: () => ({ action: 'list' }),
   },
   {
-    pattern: /^(?:open|launch|show|check|get)\s+(?:the\s+)?weather(?:\s+app)?$/i,
+    pattern: /^(?:open|launch)\s+(?:the\s+)?weather\s+app$/i,
     capability: 'app_launch',
     extractParams: () => ({ target: 'weather' }),
+  },
+  {
+    pattern: /^(?:show|check|get)\s+(?:the\s+)?weather(?:\s+(?:in|at|for)\s+(.+))?$/i,
+    capability: 'weather',
+    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
   },
   {
     pattern: /^(?:what(?:'s|\s+is)|how(?:'s|\s+is)|can\s+you\s+tell\s+me\s+what(?:'s|\s+is)|tell\s+me\s+what(?:'s|\s+is)|will\s+it\s+be|is\s+it\s+going\s+to\s+be|gonna\s+be)\s+.*(?:weather|forecast|temperature|rain|snow)\b.*\??$/i,
-    capability: 'app_launch',
-    extractParams: () => ({ target: 'weather' }),
+    capability: 'weather',
+    extractParams: () => ({}),
   },
   {
     pattern: /^(?:will\s+it|is\s+it\s+gonna|is\s+it|gonna)\s+(?:rain|snow)(?:\s+today|\s+outside|\s+later)?\??$/i,
-    capability: 'app_launch',
-    extractParams: () => ({ target: 'weather' }),
+    capability: 'weather',
+    extractParams: () => ({}),
   },
   {
     pattern: /^share\s+(.+)/i,
@@ -1048,6 +1053,62 @@ const rules: ParseRule[] = [
     pattern: /^(?:replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)(?:\s+(.+))?$/i,
     capability: 'self_replicate',
     extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
+  },
+
+  // ════════════════════════════════════════════════════
+  // WEATHER
+  // ════════════════════════════════════════════════════
+  // "what is the weather in Paris" / "weather in London"
+  {
+    pattern: /^(?:what(?:'s|\s+is)?\s+the\s+)?weather\s+(?:like\s+)?(?:in|at|for)\s+(.+)$/i,
+    capability: 'weather',
+    extractParams: (m) => ({ location: m[1].trim() }),
+  },
+  // "what is the weather" / "what's the weather like" / "weather today"
+  {
+    pattern: /^(?:what(?:'s|\s+is)?\s+the\s+weather(?:\s+like)?|weather(?:\s+today)?|current\s+weather)$/i,
+    capability: 'weather',
+    extractParams: () => ({}),
+  },
+  // "current temperature" / "temperature outside" / "temperature in Berlin"
+  {
+    pattern: /^(?:current\s+)?temperature(?:\s+(?:outside|right\s+now|today))?(?:\s+(?:in|at)\s+(.+))?$/i,
+    capability: 'weather',
+    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
+  },
+  // "is it raining" / "is it raining in Seattle" / "will it rain today"
+  {
+    pattern: /^(?:is|will)\s+it\s+(?:raining|snowing|rain|snow|sunny|hot|cold|warm)(?:\s+(?:today|outside|right\s+now))?(?:\s+(?:in|at)\s+(.+))?$/i,
+    capability: 'weather',
+    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
+  },
+  // "forecast for today" / "weather forecast"
+  {
+    pattern: /^(?:weather\s+)?forecast(?:\s+(?:for\s+today|today))?(?:\s+(?:in|at|for)\s+(.+))?$/i,
+    capability: 'weather',
+    extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
+  },
+
+  // ════════════════════════════════════════════════════
+  // NEWS HEADLINES
+  // ════════════════════════════════════════════════════
+  // "top headlines" / "today's news" / "latest news"
+  {
+    pattern: /^(?:top\s+(?:news\s+)?headlines?|(?:today'?s?|latest|current|breaking)\s+news(?:\s+headlines?)?)$/i,
+    capability: 'news_headlines',
+    extractParams: () => ({}),
+  },
+  // "news about technology" / "latest news on sports" / "headlines about AI"
+  {
+    pattern: /^(?:(?:top\s+)?(?:news|headlines?)\s+(?:about|on|for|regarding)|(?:today'?s?|latest|current)\s+news\s+(?:about|on|for|regarding))\s+(.+)$/i,
+    capability: 'news_headlines',
+    extractParams: (m) => ({ topic: m[1].trim() }),
+  },
+  // "what's in the news" / "what's happening in the news"
+  {
+    pattern: /^what(?:'s|\s+is)\s+(?:happening\s+)?(?:in\s+)?(?:the\s+)?news(?:\s+today)?$/i,
+    capability: 'news_headlines',
+    extractParams: () => ({}),
   },
 
   // ════════════════════════════════════════════════════

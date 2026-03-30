@@ -546,6 +546,24 @@ const schemas: CapabilitySchema[] = [
       seconds: { type: 'number', description: 'Duration in seconds (default 5)' },
     },
   },
+  {
+    capabilityId: 'weather',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      location: { type: 'string', description: 'City or location name (defaults to device GPS position)' },
+      unit: { type: 'string', description: 'Temperature unit: fahrenheit or celsius (default: fahrenheit)' },
+    },
+  },
+  {
+    capabilityId: 'news_headlines',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      topic: { type: 'string', description: 'Topic or keyword to filter headlines (e.g. "technology", "sports")' },
+      count: { type: 'number', description: 'Number of headlines to return (default 5)' },
+    },
+  },
 ];
 
 const schemaMap = new Map<string, CapabilitySchema>();

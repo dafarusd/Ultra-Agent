@@ -2311,6 +2311,103 @@ export class TaskExecutor {
           return { success: true, summary, data: u };
         } catch (e: any) { return { success: false, summary: `Vision failed: ${e.message}` }; }
       }
+      case 'weather': {
+        try {
+          let lat: number | null = null;
+          let lon: number | null = null;
+          let locationName: string | null = null;
+          const unit = (params.unit === 'celsius') ? 'celsius' : 'fahrenheit';
+          const unitSymbol = unit === 'celsius' ? '°C' : '°F';
+
+          if (params.location) {
+            const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(params.location)}&count=1&language=en&format=json`;
+            const geoRes = await fetch(geoUrl);
+            if (geoRes.ok) {
+              const geoData = await geoRes.json();
+              if (geoData.results && geoData.results.length > 0) {
+                lat = geoData.results[0].latitude;
+                lon = geoData.results[0].longitude;
+                locationName = geoData.results[0].name;
+              }
+            }
+          } else if (isNative) {
+            try {
+              const { status } = await Location.requestForegroundPermissionsAsync();
+              if (status === 'granted') {
+                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
+                lat = loc.coords.latitude;
+                lon = loc.coords.longitude;
+                try {
+                  const [addr] = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lon });
+                  locationName = addr.city || addr.subregion || addr.region || addr.country || null;
+                } catch {}
+              }
+            } catch {}
+          }
+
+          if (lat === null || lon === null) {
+            return { success: false, summary: 'Could not determine your location. Try "weather in New York".' };
+          }
+
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current_weather=true&hourly=precipitation_probability,weathercode&forecast_days=1&timezone=auto&temperature_unit=${unit}`;
+          const res = await fetch(weatherUrl);
+          if (!res.ok) return { success: false, summary: `Weather service unavailable (${res.status}). Try again later.` };
+          const data = await res.json();
+
+          const cw = data.current_weather;
+          const temp = Math.round(cw.temperature);
+          const windspeed = Math.round(cw.windspeed);
+          const condition = wmoCodeToCondition(cw.weathercode);
+
+          const hourly = data.hourly;
+          const precipArr: number[] = (hourly?.precipitation_probability || []).slice(0, 6);
+          const maxPrecip = precipArr.length > 0 ? Math.max(...precipArr) : 0;
+
+          const locStr = locationName ? ` in ${locationName}` : '';
+          let summary = `Weather${locStr}: ${temp}${unitSymbol}, ${condition}. Wind: ${windspeed} km/h.`;
+          if (maxPrecip > 20) summary += ` Rain chance: ${maxPrecip}% over the next 6 hours.`;
+
+          DebugLog.push('WEATHER', { lat, lon, location: locationName, temp, windspeed, code: cw.weathercode, condition });
+          return {
+            success: true,
+            summary,
+            data: { temperature: temp, unit: unitSymbol, condition, windspeed, location: locationName, precipChance: maxPrecip },
+          };
+        } catch (e: any) {
+          return { success: false, summary: `Weather error: ${e.message}` };
+        }
+      }
+      case 'news_headlines': {
+        try {
+          const topic: string = params.topic || '';
+          const count: number = typeof params.count === 'number' ? Math.min(params.count, 10) : 5;
+          const feeds = topic
+            ? [`https://news.google.com/rss/search?q=${encodeURIComponent(topic)}&hl=en&gl=US&ceid=US:en`]
+            : [
+                'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en',
+                'https://feeds.bbci.co.uk/news/rss.xml',
+                'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml',
+              ];
+
+          for (const feedUrl of feeds) {
+            try {
+              const res = await fetch(feedUrl);
+              if (!res.ok) continue;
+              const xml = await res.text();
+              const headlines = parseRssHeadlines(xml, count);
+              if (headlines.length > 0) {
+                const topicStr = topic ? ` about "${topic}"` : '';
+                const summary = `Top headlines${topicStr}:\n${headlines.map((h, i) => `${i + 1}. ${h.title}`).join('\n')}`;
+                DebugLog.push('NEWS_FETCH', { feedUrl, count: headlines.length, topic });
+                return { success: true, summary, data: { headlines, source: feedUrl } };
+              }
+            } catch {}
+          }
+          return { success: false, summary: 'Could not fetch news headlines. Check your internet connection.' };
+        } catch (e: any) {
+          return { success: false, summary: `News error: ${e.message}` };
+        }
+      }
       default:
         throw new Error(`No executor for: ${capId}`);
     }
@@ -2400,4 +2497,47 @@ function parseDurationToSeconds(input: string): number {
   const minutes = normalized.match(/(\d+)\s*m(in(ute)?)?s?/)?.[1];
   const seconds = normalized.match(/(\d+)\s*s(ec(ond)?)?s?/)?.[1];
   return (parseInt(hours || '0') * 3600) + (parseInt(minutes || '0') * 60) + parseInt(seconds || '0');
+}
+
+function wmoCodeToCondition(code: number): string {
+  if (code === 0) return 'Clear sky';
+  if (code === 1) return 'Mainly clear';
+  if (code === 2) return 'Partly cloudy';
+  if (code === 3) return 'Overcast';
+  if (code === 45 || code === 48) return 'Foggy';
+  if (code >= 51 && code <= 55) return 'Drizzle';
+  if (code >= 56 && code <= 57) return 'Freezing drizzle';
+  if (code >= 61 && code <= 65) return 'Rain';
+  if (code >= 66 && code <= 67) return 'Freezing rain';
+  if (code >= 71 && code <= 77) return 'Snow';
+  if (code >= 80 && code <= 82) return 'Rain showers';
+  if (code === 85 || code === 86) return 'Snow showers';
+  if (code === 95) return 'Thunderstorm';
+  if (code === 96 || code === 99) return 'Thunderstorm with hail';
+  return 'Unknown';
+}
+
+function parseRssHeadlines(xml: string, limit: number): Array<{ title: string; link?: string }> {
+  const headlines: Array<{ title: string; link?: string }> = [];
+  const itemRe = /<item[\s>]([\s\S]*?)<\/item>/gi;
+  const titleRe = /<title>(?:<!\[CDATA\[)?\s*([\s\S]*?)\s*(?:\]\]>)?<\/title>/i;
+  const linkRe = /<link>([^<]+)<\/link>/i;
+  let m: RegExpExecArray | null;
+  while ((m = itemRe.exec(xml)) !== null && headlines.length < limit) {
+    const block = m[1];
+    const titleMatch = block.match(titleRe);
+    if (!titleMatch) continue;
+    const title = titleMatch[1]
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!title || title.length < 5) continue;
+    const linkMatch = block.match(linkRe);
+    headlines.push({ title, link: linkMatch?.[1]?.trim() });
+  }
+  return headlines;
 }

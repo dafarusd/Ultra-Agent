@@ -102,7 +102,9 @@ export type UltraLogCat =
   | 'PERMISSION_SNAPSHOT_STARTUP' // Permission states at startup
   | 'PERMISSION_RECHECK_RUNTIME'  // Permission re-read before capability
   | 'PERMISSION_CONTRADICTION'    // Startup vs runtime permission mismatch
-  | 'BUG_REPORT_WRITE';           // Bug report generation event with session metadata
+  | 'BUG_REPORT_WRITE'            // Bug report generation event with session metadata
+  | 'WEATHER'                     // Weather capability fetch result
+  | 'NEWS_FETCH';                 // News headlines fetch result
 
 interface UltraLogEntry {
   ts: string;

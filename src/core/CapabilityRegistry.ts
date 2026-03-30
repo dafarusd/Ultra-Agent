@@ -88,6 +88,8 @@ export class CapabilityRegistry {
       { id: 'behavior_patterns', name: 'Behavior Patterns', description: 'Show detected behavioral patterns', riskLevel: 'safe', available: true, permissionsRequired: [] },
       { id: 'web_research', name: 'Web Research', description: 'Research a topic using installed apps', riskLevel: 'moderate', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
       { id: 'vision_read', name: 'Vision Read', description: 'Understand what is on screen using AI', riskLevel: 'safe', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
+      { id: 'weather', name: 'Weather', description: 'Get current weather conditions and forecast from Open-Meteo', riskLevel: 'safe', available: true, permissionsRequired: ['INTERNET'] },
+      { id: 'news_headlines', name: 'News Headlines', description: 'Fetch top news headlines from RSS feeds', riskLevel: 'safe', available: true, permissionsRequired: ['INTERNET'] },
     ];
     for (const c of caps) this.capabilities.set(c.id, c);
     this.logger.info(`Registered ${this.capabilities.size} capabilities`);
