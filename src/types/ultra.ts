@@ -87,6 +87,13 @@ export interface ChatMessage {
     requiresMessageBody?: boolean;
     pendingNumber?: string;
     pendingName?: string;
+    pendingChain?: {
+      steps: Array<{ capability: string; params: Record<string, unknown>; reason?: string }>;
+      idx: number;
+      collectedSummaries: string[];
+      disambigCapability: string;
+      disambigParams: Record<string, unknown>;
+    };
   };
 }
 

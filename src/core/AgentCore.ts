@@ -71,6 +71,26 @@ function uid(prefix = 'msg'): string {
   return `${prefix}_${Math.random().toString(36).slice(2)}_${Date.now()}`;
 }
 
+type Complexity = 'simple' | 'moderate' | 'complex';
+
+function classifyComplexity(input: string): Complexity {
+  const t = input.toLowerCase();
+  const complexSignals = [
+    /\b(explain|analyze|compare|contrast|evaluate|critique|assess|reasoning|logic|philosophy|ethical|moral|theorem|proof|research|hypothesis|argue|debate)\b/,
+    /\b(why|how does|what causes|what is the relationship|implications?|consequences?|significance)\b/,
+    /\b(step by step|in depth|thoroughly|comprehensively|detailed analysis)\b/,
+    /\b(difference between .+ and .+|pros and cons|advantages? and disadvantages?)\b/,
+  ];
+  const moderateSignals = [
+    /\b(summarize|describe|list|tell me about|what is|what are|how to|how do)\b/,
+    /\b(recommend|suggest|help me|write a|create a|draft|plan|ideas?)\b/,
+    /[?].*[?]/,
+  ];
+  if (complexSignals.some(r => r.test(t))) return 'complex';
+  if (moderateSignals.some(r => r.test(t)) || input.length > 200) return 'moderate';
+  return 'simple';
+}
+
 export interface ExecuteArgs {
   conversationId: string;
   userInput: string;
@@ -322,7 +342,8 @@ export class AgentCore extends SimpleEmitter {
       'wifi_toggle', 'bluetooth_toggle', 'do_not_disturb', 'battery_status', 'system_info',
       'device_info', 'app_share', 'web_research', 'vision_read', 'react_navigate',
       'event_trigger_set', 'event_trigger_list', 'event_trigger_remove', 'note_create',
-      'calendar_create', 'app_info', 'notification_read', 'volume_set', 'brightness_set'
+      'calendar_create', 'app_info', 'notification_read', 'volume_set', 'brightness_set',
+      'describe_screen', 'read_text_on_screen'
     ].includes(plan.capability);
   }
 
@@ -370,12 +391,17 @@ export class AgentCore extends SimpleEmitter {
     const isConvMode = params.mode === 'conversation';
     let behavior: string;
 
+    const complexity = classifyComplexity(params.userInput);
+    const cotBlock = complexity !== 'simple'
+      ? `\n\nReasoning approach: Think step-by-step before answering. Work through the problem internally — identify what is being asked, consider relevant knowledge, evaluate possible answers, then give your best response. Do not show your reasoning in the reply unless the user specifically asked for it.`
+      : '';
+
     if (params.mode === 'command') {
       behavior = 'You MUST return ONLY a JSON action plan: {"capability":"...", "params": {...}, "reason":"..."}. Do NOT return natural language, code, or markdown. ONLY valid JSON.';
     } else if (params.mode === 'ai_instruction') {
-      behavior = 'The user is giving you meta-instructions about how to handle their request. Follow their instructions precisely while answering the target request. Return natural language.';
+      behavior = `The user is giving you meta-instructions about how to handle their request. Follow their instructions precisely while answering the target request. Return natural language.${cotBlock}`;
     } else {
-      behavior = `Return a natural language response. Be precise, concise, and helpful.
+      behavior = `Return a natural language response. Be precise, concise, and helpful.${cotBlock}
 
 ABSOLUTE RULES IN CONVERSATION MODE — VIOLATION IS A CRITICAL FAILURE:
 1. You CANNOT execute device actions. You have no hands in this mode.
@@ -1122,6 +1148,9 @@ You are always on. Always capable. Always direct.`;
         resultMeta.candidates = execData.candidates || [];
         resultMeta.fuzzyQuery = execData.query || plan.params?.target || '';
       }
+      if (execData?.requiresDisambiguation && execData?.pendingChain) {
+        resultMeta.pendingChain = execData.pendingChain;
+      }
       if ((plan.capability === 'system_info' || plan.capability === 'device_info') && execResult?.data?.systemInfoData) {
         resultMeta.data = { systemInfoData: execResult.data.systemInfoData };
       }
@@ -1376,6 +1405,97 @@ You are always on. Always capable. Always direct.`;
       }
     }
 
+    // === PENDING CHAIN RESUME ===
+    // If there is no plan set by the disambiguation block, check if the last assistant
+    // message stored a pendingChain from a paused multi-step execution.
+    // If so, the current user input resolves the paused step — run it, then
+    // continue the remaining steps and return the combined summary.
+    if (!plan && mode === 'conversation') {
+      try {
+        const conv = await this.conversations.loadConversation(conversationId);
+        if (conv && conv.messages.length >= 2) {
+          const recentMsgsForChain = conv.messages.slice(-8);
+          const lastAssistantForChain = [...recentMsgsForChain].reverse().find(m => m.role === 'assistant');
+          const pendingChainData = lastAssistantForChain?.meta?.pendingChain as {
+            steps: Array<{ capability: string; params: Record<string, unknown>; reason?: string }>;
+            idx: number;
+            collectedSummaries: string[];
+            disambigCapability: string;
+            disambigParams: Record<string, unknown>;
+          } | undefined;
+
+          if (pendingChainData) {
+            DebugLog.systemEvent('AgentCore', `PendingChain resume: user answered "${userInput.slice(0, 60)}", remaining=${pendingChainData.steps.length} steps`);
+            step('PLAN', `Resuming paused chain from step ${pendingChainData.idx + 1}`, true);
+
+            const allSummaries = [...pendingChainData.collectedSummaries];
+
+            // Re-resolve the paused step using the user's answer (treat it as a contact/app selection).
+            // Build the resolved plan by injecting the user's input as the disambiguation answer.
+            const resolvedParams = { ...pendingChainData.disambigParams };
+            // The user's input is typically a contact name, phone number, or app selection.
+            // Patch common param keys to use the resolved value.
+            if ('to' in resolvedParams || pendingChainData.disambigCapability === 'sms_send' || pendingChainData.disambigCapability === 'phone_call') {
+              resolvedParams.to = userInput.trim();
+            } else if ('target' in resolvedParams) {
+              resolvedParams.target = userInput.trim();
+            }
+            const resolvedPlan: ActionPlan = {
+              capability: pendingChainData.disambigCapability,
+              params: resolvedParams,
+              reason: `Resuming chain: user resolved disambiguation with "${userInput.slice(0, 60)}"`,
+            };
+
+            try {
+              const resolvedResult = await this.executor.runWithPlan(resolvedPlan, taskId + '_chain_resume');
+              const resolvedTag = resolvedResult.success ? '✓' : '✗';
+              allSummaries.push(`${resolvedTag} ${resolvedResult.summary || resolvedPlan.capability}`);
+            } catch (e: any) {
+              allSummaries.push(`✗ ${resolvedPlan.capability}: ${e.message}`);
+            }
+
+            // Execute remaining steps
+            for (let si = 0; si < pendingChainData.steps.length; si++) {
+              const rawStep = pendingChainData.steps[si];
+              let continuePlan: ActionPlan | null = null;
+              if (rawStep.capability === '__raw__') {
+                const rawInput = String(rawStep.params.__raw__ || rawStep.reason || '');
+                continuePlan = this.parser.parse(rawInput);
+              } else {
+                continuePlan = { capability: rawStep.capability, params: rawStep.params, reason: rawStep.reason };
+              }
+              if (!continuePlan) {
+                allSummaries.push(`✗ Step ${pendingChainData.idx + 2 + si}: could not parse`);
+                continue;
+              }
+              try {
+                const contResult = await this.executor.runWithPlan(continuePlan, taskId + `_chain_cont${si}`);
+                const contTag = contResult.success ? '✓' : '✗';
+                allSummaries.push(`${contTag} ${contResult.summary || continuePlan.capability}`);
+              } catch (e: any) {
+                allSummaries.push(`✗ ${continuePlan.capability}: ${e.message}`);
+              }
+            }
+
+            const combinedSummary = allSummaries.join(' → ');
+            DebugLog.systemEvent('AgentCore', `PendingChain completed: ${combinedSummary.slice(0, 200)}`);
+            const chainMsg: ChatMessage = {
+              id: uid('msg'),
+              role: 'assistant',
+              content: combinedSummary,
+              createdAt: Date.now(),
+              source: 'ultra',
+              meta: { mode: 'command', capability: pendingChainData.disambigCapability, multiStep: true },
+            };
+            await this.conversations.addMessage(conversationId, chainMsg);
+            return { type: 'action_result', message: combinedSummary, taskId };
+          }
+        }
+      } catch (chainErr: any) {
+        DebugLog.error('PendingChainResume', chainErr.message, chainErr.stack);
+      }
+    }
+
     // === EXECUTE PLAN SET BY DISAMBIGUATION FOLLOW-UP ===
     // If the disambiguation block set a plan (fuzzy app or contact resolve), re-enter
     // the same execution kernel as a first-class task — no direct executor shortcut.
@@ -1425,14 +1545,54 @@ You are always on. Always capable. Always direct.`;
       : userInput;
 
     const finalMessages = [...payload, { role: 'user', content: framedUserMessage }];
+    const inputComplexity = classifyComplexity(userInput);
 
     try {
-      const aiResult = await this.ai.completeWithConversation(finalMessages, {
+      let aiResult = await this.ai.completeWithConversation(finalMessages, {
         model,
         taskId,
         agentId: 'chat',
         maxTokens: 4000,
       });
+
+      // === SELF-CRITIQUE PASS (complex queries, long responses) ===
+      // For complex questions where the response is substantial, run a lightweight
+      // self-critique to catch errors and improve quality. Skipped for short answers.
+      const SELF_CRITIQUE_CHAR_THRESHOLD = 800;
+      if (inputComplexity === 'complex' && aiResult.content.length > SELF_CRITIQUE_CHAR_THRESHOLD && this.ai.hasApiKey()) {
+        try {
+          DebugLog.systemEvent('AgentCore', `Self-critique triggered (complexity=complex, len=${aiResult.content.length})`);
+          const critiqueMessages = [
+            { role: 'system', content: 'You are a precise editor. Review the following response for factual errors, logical gaps, or misleading statements. If the response is correct and complete, output it unchanged. If you find issues, output a corrected version. Output ONLY the final response text — no commentary, no "Here is the corrected version:", no preamble.' },
+            { role: 'user', content: `Original question: ${userInput}\n\nResponse to review:\n${aiResult.content}` },
+          ];
+          const critiqueResult = await this.ai.completeWithConversation(critiqueMessages, {
+            model,
+            taskId: taskId + '_critique',
+            agentId: 'critic',
+            maxTokens: 4000,
+          });
+          if (critiqueResult.content && critiqueResult.content.length > 50) {
+            DebugLog.systemEvent('AgentCore', `Self-critique accepted (before=${aiResult.content.length}, after=${critiqueResult.content.length})`);
+            aiResult = { ...aiResult, content: critiqueResult.content };
+          }
+        } catch (critiqueErr: any) {
+          DebugLog.error('SelfCritique', critiqueErr.message, critiqueErr.stack);
+        }
+      }
+
+      // === MODEL ESCALATION ===
+      // Detect uncertainty markers in the response — if present and the router
+      // has another model available, retry with escalation.
+      const escalated = await this.ai.tryEscalate(aiResult.content, finalMessages, {
+        taskId: taskId + '_esc',
+        agentId: 'escalated_chat',
+        maxTokens: 4000,
+      });
+      if (escalated) {
+        DebugLog.systemEvent('AgentCore', `Model escalation used: ${escalated.model}`);
+        aiResult = escalated;
+      }
 
       DebugLog.aiResponse(conversationId, aiResult.model, aiResult.content, aiResult.cost);
       DebugLog.push('EFFECT', {

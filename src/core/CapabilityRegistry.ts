@@ -88,6 +88,8 @@ export class CapabilityRegistry {
       { id: 'behavior_patterns', name: 'Behavior Patterns', description: 'Show detected behavioral patterns', riskLevel: 'safe', available: true, permissionsRequired: [] },
       { id: 'web_research', name: 'Web Research', description: 'Research a topic using installed apps', riskLevel: 'moderate', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
       { id: 'vision_read', name: 'Vision Read', description: 'Understand what is on screen using AI', riskLevel: 'safe', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
+      { id: 'describe_screen', name: 'Describe Screen', description: 'Describe what is currently on screen using AI vision', riskLevel: 'safe', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
+      { id: 'read_text_on_screen', name: 'Read Screen Text', description: 'OCR and read all visible text from the current screen', riskLevel: 'safe', available: true, permissionsRequired: ['BIND_ACCESSIBILITY_SERVICE'] },
       { id: 'weather', name: 'Weather', description: 'Get current weather conditions and forecast from Open-Meteo', riskLevel: 'safe', available: true, permissionsRequired: ['INTERNET'] },
       { id: 'news_headlines', name: 'News Headlines', description: 'Fetch top news headlines from RSS feeds', riskLevel: 'safe', available: true, permissionsRequired: ['INTERNET'] },
     ];

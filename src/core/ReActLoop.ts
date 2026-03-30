@@ -52,6 +52,8 @@ const SEARCH_FIELD_HINT = /(search|find|query|lookup)/i;
 const SEARCH_BUTTON_HINT = /^(search|go|enter|submit|done|ok|apply)$/i;
 const RESULT_TEXT_HINT = /(result|results|price|rating|reviews?|buy|shop|watch|play|open|visit)/i;
 
+const VISION_SPARSE_THRESHOLD = 8;
+
 export class ReActLoop {
   private maxIterations: number;
   private iterationDelayMs: number;
@@ -64,6 +66,20 @@ export class ReActLoop {
     this.maxIterations = options.maxIterations ?? 8;
     this.iterationDelayMs = options.iterationDelayMs ?? 1200;
     this.allowLLMFallback = options.allowLLMFallback ?? true;
+  }
+
+  private async tryGetVisionContext(): Promise<string | null> {
+    try {
+      const { getAgentCoreInstance } = await import('./AgentCore');
+      const core = getAgentCoreInstance();
+      const vision = core?.getCortex()?.getVisionPipeline();
+      if (!vision) return null;
+      const u = await vision.understand();
+      if (!u || !u.description || u.confidence < 0.2) return null;
+      return `[VISUAL] ${u.description}${u.textContent.length > 0 ? '\nText visible: ' + u.textContent.slice(0, 5).join(' | ') : ''}`;
+    } catch {
+      return null;
+    }
   }
 
   async execute(goal: string, appHint?: string): Promise<ReActResult> {
@@ -150,8 +166,17 @@ export class ReActLoop {
 
       DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: Falling back to LLM (deterministic failed ${deterministicFailCount}x)`);
 
+      let enhancedObservation = observation;
+      if (nodes.length < VISION_SPARSE_THRESHOLD && this.allowLLMFallback) {
+        const visionCtx = await this.tryGetVisionContext();
+        if (visionCtx) {
+          enhancedObservation = `${visionCtx}\n\n${observation}`;
+          DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: sparse screen (${nodes.length} nodes), vision context prepended`);
+        }
+      }
+
       const systemPrompt = 'You control an Android screen. You see UI elements and choose one action. Respond ONLY: ACTION: tap_index(N), tap(x,y), type("text"), scroll(up|down), back(), done. No explanation.';
-      const userMessage = `GOAL: ${goal}\n\nSCREEN:\n${observation.slice(0, 2000)}\n\nACTION:`;
+      const userMessage = `GOAL: ${goal}\n\nSCREEN:\n${enhancedObservation.slice(0, 2000)}\n\nACTION:`;
       let reasoning: string;
       try {
         reasoning = await this.aiCall(`${systemPrompt}\n\n${userMessage}`);

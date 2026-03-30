@@ -95,6 +95,45 @@ export class VisionPipeline {
     return { description: descMatch ? descMatch[1].trim() : text.slice(0, 300), appName: appMatch ? appMatch[1].trim() : fallbackApp, screenType: typeMatch ? typeMatch[1].trim().toLowerCase() : 'unknown', interactableElements, textContent, structuredData, confidence: confMatch ? parseFloat(confMatch[1]) : 0.5, timestamp: Date.now() };
   }
 
+  async readText(hint?: string): Promise<{ success: boolean; text: string }> {
+    if (!isNative || !AppController.isAvailable()) return { success: false, text: 'Vision requires Android device' };
+
+    let screenshotBase64: string | null = null;
+    try {
+      const taken = await AppController.takeScreenshot();
+      if (taken && FileSystem) {
+        const screenshotDir = FileSystem.documentDirectory + 'screenshots/';
+        try {
+          const files = await FileSystem.readDirectoryAsync(screenshotDir);
+          const pngFiles = files.filter((f: string) => f.endsWith('.png')).sort().reverse();
+          if (pngFiles.length > 0) {
+            screenshotBase64 = await FileSystem.readAsStringAsync(screenshotDir + pngFiles[0], { encoding: FileSystem.EncodingType.Base64 });
+            this.lastScreenshot = screenshotBase64;
+            this.lastScreenshotTime = Date.now();
+          }
+        } catch {}
+      }
+    } catch (e: any) { DebugLog.error('VisionPipeline', `readText screenshot failed: ${e.message}`); }
+
+    if (!screenshotBase64) return { success: false, text: 'Could not capture screen for text reading' };
+    if (!this.ai.hasApiKey()) return { success: false, text: 'AI provider not configured' };
+
+    try {
+      const hintLine = hint ? ` Focus on: ${hint}.` : '';
+      const userContent: any[] = [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: screenshotBase64.slice(0, 1_000_000) } },
+        { type: 'text', text: `Read all visible text from this screenshot exactly as it appears.${hintLine} Return only the raw text you can see, preserving line breaks. Do not describe the image — just transcribe the text.` },
+      ];
+      const messages = [{ role: 'system', content: 'You are an OCR assistant. Extract all visible text from images exactly as it appears.' }, { role: 'user', content: userContent }];
+      const aiResult = await this.ai.completeWithConversation(messages as any, { taskId: `vision_ocr_${Date.now().toString(36)}`, agentId: 'vision', maxTokens: 600, temperature: 0.1 });
+      DebugLog.push('VISION_ANALYZE' as any, { event: 'read_text_done', chars: aiResult.content.length });
+      return { success: true, text: aiResult.content.trim() };
+    } catch (err: any) {
+      DebugLog.error('VisionPipeline', `readText AI failed: ${err.message}`);
+      return { success: false, text: `Text reading failed: ${err.message}` };
+    }
+  }
+
   getLastScreenshot(): { base64: string | null; timestamp: number } { return { base64: this.lastScreenshot, timestamp: this.lastScreenshotTime }; }
   private emptyResult(reason: string): ScreenUnderstanding { return { description: reason, appName: '', screenType: 'unknown', interactableElements: [], textContent: [], structuredData: null, confidence: 0, timestamp: Date.now() }; }
 }

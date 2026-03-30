@@ -1093,6 +1093,40 @@ const rules: ParseRule[] = [
   },
 
   // ════════════════════════════════════════════════════
+  // VISION — DESCRIBE SCREEN / READ TEXT ON SCREEN
+  // ════════════════════════════════════════════════════
+  // "what do you see" / "what's on my screen" / "what's on screen" / "describe the screen"
+  {
+    pattern: /^(?:what(?:'s|\s+is)\s+(?:on\s+)?(?:my\s+)?(?:the\s+)?screen(?:\?|$)|describe\s+(?:the\s+)?(?:current\s+)?screen|what\s+do\s+you\s+see|look\s+at\s+(?:the\s+)?screen|what\s+(?:can\s+you\s+see|are\s+you\s+seeing)|what\s+(?:is|are)\s+(?:showing|displayed|visible)\s+(?:on\s+)?(?:my\s+)?screen)/i,
+    capability: 'describe_screen',
+    extractParams: () => ({}),
+  },
+  // "describe what's on screen" / "describe this screen" / "describe the app"
+  {
+    pattern: /^describe\s+(?:what(?:'s|\s+is)\s+(?:on\s+)?(?:the\s+)?screen|this\s+screen|this\s+app|this\s+page|what\s+you\s+see)/i,
+    capability: 'describe_screen',
+    extractParams: () => ({}),
+  },
+  // "read what's on screen" / "read the screen" / "read this page"
+  {
+    pattern: /^read\s+(?:the\s+text\s+(?:on\s+|from\s+)?(?:the\s+)?screen|what(?:'s|\s+is)\s+on\s+(?:the\s+)?screen|the\s+screen|this\s+page|this\s+screen|what\s+you\s+see)$/i,
+    capability: 'read_text_on_screen',
+    extractParams: () => ({}),
+  },
+  // "read the text in this image/photo" / "read text from screen" / "extract text from screen"
+  {
+    pattern: /^(?:read|extract|get|copy)\s+(?:the\s+)?text\s+(?:in|from|on)\s+(?:this\s+)?(?:image|photo|screenshot|screen|page)$/i,
+    capability: 'read_text_on_screen',
+    extractParams: () => ({}),
+  },
+  // "what does the screen say" / "what does it say on screen"
+  {
+    pattern: /^what\s+does\s+(?:the\s+)?(?:screen|it|this)\s+say(?:\?|$)/i,
+    capability: 'read_text_on_screen',
+    extractParams: () => ({}),
+  },
+
+  // ════════════════════════════════════════════════════
   // NEWS HEADLINES
   // ════════════════════════════════════════════════════
   // "top headlines" / "today's news" / "latest news"

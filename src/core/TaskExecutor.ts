@@ -1652,6 +1652,36 @@ export class TaskExecutor {
           } finally {
             DebugLog.watchdogDisarm(stepWatchdogId, 'multistep_exec');
           }
+
+          // ── Mid-chain disambiguation detection ──
+          // If this step needs the user to resolve a contact or app name, pause the chain
+          // and store the remaining steps so AgentCore can resume after the user answers.
+          const stepData = stepResult.data as Record<string, any> | undefined;
+          const needsDisambig = stepData?.requiresDisambiguation || stepData?.requiresFuzzyConfirmation;
+          if (needsDisambig) {
+            const remainingSteps = rawSteps.slice(idx + 1).map((s: any) => {
+              if (typeof s === 'string') return { capability: '__raw__', params: { __raw__: s }, reason: s };
+              return { capability: s.capability || '__raw__', params: s.params || {}, reason: s.reason || '' };
+            });
+            DebugLog.systemEvent('MultiStep', `Disambiguation at step ${idx + 1}/${rawSteps.length} — pausing chain (${remainingSteps.length} steps remaining)`);
+            return {
+              success: false,
+              summary: stepResult.summary || 'Disambiguation required',
+              data: {
+                requiresDisambiguation: true,
+                summary: stepResult.summary,
+                pendingChain: {
+                  steps: remainingSteps,
+                  idx,
+                  collectedSummaries: [...summaries],
+                  disambigCapability: stepPlan.capability,
+                  disambigParams: stepPlan.params as Record<string, unknown>,
+                },
+                ...(stepData || {}),
+              },
+            };
+          }
+
           const stepTag = stepResult.success ? '✓' : '✗';
           const stepSummary = stepResult.summary || `${stepLabel || stepPlan.capability}: ${stepResult.success ? 'ok' : 'failed'}`;
           summaries.push(`${stepTag} ${stepSummary}`);
@@ -2299,6 +2329,31 @@ export class TaskExecutor {
           const result = await appIntel.search(params.query, { app: 'google' });
           return { success: result.success, summary: result.aiSummary, data: { structuredData: result.structuredData, app: result.app, steps: result.steps } };
         } catch (e: any) { return { success: false, summary: `Research failed: ${e.message}` }; }
+      }
+      case 'describe_screen': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const vision = core?.getCortex()?.getVisionPipeline();
+          if (!vision) return { success: false, summary: 'Vision pipeline not available' };
+          const context: string | undefined = params.context || undefined;
+          const u = await vision.understand(context);
+          let summary = u.description;
+          if (u.textContent.length > 0) summary += '\n\nVisible text: ' + u.textContent.slice(0, 5).join('; ');
+          if (u.interactableElements.length > 0) summary += '\n\nInteractive: ' + u.interactableElements.slice(0, 5).map(e => `${e.label} [${e.type}]`).join(', ');
+          DebugLog.push('VISION_ANALYZE' as any, { event: 'describe_screen', screenType: u.screenType, confidence: u.confidence, textItems: u.textContent.length, interactive: u.interactableElements.length });
+          return { success: true, summary, data: u };
+        } catch (e: any) { return { success: false, summary: `Screen description failed: ${e.message}` }; }
+      }
+      case 'read_text_on_screen': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const vision = core?.getCortex()?.getVisionPipeline();
+          if (!vision) return { success: false, summary: 'Vision pipeline not available' };
+          const hint: string | undefined = params.hint || undefined;
+          const result = await vision.readText(hint);
+          if (!result.success) return { success: false, summary: result.text };
+          return { success: true, summary: result.text.length > 0 ? result.text : 'No text found on screen.', data: { text: result.text } };
+        } catch (e: any) { return { success: false, summary: `Screen text reading failed: ${e.message}` }; }
       }
       case 'vision_read': {
         try {

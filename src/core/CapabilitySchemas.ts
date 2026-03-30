@@ -525,6 +525,22 @@ const schemas: CapabilitySchema[] = [
     optionalParams: {},
   },
   {
+    capabilityId: 'describe_screen',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      context: { type: 'string', description: 'Optional context about what the user is trying to do' },
+    },
+  },
+  {
+    capabilityId: 'read_text_on_screen',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      hint: { type: 'string', description: 'Optional hint about what text to focus on (e.g. "prices", "phone numbers")' },
+    },
+  },
+  {
     capabilityId: 'tts',
     version: 1,
     requiredParams: {

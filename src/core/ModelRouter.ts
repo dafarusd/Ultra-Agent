@@ -911,6 +911,78 @@ export class ModelRouter {
     }
   }
 
+  /**
+   * Try to escalate a response that shows uncertainty markers by re-issuing the
+   * conversation to a different model (if one is available).
+   *
+   * Returns null when:
+   *   - The response has no uncertainty markers
+   *   - Only one model is configured (nothing to escalate to)
+   *   - The escalation call fails
+   */
+  async tryEscalate(
+    responseText: string,
+    messages: Array<{ role: string; content: string }>,
+    opts: { taskId?: string; agentId?: string; maxTokens?: number }
+  ): Promise<CompletionResult | null> {
+    const UNCERTAINTY_MARKERS = [
+      /\bi'?m not (sure|certain|confident)\b/i,
+      /\bi don'?t (know|have enough|have sufficient)\b/i,
+      /\bi (cannot|can'?t) (be sure|say for certain|confirm)\b/i,
+      /\bit'?s (unclear|hard to say|difficult to determine)\b/i,
+      /\bI lack (the|sufficient|enough|up-to-date)\b/i,
+      /\bmy (training|knowledge) (cut-?off|data)\b/i,
+    ];
+    const hasUncertainty = UNCERTAINTY_MARKERS.some(r => r.test(responseText));
+    if (!hasUncertainty) return null;
+
+    // Check that we have multiple models available so there's something to escalate to
+    const allModels = this.providerBackedModels;
+    if (allModels.length < 2) {
+      DebugLog.push('SYSTEM', { event: 'escalate_skipped', reason: 'only_one_model' });
+      return null;
+    }
+
+    // Pick a different model from a different provider if possible, else any different model
+    const currentModel = this.defaultModel;
+    const currentProvider = this.defaultProviderId;
+    const candidate =
+      allModels.find(m => m.id !== currentModel && m.providerId !== currentProvider && m.type === 'text') ??
+      allModels.find(m => m.id !== currentModel && m.type === 'text');
+
+    if (!candidate) {
+      DebugLog.push('SYSTEM', { event: 'escalate_skipped', reason: 'no_different_model' });
+      return null;
+    }
+
+    DebugLog.push('SYSTEM', {
+      event: 'escalate_triggered',
+      from: buildCompositeKey(currentProvider, currentModel),
+      to: buildCompositeKey(candidate.providerId, candidate.id),
+      uncertainty: responseText.slice(0, 120),
+    });
+
+    try {
+      if (this.bridge) {
+        if (!this.bridge.hasActiveProvider()) return null;
+        const escalateResult = await this.bridge.completeConversation(messages, {
+          model: candidate.id,
+          maxTokens: opts.maxTokens,
+          taskId: opts.taskId,
+          agentId: opts.agentId,
+          preferredProviderId: candidate.providerId,
+        });
+        DebugLog.push('SYSTEM', { event: 'escalate_success', model: escalateResult.model });
+        return escalateResult;
+      }
+      // Legacy (no-bridge) path — no alternate model available
+      return null;
+    } catch (err: any) {
+      DebugLog.push('ERROR', { event: 'escalate_failed', error: err.message });
+      return null;
+    }
+  }
+
   hasApiKey(): boolean {
     if (this.bridge) return this.bridge.hasActiveProvider();
     return this.apiKey !== null;
