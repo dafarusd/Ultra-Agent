@@ -1614,22 +1614,41 @@ export class TaskExecutor {
             }
           }
 
+          const stopOnFail = params.stopOnFirstFailure === true;
+          const skipRemaining = (fromIdx: number, reason: string) => {
+            for (let j = fromIdx; j < rawSteps.length; j++) {
+              summaries.push(`⊘ step ${j + 1}: skipped (${reason})`);
+            }
+          };
+
           if (!stepPlan) {
-            summaries.push(`Step ${idx + 1}: could not parse`);
+            summaries.push(`✗ Step ${idx + 1}: could not parse`);
             allSucceeded = false;
+            if (stopOnFail) { skipRemaining(idx + 1, 'prior step failed'); break; }
             continue;
           }
           if (stepPlan.capability === 'multi_step') {
-            summaries.push(`Step ${idx + 1}: nested multi_step is not allowed`);
+            summaries.push(`✗ Step ${idx + 1}: nested multi_step is not allowed`);
             allSucceeded = false;
+            if (stopOnFail) { skipRemaining(idx + 1, 'prior step failed'); break; }
             continue;
           }
 
+          const STEP_TIMEOUT_MS = 20000;
           const stepWatchdogId = `${taskId}_ms${idx + 1}`;
-          DebugLog.watchdogArm(stepWatchdogId, 'multistep_exec', 20000);
+          DebugLog.watchdogArm(stepWatchdogId, 'multistep_exec', STEP_TIMEOUT_MS);
+          const timeoutResult = new Promise<{ success: boolean; summary: string }>((resolve) =>
+            setTimeout(
+              () => resolve({ success: false, summary: `${stepLabel || stepPlan!.capability}: timed out after ${STEP_TIMEOUT_MS / 1000}s` }),
+              STEP_TIMEOUT_MS
+            )
+          );
           let stepResult: Awaited<ReturnType<typeof this.runWithPlan>>;
           try {
-            stepResult = await this.runWithPlan(stepPlan, stepWatchdogId);
+            stepResult = await Promise.race([
+              this.runWithPlan(stepPlan, stepWatchdogId),
+              timeoutResult,
+            ]) as Awaited<ReturnType<typeof this.runWithPlan>>;
           } finally {
             DebugLog.watchdogDisarm(stepWatchdogId, 'multistep_exec');
           }
@@ -1638,12 +1657,7 @@ export class TaskExecutor {
           summaries.push(`${stepTag} ${stepSummary}`);
           if (!stepResult.success) {
             allSucceeded = false;
-            if (params.stopOnFirstFailure === true) {
-              for (let j = idx + 1; j < rawSteps.length; j++) {
-                summaries.push(`⊘ step ${j + 1}: skipped (prior step failed)`);
-              }
-              break;
-            }
+            if (stopOnFail) { skipRemaining(idx + 1, 'prior step failed'); break; }
           }
         }
 

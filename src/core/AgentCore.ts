@@ -401,11 +401,27 @@ When a task spans multiple steps, you execute them in sequence. When you need to
 
 You are always on. Always capable. Always direct.`;
 
-    // In conversation mode: inject a compact capability summary (not the full list) and
-    // only show denied permissions to avoid unnecessary context bloat.
-    const capLine = isConvMode
-      ? `Device capabilities: ${params.capabilities.length} available (switch to command mode to activate them)`
-      : `Available capabilities: ${params.capabilities.join(', ')}`;
+    // In conversation mode: inject the top-15 most-used capabilities (ranked by usage history)
+    // rather than the full list, to reduce context bloat. Falls back to the full list if
+    // there is insufficient history (< 3 tracked capabilities).
+    let capLine: string;
+    if (isConvMode) {
+      const topPatterns = this.learner.getTopPatterns(50);
+      const capUsage = new Map<string, number>();
+      for (const pat of topPatterns) {
+        for (const c of pat.capabilities) {
+          capUsage.set(c, (capUsage.get(c) ?? 0) + pat.usageCount);
+        }
+      }
+      const ranked = [...capUsage.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(e => e[0])
+        .slice(0, 15);
+      const topCaps = ranked.length >= 3 ? ranked : params.capabilities.slice(0, 15);
+      capLine = `Available capabilities: ${topCaps.join(', ')} (${params.capabilities.length - topCaps.length} more available in command mode)`;
+    } else {
+      capLine = `Available capabilities: ${params.capabilities.join(', ')}`;
+    }
     const deniedMatch = permReport.match(/Denied:\s*(.+)$/i);
     const deniedStr = deniedMatch ? deniedMatch[1].trim() : '';
     const permLine = isConvMode
@@ -1178,13 +1194,15 @@ You are always on. Always capable. Always direct.`;
             const candidates: Array<{ appName: string; packageName: string }> = lastAssistant.meta.candidates || [];
             const query: string = lastAssistant.meta.fuzzyQuery || '';
             const inputLower = userInput.toLowerCase().trim();
+            // Normalize input: strip leading/trailing punctuation for robust matching
+            const inputNorm = inputLower.replace(/^[^a-z0-9#]+|[^a-z0-9]+$/g, '').trim();
 
             // User said yes/confirm — launch the first (best) candidate
-            const isYes = /^(yes|yeah|yep|sure|ok|okay|correct|that('s| is) it|that one|open it|launch it|go)$/i.test(inputLower);
+            const isYes = /^(yes|yeah|yep|yup|sure|ok|okay|correct|that('s| is)( it)?|that one|this one|open it|launch it|go ahead|go)$/i.test(inputNorm);
             // User named a specific app from the list
             const namedCandidate = candidates.find(c =>
-              inputLower.includes(c.appName.toLowerCase()) ||
-              c.appName.toLowerCase().includes(inputLower)
+              inputNorm.includes(c.appName.toLowerCase()) ||
+              c.appName.toLowerCase().includes(inputNorm)
             );
             // User said an ordinal like "1", "2", "first", "second", "the third one"
             const ordinalMap: Record<string, number> = {
@@ -1193,7 +1211,7 @@ You are always on. Always capable. Always direct.`;
               '3': 2, 'third': 2, '3rd': 2,
               '4': 3, 'fourth': 3, '4th': 3,
             };
-            const ordinalKey = Object.keys(ordinalMap).find(k => new RegExp(`\\b${k}\\b`, 'i').test(inputLower));
+            const ordinalKey = Object.keys(ordinalMap).find(k => new RegExp(`\\b${k}\\b`, 'i').test(inputNorm));
             const ordinalCandidate = ordinalKey !== undefined ? candidates[ordinalMap[ordinalKey]] : undefined;
 
             if (isYes && candidates.length > 0) {
@@ -1271,6 +1289,8 @@ You are always on. Always capable. Always direct.`;
           )) {
             // User is answering a disambiguation — accept explicit numbers, ordinals, or contact names from the assistant list.
             const phoneMatch = userInput.match(/(\+?[\d\s\-\(\)]{7,})/);
+            // Normalize input: strip leading/trailing punctuation so "1." / "yes!" / "John." etc. all match
+            const contactInputNorm = userInput.toLowerCase().trim().replace(/^[^a-z0-9#]+|[^a-z0-9]+$/g, '').trim();
             const optionRegex = /([^:,]+?)\s*\(([^:]+):\s*([^\)]+)\)/g;
             const options: Array<{ name: string; label: string; number: string }> = [];
             let optMatch: RegExpExecArray | null;
@@ -1282,9 +1302,9 @@ You are always on. Always capable. Always direct.`;
               });
             }
             const ordinalMap: Record<string, number> = { first: 0, '1': 0, '1st': 0, second: 1, '2': 1, '2nd': 1, third: 2, '3': 2, '3rd': 2, fourth: 3, '4': 3, '4th': 3 };
-            const ordinalKey = Object.keys(ordinalMap).find(k => new RegExp(`\\b${k}\\b`, 'i').test(userInput));
+            const ordinalKey = Object.keys(ordinalMap).find(k => new RegExp(`\\b${k}\\b`, 'i').test(contactInputNorm));
             const ordinalChoice = ordinalKey !== undefined ? options[ordinalMap[ordinalKey]] : undefined;
-            const namedChoice = options.find(o => userInput.toLowerCase().includes(o.name.toLowerCase()) || o.name.toLowerCase().includes(userInput.toLowerCase().trim()));
+            const namedChoice = options.find(o => contactInputNorm.includes(o.name.toLowerCase()) || o.name.toLowerCase().includes(contactInputNorm));
             const chosenNumber = phoneMatch ? phoneMatch[1].replace(/[^\d+]/g, '') : (namedChoice?.number || ordinalChoice?.number || '');
             const chosenName = namedChoice?.name || ordinalChoice?.name || '';
             if (chosenNumber) {
