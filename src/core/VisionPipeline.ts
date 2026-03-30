@@ -77,7 +77,33 @@ export class VisionPipeline {
       return this.parseVisionResponse(aiResult.content, activePackage);
     } catch (err: any) {
       DebugLog.error('VisionPipeline', `AI vision failed: ${err.message}`);
-      return { description: `App: ${activePackage}. AI vision unavailable.`, appName: activePackage, screenType: 'unknown', interactableElements: [], textContent: [], structuredData: null, confidence: 0.2, timestamp: Date.now() };
+      // Build a meaningful tree-based fallback narrative from the accessibility data
+      // already collected above, so callers get useful content instead of a blank error.
+      const treeItems = accessibilityText
+        .split('\n')
+        .filter(l => l.includes('"'))
+        .slice(0, 15)
+        .map(l => { const m = l.match(/"([^"]+)"/); return m ? m[1].trim() : ''; })
+        .filter(Boolean);
+      const clickable = accessibilityText
+        .split('\n')
+        .filter(l => l.includes('tappable'))
+        .slice(0, 6)
+        .map(l => { const m = l.match(/"([^"]+)"/); return m ? m[1].trim() : ''; })
+        .filter(Boolean);
+      const fallbackDesc = treeItems.length > 0
+        ? `${activePackage || 'App'} screen contains: ${treeItems.slice(0, 6).join(', ')}${treeItems.length > 6 ? ` and ${treeItems.length - 6} more elements` : ''}. (AI vision model unavailable — showing accessibility tree only.)`
+        : `App: ${activePackage || 'unknown'}. No accessibility data available. (AI vision model unavailable.)`;
+      return {
+        description: fallbackDesc,
+        appName: activePackage,
+        screenType: 'unknown',
+        interactableElements: clickable.map(label => ({ label, type: 'button' as const, suggestedAction: `tap "${label}"` })),
+        textContent: treeItems,
+        structuredData: null,
+        confidence: 0.2,
+        timestamp: Date.now(),
+      };
     }
   }
 

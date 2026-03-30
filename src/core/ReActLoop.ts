@@ -24,6 +24,7 @@ export interface ReActOptions {
   maxIterations?: number;
   iterationDelayMs?: number;
   allowLLMFallback?: boolean;
+  visionSparseThreshold?: number;
 }
 
 interface FlatNode {
@@ -58,6 +59,7 @@ export class ReActLoop {
   private maxIterations: number;
   private iterationDelayMs: number;
   private allowLLMFallback: boolean;
+  private visionSparseThreshold: number;
 
   constructor(
     private aiCall: (prompt: string) => Promise<string>,
@@ -66,6 +68,7 @@ export class ReActLoop {
     this.maxIterations = options.maxIterations ?? 8;
     this.iterationDelayMs = options.iterationDelayMs ?? 1200;
     this.allowLLMFallback = options.allowLLMFallback ?? true;
+    this.visionSparseThreshold = options.visionSparseThreshold ?? VISION_SPARSE_THRESHOLD;
   }
 
   private async tryGetVisionContext(): Promise<string | null> {
@@ -75,8 +78,12 @@ export class ReActLoop {
       const vision = core?.getCortex()?.getVisionPipeline();
       if (!vision) return null;
       const u = await vision.understand();
-      if (!u || !u.description || u.confidence < 0.2) return null;
-      return `[VISUAL] ${u.description}${u.textContent.length > 0 ? '\nText visible: ' + u.textContent.slice(0, 5).join(' | ') : ''}`;
+      if (!u || !u.description) return null;
+      // confidence < 0.2 means even the a11y tree was empty — nothing useful to offer
+      if (u.confidence < 0.2) return null;
+      // confidence === 0.2 means AI vision failed but we have a tree-based fallback
+      const tag = u.confidence <= 0.2 ? '[SCREEN_TREE]' : '[VISUAL]';
+      return `${tag} ${u.description}${u.textContent.length > 0 ? '\nText visible: ' + u.textContent.slice(0, 5).join(' | ') : ''}`;
     } catch {
       return null;
     }
@@ -167,7 +174,7 @@ export class ReActLoop {
       DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: Falling back to LLM (deterministic failed ${deterministicFailCount}x)`);
 
       let enhancedObservation = observation;
-      if (nodes.length < VISION_SPARSE_THRESHOLD && this.allowLLMFallback) {
+      if (nodes.length < this.visionSparseThreshold && this.allowLLMFallback) {
         const visionCtx = await this.tryGetVisionContext();
         if (visionCtx) {
           enhancedObservation = `${visionCtx}\n\n${observation}`;

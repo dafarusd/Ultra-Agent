@@ -1071,31 +1071,14 @@ const rules: ParseRule[] = [
     capability: 'image_generate',
     extractParams: (m) => ({ prompt: m[1].trim() }),
   },
-  {
-    pattern: /^(?:say|speak|read\s+(?:out\s+)?(?:loud)?)\s+(.+)/i,
-    capability: 'tts',
-    extractParams: (m) => ({ text: m[1].trim() }),
-  },
-  {
-    pattern: /^generate\s+(?:a\s+)?(?:an?\s+)?video\s+(?:of\s+)?(.+)/i,
-    capability: 'video_generate',
-    extractParams: (m) => ({ prompt: m[1].trim() }),
-  },
-  {
-    pattern: /^(?:improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself)(?:\s+(.+))?$/i,
-    capability: 'self_modify',
-    extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
-  },
-  {
-    pattern: /^(?:replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)(?:\s+(.+))?$/i,
-    capability: 'self_replicate',
-    extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
-  },
 
   // ════════════════════════════════════════════════════
   // VISION — DESCRIBE SCREEN / READ TEXT ON SCREEN
+  // Placed BEFORE the TTS "read ..." catch-all rule so that
+  // "read the screen", "read what's on screen", etc. are
+  // routed to the correct OCR/describe capability first.
   // ════════════════════════════════════════════════════
-  // "what do you see" / "what's on my screen" / "what's on screen" / "describe the screen"
+  // "what's on my screen" / "describe the screen" / "what do you see"
   {
     pattern: /^(?:what(?:'s|\s+is)\s+(?:on\s+)?(?:my\s+)?(?:the\s+)?screen(?:\?|$)|describe\s+(?:the\s+)?(?:current\s+)?screen|what\s+do\s+you\s+see|look\s+at\s+(?:the\s+)?screen|what\s+(?:can\s+you\s+see|are\s+you\s+seeing)|what\s+(?:is|are)\s+(?:showing|displayed|visible)\s+(?:on\s+)?(?:my\s+)?screen)/i,
     capability: 'describe_screen',
@@ -1124,6 +1107,29 @@ const rules: ParseRule[] = [
     pattern: /^what\s+does\s+(?:the\s+)?(?:screen|it|this)\s+say(?:\?|$)/i,
     capability: 'read_text_on_screen',
     extractParams: () => ({}),
+  },
+
+  // TTS — narrow regex so bare "read <topic>" doesn't shadow vision rules above.
+  // Only matches when "say"/"speak" are used, or "read" + explicit "out loud"/"aloud".
+  {
+    pattern: /^(?:say|speak)\s+(.+)|^read\s+(?:out\s+loud|aloud|(?:out)\s+(?:loud))\s+(.+)/i,
+    capability: 'tts',
+    extractParams: (m) => ({ text: (m[1] || m[2] || '').trim() }),
+  },
+  {
+    pattern: /^generate\s+(?:a\s+)?(?:an?\s+)?video\s+(?:of\s+)?(.+)/i,
+    capability: 'video_generate',
+    extractParams: (m) => ({ prompt: m[1].trim() }),
+  },
+  {
+    pattern: /^(?:improve\s+yourself|self[\s-]?improve|evolve|mutate|upgrade\s+yourself)(?:\s+(.+))?$/i,
+    capability: 'self_modify',
+    extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
+  },
+  {
+    pattern: /^(?:replicate|self[\s-]?replicate|reproduce|clone\s+yourself|spawn\s+offspring)(?:\s+(.+))?$/i,
+    capability: 'self_replicate',
+    extractParams: (m) => (m[1] ? { goal: m[1].trim() } : {}),
   },
 
   // ════════════════════════════════════════════════════
