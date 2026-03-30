@@ -950,6 +950,13 @@ const rules: ParseRule[] = [
     capability: 'weather',
     extractParams: (m) => m[1] ? { location: m[1].trim() } : {},
   },
+  // Location-specific "what's/what is the weather in X" — must be BEFORE the generic catch-all below
+  {
+    pattern: /^(?:what(?:'s|\s+is)|how(?:'s|\s+is)|tell\s+me\s+what(?:'s|\s+is))\s+(?:the\s+)?(?:weather|temperature|forecast)\s+(?:like\s+)?(?:in|at|for)\s+(.+?)\??$/i,
+    capability: 'weather',
+    extractParams: (m) => ({ location: m[1].trim() }),
+  },
+  // Generic "what's the weather" / "how's the weather" (no specific location)
   {
     pattern: /^(?:what(?:'s|\s+is)|how(?:'s|\s+is)|can\s+you\s+tell\s+me\s+what(?:'s|\s+is)|tell\s+me\s+what(?:'s|\s+is)|will\s+it\s+be|is\s+it\s+going\s+to\s+be|gonna\s+be)\s+.*(?:weather|forecast|temperature|rain|snow)\b.*\??$/i,
     capability: 'weather',

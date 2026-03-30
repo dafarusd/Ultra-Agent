@@ -2349,29 +2349,28 @@ export class TaskExecutor {
             return { success: false, summary: 'Could not determine your location. Try "weather in New York".' };
           }
 
-          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current_weather=true&hourly=precipitation_probability,weathercode&forecast_days=1&timezone=auto&temperature_unit=${unit}`;
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation_probability&timezone=auto&temperature_unit=${unit}`;
           const res = await fetch(weatherUrl);
           if (!res.ok) return { success: false, summary: `Weather service unavailable (${res.status}). Try again later.` };
           const data = await res.json();
 
-          const cw = data.current_weather;
-          const temp = Math.round(cw.temperature);
-          const windspeed = Math.round(cw.windspeed);
-          const condition = wmoCodeToCondition(cw.weathercode);
-
-          const hourly = data.hourly;
-          const precipArr: number[] = (hourly?.precipitation_probability || []).slice(0, 6);
-          const maxPrecip = precipArr.length > 0 ? Math.max(...precipArr) : 0;
+          const cur = data.current;
+          const temp = Math.round(cur.temperature_2m ?? cur.temperature ?? 0);
+          const humidity = Math.round(cur.relative_humidity_2m ?? 0);
+          const windspeed = Math.round(cur.wind_speed_10m ?? cur.windspeed ?? 0);
+          const precipChance = Math.round(cur.precipitation_probability ?? 0);
+          const weatherCode = cur.weather_code ?? cur.weathercode ?? 0;
+          const condition = wmoCodeToCondition(weatherCode);
 
           const locStr = locationName ? ` in ${locationName}` : '';
-          let summary = `Weather${locStr}: ${temp}${unitSymbol}, ${condition}. Wind: ${windspeed} km/h.`;
-          if (maxPrecip > 20) summary += ` Rain chance: ${maxPrecip}% over the next 6 hours.`;
+          let summary = `Weather${locStr}: ${temp}${unitSymbol}, ${condition}. Humidity: ${humidity}%. Wind: ${windspeed} km/h.`;
+          if (precipChance > 20) summary += ` Precipitation chance: ${precipChance}%.`;
 
-          DebugLog.push('WEATHER', { lat, lon, location: locationName, temp, windspeed, code: cw.weathercode, condition });
+          DebugLog.push('WEATHER', { lat, lon, location: locationName, temp, humidity, windspeed, weatherCode, condition, precipChance });
           return {
             success: true,
             summary,
-            data: { temperature: temp, unit: unitSymbol, condition, windspeed, location: locationName, precipChance: maxPrecip },
+            data: { temperature: temp, unit: unitSymbol, condition, windspeed, humidity, location: locationName, precipChance },
           };
         } catch (e: any) {
           return { success: false, summary: `Weather error: ${e.message}` };
