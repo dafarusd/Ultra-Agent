@@ -1676,6 +1676,7 @@ export class TaskExecutor {
                   collectedSummaries: [...summaries],
                   disambigCapability: stepPlan.capability,
                   disambigParams: stepPlan.params as Record<string, unknown>,
+                  createdAt: Date.now(),
                 },
                 ...(stepData || {}),
               },

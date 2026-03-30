@@ -93,6 +93,7 @@ export interface ChatMessage {
       collectedSummaries: string[];
       disambigCapability: string;
       disambigParams: Record<string, unknown>;
+      createdAt: number;
     };
   };
 }

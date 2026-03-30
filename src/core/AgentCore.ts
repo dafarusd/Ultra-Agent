@@ -1422,10 +1422,21 @@ You are always on. Always capable. Always direct.`;
             collectedSummaries: string[];
             disambigCapability: string;
             disambigParams: Record<string, unknown>;
+            createdAt?: number;
           } | undefined;
 
-          if (pendingChainData) {
-            DebugLog.systemEvent('AgentCore', `PendingChain resume: user answered "${userInput.slice(0, 60)}", remaining=${pendingChainData.steps.length} steps`);
+          // Safety gate 1: expiry — only resume within 2 minutes of the disambiguation question.
+          const chainAge = pendingChainData?.createdAt ? Date.now() - pendingChainData.createdAt : Infinity;
+          const chainExpired = !pendingChainData?.createdAt || chainAge > 120_000;
+
+          // Safety gate 2: confirmation-state check — the assistant message that carries
+          // pendingChain must be the last saved message in the conversation (meaning the user
+          // is directly replying to the disambiguation question with no intervening exchanges).
+          const lastSavedMsg = conv.messages[conv.messages.length - 1];
+          const isDirectReply = lastSavedMsg?.role === 'assistant' && lastSavedMsg?.meta?.pendingChain != null;
+
+          if (pendingChainData && !chainExpired && isDirectReply) {
+            DebugLog.systemEvent('AgentCore', `PendingChain resume: user answered "${userInput.slice(0, 60)}", age=${Math.round(chainAge / 1000)}s remaining=${pendingChainData.steps.length} steps`);
             step('PLAN', `Resuming paused chain from step ${pendingChainData.idx + 1}`, true);
 
             const allSummaries = [...pendingChainData.collectedSummaries];
