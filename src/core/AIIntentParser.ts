@@ -28,6 +28,7 @@ ${capList}
 If the user wants one of these actions, respond with ONLY this JSON (no markdown, no explanation):
 {"capability":"the_capability_id","params":{"param_name":"value"},"reason":"what they want"}
 
+IMPORTANT: For numeric params (level, limit, count, step), use a number not a string: {"level":100} not {"level":"100"}
 Common mappings:
 - "opn X" / "oepn X" / "launch X" → app_launch, target: X
 - "cll X" / "cal X" / "ring X" → app_launch with call intent
@@ -54,10 +55,15 @@ If this is just conversation (greeting, question, opinion, chat) respond with:
 
       const cleaned = result.content.replace(/```json|```/g, '').trim();
       const firstBrace = cleaned.indexOf('{');
-      const lastBrace = cleaned.lastIndexOf('}');
-      const jsonCandidate = firstBrace >= 0 && lastBrace > firstBrace
-        ? cleaned.slice(firstBrace, lastBrace + 1)
-        : cleaned;
+      if (firstBrace < 0) return null;
+      // Extract FIRST balanced JSON object only — guards against multi-object LLM responses
+      let depth = 0;
+      let jsonEnd = -1;
+      for (let i = firstBrace; i < cleaned.length; i++) {
+        if (cleaned[i] === '{') depth++;
+        else if (cleaned[i] === '}') { depth--; if (depth === 0) { jsonEnd = i; break; } }
+      }
+      const jsonCandidate = jsonEnd >= 0 ? cleaned.slice(firstBrace, jsonEnd + 1) : cleaned.slice(firstBrace);
       const parsed = JSON.parse(jsonCandidate);
 
       if (!parsed.capability || parsed.capability === 'null' || parsed.capability === null) {
@@ -85,9 +91,18 @@ If this is just conversation (greeting, question, opinion, chat) respond with:
         params: Object.keys(parsed.params || {}),
       });
 
+      const rawParams: Record<string, any> = parsed.params || {};
+      // Coerce known numeric fields that LLMs often return as strings
+      const NUMERIC_PARAMS = ['level', 'limit', 'count', 'step', 'brightness', 'volume'];
+      for (const key of NUMERIC_PARAMS) {
+        if (key in rawParams && typeof rawParams[key] === 'string') {
+          const n = parseFloat(rawParams[key]);
+          if (!isNaN(n)) rawParams[key] = n;
+        }
+      }
       return {
         capability: parsed.capability,
-        params: parsed.params || {},
+        params: rawParams,
         reason: parsed.reason || `AI understood: ${userInput}`,
       };
     } catch (e: any) {

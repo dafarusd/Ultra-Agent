@@ -94,9 +94,9 @@ const rules: ParseRule[] = [
 
   // ── PHONE CALLS ────────────────────────────────────
 
-  // "call 555-123-4567" (direct phone number)
+  // "call 555-123-4567" / "call 911" (direct phone number or short code)
   {
-    pattern: /^call\s+([\d\s\-\+\(\)]{7,})$/i,
+    pattern: /^call\s+([\d\s\-\+\(\)]{3,})$/i,
     capability: 'app_launch',
     extractParams: (m) => ({
       target: 'phone',

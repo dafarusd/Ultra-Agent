@@ -580,6 +580,25 @@ const schemas: CapabilitySchema[] = [
       count: { type: 'number', description: 'Number of headlines to return (default 5)' },
     },
   },
+  {
+    capabilityId: 'sms_read',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      limit: { type: 'number', description: 'Max messages to return (default 10)' },
+      filter: { type: 'string', description: 'Optional sender filter' },
+    },
+  },
+  {
+    capabilityId: 'sms_conversation',
+    version: 1,
+    requiredParams: {},
+    optionalParams: {
+      address: { type: 'string', description: 'Phone number or contact name' },
+      contact: { type: 'string', description: 'Contact name (resolved to number)' },
+      limit: { type: 'number', description: 'Max messages to return (default 15)' },
+    },
+  },
 ];
 
 const schemaMap = new Map<string, CapabilitySchema>();
