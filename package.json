@@ -16,7 +16,6 @@
     "lint:fix": "npx expo lint --fix"
   },
   "dependencies": {
-    "esbuild": "^0.27.4",
     "@expo-google-fonts/inter": "^0.4.0",
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -27,6 +26,7 @@
     "buffer": "^6.0.3",
     "drizzle-orm": "^0.39.3",
     "drizzle-zod": "^0.7.0",
+    "esbuild": "^0.27.4",
     "events": "^3.3.0",
     "expo": "~54.0.27",
     "expo-background-fetch": "^14.0.9",
@@ -51,6 +51,7 @@
     "expo-local-authentication": "^17.0.8",
     "expo-location": "~19.0.8",
     "expo-media-library": "^18.2.1",
+    "expo-notifications": "^55.0.14",
     "expo-print": "^15.0.8",
     "expo-router": "^6.0.23",
     "expo-secure-store": "^15.0.8",
