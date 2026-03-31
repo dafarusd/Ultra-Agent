@@ -1180,7 +1180,9 @@ export class TaskExecutor {
         // Step 3: AI fallback only if both directory and device query found nothing
         if (!pkg) {
           if (weatherLikeTarget) {
-            DebugLog.appLaunchFail(taskId, target, undefined, 'Weather target unresolved locally; skipping AI package guess', 'ai_fallback');
+            // No weather app found on device — redirect to built-in weather capability
+            DebugLog.systemEvent('TaskExecutor', `Weather target "${target}" unresolved locally; redirecting to weather capability`);
+            return this.execWithParams('weather', params, request, taskId);
           } else if (!this.ai.hasApiKey()) {
             DebugLog.appLaunchFail(taskId, target, undefined, 'No API key configured', 'ai_fallback');
             return { success: false, error: `Could not find "${target}" on this device. Configure an API key to enable AI-assisted app lookup.` };
