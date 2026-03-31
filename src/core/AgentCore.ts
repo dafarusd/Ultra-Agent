@@ -643,6 +643,9 @@ You are always on. Always capable. Always direct.`;
     if (relevantMemory.length > 0) {
       DebugLog.systemEvent('AgentCore', `Memory retrieved: ${relevantMemory.length} relevant entries`);
     }
+    const memoryContext = relevantMemory.length > 0
+      ? relevantMemory.map((m: any) => `[Memory] ${m.key}: ${m.value}`).join('\n').slice(0, 800)
+      : '';
 
     // ── CORTEX ROUTING ──
     if (mode === 'command' && this.cortex.isComplex(userInput)) {
@@ -819,7 +822,7 @@ You are always on. Always capable. Always direct.`;
           const systemPrompt = this.buildDynamicPrompt({
             mode,
             userInput,
-            summary: '',
+            summary: memoryContext,
             capabilities: capList,
           });
           const { payload } = await this.buildContext(conversationId, systemPrompt, 1200, this.ai.getDefaultModel());

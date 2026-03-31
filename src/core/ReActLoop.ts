@@ -124,7 +124,8 @@ export class ReActLoop {
     for (let iteration = 1; iteration <= this.maxIterations; iteration++) {
       try {
         const currentPkg = await AppController.getActivePackage();
-        if (currentPkg === 'com.agent.ultra') {
+        const skipSelfCheck = iteration === 1 && !!appHint;
+        if (!skipSelfCheck && currentPkg === 'com.agent.ultra') {
           DebugLog.error('ReActLoop', `SAFETY STOP at iter ${iteration}: foreground package is Agent Ultra — aborting to prevent self-interaction`);
           return { success: false, steps, finalObservation: 'ReActLoop detected self-interaction — stopped for safety', goalAchieved: false, error: 'self_interaction' };
         }
