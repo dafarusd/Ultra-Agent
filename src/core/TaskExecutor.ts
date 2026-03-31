@@ -1531,6 +1531,19 @@ export class TaskExecutor {
                   await new Promise((resolve) => setTimeout(resolve, 2000));
                   await AppController.allowPackage(knownPkg);
                 }
+              } else if (/^https?:\/\/|[\w-]+\.(com|org|net|io|co|app|dev|ai|gov|edu)(\/|$)/i.test(launchTarget)) {
+                // appHint is a URL/domain — open in browser via ACTION_VIEW
+                const url = /^https?:\/\//i.test(launchTarget) ? launchTarget : `https://${launchTarget}`;
+                DebugLog.systemEvent('ReActNav', `URL appHint "${launchTarget}" — opening via ACTION_VIEW`);
+                try {
+                  await IntentLauncher.startActivityAsync('android.intent.action.VIEW', { data: url });
+                  await new Promise((resolve) => setTimeout(resolve, 3000));
+                  const browserPkg = await AppController.getActivePackage().catch(() => null);
+                  if (browserPkg) await AppController.allowPackage(browserPkg);
+                  DebugLog.systemEvent('ReActNav', `URL opened, foreground pkg=${browserPkg || 'unknown'}`);
+                } catch (urlErr: any) {
+                  this.logger.warn(`react_navigate URL open failed: ${urlErr.message}`);
+                }
               }
             }
           } catch (launchErr: any) {
