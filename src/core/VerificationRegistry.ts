@@ -13,6 +13,9 @@ const registry: Record<string, Verifier> = {
     const r = result?.data ?? result;
     if (r?.success === false) return { verified: false, issues: [r?.error || r?.summary || 'Launch failed'] };
     if (r?.launched || r?.action) return { verified: true, issues: [] };
+    // Weather redirect: app_launch may return weather data instead of a launch confirmation
+    const inner = r?.data ?? {};
+    if (inner?.temperature !== undefined || inner?.condition !== undefined) return { verified: true, issues: [] };
     return { verified: false, issues: ['No launch confirmation'] };
   },
 
