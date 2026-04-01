@@ -1067,7 +1067,7 @@ export class TaskExecutor {
         if (deepLinkMatch) {
           try {
             await IntentLauncher.startActivityAsync(
-              IntentLauncher.ActivityAction.VIEW,
+              'android.intent.action.VIEW' as any,
               { data: deepLinkMatch.uri, packageName: deepLinkMatch.packageHint }
             );
             DebugLog.executorExit(taskId, 'app_launch', true, 'deep_link');
@@ -1264,8 +1264,8 @@ export class TaskExecutor {
           DebugLog.appLaunchFail(taskId, target, pkg, 'No valid package found', 'no_package');
           try {
             const { AppFallback } = await import('./AppFallback');
-            const fallbackResult = await AppFallback.suggest(target);
-            if (fallbackResult) return fallbackResult;
+            const fallbackResult = AppFallback.resolve(target);
+            if (fallbackResult && fallbackResult.type !== 'none') return { success: false, ...fallbackResult };
           } catch {}
           return { success: false, error: `Could not find "${target}" on this device` };
         }
@@ -1278,12 +1278,12 @@ export class TaskExecutor {
           const nativeLaunchResult = await AgentNativeModuleLaunch.launchApp(pkg);
           if (!nativeLaunchResult.success) {
             // Native verification failed — package does not exist or is not launchable
-            DebugLog.appLaunchFail(taskId, target, pkg, nativeLaunchResult.error || 'Not launchable', 'native_launch_verify');
+            DebugLog.appLaunchFail(taskId, target, pkg, nativeLaunchResult.error || 'Not launchable', 'intent_launch');
             DebugLog.executorExit(taskId, 'app_launch', false, 'native_launch_not_found');
             try {
               const { AppFallback } = await import('./AppFallback');
-              const fallbackResult = await AppFallback.suggest(target);
-              if (fallbackResult) return fallbackResult;
+              const fallbackResult = AppFallback.resolve(target);
+              if (fallbackResult && fallbackResult.type !== 'none') return { success: false, ...fallbackResult };
             } catch {}
             return { success: false, error: `"${target}" is not installed on this device. (tried package: ${pkg})` };
           }
@@ -1424,8 +1424,8 @@ export class TaskExecutor {
           : 'No task evaluation performed';
 
         const lineage = improver.getLineage();
-        const best = lineage.getBestGeneration();
-        const failures = lineage.getFailurePatterns();
+        const best = lineage.getBestGenome();
+        const failures = lineage.getAllNodes();
 
         DebugLog.executorExit(taskId, 'self_modify', result.totalImprovements > 0, `cycles=${result.totalCycles}_improvements=${result.totalImprovements}`);
         return {
@@ -1437,7 +1437,7 @@ export class TaskExecutor {
           fitness: result.genome.fitness?.overallScore ?? null,
           taskSummary,
           bestGeneration: best ? { generation: best.generation, score: best.fitness?.overallScore ?? 0 } : null,
-          persistentFailures: failures.filter(f => f.failureRate > 0.5).map(f => f.challengeId),
+          persistentFailures: failures.filter((f: any) => f.failureRate > 0.5).map((f: any) => f.challengeId),
           report: result.report,
         };
       }

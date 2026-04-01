@@ -37,7 +37,7 @@ export class CostTracker {
   private taskLimit: number;
   private static readonly STORAGE_KEY = 'cost_history';
   private static readonly MAX_ENTRIES = 1000;
-  private modelRatesCache: Record<string, { input: number; output: number } | null> = {};
+  private modelRatesCache: Record<string, { inputPer1kTokens: number; outputPer1kTokens: number } | null> = {};
 
   constructor(vault: SecureVault) {
     this.vault = vault;
@@ -153,7 +153,7 @@ export class CostTracker {
     if (this.dailyLimit <= 0) return true;
     const spent = this.getDailySpend();
     const allowed = spent < this.dailyLimit;
-    DebugLog.costLimitCheck('daily', this.dailyLimit, spent, allowed);
+    DebugLog.costLimitCheck('daily', allowed, spent, this.dailyLimit);
     return allowed;
   }
 
@@ -161,7 +161,7 @@ export class CostTracker {
     if (this.taskLimit <= 0) return true;
     const spent = this.getTaskSpend(taskId);
     const allowed = spent < this.taskLimit;
-    DebugLog.costLimitCheck('task', this.taskLimit, spent, allowed);
+    DebugLog.costLimitCheck('task', allowed, spent, this.taskLimit);
     return allowed;
   }
 

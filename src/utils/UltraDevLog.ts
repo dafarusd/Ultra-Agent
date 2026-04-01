@@ -38,73 +38,128 @@ const FileSystem: any = Platform.OS !== 'web' ? ExpoFileSystem : null;
 const PROCESS_RESTART_KEY = 'ultra_last_background_ts';
 
 export type UltraLogCat =
-  | 'USER_MSG' | 'AI_RESPONSE' | 'AGENT_STEP' | 'MODE' | 'PLAN' | 'SAFETY'
-  | 'API_CALL' | 'EXEC_RESULT' | 'VERIFY' | 'ERROR' | 'SYSTEM' | 'COST'
-  | 'MODEL_SWITCH' | 'CONV_NEW' | 'CONV_DEL'
-  | 'UI_MODAL' | 'UI_PROCESSING' | 'UI_RENDER_MSG' | 'UI_SEND_ATTEMPT' | 'UI_SEND_COMPLETE'
-  | 'APP_LAUNCH_BEGIN' | 'APP_LAUNCH_DEVICE' | 'APP_LAUNCH_MATCH' | 'APP_LAUNCH_AI'
-  | 'APP_LAUNCH_FIRE' | 'APP_LAUNCH_RESUME' | 'APP_LAUNCH_FAIL'
-  | 'SMS_RESOLVE' | 'SMS_FIRE' | 'SMS_RESULT'
-  | 'VAULT_READ' | 'VAULT_WRITE'
-  | 'PARSE_INPUT' | 'PARSE_COMPOUND'
-  | 'PICKER_OPEN' | 'PICKER_CLOSE' | 'PICKER_ANIMATE' | 'PICKER_SELECT'
-  | 'CORE_INSTANCE' | 'EXECUTOR_BRANCH' | 'CONV_CONTEXT_SENT'
-  | 'UI_MESSAGE_RENDERED' | 'TASK_WATCHDOG' | 'APP_STATE_CHANGE'
-  | 'COMPONENT_LIFECYCLE'
-  | 'SETTINGS_SAVE'
-  | 'EXECUTE_PHASE'
-  | 'NAV_CHANGE'
-  | 'FOCUS_EFFECT_DEPS'
-  | 'PROCESS_RESTART'
-  | 'PICKER_CONTENT'
-  | 'CONTEXT_PROVIDER'
-  | 'SESSION_SUMMARY'
-  | 'DEVICE_INFO'
-  | 'NETWORK_STATUS'
-  | 'PERMISSION_STATUS'
-  | 'ERROR_BOUNDARY'
-  | 'SETTINGS_INTENT'
-  | 'DEEP_LINK'
-  | 'SYSTEM_ACTION'
-  | 'SYSTEM_INFO'
-  | 'PREFERENCE_BACKUP'
-  | 'LEARN_PACKAGE'
-  | 'A11Y_WINDOW' | 'A11Y_NOTIF' | 'A11Y_CLICK' | 'A11Y_CONTENT'
-  | 'STATE_BEFORE' | 'STATE_AFTER' | 'STATE_DELTA'
-  | 'A11Y_HEARTBEAT' | 'CRASH_NATIVE' | 'NET_DETAIL' | 'UI_SNAPSHOT'
-  | 'BUBBLE_DIAG'
-  | 'A11Y_QS_TRACE'
-  | 'GRID_TAP' | 'CONTEXT_TAP' | 'SLASH_CMD'
-  | 'CHAIN'
-  | 'EFFECT'
-  // ── V3: Brain sensors ──
-  | 'CORTEX_ROUTE' | 'CORTEX_DECOMPOSE' | 'CORTEX_STEP' | 'CORTEX_REPLAN' | 'CORTEX_RESULT'
-  | 'KG_ENTITY' | 'KG_RELATION' | 'KG_RESOLVE' | 'KG_PERSIST' | 'KG_SEED'
-  | 'APP_INTEL_SEARCH' | 'APP_INTEL_READAPP' | 'APP_INTEL_EXTRACT' | 'APP_INTEL_LAUNCH'
-  | 'VISION_CAPTURE' | 'VISION_ANALYZE'
-  | 'SIGNAL_READ' | 'SIGNAL_PATTERN'
-  | 'PROACTIVE_EVAL' | 'PROACTIVE_SUGGEST' | 'PROACTIVE_DISMISS' | 'PROACTIVE_ACT'
-  | 'BG_SERVICE' | 'TASK_STORE'
-  | 'REACT_LOOP_STEP' | 'REACT_LOOP_DIFF'
-  | 'CTX_AGGREGATE'
-  // ── V5: Zero blind spots ──
-  | 'AI_CALL'           // Every AI prompt + response + error
-  | 'HEADLESS_TASK'     // HeadlessJS start/complete/timeout
-  | 'BUDGET_CHECK'      // Token budget breakdown
-  // ── Logging truth pass ──
-  | 'PICKER_FILTER_CHANGE'        // Filter tab changed in model picker
-  | 'SETTINGS_SAVE_START'         // Structured settings save intent
-  | 'SETTINGS_SAVE_RESULT'        // Structured settings save outcome
-  | 'ROUTING_ASSIGNMENT_CHANGE'   // Operation→group routing change
-  | 'ROUTING_ASSIGNMENT'          // Normalized routing assignment snapshot
-  | 'API_STATE_SNAPSHOT'          // Provider/group/model state snapshot
-  | 'MODEL_INVENTORY_SYNC'        // Model inventory refresh event
-  | 'PERMISSION_SNAPSHOT_STARTUP' // Permission states at startup
-  | 'PERMISSION_RECHECK_RUNTIME'  // Permission re-read before capability
-  | 'PERMISSION_CONTRADICTION'    // Startup vs runtime permission mismatch
-  | 'BUG_REPORT_WRITE'            // Bug report generation event with session metadata
-  | 'WEATHER'                     // Weather capability fetch result
-  | 'NEWS_FETCH';                 // News headlines fetch result
+  // ── Agent / execution ──
+  | 'AGENT_EXEC_START' | 'AGENT_INIT_DONE' | 'AGENT_INIT_START'
+  | 'AGENT_INIT_SUB' | 'AGENT_STEP'
+  | 'CORE_INSTANCE' | 'EXECUTOR_BRANCH' | 'EXECUTE_PHASE'
+  | 'INIT_CHECKPOINT' | 'INIT_FATAL'
+  | 'TASK_STORE' | 'TASK_WATCHDOG'
+  // ── AI / model ──
+  | 'AI_CALL' | 'AI_REQUEST' | 'AI_RESPONSE'
+  | 'API_CALL' | 'API_STATE_SNAPSHOT'
+  | 'MODEL_ABORT' | 'MODEL_API_ERR' | 'MODEL_API_REQ'
+  | 'MODEL_API_RESP' | 'MODEL_DISCOVERY_DETAIL'
+  | 'MODEL_DISC_DONE' | 'MODEL_DISC_ERR' | 'MODEL_DISC_START'
+  | 'MODEL_GET_DEFAULT' | 'MODEL_IMG_ERR' | 'MODEL_IMG_REQ'
+  | 'MODEL_IMG_RESP' | 'MODEL_INVENTORY_SYNC'
+  | 'MODEL_SET_DEFAULT' | 'MODEL_SET_DEFAULT_ERR'
+  | 'MODEL_STATE' | 'MODEL_SWITCH'
+  | 'ROUTING_ASSIGNMENT' | 'ROUTING_ASSIGNMENT_CHANGE'
+  // ── App / launch ──
+  | 'APP_INTEL_EXTRACT' | 'APP_INTEL_LAUNCH'
+  | 'APP_INTEL_READAPP' | 'APP_INTEL_SEARCH'
+  | 'APP_LAUNCH_AI' | 'APP_LAUNCH_BEGIN'
+  | 'APP_LAUNCH_DEVICE' | 'APP_LAUNCH_FAIL'
+  | 'APP_LAUNCH_FIRE' | 'APP_LAUNCH_MATCH'
+  | 'APP_LAUNCH_RESUME' | 'APP_STATE_CHANGE'
+  // ── Brain / cortex ──
+  | 'CORTEX_DECOMPOSE' | 'CORTEX_REPLAN' | 'CORTEX_RESULT'
+  | 'CORTEX_ROUTE' | 'CORTEX_STEP'
+  | 'REACT_LOOP_DIFF' | 'REACT_LOOP_STEP'
+  | 'CTX_AGGREGATE' | 'PLAN' | 'MODE'
+  // ── Build ──
+  | 'BUILD_DONE' | 'BUILD_PHASE' | 'BUILD_START'
+  // ── Conversation ──
+  | 'CONV_CONTEXT_SENT' | 'CONV_DEL' | 'CONV_ERR'
+  | 'CONV_LIST' | 'CONV_LOAD' | 'CONV_MSG'
+  | 'CONV_NEW' | 'CONV_SAVE'
+  // ── Cost / budget ──
+  | 'BUDGET_CHECK' | 'COST' | 'COST_LIMIT'
+  // ── Debug ──
+  | 'BUG_REPORT_WRITE'
+  | 'DEBUG_SCREENSHOT' | 'DEBUG_SCREENSHOT_FAIL'
+  // ── Device / hardware / sensors ──
+  | 'A11Y_CLICK' | 'A11Y_CONTENT' | 'A11Y_DUMPSYS'
+  | 'A11Y_HEARTBEAT' | 'A11Y_NOTIF' | 'A11Y_QS_TRACE'
+  | 'A11Y_STATE' | 'A11Y_WINDOW'
+  | 'ACTIVITY_STACK' | 'ALARM_STATE' | 'AUDIO_STATE'
+  | 'CAMERA_RECOVERY' | 'CPU_STATE' | 'DEVICE_IDLE'
+  | 'DEVICE_INFO' | 'INPUT_STATE' | 'NOTIFICATION_STATE'
+  | 'PACKAGE_STATE' | 'POWER_STATE' | 'PROC_STATE'
+  | 'THERMAL' | 'WIFI_STATE' | 'WINDOW_STATE'
+  | 'CRASH_NATIVE' | 'PROCESS_RESTART'
+  // ── Genome ──
+  | 'GENOME_DONE' | 'GENOME_ERR' | 'GENOME_PHASE'
+  | 'GENOME_START'
+  // ── Grid ──
+  | 'GRID_FAV_TOGGLE' | 'GRID_LOAD' | 'GRID_SAVE'
+  | 'GRID_TAP'
+  // ── Knowledge graph ──
+  | 'KG_ENTITY' | 'KG_PERSIST' | 'KG_RELATION'
+  | 'KG_RESOLVE' | 'KG_SEED'
+  // ── Memory / learning ──
+  | 'LEARN_PACKAGE' | 'MEMORY'
+  // ── Network ──
+  | 'NET_CONNECTIVITY' | 'NET_DETAIL' | 'NET_MODELS_RAW'
+  | 'NET_STATS' | 'NETWORK_STATUS'
+  // ── Permissions ──
+  | 'PERMISSION_CONTRADICTION' | 'PERMISSION_RECHECK_RUNTIME'
+  | 'PERMISSION_SNAPSHOT_STARTUP' | 'PERMISSION_STATUS'
+  | 'PERM_CHECK' | 'PERM_REQUEST'
+  // ── Proactive ──
+  | 'PROACTIVE_ACT' | 'PROACTIVE_DISMISS'
+  | 'PROACTIVE_EVAL' | 'PROACTIVE_SUGGEST'
+  // ── Settings ──
+  | 'SETTINGS_API_DEL' | 'SETTINGS_API_SAVE'
+  | 'SETTINGS_COST_SAVE' | 'SETTINGS_DEFAULTS_SAVE'
+  | 'SETTINGS_DEFAULT_PICK' | 'SETTINGS_INTENT'
+  | 'SETTINGS_SAVE' | 'SETTINGS_SAVE_RESULT'
+  | 'SETTINGS_SAVE_START' | 'SETTINGS_STATE'
+  // ── Sidebar ──
+  | 'SIDEBAR_CONV_SELECT' | 'SIDEBAR_OPEN' | 'SIDEBAR_QUICK'
+  // ── Signal ──
+  | 'SIGNAL_PATTERN' | 'SIGNAL_READ'
+  // ── SMS ──
+  | 'SMS_FIRE' | 'SMS_RESOLVE' | 'SMS_RESULT'
+  // ── Storage ──
+  | 'STORAGE_DELETE_ERROR' | 'STORAGE_MIGRATE'
+  | 'STORAGE_READ_ERROR' | 'STORAGE_WRITE_ERROR'
+  // ── System ──
+  | 'DEEP_LINK' | 'ERROR' | 'ERROR_BOUNDARY' | 'SAFETY' | 'SYSTEM'
+  | 'SYSTEM_ACTION' | 'SYSTEM_INFO'
+  | 'BG_SERVICE' | 'HEADLESS_TASK'
+  | 'VERSION_RESET'
+  // ── UI ──
+  | 'BUBBLE_DIAG' | 'COMPONENT_LIFECYCLE'
+  | 'CONTEXT_PROVIDER' | 'CONTEXT_TAP'
+  | 'CHAIN' | 'EFFECT' | 'FIRED' | 'POST'
+  | 'FOCUS_EFFECT_DEPS' | 'NAV_CHANGE' | 'ROUTE'
+  | 'PICKER_ANIMATE' | 'PICKER_CLOSE' | 'PICKER_CONTENT'
+  | 'PICKER_FILTER_CHANGE' | 'PICKER_OPEN' | 'PICKER_SELECT'
+  | 'RENDER_PERF' | 'RENDER_STATS'
+  | 'SESSION_SUMMARY' | 'SLASH_CMD' | 'TOGGLE_TAP'
+  | 'UI_CONV_SWITCH' | 'UI_DEFAULTS_LOADED'
+  | 'UI_DEFAULTS_SAVED' | 'UI_ERROR' | 'UI_FOCUS'
+  | 'UI_INIT' | 'UI_MESSAGE_RENDERED' | 'UI_MODAL'
+  | 'UI_MODEL_APPLY' | 'UI_MODE_SWITCH'
+  | 'UI_PICKER_CLOSE' | 'UI_PICKER_OPEN'
+  | 'UI_PICKER_SELECT' | 'UI_PILL'
+  | 'UI_PLUS_OPEN' | 'UI_PLUS_SELECT'
+  | 'UI_PROCESSING' | 'UI_RENDER_MSG'
+  | 'UI_SEND' | 'UI_SEND_ATTEMPT' | 'UI_SEND_COMPLETE'
+  | 'UI_SETTINGS' | 'UI_SNAPSHOT' | 'UI_STATE' | 'UI_STOP'
+  // ── Parse ──
+  | 'PARSE_COMPOUND' | 'PARSE_INPUT'
+  // ── State tracking ──
+  | 'STATE' | 'STATE_AFTER' | 'STATE_BEFORE' | 'STATE_DELTA'
+  // ── Vault ──
+  | 'VAULT_DEL' | 'VAULT_ERR' | 'VAULT_GET'
+  | 'VAULT_READ' | 'VAULT_SET' | 'VAULT_WRITE'
+  // ── Vision ──
+  | 'VISION_ANALYZE' | 'VISION_CAPTURE'
+  // ── Misc capabilities ──
+  | 'NEWS_FETCH' | 'PREFERENCE_BACKUP' | 'WEATHER'
+  | 'EXEC_RESULT' | 'USER_MSG' | 'VERIFY';
 
 interface UltraLogEntry {
   ts: string;
@@ -1192,17 +1247,17 @@ export class UltraDevLog {
   static getDir(): string { return UltraDevLog.getLogDir(); }
   static getFilePath(): string { return UltraDevLog.getSessionFilePath(); }
   static getMemoryEntriesFormatted(limit?: number): string { return UltraDevLog.getFormattedLog(limit); }
-  static modelAbort(taskId: string, reason: string): void { UltraDevLog.push('SYSTEM', { event: 'model_abort', taskId, reason }); }
+  static modelAbort(taskId: string, reason?: string): void { UltraDevLog.push('SYSTEM', { event: 'model_abort', taskId, reason }); }
   static modelApiError(model: string, taskId: string, error: string, durationMs: number): void { UltraDevLog.push('SYSTEM', { event: 'model_api_error', model, taskId, error, durationMs }); }
   static modelApiRequest(model: string, taskId: string, promptTokens: number, maxTokens: number): void { UltraDevLog.push('API_CALL', { event: 'request', model, taskId, promptTokens, maxTokens }); }
-  static modelApiResponse(model: string, taskId: string, contentLength: number, durationMs: number, cost?: number): void { UltraDevLog.push('API_CALL', { event: 'response', model, taskId, contentLength, durationMs, cost }); }
-  static modelDiscoveryStart(): void { UltraDevLog.push('SYSTEM', { event: 'model_discovery_start' }); }
-  static modelDiscoveryResult(modelCount: number): void { UltraDevLog.push('SYSTEM', { event: 'model_discovery_result', modelCount }); }
+  static modelApiResponse(model: string, taskId: string, inputTokens: number, outputTokens: number, cost: number, durationMs: number): void { UltraDevLog.push('API_CALL', { event: 'response', model, taskId, inputTokens, outputTokens, cost, durationMs }); }
+  static modelDiscoveryStart(baseUrl?: string): void { UltraDevLog.push('SYSTEM', { event: 'model_discovery_start', baseUrl }); }
+  static modelDiscoveryResult(modelCount: number, modelIds?: string[]): void { UltraDevLog.push('SYSTEM', { event: 'model_discovery_result', modelCount, modelIds }); }
   static modelDiscoveryError(error: string): void { UltraDevLog.push('SYSTEM', { event: 'model_discovery_error', error }); }
-  static modelImageRequest(taskId: string, prompt: string): void { UltraDevLog.push('SYSTEM', { event: 'model_image_request', taskId, promptPreview: prompt.slice(0, 200) }); }
-  static modelImageResponse(taskId: string, imageCount: number, durationMs: number): void { UltraDevLog.push('SYSTEM', { event: 'model_image_response', taskId, imageCount, durationMs }); }
-  static modelImageError(taskId: string, error: string): void { UltraDevLog.push('SYSTEM', { event: 'model_image_error', taskId, error }); }
-  static modelSetDefault(modelId: string, source: string): void { UltraDevLog.push('SYSTEM', { event: 'model_set_default', modelId, source }); }
+  static modelImageRequest(model: string, promptLength: number): void { UltraDevLog.push('SYSTEM', { event: 'model_image_request', model, promptLength }); }
+  static modelImageResponse(model: string, imageCount: number, cost: number, durationMs: number): void { UltraDevLog.push('SYSTEM', { event: 'model_image_response', model, imageCount, cost, durationMs }); }
+  static modelImageError(model: string, error: string): void { UltraDevLog.push('SYSTEM', { event: 'model_image_error', model, error }); }
+  static modelSetDefault(modelId: string, prev: string, source: string): void { UltraDevLog.push('SYSTEM', { event: 'model_set_default', modelId, prev, source }); }
   static modelSetDefaultError(modelId: string, error: string): void { UltraDevLog.push('SYSTEM', { event: 'model_set_default_error', modelId, error }); }
   private static lastModelStateHash = new Map<string, string>();
   static modelState(key: string, value: unknown): void {
@@ -1350,7 +1405,7 @@ export class UltraDevLog {
           const mismatch = d.selectedModelMismatch ? ' *** MODEL_MISMATCH' : '';
           const ep = d.entryPoint ? ` ep=${d.entryPoint}` : '';
           const op = d.requestedOperation ? ` op=${d.requestedOperation}` : '';
-          const asgn = d.assignedTaskDefaultCandidates?.length
+          const asgn = (d.assignedTaskDefaultCandidates as unknown[] | undefined)?.length
             ? ` tdAssigned=[${(d.assignedTaskDefaultCandidates as string[]).join(',')}]`
             : (d.assignedGroupId ? ` assigned=${d.assignedGroupId}` : ' assigned=none');
           const elig = d.eligibleCandidateCount !== undefined ? ` elig=${d.eligibleCandidateCount}` : '';
@@ -1403,7 +1458,7 @@ export class UltraDevLog {
         if (d.requestedFilter !== undefined) {
           const mismatch = d.selectedModelMismatch ? ' *** MODEL_MISMATCH' : '';
           const op = d.requestedOperation ? ` op=${d.requestedOperation}` : '';
-          const asgn = d.assignedTaskDefaultCandidates?.length
+          const asgn = (d.assignedTaskDefaultCandidates as unknown[] | undefined)?.length
             ? ` tdAssigned=[${(d.assignedTaskDefaultCandidates as string[]).join(',')}]`
             : (d.assignedGroupId ? ` assigned=${d.assignedGroupId}` : ' assigned=none');
           const elig = d.eligibleCandidateCount !== undefined ? ` elig=${d.eligibleCandidateCount}` : '';
@@ -1420,7 +1475,7 @@ export class UltraDevLog {
       case 'SETTINGS_INTENT': return `${t} [SETTINGS ]${c} ${d.matched ? 'HIT' : 'MISS'} query="${d.query}" action=${d.action ?? 'none'} label=${d.label ?? 'none'}`;
       case 'DEEP_LINK': return `${t} [DEEPLINK ]${c} ${d.matched ? 'HIT' : 'MISS'} query="${d.query}" uri=${d.uri ?? 'none'}`;
       case 'SYSTEM_ACTION': return `${t} [SYS_ACT  ]${c} trigger="${d.trigger}" routed=${d.routedToSettings} ok=${d.success}`;
-      case 'SYSTEM_INFO': return `${t} [SYS_INFO ]${c} bat=${d.batteryPct ?? '?'}% ram=${d.ramUsedMB ?? '?'}/${d.ramTotalMB ?? '?'}MB storage=${d.storageFreeGB ?? '?'}/${d.storageTotalGB ?? '?'}GB temp=${d.cpuTempC ?? '?'}°C${d.failedReads?.length ? ' WARN:failed=' + d.failedReads : ''}`;
+      case 'SYSTEM_INFO': return `${t} [SYS_INFO ]${c} bat=${d.batteryPct ?? '?'}% ram=${d.ramUsedMB ?? '?'}/${d.ramTotalMB ?? '?'}MB storage=${d.storageFreeGB ?? '?'}/${d.storageTotalGB ?? '?'}GB temp=${d.cpuTempC ?? '?'}°C${(d.failedReads as unknown[] | undefined)?.length ? ' WARN:failed=' + d.failedReads : ''}`;
       case 'PREFERENCE_BACKUP': return `${t} [PREF_BAK ]${c} ${d.operation} ${d.success ? 'OK' : 'FAIL'} keys=${d.keysCount}${d.error ? ' err=' + d.error : ''}`;
       case 'LEARN_PACKAGE': return `${t} [LEARN_PKG]${c} "${d.trigger}" → ${d.packageName} update=${d.wasUpdate}`;
       case 'A11Y_WINDOW': return `${t} [A11Y_WIN]${c} pkg=${d.pkg} cls=${d.cls}`;

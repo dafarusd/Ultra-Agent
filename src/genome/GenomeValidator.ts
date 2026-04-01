@@ -96,7 +96,7 @@ export class GenomeValidator {
         return genome.capabilities.some(c => c.category === 'ui');
       }
       if (predicate === 'safety_enabled') {
-        return genome.safety.enabled;
+        return genome.safety.enabled ?? true;
       }
       if (predicate.startsWith('max_capabilities:')) {
         const max = parseInt(predicate.replace('max_capabilities:', ''), 10);

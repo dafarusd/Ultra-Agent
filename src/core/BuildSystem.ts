@@ -119,10 +119,10 @@ export class BuildSystem {
       } : undefined;
       const { apkPath, spec } = await orchestrator.buildFromDescription(description, undefined, wrappedProgress);
       this.lastBuiltSpec = spec;
-      DebugLog.buildComplete(_taskId, true, Date.now() - startTime);
+      DebugLog.buildComplete(_taskId, true, `${Date.now() - startTime}ms`);
       return { success: true, apkPath, spec };
     } catch (e: any) {
-      DebugLog.buildComplete(_taskId, false, Date.now() - startTime, e.message);
+      DebugLog.buildComplete(_taskId, false, `${Date.now() - startTime}ms: ${e.message}`);
       this.logger.error('Build failed: ' + e.message);
       return { success: false, error: e.message };
     }

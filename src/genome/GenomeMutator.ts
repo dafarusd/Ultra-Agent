@@ -126,6 +126,7 @@ Mutation history length: ${genome.mutations.length}`,
       payload: mutation.payload,
       reason: mutation.reason,
       appliedAt: Date.now(),
+      fitnessImpact: null,
     };
 
     switch (mutation.operation) {

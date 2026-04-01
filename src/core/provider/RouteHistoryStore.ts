@@ -42,7 +42,7 @@ export class RouteHistoryStore {
   async update(conversationId: string, route: ResolvedRoute): Promise<void> {
     const entry: RouteHistory = {
       conversationId,
-      lastGroupId: route.groupId,
+      lastGroupId: route.groupId ?? '',
       lastProviderId: route.providerId,
       lastModelId: route.modelId,
       lastAdapterId: route.adapterId,

@@ -42,6 +42,7 @@ export interface AppControllerInterface {
   clearCrashLog(): Promise<boolean>;
   heartbeatPing(): Promise<{ alive: boolean; foregroundPackage: string; timestamp: number }>;
   startBackgroundService(): Promise<boolean>;
+  exec?(cmd: string, args?: string): Promise<string>;
   isAvailable(): boolean;
 }
 

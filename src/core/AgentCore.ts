@@ -199,9 +199,9 @@ export class AgentCore extends SimpleEmitter {
       const t0 = Date.now();
       try {
         await fn();
-        DebugLog.agentInitSubsystem(name, true, Date.now() - t0);
+        DebugLog.agentInitSubsystem(name, true);
       } catch (err: any) {
-        DebugLog.agentInitSubsystem(name, false, Date.now() - t0, err.message);
+        DebugLog.agentInitSubsystem(name, false);
         console.warn(`[AgentCore] ${name} init failed: ${err.message}`);
       }
     };

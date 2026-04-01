@@ -101,6 +101,18 @@ export class GenomeFitness {
     return Math.min(100, Math.round(score));
   }
 
+  compareGenerations(parent: FitnessMetrics, offspring: FitnessMetrics): { breakdown: Array<{ metric: string; parent: number; offspring: number; change: number }> } {
+    const metrics: Array<{ metric: string; parent: number; offspring: number }> = [
+      { metric: 'overallScore', parent: parent.overallScore, offspring: offspring.overallScore },
+      { metric: 'capabilityScore', parent: parent.capabilityScore, offspring: offspring.capabilityScore },
+      { metric: 'testsPassed', parent: parent.testsPassed, offspring: offspring.testsPassed },
+      { metric: 'runtimeCrashes', parent: parent.runtimeCrashes, offspring: offspring.runtimeCrashes },
+    ];
+    return {
+      breakdown: metrics.map(m => ({ ...m, change: m.offspring - m.parent })),
+    };
+  }
+
   private computeOverallScore(metrics: FitnessMetrics): number {
     let score = 0;
     if (metrics.buildSuccess) score += 30;

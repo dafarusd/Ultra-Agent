@@ -230,7 +230,7 @@ export class DeviceContext {
           snapshot.location = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy, altitude: pos.coords.altitude, timestamp: pos.timestamp };
         } else {
           const { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          snapshot.location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, altitude: coords.altitude, timestamp: now };
+          snapshot.location = { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy ?? 0, altitude: coords.altitude ?? 0, timestamp: now };
         }
       } catch (e: any) { errors.push(`location: ${e.message}`); }
     }

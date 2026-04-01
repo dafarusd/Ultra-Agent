@@ -178,7 +178,7 @@ export class Cortex {
       const { withRetry } = await import('../utils/AICallLogger');
       const result = await withRetry(() => this.ai.complete(prompt, { taskId: `decompose_${Date.now().toString(36)}`, agentId: 'cortex_planner', maxTokens: 1500, temperature: 0.2 }), { maxRetries: 2, agentId: 'cortex_planner' });
       aiLog.logResponse(result.content, result.cost);
-      if (result.cost) taskTotalCost += result.cost;
+      if (result.cost) this.taskTotalCost += result.cost;
       const parsed = JSON.parse(result.content.replace(/```json|```/g, '').trim());
       if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Empty decomposition');
       return parsed.map((s: any) => ({ id: s.id || `step_${Math.random().toString(36).slice(2, 6)}`, description: s.description || '', type: s.type || 'capability', capability: s.capability, params: s.params || {}, dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn : [], appHint: s.appHint, query: s.query }));

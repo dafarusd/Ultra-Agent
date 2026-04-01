@@ -177,7 +177,7 @@ export default function SettingsScreen() {
       const usages: ModelUsage[] = Object.entries(summary.costByModel || {}).map(([modelId, cost]) => ({
         modelId,
         modelName: modelId,
-        apiName: summary.costByProvider?.[modelId] ?? '',
+        apiName: modelId.split('/')[0] ?? '',
         calls: summary.callsByModel?.[modelId] || 0,
         inputTokens: 0,
         outputTokens: 0,

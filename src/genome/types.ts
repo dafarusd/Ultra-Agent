@@ -48,6 +48,8 @@ export interface Capability {
   behaviorSpec: string;
   mutable: boolean;
   essential: boolean;
+  enabled?: boolean;
+  riskLevel?: RiskTier;
   interfaces: InterfaceContract[];
 }
 
@@ -89,14 +91,17 @@ export interface BehaviorSpec {
 
 export interface MutationRecord {
   id: string;
-  timestamp: number;
+  timestamp?: number;
   operation: MutationOp;
   target: string;
-  description: string;
-  diff: string;
-  parentGenomeHash: string;
-  resultGenomeHash: string;
+  description?: string;
+  diff?: string;
+  parentGenomeHash?: string;
+  resultGenomeHash?: string;
   fitnessImpact: number | null;
+  payload?: any;
+  reason?: string;
+  appliedAt?: number;
 }
 
 export interface TaskPerformance {
@@ -104,7 +109,8 @@ export interface TaskPerformance {
   challengesTotal: number;
   weightedScore: number;
   failedChallenges: string[];
-  averageTimeMs: number;
+  averageTimeMs?: number;
+  avgExecutionTimeMs?: number;
 }
 
 export interface FitnessMetrics {
@@ -139,6 +145,8 @@ export interface Genome {
   };
 
   capabilities: Capability[];
+  config?: Record<string, any>;
+  permissions?: string[];
 
   ai: {
     apiBaseUrl: string;
@@ -157,6 +165,7 @@ export interface Genome {
   };
 
   safety: {
+    enabled?: boolean;
     invariants: SafetyInvariant[];
     approvalRequired: string[];
     autoApproved: string[];
@@ -198,9 +207,12 @@ export interface MutationRequest {
 
 export interface MutationResult {
   success: boolean;
-  genome: Genome | null;
-  violations: string[];
-  warnings: string[];
+  genome?: Genome | null;
+  mutatedGenome?: Genome | null;
+  violations?: string[];
+  warnings?: string[];
+  error?: string;
+  appliedMutations?: MutationRecord[];
 }
 
 export interface GenomeBuildOutput {

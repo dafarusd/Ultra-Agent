@@ -432,7 +432,7 @@ export default function ChatScreen() {
         try {
           const Constants = require('expo-constants').default;
           const currentVersionCode = String(Constants.expoConfig?.android?.versionCode || '0');
-          const storedVersionCode = await vault.get('installed_version_code');
+          const storedVersionCode = await vault!.get('installed_version_code');
           if (storedVersionCode !== currentVersionCode) {
             const RESET_ON_UPGRADE = [
               'onboarding_done',
@@ -443,12 +443,12 @@ export default function ChatScreen() {
               'grid_config_version',
             ];
             for (const key of RESET_ON_UPGRADE) {
-              try { await vault.delete(key); } catch {}
+              try { await vault!.delete(key); } catch {}
             }
             for (const key of RESET_ON_UPGRADE) {
               try { await AsyncStorage.removeItem(key); } catch {}
             }
-            await vault.set('installed_version_code', currentVersionCode);
+            await vault!.set('installed_version_code', currentVersionCode);
             UltraDevLog.push('VERSION_RESET', {
               previous: storedVersionCode || '(none)',
               current: currentVersionCode,
@@ -471,11 +471,11 @@ export default function ChatScreen() {
         ];
         for (const key of MIGRATE_KEYS) {
           try {
-            const vaultVal = await vault.get(key);
+            const vaultVal = await vault!.get(key);
             if (vaultVal) continue;
             const asVal = await AsyncStorage.getItem(key);
             if (asVal) {
-              await vault.set(key, asVal);
+              await vault!.set(key, asVal);
               UltraDevLog.push('STORAGE_MIGRATE', { key, from: 'async', to: 'vault', size: asVal.length });
             }
           } catch {}
@@ -562,8 +562,8 @@ export default function ChatScreen() {
 
         // Biometric gate — load biometric_timeout (ms) override if set
         const gate = new BiometricGate();
-        await gate.init(vault);
-        const biometricTimeout = await vault.get('biometric_timeout').catch(() => null);
+        await gate.init(vault!);
+        const biometricTimeout = await vault!.get('biometric_timeout').catch(() => null);
         if (biometricTimeout !== null) {
           const timeoutMs = parseInt(biometricTimeout, 10) || 0;
           const mins = Math.round(timeoutMs / 60000);
@@ -766,7 +766,7 @@ export default function ChatScreen() {
       } else {
         result = await agentCore.execute({ conversationId, userInput: text });
       }
-      UltraDevLog.sendComplete(result?.taskId ?? '(unknown)', result?.success !== false, Date.now() - _sendStart, true, false);
+      UltraDevLog.sendComplete(result?.taskId ?? '(unknown)', result?.type !== 'error', Date.now() - _sendStart, true, false);
       await handleResult(result, agentCore, conversationId);
     } catch (err: any) {
       UltraDevLog.error('handleSend', err?.message || 'unknown', err?.stack);
@@ -1023,7 +1023,7 @@ export default function ChatScreen() {
     const tierService = agentCore?.getTierService();
     const tierFiltered = tierService ? tierService.filterModelsForTier(result) : result;
     const counts: Record<string, number> = {};
-    tierFiltered.forEach((m) => { counts[m.type] = (counts[m.type] || 0) + 1; });
+    tierFiltered.forEach((m: any) => { counts[m.type] = (counts[m.type] || 0) + 1; });
     UltraDevLog.modelState("picker_classification", counts);
     return tierFiltered;
   }, [agentCore, activeModelId, getResolvedCurrentModelId]);
@@ -1362,7 +1362,7 @@ export default function ChatScreen() {
                   UltraDevLog.push('CHAIN', { component: 'ChatScreen', action: 'share_message', trigger: { msgId: item.id }, state: {}, data: { contentLength: item.content.length }, outcome: 'sharing' });
                   try {
                     const shareResult = await Share.share({ message: item.content });
-                    UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'share_message', success: shareResult.action !== Share.dismissedAction, action: shareResult.action });
+                    UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'share_message', success: shareResult.action !== Share.dismissedAction, shareAction: shareResult.action });
                   } catch (e: any) {
                     UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'share_message', success: false, error: e?.message });
                   }

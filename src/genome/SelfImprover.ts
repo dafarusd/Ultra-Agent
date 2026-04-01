@@ -99,20 +99,15 @@ export class SelfImprover {
     }
 
     onProgress?.('mutating', 'Applying mutations...');
-    const mutationResult = this.mutator.applyAll(currentGenome, limited);
+    const mutationResult = await this.mutator.applyMutations(currentGenome, limited);
 
     if (!mutationResult.success) {
-      report.push('Mutation validation failed:');
-      for (const v of mutationResult.violations) report.push(`  x ${v}`);
+      report.push('Mutation failed:');
+      if (mutationResult.error) report.push(`  x ${mutationResult.error}`);
       return { genome: currentGenome, improved: false, report: report.join('\n') };
     }
 
-    if (mutationResult.warnings.length > 0) {
-      report.push('Warnings:');
-      for (const w of mutationResult.warnings) report.push(`  ! ${w}`);
-    }
-
-    const mutatedGenome = mutationResult.genome!;
+    const mutatedGenome = mutationResult.mutatedGenome!;
     report.push('Mutations applied successfully.');
 
     onProgress?.('compiling', 'Compiling mutated genome...');

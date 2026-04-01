@@ -399,8 +399,8 @@ export class GroupRouter {
     return {
       providerId: route.providerId,
       providerName: route.providerName,
-      groupId: route.groupId,
-      groupName: route.groupName,
+      groupId: route.groupId ?? '',
+      groupName: route.groupName ?? '',
       modelId: route.modelId,
       adapterId: route.adapterId,
       operation: route.operation,

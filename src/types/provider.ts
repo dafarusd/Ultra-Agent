@@ -60,6 +60,10 @@ export interface ProviderCapabilities {
 export interface PricingInfo {
   inputPer1kTokens?: number;
   outputPer1kTokens?: number;
+  /** @deprecated Use inputPer1kTokens instead */
+  inputPer1k?: number;
+  /** @deprecated Use outputPer1kTokens instead */
+  outputPer1k?: number;
   imagePerRequest?: number;
   audioPerSecond?: number;
   videoPerSecond?: number;

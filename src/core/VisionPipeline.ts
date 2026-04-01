@@ -43,7 +43,7 @@ export class VisionPipeline {
           const pngFiles = files.filter((f: string) => f.endsWith('.png')).sort().reverse();
           if (pngFiles.length > 0) {
             screenshotBase64 = await FileSystem.readAsStringAsync(screenshotDir + pngFiles[0], { encoding: FileSystem.EncodingType.Base64 });
-            const imageSizeBytes = Math.round(screenshotBase64.length * 0.75);
+            const imageSizeBytes = Math.round(screenshotBase64!.length * 0.75);
             DebugLog.push('VISION_CAPTURE' as any, { event: 'screenshot_captured', sizeBytes: imageSizeBytes, exceedsModelLimit: imageSizeBytes > 5_000_000 });
             if (imageSizeBytes > 5_000_000) DebugLog.push('VISION_CAPTURE' as any, { event: 'screenshot_too_large', sizeBytes: imageSizeBytes });
             this.lastScreenshot = screenshotBase64; this.lastScreenshotTime = Date.now();
@@ -66,7 +66,7 @@ export class VisionPipeline {
       // For completeWithConversation(), we check by attempting to find any vision model
       // from the bridge; if none, sending image bytes causes HTTP 400.
       const canUseVision = screenshotBase64 && typeof (this.ai as any).completeVision === 'function';
-      if (canUseVision) userContent.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: screenshotBase64.slice(0, 1_000_000) } });
+      if (canUseVision) userContent.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: screenshotBase64!.slice(0, 1_000_000) } });
       userContent.push({ type: 'text', text: `Describe this Android screen.${contextLine}\n\nACCESSIBILITY TREE:\n${accessibilityText.slice(0, 2000)}\n\nAPP: ${activePackage}\n\nRespond:\nAPP: name\nSCREEN_TYPE: home|search_results|settings|chat|form|list|media|map|login|error|other\nDESCRIPTION: 2-3 sentences\nTEXT: key visible text (one per line, max 10)\n${opts.identifyActions ? 'ACTIONS: "label" [type] - what it does (max 8)' : ''}\n${opts.extractData ? 'DATA: JSON object of structured data visible' : ''}\nCONFIDENCE: 0-1` });
 
       const messages = [{ role: 'system', content: 'You analyze Android screenshots and accessibility data.' }, { role: 'user', content: userContent }];

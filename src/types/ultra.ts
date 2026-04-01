@@ -56,7 +56,7 @@ export interface PromptTrace {
   error?: string | null;
   durationMs?: number;
   taskId?: string;
-  mode?: 'command' | 'conversation' | 'ai_instruction';
+  mode?: 'command' | 'conversation' | 'ai_instruction' | 'system' | 'vision';
   deterministic?: boolean;
   ledgerEvents?: TraceLedgerEvent[];
 }
@@ -69,9 +69,10 @@ export interface ChatMessage {
   source?: MessageSource;
   meta?: {
     promptTrace?: PromptTrace;
-    mode?: 'command' | 'conversation' | 'ai_instruction';
+    mode?: 'command' | 'conversation' | 'ai_instruction' | 'system' | 'vision';
     capability?: string;
     risk?: 'safe' | 'moderate' | 'dangerous' | 'blocked';
+    requiresApproval?: boolean;
     isBuildLog?: boolean;
     data?: any;
     needsUpgrade?: boolean;
@@ -138,6 +139,7 @@ export type ExecutionResultType =
 export interface UltraExecutionResult {
   type: ExecutionResultType;
   message: string;
+  success?: boolean;
   taskId?: string;
   data?: any;
 }
