@@ -44,9 +44,9 @@ function describeAction(tool: string, params: Record<string, any>): string {
 // TOOL DEFINITIONS
 // ─────────────────────────────────────────────────────────────────────────────
 const TOOLS = `
-app_launch        - Open an app or website. params: {target, action?, data?, extras?}
-react_navigate    - Open app then interact with UI to complete a goal. params: {goal, appHint}
-web_search        - Search the internet. params: {query}
+app_launch        - Just open an app or website (open only, no interaction). params: {target}
+react_navigate    - Open an app/website AND do things inside it (tap, type, scroll, find, click). USE THIS when the user wants to DO something inside an app or site. params: {goal, appHint}
+web_search        - Search the internet for information. Returns text only. Does NOT open or interact with sites. Never put a URL here. params: {query}
 web_research      - Deep research a topic, return summary. params: {query}
 weather           - Get weather. params: {city?, use_current_location?, date?}
 device_location   - Get GPS coordinates and city name. params: {}
@@ -99,7 +99,14 @@ CRITICAL RULES:
 - If a tool fails, tell the user what went wrong.
 
 AVAILABLE TOOLS:
-${TOOLS}`;
+${TOOLS}
+
+TOOL SELECTION:
+- "Open X and do Y inside it" = react_navigate (goal=Y, appHint=X)
+- "Go to site X and click/find/search Y" = react_navigate (goal=Y, appHint=X)  
+- "Open X" with nothing else to do = app_launch (target=X)
+- "Search for info about X" = web_search (query=X)
+- NEVER put a URL into web_search. URLs go to app_launch or react_navigate.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
