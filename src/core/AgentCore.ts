@@ -97,6 +97,10 @@ export interface ExecuteArgs {
   userInput: string;
   replay?: boolean;
   approvedAction?: boolean;
+  pendingState?: {
+    messages: Array<{ role: string; content: string }>;
+    toolCall: { tool: string; params: Record<string, any> };
+  };
 }
 
 export class AgentCore extends SimpleEmitter {
@@ -581,7 +585,13 @@ You are always on. Always capable. Always direct.`;
     DebugLog.agentExecuteStart(taskId, conversationId, userInput.length, !!args.replay);
 
     const brain = new BrainExecutor(this.ai, this.executor, this.conversations);
-    return brain.execute(userInput, conversationId, taskId);
+    return brain.execute(
+      userInput,
+      conversationId,
+      taskId,
+      args.approvedAction,
+      args.approvedAction ? (args as any).pendingState : undefined,
+    );
   }
 
   async handleConfirmation(confirmed: boolean, originalRequest: string, conversationId: string): Promise<UltraExecutionResult> {

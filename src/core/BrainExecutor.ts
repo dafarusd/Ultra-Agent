@@ -5,8 +5,43 @@ import type { UltraExecutionResult } from '../types/ultra';
 import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DESTRUCTIVE TOOLS — require explicit user confirmation before executing
+// These tools make real-world changes the user cannot undo easily:
+// sending messages, making calls, deleting files, making purchases
+// ─────────────────────────────────────────────────────────────────────────────
+const DESTRUCTIVE_TOOLS = new Set([
+  'sms_send',
+  'file_delete',
+]);
+
+// app_launch is destructive only when it's a phone call
+function isDestructiveLaunch(params: Record<string, any>): boolean {
+  const action = (params.action || '').toLowerCase();
+  return action === 'android.intent.action.call' || action === 'android.intent.action.dial';
+}
+
+function requiresConfirmation(tool: string, params: Record<string, any>): boolean {
+  if (DESTRUCTIVE_TOOLS.has(tool)) return true;
+  if (tool === 'app_launch' && isDestructiveLaunch(params)) return true;
+  return false;
+}
+
+function describeAction(tool: string, params: Record<string, any>): string {
+  if (tool === 'sms_send') {
+    return `Send a text message to ${params.to || 'unknown'}: "${params.message || ''}"`;
+  }
+  if (tool === 'file_delete') {
+    return `Delete file: ${params.filename || params.path || 'unknown'}`;
+  }
+  if (tool === 'app_launch' && isDestructiveLaunch(params)) {
+    const number = params.data?.replace('tel:', '') || params.extras?._contactName || 'unknown';
+    return `Call ${number}`;
+  }
+  return `Execute ${tool}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TOOL DEFINITIONS
-// The AI sees exactly this. Compact, unambiguous, complete.
 // ─────────────────────────────────────────────────────────────────────────────
 const TOOLS = `
 app_launch        - Open an app or website. params: {target, action?, data?, extras?}
@@ -56,13 +91,12 @@ Respond with ONLY a JSON tool call — no explanation, no preamble:
 WHEN YOU ARE DONE OR WANT TO TALK:
 Respond with plain text. Be direct and brief.
 
-RULES:
+CRITICAL RULES:
+- Only send messages (sms_send) or make calls when the user EXPLICITLY asks you to.
+- Do NOT send messages as a "helpful" follow-up. Do NOT reply to SMS threads you read.
+- Do NOT call numbers you find in the inbox. Reading SMS is for information only.
 - Always USE tools to do things. Never say "I would" or "I can" — just do it.
-- If a tool fails, tell the user what went wrong and what to try next.
-- You can call multiple tools in sequence by using tool calls one at a time.
-- For tasks that require navigating a phone UI (search something in an app, scroll, tap), use react_navigate.
-- For opening an app or URL, use app_launch.
-- Never make up information. If you don't know, use web_search.
+- If a tool fails, tell the user what went wrong.
 
 AVAILABLE TOOLS:
 ${TOOLS}`;
@@ -79,8 +113,6 @@ function parseToolCall(text: string): { tool: string; params: Record<string, any
   const cleaned = text.replace(/```json|```/g, '').trim();
   const start = cleaned.indexOf('{');
   if (start < 0) return null;
-
-  // Extract first balanced JSON object
   let depth = 0;
   let end = -1;
   for (let i = start; i < cleaned.length; i++) {
@@ -88,7 +120,6 @@ function parseToolCall(text: string): { tool: string; params: Record<string, any
     else if (cleaned[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
   }
   if (end < 0) return null;
-
   try {
     const obj = JSON.parse(cleaned.slice(start, end + 1));
     if (obj?.tool && typeof obj.tool === 'string') {
@@ -103,7 +134,6 @@ function formatToolResult(result: any): string {
   if (typeof result === 'string') return result;
   if (result.error) return `Error: ${result.error}`;
   if (result.summary) return result.summary;
-  // Compact JSON for structured results
   try {
     const str = JSON.stringify(result);
     return str.length > 1500 ? str.slice(0, 1500) + '...' : str;
@@ -126,10 +156,33 @@ export class BrainExecutor {
     userInput: string,
     conversationId: string,
     taskId: string,
+    approvedAction?: boolean,
+    pendingState?: { messages: Array<{ role: string; content: string }>; toolCall: { tool: string; params: Record<string, any> } },
   ): Promise<UltraExecutionResult> {
-    DebugLog.systemEvent('BrainExecutor', `START input="${userInput.slice(0, 80)}"`);
+    DebugLog.systemEvent('BrainExecutor', `START input="${userInput.slice(0, 80)}" approved=${!!approvedAction}`);
 
-    // ── 1. Save user message ──────────────────────────────────────────────
+    // ── RESUME PATH: user approved a pending destructive action ──────────
+    if (approvedAction && pendingState) {
+      DebugLog.systemEvent('BrainExecutor', `RESUMING from pending: ${pendingState.toolCall.tool}`);
+      const { messages, toolCall } = pendingState;
+
+      let toolResult: any;
+      try {
+        toolResult = await (this.executor as any).execWithParams(toolCall.tool, toolCall.params, userInput, taskId);
+      } catch (e: any) {
+        toolResult = { error: e.message };
+      }
+      const resultText = formatToolResult(toolResult);
+      DebugLog.systemEvent('BrainExecutor', `RESUME TOOL RESULT: ${resultText.slice(0, 120)}`);
+
+      // Continue the loop with the result
+      messages.push({ role: 'assistant', content: JSON.stringify({ tool: toolCall.tool, params: toolCall.params }) });
+      messages.push({ role: 'user', content: `Tool result for ${toolCall.tool}:\n${resultText}\n\nNow respond to the user or call another tool.` });
+
+      return this.runLoop(userInput, conversationId, taskId, messages, 1);
+    }
+
+    // ── NORMAL PATH: save user message and build fresh context ───────────
     await this.conversations.addMessage(conversationId, {
       id: uid(),
       role: 'user',
@@ -137,19 +190,23 @@ export class BrainExecutor {
       createdAt: Date.now(),
     });
 
-    // ── 2. Build conversation payload with full history ───────────────────
     const systemPrompt = buildSystemPrompt();
-    const { payload } = await (this as any).buildContextFromConversation(
-      conversationId, systemPrompt, 2000,
-    );
+    const { payload } = await this.buildContextFromConversation(conversationId, systemPrompt);
+    return this.runLoop(userInput, conversationId, taskId, payload, 0);
+  }
 
-    // ── 3. Tool-calling loop ──────────────────────────────────────────────
+  private async runLoop(
+    userInput: string,
+    conversationId: string,
+    taskId: string,
+    messages: Array<{ role: string; content: string }>,
+    resumeTurn: number,
+  ): Promise<UltraExecutionResult> {
     const MAX_TOOL_TURNS = 12;
-    const messages: Array<{ role: string; content: string }> = [...payload];
     let finalText = '';
     let lastCapability = '';
 
-    for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+    for (let turn = resumeTurn; turn < MAX_TOOL_TURNS; turn++) {
       DebugLog.systemEvent('BrainExecutor', `AI turn ${turn + 1}`);
 
       const aiResult = await this.ai.completeWithConversation(messages, {
@@ -162,28 +219,43 @@ export class BrainExecutor {
       const rawResponse = aiResult.content.trim();
       DebugLog.systemEvent('BrainExecutor', `AI response (${rawResponse.length} chars): ${rawResponse.slice(0, 120)}`);
 
-      // Try to parse as tool call
       const toolCall = parseToolCall(rawResponse);
 
       if (!toolCall) {
-        // Plain text response — done
         finalText = rawResponse;
         DebugLog.systemEvent('BrainExecutor', `TEXT response, done after ${turn + 1} turns`);
         break;
       }
 
-      // ── Execute the tool ──────────────────────────────────────────────
+      // ── CONFIRMATION GATE ─────────────────────────────────────────────
+      if (requiresConfirmation(toolCall.tool, toolCall.params)) {
+        const description = describeAction(toolCall.tool, toolCall.params);
+        DebugLog.systemEvent('BrainExecutor', `CONFIRMATION REQUIRED: ${description}`);
+
+        // Save state so we can resume exactly here if approved
+        const pendingState = {
+          messages: [...messages, { role: 'assistant', content: rawResponse }],
+          toolCall,
+        };
+
+        return {
+          type: 'approval_required',
+          message: `Agent Ultra wants to: **${description}**\n\nAllow this action?`,
+          taskId,
+          data: {
+            replayUserInput: userInput,
+            pendingState,
+          },
+        };
+      }
+
+      // ── EXECUTE TOOL ──────────────────────────────────────────────────
       DebugLog.systemEvent('BrainExecutor', `TOOL CALL: ${toolCall.tool} params=${JSON.stringify(toolCall.params).slice(0, 120)}`);
       lastCapability = toolCall.tool;
 
       let toolResult: any;
       try {
-        toolResult = await (this.executor as any).execWithParams(
-          toolCall.tool,
-          toolCall.params,
-          userInput,
-          taskId,
-        );
+        toolResult = await (this.executor as any).execWithParams(toolCall.tool, toolCall.params, userInput, taskId);
       } catch (e: any) {
         toolResult = { error: e.message };
       }
@@ -191,21 +263,17 @@ export class BrainExecutor {
       const resultText = formatToolResult(toolResult);
       DebugLog.systemEvent('BrainExecutor', `TOOL RESULT: ${resultText.slice(0, 120)}`);
 
-      // ── Add tool call + result to messages and loop ───────────────────
       messages.push({ role: 'assistant', content: rawResponse });
       messages.push({
         role: 'user',
         content: `Tool result for ${toolCall.tool}:\n${resultText}\n\nNow respond to the user or call another tool.`,
       });
 
-      // If last turn and no text yet, force text response
       if (turn === MAX_TOOL_TURNS - 1) {
         finalText = `Ran ${toolCall.tool}: ${resultText}`;
-        DebugLog.systemEvent('BrainExecutor', 'MAX TURNS reached, using last tool result');
       }
     }
 
-    // ── 4. Save assistant response ────────────────────────────────────────
     if (finalText) {
       await this.conversations.addMessage(conversationId, {
         id: uid(),
@@ -218,25 +286,17 @@ export class BrainExecutor {
     }
 
     DebugLog.systemEvent('BrainExecutor', `DONE taskId=${taskId}`);
-    return {
-      type: 'action_result',
-      message: finalText || 'Done.',
-      taskId,
-    };
+    return { type: 'action_result', message: finalText || 'Done.', taskId };
   }
 
-  // Builds payload from conversation history
   private async buildContextFromConversation(
     conversationId: string,
     systemPrompt: string,
-    responseMaxTokens: number,
   ): Promise<{ payload: Array<{ role: string; content: string }> }> {
     const conv = await this.conversations.loadConversation(conversationId);
     const msgs = conv
       ? conv.messages.slice(-20).map((m: any) => ({ role: m.role, content: m.content }))
       : [];
-    return {
-      payload: [{ role: 'system', content: systemPrompt }, ...msgs],
-    };
+    return { payload: [{ role: 'system', content: systemPrompt }, ...msgs] };
   }
 }
