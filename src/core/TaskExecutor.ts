@@ -1620,12 +1620,12 @@ export class TaskExecutor {
             const aiResult = await this.ai.complete(prompt, {
               taskId,
               agentId: 'react',
-              maxTokens: 600,
-              temperature: 0.2,
+              maxTokens: 150,
+              temperature: 0.1,
             });
             return aiResult.content;
           },
-          { maxIterations: hasAiFallback ? 8 : 10, iterationDelayMs: 1200, allowLLMFallback: hasAiFallback }
+          { maxIterations: hasAiFallback ? 15 : 20, iterationDelayMs: 800, allowLLMFallback: hasAiFallback }
         );
         const reactResult = await reactLoop.execute(goal, appHint);
         DebugLog.executorExit(taskId, 'react_navigate', reactResult.goalAchieved, `steps=${reactResult.steps.length} llmFallback=${hasAiFallback}`);

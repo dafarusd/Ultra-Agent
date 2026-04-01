@@ -144,7 +144,7 @@ export class BrainExecutor {
     );
 
     // ── 3. Tool-calling loop ──────────────────────────────────────────────
-    const MAX_TOOL_TURNS = 6;
+    const MAX_TOOL_TURNS = 12;
     const messages: Array<{ role: string; content: string }> = [...payload];
     let finalText = '';
     let lastCapability = '';

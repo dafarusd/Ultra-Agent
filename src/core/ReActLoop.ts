@@ -124,7 +124,9 @@ export class ReActLoop {
     for (let iteration = 1; iteration <= this.maxIterations; iteration++) {
       try {
         const currentPkg = await AppController.getActivePackage();
-        const skipSelfCheck = iteration === 1 && !!appHint;
+        // Skip self-check for first 3 iterations when we have an appHint —
+        // the app needs time to launch and the user may briefly see Ultra
+        const skipSelfCheck = iteration <= 3 && !!appHint;
         if (!skipSelfCheck && currentPkg === 'com.agent.ultra') {
           DebugLog.error('ReActLoop', `SAFETY STOP at iter ${iteration}: foreground package is Agent Ultra — aborting to prevent self-interaction`);
           return { success: false, steps, finalObservation: 'ReActLoop detected self-interaction — stopped for safety', goalAchieved: false, error: 'self_interaction' };
@@ -185,8 +187,25 @@ export class ReActLoop {
         }
       }
 
-      const systemPrompt = 'You control an Android screen. You see UI elements and choose one action. Respond ONLY: ACTION: tap_index(N), tap(x,y), type("text"), scroll(up|down), back(), done. No explanation.';
-      const userMessage = `GOAL: ${goal}\n\nSCREEN:\n${enhancedObservation.slice(0, 2000)}\n\nACTION:`;
+      const systemPrompt = `You control an Android phone. Choose ONE action to make progress toward the goal.
+ACTIONS YOU CAN USE:
+- tap_index(N)   tap element by its index number
+- tap(N)         same as tap_index(N)
+- type("text")   type text into focused field
+- scroll(down)   scroll the screen down
+- scroll(up)     scroll the screen up
+- back()         press the back button
+- done           goal is complete
+
+Respond with ONLY the action. No explanation. No prefix. Just the action.`;
+
+      // Build step history for context (last 4 steps)
+      const recentSteps = steps.slice(-4).map(s =>
+        `  ${s.action} → ${s.uiChanged ? 'screen changed' : s.actionResult ? 'no visual change' : 'FAILED'}`
+      ).join('\n');
+      const historyLine = recentSteps ? `\nRECENT ACTIONS:\n${recentSteps}\n` : '';
+
+      const userMessage = `GOAL: ${goal}${historyLine}\n\nSCREEN:\n${enhancedObservation.slice(0, 1500)}\n\nACTION:`;
       let reasoning: string;
       try {
         reasoning = await this.aiCall(`${systemPrompt}\n\n${userMessage}`);
@@ -241,14 +260,27 @@ export class ReActLoop {
       const flat = await getScreenContentFlat();
       const nodes = JSON.parse(flat) as FlatNode[];
       if (!Array.isArray(nodes) || nodes.length === 0) return 'Screen: empty or inaccessible';
-      return nodes.map((n) => {
-        const label = (n.t || n.d || '').slice(0, 60);
-        const flags: string[] = [];
-        if (n.c) flags.push('tap');
-        if (n.e) flags.push('type');
-        if (n.s) flags.push('scroll');
-        return `[${n.i}] "${label}" [${flags.join(',') || 'view'}] @(${n.x},${n.y})`;
-      }).join('\n');
+
+      // Only show interactive nodes — skip empty labels and view-only noise
+      const tappable: string[] = [];
+      const typeable: string[] = [];
+      const scrollable: string[] = [];
+
+      for (const n of nodes) {
+        const label = (n.t || n.d || '').trim().slice(0, 50);
+        if (!label) continue; // skip blank nodes
+        if (n.e) typeable.push(`  [${n.i}] ${label}`);
+        else if (n.c) tappable.push(`  [${n.i}] ${label}`);
+        else if (n.s && !tappable.length) scrollable.push(`  [${n.i}] ${label}`);
+      }
+
+      const parts: string[] = [];
+      if (tappable.length) parts.push(`TAPPABLE:\n${tappable.slice(0, 20).join('\n')}`);
+      if (typeable.length) parts.push(`TYPEABLE:\n${typeable.slice(0, 5).join('\n')}`);
+      if (scrollable.length) parts.push(`SCROLLABLE:\n${scrollable.slice(0, 3).join('\n')}`);
+      if (!parts.length) parts.push('Screen has no interactive elements — try scroll(down) or back()');
+
+      return parts.join('\n\n');
     } catch {
       try {
         const tree = await AppController.getScreenContent();
