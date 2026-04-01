@@ -155,7 +155,7 @@ export class PermissionBroker {
           DebugLog.permissionStatus('MANAGE_EXTERNAL_STORAGE', 'already granted');
         } else {
           // Request via system settings — user must grant manually once
-          const { IntentLauncher } = await import('expo-intent-launcher');
+          const IntentLauncher = await import('expo-intent-launcher');
           await IntentLauncher.startActivityAsync(
             'android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION',
             { data: 'package:com.agent.ultra' }

@@ -299,6 +299,17 @@ export class ReActLoop {
       const tapMatch = a.match(/^tap\(\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
       if (tapMatch) return await performTap(parseInt(tapMatch[1], 10), parseInt(tapMatch[2], 10));
 
+      // tap(N) with single arg = tap by node index (alias for tap_index(N))
+      const tapSingleMatch = a.match(/^tap\(\s*(\d+)\s*\)$/i);
+      if (tapSingleMatch) {
+        const idx = parseInt(tapSingleMatch[1], 10);
+        const flat = await getScreenContentFlat();
+        const nodes = JSON.parse(flat) as FlatNode[];
+        const node = Array.isArray(nodes) ? nodes.find((n) => n.i === idx) : null;
+        if (node) return await performTap(node.x, node.y);
+        return false;
+      }
+
       const tapIdxMatch = a.match(/^tap_index\(\s*(\d+)\s*\)$/i);
       if (tapIdxMatch) {
         const idx = parseInt(tapIdxMatch[1], 10);

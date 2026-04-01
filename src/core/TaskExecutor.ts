@@ -840,13 +840,29 @@ export class TaskExecutor {
         const target = params.target;
         if (!target) { DebugLog.executorExit(taskId, 'app_launch', false, 'no_target'); return { error: 'No app or action specified' }; }
 
+        // If target looks like a URL and no explicit action, treat as ACTION_VIEW
+        if (target && /^https?:\/\//i.test(target) && !params.action) {
+          params.action = 'android.intent.action.VIEW';
+          params.data = target;
+          params.target = 'browser';
+        }
+
         // ── PATH A: Rich intent (action/data/extras provided by parser) ──
         if (params.action) {
           DebugLog.executorBranch(taskId, 'app_launch', 'rich_intent', { action: params.action });
           this.logger.info(`Rich intent: action=${params.action} data=${params.data || 'none'} pkg=${params.packageName || 'none'}`);
 
-          // FIXED: Guard action string to prevent "'activityAction' argument must be a non-empty string!"
-          const safeAction = params.action || 'android.intent.action.VIEW';
+          // Normalize short action aliases to full Android intent strings
+          const ACTION_MAP: Record<string, string> = {
+            'view': 'android.intent.action.VIEW',
+            'call': 'android.intent.action.CALL',
+            'dial': 'android.intent.action.DIAL',
+            'send': 'android.intent.action.SEND',
+            'edit': 'android.intent.action.EDIT',
+            'pick': 'android.intent.action.PICK',
+          };
+          const rawAction = params.action || '';
+          const safeAction = ACTION_MAP[rawAction.toLowerCase()] || rawAction || 'android.intent.action.VIEW';
 
           // Special case: contact name resolution for phone calls
           if (params.extras?._contactName &&
