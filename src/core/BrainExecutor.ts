@@ -264,6 +264,19 @@ export class BrainExecutor {
       DebugLog.systemEvent('BrainExecutor', `TOOL RESULT: ${resultText.slice(0, 120)}`);
 
       messages.push({ role: 'assistant', content: rawResponse });
+
+      // Stuck detector: if the same tool fails twice in a row, stop and report honestly
+      const isFailure = resultText.startsWith('Error:') || resultText.startsWith('Could not');
+      if (isFailure) {
+        const prevMsg = messages.length >= 4 ? messages[messages.length - 3].content : '';
+        const prevWasSameTool = prevMsg.includes(`"tool":"${toolCall.tool}"`);
+        if (prevWasSameTool) {
+          finalText = `I wasn't able to complete that. ${toolCall.tool} failed twice: ${resultText}. Please try rephrasing or check if the required app or permission is available.`;
+          DebugLog.systemEvent('BrainExecutor', `STUCK STOP: ${toolCall.tool} failed twice, stopping`);
+          break;
+        }
+      }
+
       messages.push({
         role: 'user',
         content: `Tool result for ${toolCall.tool}:\n${resultText}\n\nNow respond to the user or call another tool.`,

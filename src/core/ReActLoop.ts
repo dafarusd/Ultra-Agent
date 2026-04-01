@@ -293,26 +293,39 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
   }
 
   private extractAction(text: string): string | null {
-    const strict = text.match(/^ACTION:\s*(.+)$/im);
+    const t = text.trim();
+
+    // 1. Strict prefix match: "ACTION: tap_index(5)"
+    const strict = t.match(/^ACTION:\s*(.+)$/im);
     if (strict) return strict[1].trim();
 
-    const actionPatterns = [
+    // 2. Bare action on its own line or as the whole response
+    const bare = t.match(/^(tap_index\(\s*\d+\s*\)|tap\(\s*\d+(?:\s*,\s*\d+)?\s*\)|type\(["']?[^)]+["']?\)|scroll\((?:up|down|forward|backward)\)|swipe\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)|back\(\)|home\(\)|done)$/i);
+    if (bare) return bare[1].trim();
+
+    // 3. Action embedded anywhere in text — extract first match
+    const patterns = [
       /\b(tap_index\(\s*\d+\s*\))/i,
       /\b(tap\(\s*\d+\s*,\s*\d+\s*\))/i,
-      /\b(type\(\s*["']?.+?["']?\s*\))/i,
-      /\b(scroll\(\s*(?:up|down|forward|backward)\s*\))/i,
+      /\b(tap\(\s*\d+\s*\))/i,             // single-arg tap = tap by index
+      /\b(type\(["']?[^)]{1,100}["']?\))/i,
+      /\b(scroll\((?:up|down|forward|backward)\))/i,
       /\b(swipe\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\))/i,
       /\b(back\(\))/i,
       /\b(home\(\))/i,
-      /\b(done)\b/i,
     ];
-    for (const pattern of actionPatterns) {
-      const found = text.match(pattern);
-      if (found) return found[1].trim();
+    for (const p of patterns) {
+      const m = t.match(p);
+      if (m) return m[1].trim();
     }
 
-    const trimmed = text.trim().toLowerCase();
-    if (trimmed === 'done' || trimmed === 'back' || trimmed === 'back()') return trimmed;
+    // 4. Keyword fallback for simple prose responses
+    const lower = t.toLowerCase();
+    if (/\bdone\b/.test(lower) && t.length < 60) return 'done';
+    if (/\bscroll down\b/.test(lower)) return 'scroll(down)';
+    if (/\bscroll up\b/.test(lower)) return 'scroll(up)';
+    if (/\bgo back\b|\bpress back\b/.test(lower)) return 'back()';
+
     return null;
   }
 

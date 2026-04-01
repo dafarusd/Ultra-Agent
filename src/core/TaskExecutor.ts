@@ -2029,6 +2029,10 @@ export class TaskExecutor {
         await new Promise<void>(resolve => setTimeout(resolve, 1000));
         const screenshotTaken = await AppController.takeScreenshot().catch(() => false);
         if (screenshotTaken) {
+          // Dismiss Samsung Smart Capture overlay that appears after every screenshot
+          await new Promise<void>(resolve => setTimeout(resolve, 600));
+          await AppController.performBack().catch(() => {});
+          await new Promise<void>(resolve => setTimeout(resolve, 500));
           return { success: true, summary: 'Screenshot taken — saved to your Screenshots folder' };
         }
         try {
