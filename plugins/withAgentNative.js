@@ -1760,29 +1760,28 @@ public class AgentAccessibilityService extends AccessibilityService {
         }
         return false;
     }
-
     private boolean checkPackageAllowed() {
-        // SAFETY: Never interact with own UI â€” prevents self-tap, self-scroll, keyboard hijack
+        // Use root window package — currentPackage may be keyboard overlay
         AccessibilityNodeInfo root = getRootInActiveWindow();
+        String rootPkg = currentPackage;
         if (root != null) {
             CharSequence pkg = root.getPackageName();
-            if (pkg != null && "com.agent.ultra".contentEquals(pkg)) {
-                Log.w(TAG, "BLOCKED: Attempted interaction with own UI");
-                root.recycle();
-                return false;
+            if (pkg != null) {
+                rootPkg = pkg.toString();
+                if ("com.agent.ultra".equals(rootPkg)) {
+                    Log.w(TAG, "BLOCKED: Attempted interaction with own UI");
+                    root.recycle();
+                    return false;
+                }
             }
             root.recycle();
         }
-
-        // Check user-defined blocked packages list
-        if (isPackageBlocked(currentPackage)) {
-            Log.w(TAG, "BLOCKED: Package is in user blocklist: " + currentPackage);
+        if (isPackageBlocked(rootPkg)) {
+            Log.w(TAG, "BLOCKED: Package is in user blocklist: " + rootPkg);
             return false;
         }
-
-        // Existing allowed-package check
-        if (!isPackageAllowed(currentPackage)) {
-            Log.w(TAG, "Package not allowed: " + currentPackage);
+        if (!isPackageAllowed(rootPkg)) {
+            Log.w(TAG, "Package not allowed: " + rootPkg);
             return false;
         }
         return true;
