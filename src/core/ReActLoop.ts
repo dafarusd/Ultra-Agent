@@ -156,6 +156,41 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
       }
     }
 
+    // -- FOREGROUND GATE: wait for target app before observing/planning --
+    // Without this, observe() and planSteps() see Agent Ultra's own UI
+    // and the planner targets our own elements (runtime-proven bug).
+    if (appHint) {
+      const maxWaitMs = 6000;
+      const pollMs = 400;
+      let waited = 0;
+      let gatePackage = '';
+      while (waited < maxWaitMs) {
+        try {
+          gatePackage = await AppController.getActivePackage() || '';
+        } catch { /* ignore */ }
+        if (gatePackage && gatePackage !== 'com.agent.ultra' && gatePackage !== 'com.samsung.android.honeyboard') {
+          break;
+        }
+        await this.sleep(pollMs);
+        waited += pollMs;
+      }
+      if (gatePackage && gatePackage !== 'com.agent.ultra') {
+        DebugLog.systemEvent('ReActLoop', `FOREGROUND GATE: target app ${gatePackage} ready (waited ${waited}ms)`);
+        await AppController.allowPackage(gatePackage);
+        observation = await this.observe();
+      } else {
+        DebugLog.error('ReActLoop', `FOREGROUND GATE: Agent Ultra still in foreground after ${maxWaitMs}ms`);
+        return {
+          success: false,
+          steps: [],
+          finalObservation: 'Target app did not come to foreground.',
+          goalAchieved: false,
+          error: 'target_not_foreground'
+        };
+      }
+    }
+
+
     const parsedGoal = this.parseGoal(goal);
 
     // ── PLANNING STEP: get app context and produce ordered plan ──────
