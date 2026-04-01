@@ -471,11 +471,33 @@ export class TaskExecutor {
     switch (capId) {
       case 'file_read': {
         if (!isNative) return { error: 'File operations require Android device' };
-        const path = params.path || this.docDir;
-        const targetPath = path.startsWith('/') ? path : this.docDir + path;
+        const rawPath = params.path || '';
+        // Try 1: explicit absolute path
+        // Try 2: internal app directory
+        // Try 3: Download directory (requires MANAGE_EXTERNAL_STORAGE on Android 13+)
+        const downloadDir = '/storage/emulated/0/Download/';
+        const candidates: string[] = [];
+        if (rawPath.startsWith('/')) {
+          candidates.push(rawPath);
+        } else if (rawPath) {
+          candidates.push(this.docDir + rawPath);
+          candidates.push(downloadDir + rawPath);
+        } else {
+          candidates.push(this.docDir);
+        }
+        let targetPath = candidates[0];
+        let info: any = { exists: false };
+        for (const candidate of candidates) {
+          try {
+            info = await FileSystem.getInfoAsync(candidate);
+            if (info.exists) { targetPath = candidate; break; }
+          } catch {}
+        }
+        if (!info.exists) {
+          const triedPaths = candidates.join(', ');
+          return { error: `File not found. Tried: ${triedPaths}. If the file is in Downloads, go to Settings and grant "All files access" permission.` };
+        }
         try {
-          const info = await FileSystem.getInfoAsync(targetPath);
-          if (!info.exists) return { error: `Path not found: ${path}` };
           if (info.isDirectory) {
             const files = await FileSystem.readDirectoryAsync(targetPath);
             return { directory: targetPath, files, count: files.length };
@@ -1448,7 +1470,22 @@ export class TaskExecutor {
           }
         }
         const { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        return { success: true, latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, altitude: coords.altitude };
+        let cityName: string | null = null;
+        try {
+          const [addr] = await Location.reverseGeocodeAsync({ latitude: coords.latitude, longitude: coords.longitude });
+          cityName = addr?.city || addr?.subregion || addr?.region || null;
+        } catch {}
+        return {
+          success: true,
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          accuracy: coords.accuracy,
+          altitude: coords.altitude,
+          city: cityName,
+          locationSummary: cityName
+            ? `${cityName} (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`
+            : `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`,
+        };
       }
       case 'app_control': {
         if (!isNative || !AppController.isAvailable()) return { error: 'App control requires Android device with accessibility service enabled' };

@@ -143,6 +143,39 @@ export class PermissionBroker {
       DebugLog.permissionStatus('ACCESS_BACKGROUND_LOCATION', 'skipped — no foreground location');
     }
 
+    // Fourth pass: MANAGE_EXTERNAL_STORAGE — special app access on Android 11+.
+    // Cannot be batched. Opens system settings intent if not already granted.
+    if (apiLevel >= 30) {
+      try {
+        const { check, PERMISSIONS } = PermissionsAndroid;
+        const manageStoragePerm = 'android.permission.MANAGE_EXTERNAL_STORAGE';
+        const alreadyManage = await check(manageStoragePerm as any).catch(() => false);
+        if (alreadyManage) {
+          this.granted.add('MANAGE_EXTERNAL_STORAGE');
+          DebugLog.permissionStatus('MANAGE_EXTERNAL_STORAGE', 'already granted');
+        } else {
+          // Request via system settings — user must grant manually once
+          const { IntentLauncher } = await import('expo-intent-launcher');
+          await IntentLauncher.startActivityAsync(
+            'android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION',
+            { data: 'package:com.agent.ultra' }
+          ).catch(() => {});
+          // Re-check after settings return
+          const grantedAfter = await check(manageStoragePerm as any).catch(() => false);
+          if (grantedAfter) {
+            this.granted.add('MANAGE_EXTERNAL_STORAGE');
+            DebugLog.permissionStatus('MANAGE_EXTERNAL_STORAGE', 'granted after settings');
+          } else {
+            this.denied.add('MANAGE_EXTERNAL_STORAGE');
+            DebugLog.permissionStatus('MANAGE_EXTERNAL_STORAGE', 'denied or deferred');
+          }
+        }
+      } catch (manageErr: any) {
+        this.denied.add('MANAGE_EXTERNAL_STORAGE');
+        DebugLog.error('PermissionBroker', `MANAGE_EXTERNAL_STORAGE request failed: ${manageErr.message}`);
+      }
+    }
+
     this.initialized = true;
     DebugLog.systemEvent('PermissionBroker', `Complete: ${this.granted.size} granted, ${this.denied.size} denied`);
   }

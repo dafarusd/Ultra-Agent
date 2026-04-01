@@ -61,7 +61,12 @@ export class VisionPipeline {
     try {
       const contextLine = context ? `\nCONTEXT: The user is trying to: ${context}` : '';
       const userContent: any[] = [];
-      if (screenshotBase64) userContent.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: screenshotBase64.slice(0, 1_000_000) } });
+      // Only include screenshot if a vision-capable model is available.
+      // completeVision() in ModelRouter selects a vision model if one exists.
+      // For completeWithConversation(), we check by attempting to find any vision model
+      // from the bridge; if none, sending image bytes causes HTTP 400.
+      const canUseVision = screenshotBase64 && typeof (this.ai as any).completeVision === 'function';
+      if (canUseVision) userContent.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: screenshotBase64.slice(0, 1_000_000) } });
       userContent.push({ type: 'text', text: `Describe this Android screen.${contextLine}\n\nACCESSIBILITY TREE:\n${accessibilityText.slice(0, 2000)}\n\nAPP: ${activePackage}\n\nRespond:\nAPP: name\nSCREEN_TYPE: home|search_results|settings|chat|form|list|media|map|login|error|other\nDESCRIPTION: 2-3 sentences\nTEXT: key visible text (one per line, max 10)\n${opts.identifyActions ? 'ACTIONS: "label" [type] - what it does (max 8)' : ''}\n${opts.extractData ? 'DATA: JSON object of structured data visible' : ''}\nCONFIDENCE: 0-1` });
 
       const messages = [{ role: 'system', content: 'You analyze Android screenshots and accessibility data.' }, { role: 'user', content: userContent }];

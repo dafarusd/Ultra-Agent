@@ -37,7 +37,8 @@
         "ACCESS_COARSE_LOCATION",
         "QUERY_ALL_PACKAGES",
         "CALL_PHONE",
-        "com.android.alarm.permission.SET_ALARM"
+        "com.android.alarm.permission.SET_ALARM",
+        "android.permission.MANAGE_EXTERNAL_STORAGE"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#000000",
