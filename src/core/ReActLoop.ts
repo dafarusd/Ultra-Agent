@@ -91,6 +91,46 @@ export class ReActLoop {
     }
   }
 
+  /**
+   * One-time planning call: given the goal, current screen, and app context,
+   * produce an ordered list of concrete UI steps. Separates planning from
+   * execution (AppAgent pattern).
+   */
+  private async planSteps(goal: string, observation: string, appPackage: string): Promise<string[]> {
+    const prompt = `You are planning UI actions on an Android phone.
+
+APP: ${appPackage || 'unknown'}
+GOAL: ${goal}
+
+CURRENT SCREEN:
+${observation.slice(0, 1200)}
+
+Produce 3-8 concrete UI steps to achieve the goal from this screen.
+Each step must be a specific action like "tap the search bar", "type 'query text'", "scroll down to find X", "tap the first result".
+Do NOT use vague steps like "find what you need" or "browse around".
+
+Respond with ONLY a JSON array of strings. No explanation. Example:
+["tap the search bar", "type 'tokyo flights'", "tap Search button", "scroll down to see results"]`;
+
+    try {
+      const response = await this.aiCall(prompt);
+      const cleaned = response.replace(/```json|```/g, '').trim();
+      const start = cleaned.indexOf('[');
+      const end = cleaned.lastIndexOf(']');
+      if (start >= 0 && end > start) {
+        const parsed = JSON.parse(cleaned.slice(start, end + 1));
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((s: any) => typeof s === 'string')) {
+          DebugLog.systemEvent('ReActLoop', `PLAN (${parsed.length} steps): ${parsed.join(' → ')}`);
+          return parsed;
+        }
+      }
+    } catch (err: any) {
+      DebugLog.error('ReActLoop', `Planning failed: ${err.message}`);
+    }
+    // If planning fails, return empty — loop will run without plan context (current behavior)
+    return [];
+  }
+
   async execute(goal: string, appHint?: string): Promise<ReActResult> {
     const steps: ReActStep[] = [];
 
@@ -117,6 +157,22 @@ export class ReActLoop {
     }
 
     const parsedGoal = this.parseGoal(goal);
+
+    // ── PLANNING STEP: get app context and produce ordered plan ──────
+    let currentAppPackage = '';
+    try {
+      currentAppPackage = await AppController.getActivePackage() || appHint || '';
+    } catch {
+      currentAppPackage = appHint || '';
+    }
+
+    let plan: string[] = [];
+    if (this.allowLLMFallback) {
+      plan = await this.planSteps(goal, observation, currentAppPackage);
+    }
+    let currentPlanStep = 0;
+    let stuckOnPlanStep = 0;
+
     let stuckCount = 0;
     let lastTreePrefix = '';
     let deterministicFailCount = 0;
@@ -135,6 +191,11 @@ export class ReActLoop {
       } catch (e: any) {
         DebugLog.error('ReActLoop', `Safety check failed at iter ${iteration}: ${e?.message}`);
       }
+
+      // Refresh app context each iteration
+      try {
+        currentAppPackage = await AppController.getActivePackage() || currentAppPackage;
+      } catch { /* keep previous */ }
 
       const nodes = await this.getNodes();
       const deterministicAction = nodes.length > 0 ? this.executeDeterministic(parsedGoal, nodes, steps) : null;
@@ -167,6 +228,21 @@ export class ReActLoop {
         }
         lastTreePrefix = treePrefix;
         observation = newObservation;
+
+        // Advance plan step on successful UI change
+        if (uiChanged && plan.length > 0 && currentPlanStep < plan.length) {
+          currentPlanStep++;
+          stuckOnPlanStep = 0;
+          DebugLog.systemEvent('ReActLoop', `PLAN: advanced to step ${currentPlanStep + 1}/${plan.length}`);
+        } else if (plan.length > 0) {
+          stuckOnPlanStep++;
+          if (stuckOnPlanStep >= 2) {
+            currentPlanStep++;
+            stuckOnPlanStep = 0;
+            DebugLog.systemEvent('ReActLoop', `PLAN: forced advance past stuck step to ${currentPlanStep + 1}/${plan.length}`);
+          }
+        }
+
         continue;
       }
 
@@ -187,7 +263,15 @@ export class ReActLoop {
         }
       }
 
-      const systemPrompt = `You control an Android phone. Choose ONE action to make progress toward the goal.
+      const planContext = plan.length > 0 && currentPlanStep < plan.length
+        ? `\nCURRENT STEP (${currentPlanStep + 1}/${plan.length}): ${plan[currentPlanStep]}`
+        : '';
+      const remainingPlan = plan.length > 0 && currentPlanStep < plan.length
+        ? `\nFULL PLAN:\n${plan.map((s, i) => `  ${i < currentPlanStep ? '✓' : i === currentPlanStep ? '→' : ' '} ${i + 1}. ${s}`).join('\n')}`
+        : '';
+
+      const systemPrompt = `You control an Android phone. You are inside the app: ${currentAppPackage || 'unknown'}.
+Choose ONE action to make progress toward the current step.
 ACTIONS YOU CAN USE:
 - tap_index(N)   tap element by its index number
 - tap(N)         same as tap_index(N)
@@ -205,7 +289,7 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
       ).join('\n');
       const historyLine = recentSteps ? `\nRECENT ACTIONS:\n${recentSteps}\n` : '';
 
-      const userMessage = `GOAL: ${goal}${historyLine}\n\nSCREEN:\n${enhancedObservation.slice(0, 1500)}\n\nACTION:`;
+      const userMessage = `GOAL: ${goal}${planContext}${remainingPlan}${historyLine}\n\nSCREEN:\n${enhancedObservation.slice(0, 1500)}\n\nACTION:`;
       let reasoning: string;
       try {
         reasoning = await this.aiCall(`${systemPrompt}\n\n${userMessage}`);
@@ -234,6 +318,20 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
 
       steps.push({ iteration, observation, reasoning, action, actionResult, uiChanged });
       DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: "${action}" result=${actionResult} uiChanged=${uiChanged}`);
+
+      // Advance plan step on successful UI change
+      if (uiChanged && plan.length > 0 && currentPlanStep < plan.length) {
+        currentPlanStep++;
+        stuckOnPlanStep = 0;
+        DebugLog.systemEvent('ReActLoop', `PLAN: advanced to step ${currentPlanStep + 1}/${plan.length}`);
+      } else if (plan.length > 0) {
+        stuckOnPlanStep++;
+        if (stuckOnPlanStep >= 2) {
+          currentPlanStep++;
+          stuckOnPlanStep = 0;
+          DebugLog.systemEvent('ReActLoop', `PLAN: forced advance past stuck step to ${currentPlanStep + 1}/${plan.length}`);
+        }
+      }
 
       const treePrefix = newObservation.slice(0, 80);
       if (treePrefix === lastTreePrefix) {
