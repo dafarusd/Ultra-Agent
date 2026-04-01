@@ -20,11 +20,11 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-01 (Session 2)
+**Last updated:** 2026-04-01 (Session 3)
 
-**App status:** Clean TypeScript compile (0 errors). No runtime verification yet. BrainExecutor is the sole active execution path (AgentCore.execute() delegates directly).
+**App status:** Clean TypeScript compile (0 errors). Three runtime-proven bugs fixed (BrainExecutor tool selection, ReActLoop foreground gate, native checkPackageAllowed keyboard bug). No post-fix runtime verification yet.
 
-**Current priority:** Runtime verification of ReActLoop planning step. Requires device build and a real phone task to trace perceive→plan→act→verify loop.
+**Current priority:** Build and test the three runtime-proven fixes from Session 3. If taps land reliably, react_navigate becomes functional.
 
 **Known blockers:**
 - Node.js v18.20.0 installed; React Native 0.81 / Expo / Metro require >= 20.19.4. Will hit issues at build time.
@@ -46,6 +46,20 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 3 — Runtime Log Analysis + Three Fixes
+- **Date:** 2026-04-01
+- **Subsystems:** A (Brain/Cognition), D (Actions/Device Control)
+- **Work done:**
+  - Analyzed runtime logs from session mngc4pfq (8931 entries) and live test session
+  - Found and fixed three runtime-proven bugs:
+  1. **BrainExecutor tool selection** (21167b2): LLM picked app_launch/web_search instead of react_navigate for "open X and do Y" tasks. Fixed tool descriptions and added TOOL SELECTION routing rules to system prompt.
+  2. **ReActLoop foreground gate** (c4e6970): planSteps() ran while Agent Ultra was still in foreground, producing plans targeting its own UI elements ("tap Agent Ultra", "tap Ask Agent Ultra..."). Added foreground polling gate — waits up to 6s for target app, re-observes, returns clear error if timeout.
+  3. **Native checkPackageAllowed keyboard bug** (e240eba): Every performTap/performText/performScroll was silently returning false whenever Samsung keyboard (honeyboard) was visible. checkPackageAllowed() used currentPackage which flips to keyboard on every keystroke. Fixed to use getRootInActiveWindow().getPackageName() — the actual app, not the keyboard overlay. THIS WAS THE ROOT CAUSE of all "result=false" failures in the ReActLoop.
+  - **Evidence chain:** seq 658-702 (browser opens, Agent Ultra returns to foreground, planner sees own UI), seq 9267-9449 (LLM chose app_launch then web_search, never tried react_navigate), runtime observation of taps returning false with keyboard visible.
+- **Committed:** 21167b2, c4e6970, e240eba
+- **Status:** SOURCE-FIXED, COMPILE-VERIFIED, RUNTIME-UNPROVEN (needs new build + device test)
+- **Next:** Build and test all three fixes together. If taps land reliably, react_navigate becomes functional.
 
 ### Session 2 — ReActLoop Planning Step + Replit Prompt Verification
 - **Date:** 2026-04-01
