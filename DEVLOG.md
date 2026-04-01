@@ -20,16 +20,16 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-04-01 (Session 2)
 
 **App status:** Clean TypeScript compile (0 errors). No runtime verification yet. BrainExecutor is the sole active execution path (AgentCore.execute() delegates directly).
 
-**Current priority:** Grep-verify which Replit prompts (12, 13, 14) are applied in live source before any new work. Do not start new feature work until this is confirmed.
+**Current priority:** Runtime verification of ReActLoop planning step. Requires device build and a real phone task to trace perceive→plan→act→verify loop.
 
 **Known blockers:**
 - Node.js v18.20.0 installed; React Native 0.81 / Expo / Metro require >= 20.19.4. Will hit issues at build time.
 - Runtime behavior is entirely unproven — compile-clean is not proof of correctness.
-- Unknown which of Replit prompts 12, 13, 14 are reflected in live source.
+- Replit prompts 12/13/14 confirmed applied (destructive tools gate, Samsung Smart Capture dismiss, stuck loop prevention, screen element classification, recent action history all present).
 
 ---
 
@@ -39,13 +39,30 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 - **BrainExecutor is sole active path.** AgentCore.execute() creates a new BrainExecutor per call and delegates. detectMode(), buildDynamicPrompt(), buildContext(), parseActionPlan() exist in AgentCore but are dead code on the active execution path.
 - **Two-Claude workflow.** Chat Claude (claude.ai) = strategy, planning, architecture. Claude Code (this instance) = execution, validation, commits. Solution files from Chat Claude are validated against real codebase before applying.
-- **react_navigate overhaul designed but not applied.** Fix adds a planning step before the loop (AppAgent pattern). Do not apply until Replit prompt status is confirmed.
+- **react_navigate planning step applied.** ReActLoop now has planSteps() method, app context injection, plan-aware LLM prompt, and step advancement tracking. Committed f42909a.
 
 ---
 
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 2 — ReActLoop Planning Step + Replit Prompt Verification
+- **Date:** 2026-04-01
+- **Subsystems:** A (Brain/Cognition), D (Actions/Device Control)
+- **Work done:**
+  - Grep-verified all Replit prompt 12/13/14 fixes are applied: DESTRUCTIVE_TOOLS safety gate, Samsung Smart Capture dismiss, stuck loop prevention (prevWasSameTool), TAPPABLE/TYPEABLE/SCROLLABLE screen classification, RECENT ACTIONS history injection
+  - Applied SOLUTION_react_navigate_planning_step.md — 5 edits to src/core/ReActLoop.ts:
+    1. Added planSteps() method — one-time AI planning call producing 3-8 ordered UI steps
+    2. Added app context resolution (AppController.getActivePackage) before loop
+    3. Added per-iteration app context refresh inside loop
+    4. Replaced LLM fallback prompt with plan-aware version (CURRENT STEP, FULL PLAN with progress markers)
+    5. Added plan step advancement logic in both deterministic and LLM paths (advance on UI change, forced advance after 2 stuck iterations)
+  - Verified appHint propagation: BrainExecutor → TaskExecutor.completeWithReActLoop → ReActLoop.execute(goal, appHint)
+  - TypeScript remains at 0 errors
+- **Committed:** f42909a — "feat: add planning step to ReActLoop (AppAgent pattern)"
+- **Status:** SOURCE-FIXED BUT RUNTIME-UNPROVEN
+- **Next:** Device build and runtime test of a real phone task through the full perceive→plan→act→verify loop
 
 ### Session 1 — Clean TypeScript Baseline
 - **Date:** 2026-04-01
