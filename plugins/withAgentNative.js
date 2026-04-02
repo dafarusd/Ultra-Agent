@@ -1761,31 +1761,22 @@ public class AgentAccessibilityService extends AccessibilityService {
         return false;
     }
     private boolean checkPackageAllowed() {
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        String rootPkg = currentPackage;
-        if (root != null) {
-            CharSequence pkg = root.getPackageName();
-            if (pkg != null) {
-                rootPkg = pkg.toString();
-                if ("com.agent.ultra".equals(rootPkg)) {
-                    emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_SELF\\",\\"pkg\\":\\"" + rootPkg + "\\"}");
-                    root.recycle();
-                    return false;
-                }
-            }
-            root.recycle();
-        }
-        if (isPackageBlocked(rootPkg)) {
-            emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_USER\\",\\"pkg\\":\\"" + rootPkg + "\\"}");
+        // Self-check uses event-based currentPackage, NOT getRootInActiveWindow()
+        // because getRootInActiveWindow() returns Agent Ultra (the a11y service host)
+        if ("com.agent.ultra".equals(currentPackage)) {
+            emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_SELF\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
             return false;
         }
-        // Auto-allow root window package � JS side cannot reliably do this
-        // because getActivePackage returns keyboard overlay, not the real app
-        if (!isPackageAllowed(rootPkg)) {
-            allowPackage(rootPkg);
-            emitA11yLog("A11Y_GATE", "{\\"action\\":\\"AUTO_ALLOWED\\",\\"pkg\\":\\"" + rootPkg + "\\"}");
+        if (isPackageBlocked(currentPackage)) {
+            emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_USER\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
+            return false;
         }
-        emitA11yLog("A11Y_GATE", "{\\"action\\":\\"PASSED\\",\\"pkg\\":\\"" + rootPkg + "\\"}");
+        // Auto-allow any non-blocked, non-self package
+        if (!isPackageAllowed(currentPackage)) {
+            allowPackage(currentPackage);
+            emitA11yLog("A11Y_GATE", "{\\"action\\":\\"AUTO_ALLOWED\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
+        }
+        emitA11yLog("A11Y_GATE", "{\\"action\\":\\"PASSED\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
         return true;
     }
     public boolean performTap(int x, int y) {
