@@ -20,11 +20,11 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-01 (Session 3)
+**Last updated:** 2026-04-02 (Session 4)
 
-**App status:** Clean TypeScript compile (0 errors). Three runtime-proven bugs fixed (BrainExecutor tool selection, ReActLoop foreground gate, native checkPackageAllowed keyboard bug). No post-fix runtime verification yet.
+**App status:** Clean TypeScript compile (0 errors). Root causes of all react_navigate failures discovered via adb logcat. getScreenContentFlat now reads target app window instead of Agent Ultra's own window. moveTaskToBack exists but call path may be unreachable in TaskExecutor.ts.
 
-**Current priority:** Build and test the three runtime-proven fixes from Session 3. If taps land reliably, react_navigate becomes functional.
+**Current priority:** Inspect TaskExecutor.ts lines 1625-1645 to find why moveTaskToBack is unreachable, then build and test both fixes together.
 
 **Known blockers:**
 - Node.js v18.20.0 installed; React Native 0.81 / Expo / Metro require >= 20.19.4. Will hit issues at build time.
@@ -46,6 +46,29 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 4 — adb Native Layer Deep Dive + Root Cause Discovery
+- **Date:** 2026-04-02
+- **Subsystems:** D (Actions/Device Control), A (Brain)
+- **Work done:**
+  - Established adb logcat debugging workflow: `$appid = adb shell pidof com.agent.ultra; adb logcat --pid=$appid -s AgentA11y:*`
+  - Added `Log.i(TAG, ...)` calls alongside all `emitA11yLog` calls so native events are visible in adb logcat (previously invisible — emitA11yLog only writes to JS queue)
+  - Added comprehensive logcat observability to: checkPackageAllowed (GATE), performTap (TAP), performText (TEXT), performScroll (SCROLL), performSwipe (SWIPE), performClick (CLICK), performBack (BACK), performHome (HOME), moveTaskToBack (MOVE_TO_BACK), getScreenContentFlat (SCREEN_FLAT with root_pkg and first node labels), getActivePackage (GET_PKG), waitForUiChange (WAIT_UI), onAccessibilityEvent (PKG_CHANGE)
+  - Added `dumpWindowStack()` method — logs all accessibility windows with layer order, type, package, focused state. Called from getScreenContentFlat.
+  - Added import for `AccessibilityWindowInfo`
+  - Removed self-check from checkPackageAllowed (was unreliable — currentPackage flips to com.agent.ultra whenever JS thread fires accessibility events even when Agent Ultra is visually in background, proven via adb)
+  - Added auto-allow to checkPackageAllowed — any non-blocked package is automatically allowed
+  - Added moveTaskToBack native method to AccessibilityBridgeModule + AppController.ts interface + TaskExecutor.ts call before ReActLoop.execute()
+  - **Fixed getScreenContentFlat** to scan all accessibility windows via `getWindows()`, pick the first `TYPE_APPLICATION` window that isn't com.agent.ultra, and read its tree. Falls back to `getRootInActiveWindow()` only if no other app window found.
+- **ROOT CAUSES DISCOVERED (all proven via adb logcat):**
+  1. **CRITICAL: getScreenContentFlat() always returned Agent Ultra's own window.** `getRootInActiveWindow()` returns the accessibility service host's window — always com.agent.ultra. The agent has NEVER seen another app's UI tree. Every plan, tap target, and text input has been against its own elements.
+  2. **CRITICAL: moveTaskToBack never fires.** Zero MOVE_TO_BACK log entries in any adb capture. The call path in TaskExecutor.ts is not being reached. Need to inspect lines 1625-1645 to find why.
+  3. **CRITICAL: Agent Ultra's activity stays in foreground** because moveTaskToBack never fires. Target app (YouTube) never gets an accessibility window in the stack. Window dumps show only: systemui, launcher, honeyboard, and Agent Ultra.
+  4. **CONFIRMED: currentPackage is unreliable** — flips between com.agent.ultra, com.android.systemui, com.samsung.android.honeyboard, and target app dozens of times per second. Self-check using currentPackage was correctly removed.
+  - **Evidence:** Full adb logcat captures showing `SCREEN_FLAT: root_pkg=com.agent.ultra` on every call, WINDOWS dumps with no YouTube window, `TEXT: text=short pkg=com.agent.ultra` (typing into own text box), zero MOVE_TO_BACK entries.
+- **Committed:** c6a4c0c, b4e703f, f9c3139, 770eac0, cea84fd, fd5ff9e, 252f654, bf4f139, 33f66ed, 839bced, a4b1787
+- **Status:** ROOT-CAUSE-PROVEN via adb. getScreenContentFlat window fix applied. moveTaskToBack call path still unreachable.
+- **Next:** Inspect TaskExecutor.ts lines 1625-1645 to find why moveTaskToBack is unreachable, then build and test both fixes together.
 
 ### Session 3 — Runtime Log Analysis + Three Fixes
 - **Date:** 2026-04-01
