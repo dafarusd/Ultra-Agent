@@ -1733,7 +1733,33 @@ public class AgentAccessibilityService extends AccessibilityService {
         CountDownLatch latch = new CountDownLatch(1);
         new Handler(Looper.getMainLooper()).post(() -> {
             try {
-                AccessibilityNodeInfo root = getRootInActiveWindow();
+                // Find the target app window, not Agent Ultra's own window
+                AccessibilityNodeInfo root = null;
+                try {
+                    java.util.List<AccessibilityWindowInfo> windows = getWindows();
+                    // First pass: find type=1 (application) window that isn't Agent Ultra
+                    for (AccessibilityWindowInfo w : windows) {
+                        if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                            AccessibilityNodeInfo wRoot = w.getRoot();
+                            if (wRoot != null) {
+                                CharSequence pkg = wRoot.getPackageName();
+                                if (pkg != null && !"com.agent.ultra".contentEquals(pkg)) {
+                                    root = wRoot;
+                                    Log.i(TAG, "SCREEN_FLAT: using_window pkg=" + pkg + " layer=" + w.getLayer());
+                                    break;
+                                }
+                                wRoot.recycle();
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "SCREEN_FLAT: window scan failed: " + e.getMessage());
+                }
+                // Fallback to default if no other app window found
+                if (root == null) {
+                    root = getRootInActiveWindow();
+                    Log.i(TAG, "SCREEN_FLAT: fallback to getRootInActiveWindow");
+                }
                 if (root != null) {
                     CharSequence rootPkg = root.getPackageName();
                     Log.i(TAG, "SCREEN_FLAT: root_pkg=" + (rootPkg != null ? rootPkg.toString() : "null"));
