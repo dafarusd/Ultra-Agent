@@ -2584,6 +2584,21 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
             promise.reject("A11Y_STATE_ERROR", e.getMessage(), e);
         }
     }
+
+    @ReactMethod
+    public void moveTaskToBack(Promise promise) {
+        try {
+            android.app.Activity activity = getCurrentActivity();
+            if (activity != null) {
+                activity.moveTaskToBack(true);
+                promise.resolve(true);
+            } else {
+                promise.resolve(false);
+            }
+        } catch (Exception e) {
+            promise.resolve(false);
+        }
+    }
 }`;
 
 const BACKGROUND_SERVICE_JAVA = `package com.agent.ultra;

@@ -1627,6 +1627,12 @@ export class TaskExecutor {
           },
           { maxIterations: hasAiFallback ? 15 : 20, iterationDelayMs: 800, allowLLMFallback: hasAiFallback }
         );
+        // Push Agent Ultra to background so target app stays in foreground
+        try {
+          await AppController.moveTaskToBack();
+          DebugLog.systemEvent('ReActNav', 'Moved Agent Ultra task to back before ReActLoop');
+        } catch { /* ignore */ }
+
         const reactResult = await reactLoop.execute(goal, appHint);
         DebugLog.executorExit(taskId, 'react_navigate', reactResult.goalAchieved, `steps=${reactResult.steps.length} llmFallback=${hasAiFallback}`);
         return {
