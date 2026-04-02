@@ -1765,26 +1765,32 @@ public class AgentAccessibilityService extends AccessibilityService {
         // because getRootInActiveWindow() returns Agent Ultra (the a11y service host)
         if ("com.agent.ultra".equals(currentPackage)) {
             emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_SELF\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
+            Log.i(TAG, "GATE: BLOCKED_SELF pkg=" + currentPackage);
             return false;
         }
         if (isPackageBlocked(currentPackage)) {
             emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_USER\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
+            Log.i(TAG, "GATE: BLOCKED_USER pkg=" + currentPackage);
             return false;
         }
         // Auto-allow any non-blocked, non-self package
         if (!isPackageAllowed(currentPackage)) {
             allowPackage(currentPackage);
             emitA11yLog("A11Y_GATE", "{\\"action\\":\\"AUTO_ALLOWED\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
+            Log.i(TAG, "GATE: AUTO_ALLOWED pkg=" + currentPackage);
         }
         emitA11yLog("A11Y_GATE", "{\\"action\\":\\"PASSED\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
+        Log.i(TAG, "GATE: PASSED pkg=" + currentPackage);
         return true;
     }
     public boolean performTap(int x, int y) {
         if (!checkPackageAllowed()) {
             emitA11yLog("A11Y_TAP", "{\\"action\\":\\"BLOCKED\\",\\"x\\":" + x + ",\\"y\\":" + y + ",\\"pkg\\":\\"" + currentPackage + "\\"}");
+            Log.i(TAG, "TAP: BLOCKED x=" + x + " y=" + y + " pkg=" + currentPackage);
             return false;
         }
         emitA11yLog("A11Y_TAP", "{\\"action\\":\\"DISPATCH\\",\\"x\\":" + x + ",\\"y\\":" + y + ",\\"pkg\\":\\"" + currentPackage + "\\"}");
+        Log.i(TAG, "TAP: DISPATCH x=" + x + " y=" + y + " pkg=" + currentPackage);
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean success = new AtomicBoolean(false);
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -1798,22 +1804,25 @@ public class AgentAccessibilityService extends AccessibilityService {
                     @Override
                     public void onCompleted(GestureDescription g) {
                         emitA11yLog("A11Y_TAP", "{\\"action\\":\\"COMPLETED\\",\\"x\\":" + x + ",\\"y\\":" + y + "}");
+                        Log.i(TAG, "TAP: COMPLETED x=" + x + " y=" + y);
                         success.set(true); latch.countDown();
                     }
                     @Override
                     public void onCancelled(GestureDescription g) {
                         emitA11yLog("A11Y_TAP", "{\\"action\\":\\"CANCELLED\\",\\"x\\":" + x + ",\\"y\\":" + y + "}");
+                        Log.i(TAG, "TAP: CANCELLED x=" + x + " y=" + y);
                         latch.countDown();
                     }
                 }, null);
             } catch (Exception e) {
                 emitA11yLog("A11Y_TAP", "{\\"action\\":\\"ERROR\\",\\"x\\":" + x + ",\\"y\\":" + y + ",\\"error\\":\\"" + e.getMessage() + "\\"}");
+                Log.i(TAG, "TAP: ERROR x=" + x + " y=" + y + " error=" + e.getMessage());
                 Log.e(TAG, "performTap error", e); latch.countDown();
             }
         });
         try { latch.await(5, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
         boolean result = success.get();
-        if (!result) { emitA11yLog("A11Y_TAP", "{\\"action\\":\\"TIMEOUT_OR_FAIL\\",\\"x\\":" + x + ",\\"y\\":" + y + "}"); }
+        if (!result) { emitA11yLog("A11Y_TAP", "{\\"action\\":\\"TIMEOUT_OR_FAIL\\",\\"x\\":" + x + ",\\"y\\":" + y + "}"); Log.i(TAG, "TAP: TIMEOUT_OR_FAIL x=" + x + " y=" + y); }
         return result;
     }
     public boolean performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
@@ -2591,11 +2600,14 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
             android.app.Activity activity = getCurrentActivity();
             if (activity != null) {
                 activity.moveTaskToBack(true);
+                Log.i(TAG, "moveTaskToBack: success");
                 promise.resolve(true);
             } else {
+                Log.i(TAG, "moveTaskToBack: no activity");
                 promise.resolve(false);
             }
         } catch (Exception e) {
+            Log.i(TAG, "moveTaskToBack: error=" + e.getMessage());
             promise.resolve(false);
         }
     }
