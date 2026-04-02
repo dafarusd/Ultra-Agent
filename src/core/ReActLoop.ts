@@ -173,6 +173,15 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
         }
         await this.sleep(pollMs);
         waited += pollMs;
+        // If we've waited 3s and Agent Ultra is still in foreground, push it to background
+        if (waited === 3200 && (gatePackage === 'com.agent.ultra' || gatePackage === 'com.android.systemui')) {
+          try {
+            await AppController.performHome();
+            DebugLog.systemEvent('ReActLoop', 'FOREGROUND GATE: pressed Home to push Agent Ultra to background');
+            await this.sleep(1500);
+            waited += 1500;
+          } catch { /* ignore */ }
+        }
       }
       if (gatePackage && gatePackage !== 'com.agent.ultra') {
         DebugLog.systemEvent('ReActLoop', `FOREGROUND GATE: target app ${gatePackage} ready (waited ${waited}ms)`);
