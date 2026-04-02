@@ -1545,7 +1545,11 @@ public class AgentAccessibilityService extends AccessibilityService {
                 .apply();
         } catch (Exception e) {}
         if (event.getPackageName() != null) {
+            String prevPkg = currentPackage;
             currentPackage = event.getPackageName().toString();
+            if (!currentPackage.equals(prevPkg)) {
+                Log.i(TAG, "PKG_CHANGE: " + prevPkg + " -> " + currentPackage);
+            }
         }
         int type = event.getEventType();
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
