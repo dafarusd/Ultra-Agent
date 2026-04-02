@@ -1648,7 +1648,7 @@ public class AgentAccessibilityService extends AccessibilityService {
         super.onDestroy();
     }
 
-    public String getActivePackage() { return currentPackage; }
+    public String getActivePackage() { Log.i(TAG, "GET_PKG: " + currentPackage); return currentPackage; }
 
     public String getScreenContent() {
         try {
@@ -1705,6 +1705,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                     JSONArray flat = new JSONArray();
                     flattenNode(root, flat);
                     root.recycle();
+                    Log.i(TAG, "SCREEN_FLAT: nodes=" + flat.length());
                     result.set(flat.toString());
                 }
             } catch (Exception e) {
@@ -1819,6 +1820,7 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
     public boolean performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
         if (!checkPackageAllowed()) return false;
+        Log.i(TAG, "SWIPE: " + x1 + "," + y1 + " -> " + x2 + "," + y2 + " pkg=" + currentPackage);
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean success = new AtomicBoolean(false);
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -1843,6 +1845,7 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     public boolean performClick(String selector) {
         if (!checkPackageAllowed()) return false;
+        Log.i(TAG, "CLICK: selector=" + selector + " pkg=" + currentPackage);
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return false;
         AccessibilityNodeInfo target = findNode(root, selector);
@@ -1854,6 +1857,7 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     public boolean performText(String selector, String text) {
         if (!checkPackageAllowed()) return false;
+        Log.i(TAG, "TEXT: selector=" + selector + " text=" + text.substring(0, Math.min(text.length(), 30)) + " pkg=" + currentPackage);
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return false;
         AccessibilityNodeInfo target = selector.isEmpty() ? findFocusedEditable(root) : findNode(root, selector);
@@ -1865,11 +1869,13 @@ public class AgentAccessibilityService extends AccessibilityService {
             target.recycle();
         }
         root.recycle();
+        Log.i(TAG, "TEXT: result=" + result);
         return result;
     }
 
     public boolean performScroll(String direction) {
         if (!checkPackageAllowed()) return false;
+        Log.i(TAG, "SCROLL: direction=" + direction + " pkg=" + currentPackage);
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return false;
         AccessibilityNodeInfo scrollable = findScrollable(root);
@@ -1882,6 +1888,7 @@ public class AgentAccessibilityService extends AccessibilityService {
             scrollable.recycle();
         }
         root.recycle();
+        Log.i(TAG, "SCROLL: result=" + result);
         return result;
     }
 
@@ -2592,14 +2599,14 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
             android.app.Activity activity = getCurrentActivity();
             if (activity != null) {
                 activity.moveTaskToBack(true);
-                Log.i(TAG, "moveTaskToBack: success");
+                Log.i(TAG, "MOVE_TO_BACK: activity=true result=true");
                 promise.resolve(true);
             } else {
-                Log.i(TAG, "moveTaskToBack: no activity");
+                Log.i(TAG, "MOVE_TO_BACK: activity=false result=false");
                 promise.resolve(false);
             }
         } catch (Exception e) {
-            Log.i(TAG, "moveTaskToBack: error=" + e.getMessage());
+            Log.i(TAG, "MOVE_TO_BACK: activity=unknown result=false error=" + e.getMessage());
             promise.resolve(false);
         }
     }
