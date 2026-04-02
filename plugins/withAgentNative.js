@@ -1706,11 +1706,23 @@ public class AgentAccessibilityService extends AccessibilityService {
             try {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root != null) {
+                    CharSequence rootPkg = root.getPackageName();
+                    Log.i(TAG, "SCREEN_FLAT: root_pkg=" + (rootPkg != null ? rootPkg.toString() : "null"));
                     JSONArray flat = new JSONArray();
                     flattenNode(root, flat);
                     root.recycle();
-                    Log.i(TAG, "SCREEN_FLAT: nodes=" + flat.length());
+                    if (flat.length() > 0) {
+                        try {
+                            String firstLabel = flat.getJSONObject(0).optString("t", "") + "|" + flat.getJSONObject(0).optString("d", "");
+                            String secondLabel = flat.length() > 1 ? flat.getJSONObject(1).optString("t", "") + "|" + flat.getJSONObject(1).optString("d", "") : "";
+                            Log.i(TAG, "SCREEN_FLAT: nodes=" + flat.length() + " first=[" + firstLabel + "] second=[" + secondLabel + "]");
+                        } catch (Exception ignored) {
+                            Log.i(TAG, "SCREEN_FLAT: nodes=" + flat.length());
+                        }
+                    }
                     result.set(flat.toString());
+                } else {
+                    Log.i(TAG, "SCREEN_FLAT: root=null");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "getScreenContentFlat error", e);
