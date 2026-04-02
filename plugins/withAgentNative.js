@@ -1761,19 +1761,11 @@ public class AgentAccessibilityService extends AccessibilityService {
         return false;
     }
     private boolean checkPackageAllowed() {
-        // Self-check uses event-based currentPackage, NOT getRootInActiveWindow()
-        // because getRootInActiveWindow() returns Agent Ultra (the a11y service host)
-        if ("com.agent.ultra".equals(currentPackage)) {
-            emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_SELF\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
-            Log.i(TAG, "GATE: BLOCKED_SELF pkg=" + currentPackage);
-            return false;
-        }
         if (isPackageBlocked(currentPackage)) {
             emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_USER\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
             Log.i(TAG, "GATE: BLOCKED_USER pkg=" + currentPackage);
             return false;
         }
-        // Auto-allow any non-blocked, non-self package
         if (!isPackageAllowed(currentPackage)) {
             allowPackage(currentPackage);
             emitA11yLog("A11Y_GATE", "{\\"action\\":\\"AUTO_ALLOWED\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
