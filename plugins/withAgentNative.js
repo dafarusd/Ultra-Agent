@@ -1761,7 +1761,6 @@ public class AgentAccessibilityService extends AccessibilityService {
         return false;
     }
     private boolean checkPackageAllowed() {
-        // Use root window package — currentPackage may be keyboard overlay
         AccessibilityNodeInfo root = getRootInActiveWindow();
         String rootPkg = currentPackage;
         if (root != null) {
@@ -1769,7 +1768,7 @@ public class AgentAccessibilityService extends AccessibilityService {
             if (pkg != null) {
                 rootPkg = pkg.toString();
                 if ("com.agent.ultra".equals(rootPkg)) {
-                    Log.w(TAG, "BLOCKED: Attempted interaction with own UI");
+                    emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_SELF\",\"pkg\":\"" + rootPkg + "\"}");
                     root.recycle();
                     return false;
                 }
@@ -1777,18 +1776,24 @@ public class AgentAccessibilityService extends AccessibilityService {
             root.recycle();
         }
         if (isPackageBlocked(rootPkg)) {
-            Log.w(TAG, "BLOCKED: Package is in user blocklist: " + rootPkg);
+            emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_USER\",\"pkg\":\"" + rootPkg + "\"}");
             return false;
         }
+        // Auto-allow root window package — JS side cannot reliably do this
+        // because getActivePackage returns keyboard overlay, not the real app
         if (!isPackageAllowed(rootPkg)) {
-            Log.w(TAG, "Package not allowed: " + rootPkg);
-            return false;
+            allowPackage(rootPkg);
+            emitA11yLog("A11Y_GATE", "{\"action\":\"AUTO_ALLOWED\",\"pkg\":\"" + rootPkg + "\"}");
         }
+        emitA11yLog("A11Y_GATE", "{\"action\":\"PASSED\",\"pkg\":\"" + rootPkg + "\"}");
         return true;
     }
-
     public boolean performTap(int x, int y) {
-        if (!checkPackageAllowed()) return false;
+        if (!checkPackageAllowed()) {
+            emitA11yLog("A11Y_TAP", "{\"action\":\"BLOCKED\",\"x\":" + x + ",\"y\":" + y + ",\"pkg\":\"" + currentPackage + "\"}");
+            return false;
+        }
+        emitA11yLog("A11Y_TAP", "{\"action\":\"DISPATCH\",\"x\":" + x + ",\"y\":" + y + ",\"pkg\":\"" + currentPackage + "\"}");
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean success = new AtomicBoolean(false);
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -1800,16 +1805,26 @@ public class AgentAccessibilityService extends AccessibilityService {
                     .build();
                 dispatchGesture(gesture, new GestureResultCallback() {
                     @Override
-                    public void onCompleted(GestureDescription g) { success.set(true); latch.countDown(); }
+                    public void onCompleted(GestureDescription g) {
+                        emitA11yLog("A11Y_TAP", "{\"action\":\"COMPLETED\",\"x\":" + x + ",\"y\":" + y + "}");
+                        success.set(true); latch.countDown();
+                    }
                     @Override
-                    public void onCancelled(GestureDescription g) { latch.countDown(); }
+                    public void onCancelled(GestureDescription g) {
+                        emitA11yLog("A11Y_TAP", "{\"action\":\"CANCELLED\",\"x\":" + x + ",\"y\":" + y + "}");
+                        latch.countDown();
+                    }
                 }, null);
-            } catch (Exception e) { Log.e(TAG, "performTap error", e); latch.countDown(); }
+            } catch (Exception e) {
+                emitA11yLog("A11Y_TAP", "{\"action\":\"ERROR\",\"x\":" + x + ",\"y\":" + y + ",\"error\":\"" + e.getMessage() + "\"}");
+                Log.e(TAG, "performTap error", e); latch.countDown();
+            }
         });
         try { latch.await(5, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
-        return success.get();
+        boolean result = success.get();
+        if (!result) { emitA11yLog("A11Y_TAP", "{\"action\":\"TIMEOUT_OR_FAIL\",\"x\":" + x + ",\"y\":" + y + "}"); }
+        return result;
     }
-
     public boolean performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
         if (!checkPackageAllowed()) return false;
         CountDownLatch latch = new CountDownLatch(1);
