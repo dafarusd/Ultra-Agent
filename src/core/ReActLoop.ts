@@ -168,7 +168,7 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
         try {
           gatePackage = await AppController.getActivePackage() || '';
         } catch { /* ignore */ }
-        if (gatePackage && gatePackage !== 'com.agent.ultra' && gatePackage !== 'com.samsung.android.honeyboard') {
+        if (gatePackage && gatePackage !== 'com.agent.ultra' && gatePackage !== 'com.samsung.android.honeyboard' && gatePackage !== 'com.android.systemui') {
           break;
         }
         await this.sleep(pollMs);
