@@ -1420,6 +1420,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 import android.util.Log;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReactApplicationContext;
@@ -1699,6 +1700,34 @@ public class AgentAccessibilityService extends AccessibilityService {
         return obj;
     }
 
+    public String dumpWindowStack() {
+        try {
+            java.util.List<AccessibilityWindowInfo> windows = getWindows();
+            StringBuilder sb = new StringBuilder();
+            sb.append("WINDOWS: count=").append(windows.size());
+            for (int i = 0; i < windows.size(); i++) {
+                AccessibilityWindowInfo w = windows.get(i);
+                AccessibilityNodeInfo root = w.getRoot();
+                String pkg = "null";
+                if (root != null) {
+                    pkg = root.getPackageName() != null ? root.getPackageName().toString() : "null";
+                    root.recycle();
+                }
+                sb.append(" | w").append(i).append("=[layer=").append(w.getLayer())
+                  .append(" type=").append(w.getType())
+                  .append(" pkg=").append(pkg)
+                  .append(" focused=").append(w.isFocused())
+                  .append("]");
+            }
+            String result = sb.toString();
+            Log.i(TAG, result);
+            return result;
+        } catch (Exception e) {
+            Log.i(TAG, "WINDOWS: error=" + e.getMessage());
+            return "error";
+        }
+    }
+
     public String getScreenContentFlat() {
         AtomicReference<String> result = new AtomicReference<>("[]");
         CountDownLatch latch = new CountDownLatch(1);
@@ -1708,6 +1737,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                 if (root != null) {
                     CharSequence rootPkg = root.getPackageName();
                     Log.i(TAG, "SCREEN_FLAT: root_pkg=" + (rootPkg != null ? rootPkg.toString() : "null"));
+                    dumpWindowStack();
                     JSONArray flat = new JSONArray();
                     flattenNode(root, flat);
                     root.recycle();
