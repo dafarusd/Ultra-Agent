@@ -1756,13 +1756,15 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public boolean waitForUiChange(int timeoutMs) {
+        Log.i(TAG, "WAIT_UI: timeout=" + timeoutMs);
         String initial = getScreenContentFlat();
         long start = System.currentTimeMillis();
         while (System.currentTimeMillis() - start < timeoutMs) {
-            try { Thread.sleep(150); } catch (InterruptedException e) { return false; }
+            try { Thread.sleep(150); } catch (InterruptedException e) { Log.i(TAG, "WAIT_UI: changed=false (interrupted)"); return false; }
             String current = getScreenContentFlat();
-            if (!current.equals(initial) && !current.equals("[]")) return true;
+            if (!current.equals(initial) && !current.equals("[]")) { Log.i(TAG, "WAIT_UI: changed=true"); return true; }
         }
+        Log.i(TAG, "WAIT_UI: changed=false");
         return false;
     }
     private boolean checkPackageAllowed() {
@@ -1837,9 +1839,9 @@ public class AgentAccessibilityService extends AccessibilityService {
                     .build();
                 dispatchGesture(gesture, new GestureResultCallback() {
                     @Override
-                    public void onCompleted(GestureDescription g) { success.set(true); latch.countDown(); }
+                    public void onCompleted(GestureDescription g) { Log.i(TAG, "SWIPE: COMPLETED"); success.set(true); latch.countDown(); }
                     @Override
-                    public void onCancelled(GestureDescription g) { latch.countDown(); }
+                    public void onCancelled(GestureDescription g) { Log.i(TAG, "SWIPE: CANCELLED"); latch.countDown(); }
                 }, null);
             } catch (Exception e) { Log.e(TAG, "performSwipe error", e); latch.countDown(); }
         });
@@ -1896,8 +1898,8 @@ public class AgentAccessibilityService extends AccessibilityService {
         return result;
     }
 
-    public boolean performBack() { return performGlobalAction(GLOBAL_ACTION_BACK); }
-    public boolean performHome() { return performGlobalAction(GLOBAL_ACTION_HOME); }
+    public boolean performBack() { Log.i(TAG, "BACK: fired"); return performGlobalAction(GLOBAL_ACTION_BACK); }
+    public boolean performHome() { Log.i(TAG, "HOME: fired"); return performGlobalAction(GLOBAL_ACTION_HOME); }
     public boolean performQuickSettings() { return performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS); }
     public boolean performNotifications() { return performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); }
     public boolean performRecents() { return performGlobalAction(GLOBAL_ACTION_RECENTS); }
