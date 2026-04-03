@@ -20,16 +20,16 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-02 (Session 4)
+**Last updated:** 2026-04-02 (Session 5)
 
-**App status:** Clean TypeScript compile (0 errors). Root causes of all react_navigate failures discovered via adb logcat. getScreenContentFlat now reads target app window instead of Agent Ultra's own window. moveTaskToBack exists but call path may be unreachable in TaskExecutor.ts.
+**App status:** Clean TypeScript compile (0 errors). Node.js upgraded to 22.21.0. Native fixes (getScreenContentFlat window scan, moveTaskToBack) are in source and compile-clean but never reached at runtime — BrainExecutor tool selection bypasses react_navigate and possibly app_launch entirely.
 
-**Current priority:** Inspect TaskExecutor.ts lines 1625-1645 to find why moveTaskToBack is unreachable, then build and test both fixes together.
+**Current priority:** Run adb logcat with ReactNativeJS tag to capture console.warn breadcrumbs from BrainExecutor, determine which tool the LLM actually selects, then fix routing.
 
 **Known blockers:**
-- Node.js v18.20.0 installed; React Native 0.81 / Expo / Metro require >= 20.19.4. Will hit issues at build time.
-- Runtime behavior is entirely unproven — compile-clean is not proof of correctness.
-- Replit prompts 12/13/14 confirmed applied (destructive tools gate, Samsung Smart Capture dismiss, stuck loop prevention, screen element classification, recent action history all present).
+- BrainExecutor LLM never selects react_navigate or app_launch — both native fixes are dead code at runtime until tool routing is fixed.
+- Internal UltraDevLog inaccessible from release/preview builds (not debuggable). console.warn breadcrumbs added as workaround.
+- Replit prompts 12/13/14 confirmed applied.
 
 ---
 
@@ -46,6 +46,23 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 5 — moveTaskToBack Wiring Confirmed + Tool Selection Diagnosed
+- **Date:** 2026-04-02
+- **Subsystems:** D (Actions/Device Control), A (Brain/Cognition), H (Build/Release)
+- **Work done:**
+  - Node.js upgraded from 18.20.0 to 22.21.0 (resolves React Native 0.81 / Expo / Metro engine requirements)
+  - Confirmed moveTaskToBack wiring is correct end-to-end: Java `@ReactMethod` in AccessibilityBridgeModule (registers as "AppController"), TypeScript interface + noop + native controller, call site in TaskExecutor.ts — no name collision, no missing registration
+  - Root cause of zero MOVE_TO_BACK logs: `native.moveTaskToBack` ternary guard silently returned `Promise.resolve(false)`. Replaced with explicit diagnostic logging (commit 21d8016)
+  - Added moveTaskToBack call to all 3 app launch paths in react_navigate case: matched app, known package, URL/domain (commit 3b48621)
+  - Two runtime adb tests both show **TOOL_NOT_SELECTED**: LLM never picks `react_navigate`, and `app_launch` handler with moveTaskToBack also never reached. Zero MOVE_TO_BACK entries, zero SCREEN_FLAT reading non-agent-ultra window, agent operates on own UI (`TEXT: text=shorts pkg=com.agent.ultra`)
+  - Window dumps confirm: only systemui, launcher, honeyboard, and Agent Ultra in window stack. Target app (YouTube) never appears.
+  - Internal UltraDevLog inaccessible from release/preview build (`run-as: package not debuggable`)
+  - Added `console.warn` breadcrumbs at BrainExecutor tool selection (`[BRAIN] tool_selected:`), TaskExecutor case entries (`[TASK] entering:`), launch results (`[TASK] launch_result:`), and moveTaskToBack calls (`[TASK] moveTaskToBack: calling`) — visible via `adb logcat -s ReactNativeJS:*` (commit 499bd3e)
+  - Preview build submitted, awaiting install and test
+- **Committed:** 21d8016, 3b48621, 499bd3e
+- **Status:** DIAGNOSTIC-IN-PROGRESS. Both native fixes are in source and compile-clean but never reached at runtime because BrainExecutor tool selection bypasses react_navigate and possibly app_launch entirely.
+- **Next:** Run adb logcat with ReactNativeJS tag to capture console.warn breadcrumbs, determine which tool the LLM actually selects, then fix routing.
 
 ### Session 4 — adb Native Layer Deep Dive + Root Cause Discovery
 - **Date:** 2026-04-02
