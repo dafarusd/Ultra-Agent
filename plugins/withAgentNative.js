@@ -1743,7 +1743,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                             AccessibilityNodeInfo wRoot = w.getRoot();
                             if (wRoot != null) {
                                 CharSequence pkg = wRoot.getPackageName();
-                                if (pkg != null && !"com.agent.ultra".contentEquals(pkg)) {
+                                if (pkg == null || !"com.agent.ultra".contentEquals(pkg)) {
                                     root = wRoot;
                                     Log.i(TAG, "SCREEN_FLAT: using_window pkg=" + pkg + " layer=" + w.getLayer());
                                     break;
