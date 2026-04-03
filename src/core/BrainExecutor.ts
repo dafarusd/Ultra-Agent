@@ -227,6 +227,7 @@ export class BrainExecutor {
       DebugLog.systemEvent('BrainExecutor', `AI response (${rawResponse.length} chars): ${rawResponse.slice(0, 120)}`);
 
       const toolCall = parseToolCall(rawResponse);
+      console.warn('[BRAIN] tool_selected:', toolCall ? toolCall.tool : 'NONE (plain text)');
 
       if (!toolCall) {
         finalText = rawResponse;

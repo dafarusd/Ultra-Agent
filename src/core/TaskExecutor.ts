@@ -836,6 +836,7 @@ export class TaskExecutor {
         };
       }
       case 'app_launch': {
+        console.warn('[TASK] entering: app_launch');
         DebugLog.executorEnter(taskId, 'app_launch');
         const target = params.target;
         if (!target) { DebugLog.executorExit(taskId, 'app_launch', false, 'no_target'); return { error: 'No app or action specified' }; }
@@ -1549,6 +1550,7 @@ export class TaskExecutor {
         }
       }
       case 'react_navigate': {
+        console.warn('[TASK] entering: react_navigate');
         DebugLog.executorEnter(taskId, 'react_navigate');
         const goal = params.goal || params.target || '';
         const appHint = params.appHint || params.packageName || '';
@@ -1572,20 +1574,24 @@ export class TaskExecutor {
             const match = findBestMatch(launchTarget, installed);
             if (match) {
               const launchResult = await AgentNativeModuleNav.launchApp(match.packageName);
+              console.warn('[TASK] launch_result:', launchResult.success);
               if (launchResult.success) {
                 await new Promise((resolve) => setTimeout(resolve, 2000));
                 await AppController.allowPackage(match.packageName);
                 await new Promise((resolve) => setTimeout(resolve, 500));
+                console.warn('[TASK] moveTaskToBack: calling');
                 try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
               }
             } else {
               const knownPkg = lookupPackage(launchTarget);
               if (knownPkg) {
                 const launchResult = await AgentNativeModuleNav.launchApp(knownPkg);
+                console.warn('[TASK] launch_result:', launchResult.success);
                 if (launchResult.success) {
                   await new Promise((resolve) => setTimeout(resolve, 2000));
                   await AppController.allowPackage(knownPkg);
                   await new Promise((resolve) => setTimeout(resolve, 500));
+                  console.warn('[TASK] moveTaskToBack: calling');
                   try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
                 }
               } else if (/^https?:\/\/|[\w-]+\.(com|org|net|io|co|app|dev|ai|gov|edu)(\/|$)/i.test(launchTarget)) {
@@ -1599,6 +1605,7 @@ export class TaskExecutor {
                   if (browserPkg) await AppController.allowPackage(browserPkg);
                   DebugLog.systemEvent('ReActNav', `URL opened, foreground pkg=${browserPkg || 'unknown'}`);
                   await new Promise((resolve) => setTimeout(resolve, 500));
+                  console.warn('[TASK] moveTaskToBack: calling');
                   try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
                 } catch (urlErr: any) {
                   this.logger.warn(`react_navigate URL open failed: ${urlErr.message}`);
@@ -1635,6 +1642,7 @@ export class TaskExecutor {
         );
         // Push Agent Ultra to background so target app stays in foreground
         try {
+          console.warn('[TASK] moveTaskToBack: calling (pre-ReActLoop)');
           DebugLog.systemEvent('ReActNav', 'Calling moveTaskToBack...');
           const mtbResult = await AppController.moveTaskToBack();
           DebugLog.systemEvent('ReActNav', `moveTaskToBack result=${mtbResult}`);
