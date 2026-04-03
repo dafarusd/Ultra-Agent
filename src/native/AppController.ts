@@ -225,13 +225,19 @@ function createNativeController(): AppControllerInterface {
       return bridge.startBackgroundService();
     },
     moveTaskToBack: async () => {
-      UltraDevLog.push('SYSTEM', { event: 'native_call_start', method: 'moveTaskToBack', exists: !!native.moveTaskToBack });
+      console.warn('[NATIVE] moveTaskToBack: typeof =', typeof native.moveTaskToBack);
       if (!native.moveTaskToBack) {
-        console.warn('[AppController] moveTaskToBack not found on native module — method may not be compiled into this build');
-        UltraDevLog.push('SYSTEM', { event: 'native_call_fail', method: 'moveTaskToBack', error: 'method_not_found' });
+        console.warn('[NATIVE] moveTaskToBack: NOT FOUND');
         return false;
       }
-      return native.moveTaskToBack();
+      try {
+        const result = await native.moveTaskToBack();
+        console.warn('[NATIVE] moveTaskToBack: resolved =', result);
+        return result;
+      } catch (e: any) {
+        console.warn('[NATIVE] moveTaskToBack: rejected =', e.message);
+        return false;
+      }
     },
     isAvailable: () => true,
   };

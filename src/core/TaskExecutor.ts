@@ -1576,11 +1576,11 @@ export class TaskExecutor {
               const launchResult = await AgentNativeModuleNav.launchApp(match.packageName);
               console.warn('[TASK] launch_result:', launchResult.success);
               if (launchResult.success) {
-                await new Promise((resolve) => setTimeout(resolve, 2000));
-                await AppController.allowPackage(match.packageName);
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 console.warn('[TASK] moveTaskToBack: calling');
                 try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                await AppController.allowPackage(match.packageName);
               }
             } else {
               const knownPkg = lookupPackage(launchTarget);
@@ -1588,11 +1588,11 @@ export class TaskExecutor {
                 const launchResult = await AgentNativeModuleNav.launchApp(knownPkg);
                 console.warn('[TASK] launch_result:', launchResult.success);
                 if (launchResult.success) {
-                  await new Promise((resolve) => setTimeout(resolve, 2000));
-                  await AppController.allowPackage(knownPkg);
                   await new Promise((resolve) => setTimeout(resolve, 500));
                   console.warn('[TASK] moveTaskToBack: calling');
                   try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
+                  await new Promise((resolve) => setTimeout(resolve, 2000));
+                  await AppController.allowPackage(knownPkg);
                 }
               } else if (/^https?:\/\/|[\w-]+\.(com|org|net|io|co|app|dev|ai|gov|edu)(\/|$)/i.test(launchTarget)) {
                 // appHint is a URL/domain — open in browser via ACTION_VIEW
@@ -1600,13 +1600,13 @@ export class TaskExecutor {
                 DebugLog.systemEvent('ReActNav', `URL appHint "${launchTarget}" — opening via ACTION_VIEW`);
                 try {
                   await IntentLauncher.startActivityAsync('android.intent.action.VIEW', { data: url });
+                  await new Promise((resolve) => setTimeout(resolve, 500));
+                  console.warn('[TASK] moveTaskToBack: calling');
+                  try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
                   await new Promise((resolve) => setTimeout(resolve, 3000));
                   const browserPkg = await AppController.getActivePackage().catch(() => null);
                   if (browserPkg) await AppController.allowPackage(browserPkg);
                   DebugLog.systemEvent('ReActNav', `URL opened, foreground pkg=${browserPkg || 'unknown'}`);
-                  await new Promise((resolve) => setTimeout(resolve, 500));
-                  console.warn('[TASK] moveTaskToBack: calling');
-                  try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
                 } catch (urlErr: any) {
                   this.logger.warn(`react_navigate URL open failed: ${urlErr.message}`);
                 }
@@ -1640,16 +1640,6 @@ export class TaskExecutor {
           },
           { maxIterations: hasAiFallback ? 15 : 20, iterationDelayMs: 800, allowLLMFallback: hasAiFallback }
         );
-        // Push Agent Ultra to background so target app stays in foreground
-        try {
-          console.warn('[TASK] moveTaskToBack: calling (pre-ReActLoop)');
-          DebugLog.systemEvent('ReActNav', 'Calling moveTaskToBack...');
-          const mtbResult = await AppController.moveTaskToBack();
-          DebugLog.systemEvent('ReActNav', `moveTaskToBack result=${mtbResult}`);
-        } catch (mtbErr: any) {
-          DebugLog.error('ReActNav', `moveTaskToBack failed: ${mtbErr?.message}`);
-        }
-
         const reactResult = await reactLoop.execute(goal, appHint);
         DebugLog.executorExit(taskId, 'react_navigate', reactResult.goalAchieved, `steps=${reactResult.steps.length} llmFallback=${hasAiFallback}`);
         return {
