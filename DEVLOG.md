@@ -20,16 +20,17 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-02 (Session 5)
+**Last updated:** 2026-04-03 (Session 5 — continued)
 
-**App status:** Clean TypeScript compile (0 errors). Node.js upgraded to 22.21.0. Native fixes (getScreenContentFlat window scan, moveTaskToBack) are in source and compile-clean but never reached at runtime — BrainExecutor tool selection bypasses react_navigate and possibly app_launch entirely.
+**App status:** Clean TypeScript compile (0 errors). Node.js 22.21.0. Three committed fixes (moveTaskToBack timing, null-package window scan, prebuildCommand) — ALL RUNTIME-UNPROVEN. Zero fixes confirmed on device.
 
-**Current priority:** Run adb logcat with ReactNativeJS tag to capture console.warn breadcrumbs from BrainExecutor, determine which tool the LLM actually selects, then fix routing.
+**Current priority:** Build with prebuildCommand clean, verify `SCREEN_FLAT: using_window` appears in logcat proving config plugin fix is compiled in. Do not change anything else until existing fixes are proven or disproven on device.
 
 **Known blockers:**
-- BrainExecutor LLM never selects react_navigate or app_launch — both native fixes are dead code at runtime until tool routing is fixed.
-- Internal UltraDevLog inaccessible from release/preview builds (not debuggable). console.warn breadcrumbs added as workaround.
-- Replit prompts 12/13/14 confirmed applied.
+- EAS cloud builds cache the android/ directory. Config plugin changes (withAgentNative.js) require `expo prebuild --clean` to regenerate Java. Added `prebuildCommand` to eas.json but final build with this setting has not been tested yet.
+- Every runtime test this session shows SCREEN_FLAT: root_pkg=com.agent.ultra. YouTube has never appeared in a SCREEN_FLAT or WINDOWS dump.
+- EAS CLI fails locally with fingerprint error (exit code 3221225794). User must build from their terminal.
+- Internal UltraDevLog inaccessible from release/preview builds. console.warn breadcrumbs used as workaround.
 
 ---
 
@@ -47,22 +48,43 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
-### Session 5 — moveTaskToBack Wiring Confirmed + Tool Selection Diagnosed
+### Session 5 (continued) — Diagnostic Deep Dive + Multiple Unproven Fixes
+- **Date:** 2026-04-03
+- **Subsystems:** D (Actions/Device Control), A (Brain/Cognition), H (Build/Release)
+- **Work done:**
+  - Node.js upgraded 18.20.0 → 22.21.0 (required for RN 0.81/Expo/Metro)
+  - Accidentally built with development profile (Chat Claude error) — produced Expo Dev Client shell, not standalone app. No lasting damage but wasted a build cycle.
+  - Confirmed moveTaskToBack native wiring is correct: AccessibilityBridgeModule registers as "AppController" (line 2305), no name collision with AgentNativeModule ("AgentNative", line 40). Same Java class hosts performTap, getScreenContentFlat, AND moveTaskToBack.
+  - Added diagnostic console.warn breadcrumbs at: BrainExecutor tool selection, TaskExecutor case entry, app launch result, moveTaskToBack call site, AppController native bridge (typeof/resolved/rejected).
+  - Discovered react_navigate IS being selected by BrainExecutor (5 times in one capture). Session 3 tool selection fix (21167b2) works. **Earlier TOOL_NOT_SELECTED diagnosis was wrong** — masked by downstream failures.
+  - Discovered moveTaskToBack DOES fire and resolves true (typeof=function, resolved=true). **Earlier METHOD_MISSING diagnosis was wrong.**
+  - Discovered moveTaskToBack fires too late: 4-12 seconds after launch instead of immediately. Agent Ultra reclaims foreground before moveTaskToBack fires, pushing behind launcher not YouTube.
+  - Reordered moveTaskToBack to fire 500ms after launch intent, before 2000ms delay and allowPackage (commit 736b3a4). Applied to all 3 app_launch paths.
+  - Discovered getScreenContentFlat window scan rejects null-package TYPE_APPLICATION windows (line 1746: `pkg != null && ...`). YouTube may report null package during transitions on Samsung. Changed to `pkg == null || ...` (commit 59cb635).
+  - Added `"prebuildCommand": "npx expo prebuild --clean"` to eas.json preview profile to force config plugin regeneration (commit 7d28ac4).
+- **What is NOT working — every runtime test failed:**
+  - Every SCREEN_FLAT shows root_pkg=com.agent.ultra. YouTube has NEVER appeared in a SCREEN_FLAT read across all tests this session.
+  - YouTube NEVER appears in any WINDOWS dump. Only systemui, launcher, honeyboard, agent.ultra.
+  - All TAP/TEXT/SCROLL actions hit com.agent.ultra, honeyboard, or systemui. Zero actions against YouTube.
+  - Agent types "shorts" into its own text box, taps its own UI, scrolls its own UI. Same failure as Sessions 1-4.
+- **EAS build caching problem (unresolved):**
+  - TypeScript changes (TaskExecutor.ts, AppController.ts) appear to deploy — timing gap dropped in some runs.
+  - Config plugin change (withAgentNative.js line 1746) has NEVER been confirmed in any running APK. The `SCREEN_FLAT: using_window` log line that would prove the new code is present has never appeared.
+  - EAS cloud builds cache the android/ directory. Config plugin changes require `expo prebuild --clean` to regenerate Java. Added prebuildCommand to eas.json but final build with this setting has not been tested yet.
+  - EAS CLI fails locally with fingerprint error (exit code 3221225794). User must build from their terminal.
+- **Committed:** 21d8016, 3b48621, 499bd3e, 30c1ef8, 736b3a4, 59cb635, 7d28ac4
+- **Status:** RUNTIME-UNPROVEN. All fixes compile-clean and are committed. Zero fixes confirmed working on device. The null-package window fix has never made it into a running APK.
+- **Next:** Build with prebuildCommand clean, verify `SCREEN_FLAT: using_window` appears in logcat proving config plugin fix is compiled in. If it doesn't appear, investigate EAS prebuild pipeline. Do not change anything else until the existing fixes are proven or disproven on device.
+
+### Session 5 (initial) — moveTaskToBack Wiring Confirmed + Tool Selection Diagnosed
 - **Date:** 2026-04-02
 - **Subsystems:** D (Actions/Device Control), A (Brain/Cognition), H (Build/Release)
 - **Work done:**
-  - Node.js upgraded from 18.20.0 to 22.21.0 (resolves React Native 0.81 / Expo / Metro engine requirements)
-  - Confirmed moveTaskToBack wiring is correct end-to-end: Java `@ReactMethod` in AccessibilityBridgeModule (registers as "AppController"), TypeScript interface + noop + native controller, call site in TaskExecutor.ts — no name collision, no missing registration
-  - Root cause of zero MOVE_TO_BACK logs: `native.moveTaskToBack` ternary guard silently returned `Promise.resolve(false)`. Replaced with explicit diagnostic logging (commit 21d8016)
-  - Added moveTaskToBack call to all 3 app launch paths in react_navigate case: matched app, known package, URL/domain (commit 3b48621)
-  - Two runtime adb tests both show **TOOL_NOT_SELECTED**: LLM never picks `react_navigate`, and `app_launch` handler with moveTaskToBack also never reached. Zero MOVE_TO_BACK entries, zero SCREEN_FLAT reading non-agent-ultra window, agent operates on own UI (`TEXT: text=shorts pkg=com.agent.ultra`)
-  - Window dumps confirm: only systemui, launcher, honeyboard, and Agent Ultra in window stack. Target app (YouTube) never appears.
-  - Internal UltraDevLog inaccessible from release/preview build (`run-as: package not debuggable`)
-  - Added `console.warn` breadcrumbs at BrainExecutor tool selection (`[BRAIN] tool_selected:`), TaskExecutor case entries (`[TASK] entering:`), launch results (`[TASK] launch_result:`), and moveTaskToBack calls (`[TASK] moveTaskToBack: calling`) — visible via `adb logcat -s ReactNativeJS:*` (commit 499bd3e)
-  - Preview build submitted, awaiting install and test
+  - Confirmed moveTaskToBack wiring is correct end-to-end
+  - Added console.warn breadcrumbs (commit 499bd3e)
+  - Initial TOOL_NOT_SELECTED diagnosis — later disproven in continued session
 - **Committed:** 21d8016, 3b48621, 499bd3e
-- **Status:** DIAGNOSTIC-IN-PROGRESS. Both native fixes are in source and compile-clean but never reached at runtime because BrainExecutor tool selection bypasses react_navigate and possibly app_launch entirely.
-- **Next:** Run adb logcat with ReactNativeJS tag to capture console.warn breadcrumbs, determine which tool the LLM actually selects, then fix routing.
+- **Status:** Superseded by Session 5 (continued) above.
 
 ### Session 4 — adb Native Layer Deep Dive + Root Cause Discovery
 - **Date:** 2026-04-02
