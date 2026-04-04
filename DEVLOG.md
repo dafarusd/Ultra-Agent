@@ -24,10 +24,10 @@ Read this file at the start of every session to understand previous work.
 
 **App status:** Clean TypeScript compile (0 errors). Node.js 22.21.0. Three committed fixes (moveTaskToBack timing, null-package window scan, prebuildCommand) — ALL RUNTIME-UNPROVEN. Zero fixes confirmed on device.
 
-**Current priority:** Build with prebuildCommand clean, verify `SCREEN_FLAT: using_window` appears in logcat proving config plugin fix is compiled in. Do not change anything else until existing fixes are proven or disproven on device.
+**Current priority:** Investigate why config plugin changes (withAgentNative.js) are not reaching the compiled APK. prebuildCommand did not solve it. May need to inspect the generated Java in android/ after prebuild, or try a local build instead of EAS cloud.
 
 **Known blockers:**
-- EAS cloud builds cache the android/ directory. Config plugin changes (withAgentNative.js) require `expo prebuild --clean` to regenerate Java. Added `prebuildCommand` to eas.json but final build with this setting has not been tested yet.
+- Config plugin change (withAgentNative.js line 1746) has NEVER reached a running APK despite prebuildCommand being added and tested. The `SCREEN_FLAT: using_window` log line has never appeared. Root cause unknown.
 - Every runtime test this session shows SCREEN_FLAT: root_pkg=com.agent.ultra. YouTube has never appeared in a SCREEN_FLAT or WINDOWS dump.
 - EAS CLI fails locally with fingerprint error (exit code 3221225794). User must build from their terminal.
 - Internal UltraDevLog inaccessible from release/preview builds. console.warn breadcrumbs used as workaround.
@@ -70,11 +70,11 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 - **EAS build caching problem (unresolved):**
   - TypeScript changes (TaskExecutor.ts, AppController.ts) appear to deploy — timing gap dropped in some runs.
   - Config plugin change (withAgentNative.js line 1746) has NEVER been confirmed in any running APK. The `SCREEN_FLAT: using_window` log line that would prove the new code is present has never appeared.
-  - EAS cloud builds cache the android/ directory. Config plugin changes require `expo prebuild --clean` to regenerate Java. Added prebuildCommand to eas.json but final build with this setting has not been tested yet.
+  - EAS cloud builds cache the android/ directory. Config plugin changes require `expo prebuild --clean` to regenerate Java. Added prebuildCommand to eas.json — built and tested, **did not solve the problem**. Config plugin changes still not reaching the APK.
   - EAS CLI fails locally with fingerprint error (exit code 3221225794). User must build from their terminal.
 - **Committed:** 21d8016, 3b48621, 499bd3e, 30c1ef8, 736b3a4, 59cb635, 7d28ac4
-- **Status:** RUNTIME-UNPROVEN. All fixes compile-clean and are committed. Zero fixes confirmed working on device. The null-package window fix has never made it into a running APK.
-- **Next:** Build with prebuildCommand clean, verify `SCREEN_FLAT: using_window` appears in logcat proving config plugin fix is compiled in. If it doesn't appear, investigate EAS prebuild pipeline. Do not change anything else until the existing fixes are proven or disproven on device.
+- **Status:** RUNTIME-UNPROVEN. All fixes compile-clean and are committed. Zero fixes confirmed working on device. The null-package window fix has never made it into a running APK despite prebuildCommand.
+- **Next:** Investigate why config plugin changes are not reaching the compiled APK. prebuildCommand did not fix it. May need to inspect generated Java in android/ after prebuild, or try a local build. Do not add more fixes until the existing ones are proven or disproven on device.
 
 ### Session 5 (initial) — moveTaskToBack Wiring Confirmed + Tool Selection Diagnosed
 - **Date:** 2026-04-02
