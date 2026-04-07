@@ -253,8 +253,6 @@ SAFETY:
 TOOLS:
 ${TOOLS}
 
-IMPORTANT: After a toggle or simple action succeeds, STOP and tell the user it's done. Do NOT call react_navigate or app_launch to "verify" — the tool already confirmed success.
-
 TOOL ROUTING (use the most direct tool available):
 - Toggle wifi/bluetooth/airplane/DND/flashlight → use the dedicated toggle tool (NOT react_navigate, NOT app_launch)
 - Set volume/brightness → volume_set / brightness_set
@@ -550,8 +548,19 @@ export class BrainExecutor {
     const conv = await this.conversations.loadConversation(conversationId);
     // Keep last 6 messages, then trim total payload to ~8KB of conversation
     // (system prompt is separate ~8KB, total target <16KB to keep LLM response <3s)
+    // IMPORTANT: Filter out plain-text assistant replies from context — they teach the
+    // model to respond as text instead of using tools. Only keep tool-call exchanges.
     let msgs = conv
-      ? conv.messages.slice(-6).map((m: any) => ({ role: m.role, content: m.content }))
+      ? conv.messages.slice(-6)
+          .filter((m: any) => {
+            // Always keep user messages
+            if (m.role === 'user') return true;
+            // Keep assistant messages that contain tool JSON or tool results
+            if (m.role === 'assistant' && m.content && (m.content.includes('"tool"') || m.content.includes('[Tool result'))) return true;
+            // Keep the very last assistant message (the most recent response)
+            return false;
+          })
+          .map((m: any) => ({ role: m.role, content: m.content }))
       : [];
     // Trim from oldest if conversation content exceeds 8KB
     const MAX_CONV_CHARS = 8000;
@@ -560,6 +569,16 @@ export class BrainExecutor {
       totalChars -= msgs[0].content.length;
       msgs = msgs.slice(1);
     }
+    // Ensure proper role alternation (merge consecutive same-role messages)
+    const merged: typeof msgs = [];
+    for (const m of msgs) {
+      if (merged.length > 0 && merged[merged.length - 1].role === m.role) {
+        merged[merged.length - 1].content += '\n' + m.content;
+      } else {
+        merged.push({ ...m });
+      }
+    }
+    msgs = merged;
     // Truncate individual messages that are too long (e.g. huge tool results)
     msgs = msgs.map(m => ({
       role: m.role,
