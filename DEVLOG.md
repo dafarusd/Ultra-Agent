@@ -20,21 +20,22 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-07 (Session 10 — Build 13 "Jarvis" deployed)
+**Last updated:** 2026-04-07 (Session 11 — Build 15 compiling, Build 14 tested)
 
-**App status:** Build 13 installed on device. 48 tools, problem-solving brain, voice input (expo-speech-recognition), camera button, inline image rendering, environment model, knowledge persistence, navigation caching, tool acquisition, proactive awareness, polished personality. TypeScript 0 errors.
+**App status:** Build 15 compiling in WSL. Build 14 was installed and tested on device. 48 tools. TypeScript 0 errors.
 
-**Current priority:** Fix Build 14 issues identified during live testing:
-1. **Self-interaction in react_navigate** — HeadlessJS reads Agent Ultra's own chat screen when it returns to foreground. Must abort immediately if screen is com.agent.ultra.
-2. **Stop button doesn't cancel HeadlessJS** — user can't interrupt a stuck react_navigate loop. Need cancellation flag checked each ReActLoop iteration.
-3. **Payload bloat** — brain messages reach 19-20KB causing 11-23s LLM responses. Need to trim conversation context aggressively.
-4. **LLM hallucates URLs** — brain invents fake domains (e.g. "bestvaluegpu.com") for react_navigate. Need URL validation.
-5. **Prompt leaking** — LLM shows reasoning/thinking process to user instead of clean answers. Tool result prompts need cleanup (partially fixed, needs testing).
+**Current priority:** Complete systematic testing of all 48 tools. Build 14 testing revealed 5 bugs, all fixed in Build 15 code. Build 15 is compiling — once done, install and continue testing from where Build 14 left off.
+
+**Build 15 build location:** `/home/<user>/agent-ultra/build-*.apk` in WSL. Copy to Windows with: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'`
+
+**Install command:** `adb -s <device-ip>:5555 install -r build-latest.apk`
+
+**Wireless ADB:** WORKING at `<device-ip>:5555`. Set up via `adb tcpip 5555` then `adb connect <device-ip>:5555`. Reconnect after WiFi drops with `adb connect <device-ip>:5555`. Do NOT test wifi_toggle or airplane_mode over wireless ADB (kills connection).
 
 **Known blockers:**
-- **ADB USB connection unstable** — device goes offline every 30-60 seconds. Wireless debug enabled but same issue. USB cable or power management suspected. Restart device helps temporarily. Makes live log monitoring nearly impossible. CRITICAL to resolve for next debug session — try different USB cable, disable USB power saving, or use `adb tcpip 5555` for pure wireless.
 - Accessibility service must be manually re-enabled after every APK reinstall.
-- Build time ~35 minutes with WSL Linux SDK. Framework Laptop 16 on order — will cut to ~15 minutes.
+- BiometricGate requires fingerprint after force-stop — cannot automate past it.
+- Build time ~35 minutes with WSL Linux SDK.
 
 ---
 
@@ -67,6 +68,103 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 11 — Code Audit + Bug Fixes + Testing (2026-04-07)
+
+- **Date:** 2026-04-07
+- **Subsystems:** A (Brain/Cognition), D (Actions/Device Control), H (Build/Release)
+
+#### Phase 1: Code Audit — 9 bugs found and fixed
+
+Full code audit of BrainExecutor, ReActLoop, TaskExecutor, HeadlessReActHandler, AppController, AgentNative, index.tsx. Bugs found and fixed:
+
+1. **image_generate** used raw user message (`request`) instead of LLM's `params.prompt` — fixed to `params.prompt || request`
+2. **weather** TOOLS definition said `city` but handler checked `params.location` — handler now accepts both, TOOLS updated to `location`
+3. **sms_send** contacts lookup ran even after recall resolved a phone number — added phone-number guard
+4. **memory_recall** hallucinated via LLM instead of querying KnowledgeGraph — replaced with real graph + vault lookup
+5. **ReActLoop self-interaction** check skipped first 3 iterations (should be 1) — changed to `iteration === 1`
+6. **Approval flow** dropped `pendingState` — destructive actions silently never executed after user approved — pendingState now saved and passed through
+7. **Flashlight toggle** state tracking simplified
+8. **Stop button cancellation** — ReActLoop now has `cancel()` method with `_cancelled` flag checked each iteration. HeadlessReActHandler listens for `cancelReActLoop` DeviceEventEmitter event. Stop button emits the event.
+9. **URL hallucination guard** — react_navigate validates URL-like appHints against known domain whitelist. Unknown domains rejected, browser opened instead. Brain prompt instructs LLM to never invent URLs.
+
+Committed as `a92a64b` (Build 14).
+
+#### Phase 2: Build 14 Testing — 7 pass, 3 bugs found
+
+Build 14 installed via wireless ADB (`<device-ip>:5555`). Systematic testing:
+
+| Test | Tool | Result | Details |
+|---|---|---|---|
+| Basic chat | (none) | **PASS** | 2.0s plain text response |
+| Battery level | (environment) | **PASS** | Answered from phone state context in system prompt |
+| WiFi toggle | wifi_toggle | **PASS** | Actually toggled WiFi off (killed wireless ADB!) |
+| Bluetooth toggle | bluetooth_toggle | **PASS** | Full end-to-end, split tile detected, 2.1s |
+| Flashlight ON | flashlight_toggle | **PASS** | 2.4s |
+| Flashlight OFF | flashlight_toggle | **FAIL** | LLM sends no `state` param, toggle goes wrong direction |
+| Device info | device_info | **PASS** | "Samsung Galaxy S25, SM-S156V, Android 16" |
+| Volume set | volume_set | **PASS** | Set to 53% (closest to 50%) |
+
+Bugs found during testing:
+
+1. **Flashlight OFF fails** — LLM sends `flashlight_toggle` without `state:"off"`, so toggle direction is based on stale `_flashlightOn` boolean. **FIXED:** infer on/off from request text (`/\b(off|disable)\b/`)
+2. **Brain calls react_navigate after simple toggles** — after flashlight_toggle succeeds, brain calls react_navigate to "verify" in Settings, wasting 3 minutes. **FIXED:** added prompt instruction "After a toggle or simple action succeeds, STOP and tell the user it's done."
+3. **isServiceEnabled() false positive** — returns false after force-stop even though service IS enabled (confirmed via `adb shell settings get secure enabled_accessibility_services`). Caused by `catch` block swallowing Settings.Secure read failure and returning false. **FIXED:** separated Settings.Secure check from instance check, Settings.Secure is authoritative.
+4. **react_navigate to Settings disables accessibility** — navigating to Accessibility settings screen toggled the service off. **FIXED:** TaskExecutor rejects goals/appHints containing "accessibility"/"quick settings". ReActLoop detects accessibility settings screen and aborts.
+5. **Stuck react_navigate blocks new messages** — 300s timeout means user waits 5 minutes. Stop button cancel was in code but untested on this build.
+
+All 5 bugs fixed, committed as `e70de49` (Build 15).
+
+#### Phase 3: Build 15 — COMPILING (in progress)
+
+Build 15 is compiling in WSL EAS. When complete:
+1. Copy APK: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'`
+2. Install: `adb -s <device-ip>:5555 install -r build-latest.apk`
+3. Re-enable accessibility service (Settings > Accessibility > Agent Ultra)
+4. Unlock biometric gate
+5. Continue testing from where Build 14 left off
+
+#### Remaining tests (NOT YET RUN)
+
+These must all be tested on Build 15:
+
+1. Flashlight OFF (re-test with inference fix)
+2. Weather
+3. Web search
+4. News headlines
+5. SMS read / SMS conversation
+6. SMS send (test approval flow)
+7. Contacts read
+8. Clipboard read/write
+9. App launch (various apps + settings)
+10. React navigate (Chrome search)
+11. Stop button (cancel mid-react_navigate)
+12. Screenshot / camera / screen recording
+13. Alarms / timers / reminders / calendar
+14. Image generation / TTS
+15. File read/write / share / open URL
+16. set_user_name / set_user_info / memory_recall / knowledge_query
+17. Voice input
+18. DND toggle (safe over wireless ADB)
+19. Location
+20. Media play/next
+21. Brightness set
+22. App info / install_app / open_url
+
+#### Post-testing plan (Phase 3 — public-ready polish)
+
+After all tools pass testing:
+1. HeadlessJS progress feedback ("Working on it..." during background tasks)
+2. Offline handling (detect no internet, tell user)
+3. Error recovery UI (friendly messages, not raw errors)
+4. Notification listener (real notification access)
+5. Brightness control (native, not settings redirect)
+6. Onboarding screen
+7. User-friendly settings (hide API jargon, guided setup)
+8. New chat flow that properly resets context
+
+- **Status:** Build 15 COMPILING. Build 14 partially tested (7/48 tools). 5 bugs found and fixed. SOURCE-FIXED BUT RUNTIME-UNPROVEN for Build 15 fixes.
+- **Next:** Install Build 15, continue systematic testing of all remaining tools.
 
 ### Session 10 — Autonomous Work Session (in progress)
 
