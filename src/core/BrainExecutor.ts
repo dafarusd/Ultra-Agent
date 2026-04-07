@@ -253,6 +253,8 @@ SAFETY:
 TOOLS:
 ${TOOLS}
 
+IMPORTANT: After a toggle or simple action succeeds, STOP and tell the user it's done. Do NOT call react_navigate or app_launch to "verify" — the tool already confirmed success.
+
 TOOL ROUTING (use the most direct tool available):
 - Toggle wifi/bluetooth/airplane/DND/flashlight → use the dedicated toggle tool (NOT react_navigate, NOT app_launch)
 - Set volume/brightness → volume_set / brightness_set

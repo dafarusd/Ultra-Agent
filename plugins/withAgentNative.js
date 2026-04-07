@@ -2478,15 +2478,30 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void isServiceEnabled(Promise promise) {
         try {
-            String enabledServices = Settings.Secure.getString(
-                reactContext.getContentResolver(),
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            );
-            boolean enabled = !TextUtils.isEmpty(enabledServices) &&
-                enabledServices.contains("com.agent.ultra");
-            promise.resolve(enabled || AgentAccessibilityService.isRunning());
+            // Check 1: is the service registered in system settings?
+            boolean settingsEnabled = false;
+            try {
+                String enabledServices = Settings.Secure.getString(
+                    reactContext.getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                );
+                settingsEnabled = !TextUtils.isEmpty(enabledServices) &&
+                    enabledServices.contains("com.agent.ultra");
+            } catch (Exception e) {
+                Log.w(TAG, "isServiceEnabled: Settings.Secure read failed: " + e.getMessage());
+            }
+            // Check 2: is the static instance alive? (may be null after process restart)
+            boolean instanceAlive = AgentAccessibilityService.isRunning();
+            // Settings.Secure is authoritative — instance may lag behind after restart
+            boolean result = settingsEnabled || instanceAlive;
+            if (settingsEnabled && !instanceAlive) {
+                Log.i(TAG, "isServiceEnabled: service registered but instance not yet connected — returning true");
+            }
+            promise.resolve(result);
         } catch (Exception e) {
-            promise.resolve(false);
+            Log.e(TAG, "isServiceEnabled: unexpected error: " + e.getMessage());
+            // Last resort: check if instance is alive even if settings read failed
+            promise.resolve(AgentAccessibilityService.isRunning());
         }
     }
 

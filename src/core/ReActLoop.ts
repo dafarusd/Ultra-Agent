@@ -283,6 +283,19 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
       const nodes = await this.getNodes();
       console.warn(`[REACT_TIMING] iter=${iteration} refresh=${_nodesStart - _refreshStart}ms getNodes=${Date.now() - _nodesStart}ms nodes=${nodes.length}`);
 
+      // Danger zone detection — stop if we're on accessibility settings (could disable our own service)
+      if (currentAppPackage === 'com.android.settings') {
+        const a11yNode = nodes.find(n => {
+          const label = (n.t || n.d || '').trim().toLowerCase();
+          return label.includes('accessibility') && (label.includes('agent ultra') || label.includes('installed apps') || label.includes('vision enhancements'));
+        });
+        if (a11yNode) {
+          console.warn(`[REACT] DANGER_ZONE: on accessibility settings — aborting`);
+          await AppController.performBack();
+          return { success: false, steps, finalObservation: 'Stopped — navigating accessibility settings could disable the agent.', goalAchieved: false, error: 'danger_zone' };
+        }
+      }
+
       // Auth/blocker detection — stop if we hit a login wall
       const AUTH_PATTERNS = /\b(sign.?in|log.?in|password|captcha|verify your|enter.?code|two.?factor|2fa|create.?account|register now)\b/i;
       const authNode = nodes.find(n => {

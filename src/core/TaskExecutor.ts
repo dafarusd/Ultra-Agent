@@ -1566,6 +1566,12 @@ export class TaskExecutor {
         if (!goal) {
           return { success: false, summary: 'No navigation goal specified' };
         }
+        // Block navigation to accessibility or settings screens that could disable the service
+        const dangerousTarget = /\b(accessibility|quick settings|notification settings)\b/i;
+        if (dangerousTarget.test(goal) || dangerousTarget.test(appHint)) {
+          console.warn(`[TASK] react_navigate: BLOCKED dangerous target goal="${goal}" appHint="${appHint}"`);
+          return { success: false, summary: 'Cannot navigate to accessibility or system settings — use the dedicated toggle tools instead.' };
+        }
         if (!isNative || !AppController.isAvailable()) {
           return { success: false, summary: 'UI navigation requires Android with accessibility service enabled' };
         }
@@ -1927,7 +1933,13 @@ export class TaskExecutor {
 
       case 'flashlight_toggle': {
         const AgentNativeModule = (await import('../native/AgentNative')).default;
-        const stateParam = params.state?.toLowerCase();
+        // Determine desired state from param, or infer from user request
+        let stateParam = params.state?.toLowerCase();
+        if (!stateParam) {
+          const reqLower = request.toLowerCase();
+          if (/\b(off|disable|stop|kill)\b/.test(reqLower)) stateParam = 'off';
+          else if (/\b(on|enable|start|shine)\b/.test(reqLower)) stateParam = 'on';
+        }
         if (stateParam === 'off') {
           await AgentNativeModule.setFlashlight(false);
           this._flashlightOn = false;
@@ -1937,8 +1949,6 @@ export class TaskExecutor {
           this._flashlightOn = true;
           return { success: true, summary: 'Flashlight turned on' };
         } else {
-          // Toggle: flip current state. Since we can't query actual hardware state,
-          // default to ON if unknown (most common request is "turn on flashlight")
           const newState = !this._flashlightOn;
           await AgentNativeModule.setFlashlight(newState);
           this._flashlightOn = newState;
