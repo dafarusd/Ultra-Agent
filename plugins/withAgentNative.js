@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.util.Base64;
 import android.util.Log;
 import androidx.core.content.FileProvider;
@@ -680,6 +681,32 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
             promise.resolve(true);
         } catch (Exception e) {
             promise.reject("BG_AGENT_START_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void startReActTask(String goal, String appHint, String taskId, Promise promise) {
+        try {
+            android.app.Activity activity = getCurrentActivity();
+            if (activity != null) {
+                activity.moveTaskToBack(true);
+                Log.i("AgentNative", "startReActTask: moveTaskToBack fired from native");
+            } else {
+                Log.w("AgentNative", "startReActTask: no current activity for moveTaskToBack");
+            }
+            Intent intent = new Intent(getReactApplicationContext(), AgentHeadlessTaskService.class);
+            Bundle extras = new Bundle();
+            extras.putString("taskType", "react_navigate");
+            extras.putString("goal", goal != null ? goal : "");
+            extras.putString("appHint", appHint != null ? appHint : "");
+            extras.putString("taskId", taskId != null ? taskId : "");
+            intent.putExtras(extras);
+            getReactApplicationContext().startService(intent);
+            Log.i("AgentNative", "startReActTask: goal=" + goal + " appHint=" + appHint + " taskId=" + taskId);
+            promise.resolve(true);
+        } catch (Exception e) {
+            Log.e("AgentNative", "startReActTask failed: " + e.getMessage());
+            promise.reject("HEADLESS_START_ERROR", e.getMessage(), e);
         }
     }
 
@@ -1548,7 +1575,7 @@ public class AgentAccessibilityService extends AccessibilityService {
         if (event.getPackageName() != null) {
             String prevPkg = currentPackage;
             currentPackage = event.getPackageName().toString();
-            if (!currentPackage.equals(prevPkg)) {
+            if (!currentPackage.equals(prevPkg) && !"com.android.systemui".equals(currentPackage) && !"com.samsung.android.honeyboard".equals(currentPackage)) {
                 Log.i(TAG, "PKG_CHANGE: " + prevPkg + " -> " + currentPackage);
             }
         }
@@ -1759,6 +1786,15 @@ public class AgentAccessibilityService extends AccessibilityService {
                 if (root == null) {
                     root = getRootInActiveWindow();
                     Log.i(TAG, "SCREEN_FLAT: fallback to getRootInActiveWindow");
+                    // GATE: if fallback returns Agent Ultra's own window, reject it
+                    if (root != null) {
+                        CharSequence fbPkg = root.getPackageName();
+                        if (fbPkg != null && "com.agent.ultra".contentEquals(fbPkg)) {
+                            Log.i(TAG, "SCREEN_FLAT: BLOCKED self-read via fallback — returning empty");
+                            root.recycle();
+                            root = null;
+                        }
+                    }
                 }
                 if (root != null) {
                     CharSequence rootPkg = root.getPackageName();
@@ -1836,6 +1872,12 @@ public class AgentAccessibilityService extends AccessibilityService {
         return false;
     }
     private boolean checkPackageAllowed() {
+        // Never allow actions on Agent Ultra's own UI — prevents self-interaction
+        if ("com.agent.ultra".equals(currentPackage)) {
+            emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_SELF\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
+            Log.i(TAG, "GATE: BLOCKED_SELF pkg=" + currentPackage);
+            return false;
+        }
         if (isPackageBlocked(currentPackage)) {
             emitA11yLog("A11Y_GATE", "{\\"action\\":\\"BLOCKED_USER\\",\\"pkg\\":\\"" + currentPackage + "\\"}");
             Log.i(TAG, "GATE: BLOCKED_USER pkg=" + currentPackage);
@@ -1966,6 +2008,50 @@ public class AgentAccessibilityService extends AccessibilityService {
         return result;
     }
 
+    public boolean performImeAction() {
+        Log.i(TAG, "IME_ENTER: firing");
+        // Search all windows for a focused editable field — getRootInActiveWindow
+        // returns the keyboard window when the keyboard is showing, not the app.
+        AccessibilityNodeInfo target = null;
+        try {
+            java.util.List<AccessibilityWindowInfo> windows = getWindows();
+            for (AccessibilityWindowInfo w : windows) {
+                if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    AccessibilityNodeInfo wRoot = w.getRoot();
+                    if (wRoot != null) {
+                        target = findFocusedEditable(wRoot);
+                        wRoot.recycle();
+                        if (target != null) {
+                            Log.i(TAG, "IME_ENTER: found editable in window pkg=" + (target.getPackageName() != null ? target.getPackageName() : "null"));
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.i(TAG, "IME_ENTER: window scan failed, trying getRootInActiveWindow");
+        }
+        // Fallback to getRootInActiveWindow
+        if (target == null) {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root != null) {
+                target = findFocusedEditable(root);
+                root.recycle();
+            }
+        }
+        boolean result = false;
+        if (target != null) {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                result = target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+            }
+            target.recycle();
+        } else {
+            Log.i(TAG, "IME_ENTER: no focused editable found in any window");
+        }
+        Log.i(TAG, "IME_ENTER: result=" + result);
+        return result;
+    }
+
     public boolean performBack() { Log.i(TAG, "BACK: fired"); return performGlobalAction(GLOBAL_ACTION_BACK); }
     public boolean performHome() { Log.i(TAG, "HOME: fired"); return performGlobalAction(GLOBAL_ACTION_HOME); }
     public boolean performQuickSettings() { return performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS); }
@@ -2034,85 +2120,180 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     public boolean tapQuickSettingsTile(String tileLabel) {
         allowPackage("com.android.systemui");
+        Log.i(TAG, "QS_TAP: start tile=" + tileLabel);
         try {
-            Thread.sleep(700);
-            android.view.accessibility.AccessibilityNodeInfo root = getRootInActiveWindow();
+            Thread.sleep(400);
+            // Samsung One UI renders QS panel in a separate window from status bar.
+            // getRootInActiveWindow() often returns the wrong SystemUI window (status bar with 4 children).
+            // Scan ALL windows to find the one containing QS tiles.
+            android.view.accessibility.AccessibilityNodeInfo root = null;
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) {
+                android.view.accessibility.AccessibilityNodeInfo bestRoot = null;
+                int bestChildren = 0;
+                for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                    android.view.accessibility.AccessibilityNodeInfo winRoot = win.getRoot();
+                    if (winRoot == null) continue;
+                    CharSequence pkg = winRoot.getPackageName();
+                    if (pkg != null && "com.android.systemui".equals(pkg.toString())) {
+                        int childCount = winRoot.getChildCount();
+                        Log.i(TAG, "QS_TAP: systemui_window children=" + childCount + " type=" + win.getType());
+                        if (childCount > bestChildren) {
+                            if (bestRoot != null) bestRoot.recycle();
+                            bestRoot = winRoot;
+                            bestChildren = childCount;
+                        } else {
+                            winRoot.recycle();
+                        }
+                    } else {
+                        winRoot.recycle();
+                    }
+                }
+                root = bestRoot;
+            }
             if (root == null) {
-                emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"no_root\\",\\"tile\\":\\"" + tileLabel + "\\"}");
+                // Fallback to getRootInActiveWindow if getWindows didn't find SystemUI
+                root = getRootInActiveWindow();
+            }
+            if (root == null) {
+                Log.i(TAG, "QS_TAP: no_root — no SystemUI window found");
                 return false;
             }
+            // Log what window we're reading
+            CharSequence rootPkg = root.getPackageName();
+            Log.i(TAG, "QS_TAP: root_pkg=" + (rootPkg != null ? rootPkg : "null") + " children=" + root.getChildCount());
 
-            java.util.List<android.view.accessibility.AccessibilityNodeInfo> nodes =
-                root.findAccessibilityNodeInfosByText(tileLabel);
-            if (nodes == null) nodes = new java.util.ArrayList<>();
-            android.view.accessibility.AccessibilityNodeInfo byDesc = findByContentDesc(root, tileLabel);
-            if (byDesc != null) nodes.add(0, byDesc);
-            emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"search\\",\\"tile\\":\\"" + tileLabel + "\\",\\"found\\":" + nodes.size() + "}");
+            // Build search labels: include the original label + variant without hyphen (Wi-Fi -> WiFi)
+            java.util.List<String> searchLabels = new java.util.ArrayList<>();
+            searchLabels.add(tileLabel);
+            if (tileLabel.contains("-")) searchLabels.add(tileLabel.replace("-", ""));
+            if (!tileLabel.contains("-") && tileLabel.toLowerCase().startsWith("wifi")) searchLabels.add("Wi-Fi");
 
-            // Filter out nodes in status bar area (y < 400) — Samsung OneUI places
-            // notification banners and status bar icons that match tile labels
+            java.util.List<android.view.accessibility.AccessibilityNodeInfo> nodes = new java.util.ArrayList<>();
+            int textMatches = 0;
+            android.view.accessibility.AccessibilityNodeInfo byDesc = null;
+
+            for (String label : searchLabels) {
+                java.util.List<android.view.accessibility.AccessibilityNodeInfo> found =
+                    root.findAccessibilityNodeInfosByText(label);
+                if (found != null) { nodes.addAll(found); textMatches += found.size(); }
+                android.view.accessibility.AccessibilityNodeInfo descNode = findByContentDesc(root, label);
+                if (descNode != null && byDesc == null) { byDesc = descNode; nodes.add(0, descNode); }
+            }
+
+            // Samsung QS tile labels may include state suffix ("Wi-Fi, Connected" or "Bluetooth, On")
+            if (nodes.size() <= 1) {
+                String[] suffixes = {", On", ", Off", ", Connected", ", Disconnected", ", Enabled", ", Disabled"};
+                for (String label : searchLabels) {
+                    for (String suffix : suffixes) {
+                        java.util.List<android.view.accessibility.AccessibilityNodeInfo> extra =
+                            root.findAccessibilityNodeInfosByText(label + suffix);
+                        if (extra != null) nodes.addAll(extra);
+                        android.view.accessibility.AccessibilityNodeInfo extraDesc = findByContentDesc(root, label + suffix);
+                        if (extraDesc != null) nodes.add(0, extraDesc);
+                    }
+                }
+            }
+            Log.i(TAG, "QS_TAP: search tile=" + tileLabel + " text_matches=" + textMatches + " desc_match=" + (byDesc != null) + " total=" + nodes.size());
+
+            // Filter out nodes in status bar / notification area (y < 500)
+            // Samsung QS tiles start at y~500+ after full panel expansion
             java.util.List<android.view.accessibility.AccessibilityNodeInfo> filteredNodes = new java.util.ArrayList<>();
             for (android.view.accessibility.AccessibilityNodeInfo candidate : nodes) {
                 android.graphics.Rect cb2 = new android.graphics.Rect();
                 candidate.getBoundsInScreen(cb2);
                 int centerY2 = (cb2.top + cb2.bottom) / 2;
-                if (centerY2 < 400) {
-                    emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"skip_node\\",\\"tile\\":\\"" + tileLabel + "\\",\\"y\\":" + centerY2 + ",\\"reason\\":\\"status_bar_area\\"}");
+                CharSequence cText = candidate.getText();
+                CharSequence cDesc = candidate.getContentDescription();
+                String nodeInfo = "text=" + (cText != null ? cText : "null") + " desc=" + (cDesc != null ? cDesc : "null") + " y=" + centerY2 + " clickable=" + candidate.isClickable() + " bounds=" + cb2.toShortString();
+                if (centerY2 < 500) {
+                    Log.i(TAG, "QS_TAP: skip_node (above_qs_area) " + nodeInfo);
                 } else {
+                    Log.i(TAG, "QS_TAP: candidate " + nodeInfo);
                     filteredNodes.add(candidate);
                 }
             }
-            // If all nodes were filtered, fall back to unfiltered list
             if (filteredNodes.isEmpty() && !nodes.isEmpty()) {
-                emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"filter_fallback\\",\\"tile\\":\\"" + tileLabel + "\\",\\"reason\\":\\"all_nodes_below_400\\"}");
-                filteredNodes = nodes;
+                // All filtered out — pick the node with HIGHEST y (furthest from status bar)
+                android.view.accessibility.AccessibilityNodeInfo bestNode = null;
+                int bestY = -1;
+                for (android.view.accessibility.AccessibilityNodeInfo n : nodes) {
+                    android.graphics.Rect nb = new android.graphics.Rect();
+                    n.getBoundsInScreen(nb);
+                    int cy = (nb.top + nb.bottom) / 2;
+                    if (cy > bestY) { bestY = cy; bestNode = n; }
+                }
+                if (bestNode != null) filteredNodes.add(bestNode);
+                Log.i(TAG, "QS_TAP: all nodes below y=500, using best_y=" + bestY);
+            }
+            if (filteredNodes.isEmpty()) {
+                Log.i(TAG, "QS_TAP: no_match tile=" + tileLabel + " — zero candidates after filter");
+                root.recycle();
+                return false;
             }
 
             for (android.view.accessibility.AccessibilityNodeInfo node : filteredNodes) {
-                // Strategy 1: walk up to clickable ancestor, try ACTION_CLICK first (works on Samsung QS)
+                // Get the node's own bounds for reference
+                android.graphics.Rect nodeBounds = new android.graphics.Rect();
+                node.getBoundsInScreen(nodeBounds);
+
+                // Strategy 1: walk up to find the QS tile container
+                // Samsung split tiles (Wi-Fi, BT, Mobile Data) have TWO clickable zones:
+                //   - LEFT side: icon area — tapping toggles on/off
+                //   - RIGHT side: text/label area — tapping opens settings
+                // We want the ICON side (toggle), so we tap the LEFT quarter of the tile.
                 android.view.accessibility.AccessibilityNodeInfo current = node;
+                android.view.accessibility.AccessibilityNodeInfo clickableAncestor = null;
+                int ancestorDepth = -1;
                 for (int depth = 0; depth < 6; depth++) {
                     if (current == null) break;
                     if (current.isClickable()) {
-                        android.graphics.Rect bounds = new android.graphics.Rect();
-                        current.getBoundsInScreen(bounds);
-                        int cx = (bounds.left + bounds.right) / 2;
-                        int cy = (bounds.top + bounds.bottom) / 2;
-                        emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"click\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"ACTION_CLICK\\",\\"x\\":" + cx + ",\\"y\\":" + cy + ",\\"bounds\\":\\"" + bounds.toShortString() + "\\"}");
-                        boolean r = current.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
-                        if (r) { root.recycle(); return true; }
-                        // ACTION_CLICK failed — fall back to gesture tap
-                        if (!bounds.isEmpty()) {
-                            emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"click_fallback\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"gesture_tap\\",\\"x\\":" + cx + ",\\"y\\":" + cy + "}");
-                            boolean g = tapAtCenter(bounds);
-                            root.recycle();
-                            return g;
-                        }
-                        root.recycle();
-                        return false;
+                        clickableAncestor = current;
+                        ancestorDepth = depth;
+                        break;
                     }
                     current = current.getParent();
                 }
-                // Strategy 2: no clickable ancestor (Samsung OneUI row layout).
-                // Try ACTION_CLICK on the node itself first, then gesture tap.
-                android.graphics.Rect nb = new android.graphics.Rect();
-                node.getBoundsInScreen(nb);
-                if (!nb.isEmpty()) {
-                    int nx = (nb.left + nb.right) / 2;
-                    int ny = nb.top + (nb.height() / 3);
-                    emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"click\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"node_click\\",\\"x\\":" + nx + ",\\"y\\":" + ny + "}");
-                    boolean nr = node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
-                    if (nr) { root.recycle(); return true; }
-                    emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"click_fallback\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"gesture_tap\\",\\"x\\":" + nx + ",\\"y\\":" + ny + "}");
+
+                if (clickableAncestor != null) {
+                    android.graphics.Rect bounds = new android.graphics.Rect();
+                    clickableAncestor.getBoundsInScreen(bounds);
+                    // Check if this is a split tile: wide tile (width > 2x height) = likely split
+                    boolean isSplitTile = bounds.width() > bounds.height() * 2;
+                    int tapX, tapY;
+                    if (isSplitTile) {
+                        // Tap the LEFT quarter — icon/toggle area on Samsung
+                        tapX = bounds.left + bounds.width() / 4;
+                        tapY = (bounds.top + bounds.bottom) / 2;
+                        Log.i(TAG, "QS_TAP: SPLIT_TILE detected — tapping icon side at " + tapX + "," + tapY + " bounds=" + bounds.toShortString());
+                    } else {
+                        tapX = (bounds.left + bounds.right) / 2;
+                        tapY = (bounds.top + bounds.bottom) / 2;
+                        Log.i(TAG, "QS_TAP: simple_tile — tapping center at " + tapX + "," + tapY + " bounds=" + bounds.toShortString());
+                    }
+                    Log.i(TAG, "QS_TAP: found_clickable_ancestor depth=" + ancestorDepth + " bounds=" + bounds.toShortString());
+                    // Always use gesture tap for QS tiles — ACTION_CLICK often opens settings on Samsung
+                    Log.i(TAG, "QS_TAP: gesture_tap at " + tapX + "," + tapY);
+                    boolean g = tapAtPoint(tapX, tapY);
+                    Log.i(TAG, "QS_TAP: gesture_tap result=" + g);
+                    root.recycle();
+                    return g;
+                }
+
+                // Strategy 2: no clickable ancestor — gesture tap on node bounds
+                if (!nodeBounds.isEmpty()) {
+                    int nx = (nodeBounds.left + nodeBounds.right) / 2;
+                    int ny = nodeBounds.top + (nodeBounds.height() / 3);
+                    Log.i(TAG, "QS_TAP: no_clickable_ancestor, gesture_tap at " + nx + "," + ny + " bounds=" + nodeBounds.toShortString());
                     root.recycle();
                     return tapAtPoint(nx, ny);
                 }
             }
-            emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"no_match\\",\\"tile\\":\\"" + tileLabel + "\\"}");
+            Log.i(TAG, "QS_TAP: exhausted all candidates, no tap fired");
             root.recycle();
             return false;
         } catch (Exception e) {
-            android.util.Log.e(TAG, "tapQuickSettingsTile error: " + e.getMessage());
+            Log.e(TAG, "QS_TAP: error: " + e.getMessage());
             return false;
         }
     }
@@ -2147,9 +2328,8 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public boolean toggleQuickSetting(String tileLabel) {
+        Log.i(TAG, "QS_TOGGLE: start tile=" + tileLabel);
         allowPackage("com.android.systemui");
-        // Samsung OneUI: GLOBAL_ACTION_QUICK_SETTINGS shows compact panel without tiles.
-        // Physical swipe from top of screen reveals the full QS tile grid.
         android.graphics.Point screenSize = new android.graphics.Point();
         try {
             android.view.WindowManager wm = (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
@@ -2157,46 +2337,37 @@ public class AgentAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) { screenSize.set(1080, 2340); }
         int cx = screenSize.x / 2;
         int h = screenSize.y;
+        Log.i(TAG, "QS_TOGGLE: screen=" + screenSize.x + "x" + h + " center_x=" + cx);
 
         // Swipe 1: pull down notification shade
-        swipeRaw(cx, 10, cx, h / 2, 300);
-        emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"swipe_shade\\",\\"tile\\":\\"" + tileLabel + "\\"}");
-        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+        boolean swipe1 = swipeRaw(cx, 10, cx, h / 2, 300);
+        Log.i(TAG, "QS_TOGGLE: swipe_shade result=" + swipe1);
+        try { Thread.sleep(600); } catch (InterruptedException ignored) {}
 
         // Swipe 2: expand to full QS tiles
-        swipeRaw(cx, h / 4, cx, h * 3 / 4, 300);
-        emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"swipe_expand\\",\\"tile\\":\\"" + tileLabel + "\\"}");
-        try { Thread.sleep(700); } catch (InterruptedException ignored) {}
+        boolean swipe2 = swipeRaw(cx, h / 4, cx, h * 3 / 4, 300);
+        Log.i(TAG, "QS_TOGGLE: swipe_expand result=" + swipe2);
+        try { Thread.sleep(800); } catch (InterruptedException ignored) {}
 
         boolean result = tapQuickSettingsTile(tileLabel);
-        emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"result\\",\\"tile\\":\\"" + tileLabel + "\\",\\"success\\":" + result + "}");
+        Log.i(TAG, "QS_TOGGLE: first_attempt tile=" + tileLabel + " result=" + result);
         if (!result) {
             // Scroll QS panel to find hidden tiles
+            Log.i(TAG, "QS_TOGGLE: scrolling QS panel to find hidden tile");
             swipeRaw(cx, h / 2, cx, h / 4, 200);
-            try { Thread.sleep(400); } catch (InterruptedException ignored) {}
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
             result = tapQuickSettingsTile(tileLabel);
+            Log.i(TAG, "QS_TOGGLE: second_attempt tile=" + tileLabel + " result=" + result);
         }
 
-        try { Thread.sleep(200); } catch (InterruptedException ignored) {}
-        // Dismiss the notification shade with a swipe-up instead of BACK presses
-        // BACK can dismiss transient dialogs that might have appeared during toggle
-        if (result) {
-            // Shade is open after toggle — swipe up to dismiss
-            android.graphics.Point dismissSize = new android.graphics.Point(1080, 2340);
-            try {
-                android.hardware.display.DisplayManager dmgr = (android.hardware.display.DisplayManager) getSystemService(android.content.Context.DISPLAY_SERVICE);
-                android.view.Display dmDisp = dmgr != null ? dmgr.getDisplay(android.view.Display.DEFAULT_DISPLAY) : null;
-                if (dmDisp != null) dmDisp.getRealSize(dismissSize);
-            } catch (Exception ignored) {}
-            int dcx = dismissSize.x / 2;
-            int dh = dismissSize.y;
-            emitA11yLog("A11Y_QS_TRACE", "{\\"step\\":\\"dismiss_shade\\",\\"tile\\":\\"" + tileLabel + "\\",\\"method\\":\\"swipe_up\\"}");
-            swipeRaw(dcx, dh / 2, dcx, dh / 6, 250);
-            try { Thread.sleep(300); } catch (InterruptedException ignored) {}
-        } else {
-            performGlobalAction(GLOBAL_ACTION_BACK);
-            performGlobalAction(GLOBAL_ACTION_BACK);
-        }
+        // Always dismiss the shade
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+        Log.i(TAG, "QS_TOGGLE: dismissing shade, toggle_result=" + result);
+        swipeRaw(cx, h * 3 / 4, cx, 10, 250);
+        try { Thread.sleep(400); } catch (InterruptedException ignored) {}
+        // Double-ensure shade is gone
+        performGlobalAction(GLOBAL_ACTION_BACK);
+        Log.i(TAG, "QS_TOGGLE: complete tile=" + tileLabel + " result=" + result);
         return result;
     }
 
@@ -2412,6 +2583,15 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
             return;
         }
         promise.resolve(AgentAccessibilityService.getInstance().performText(selector, text));
+    }
+
+    @ReactMethod
+    public void performImeAction(Promise promise) {
+        if (!AgentAccessibilityService.isRunning()) {
+            promise.reject("NOT_RUNNING", "Accessibility service not running");
+            return;
+        }
+        promise.resolve(AgentAccessibilityService.getInstance().performImeAction());
     }
 
     @ReactMethod
@@ -2793,9 +2973,10 @@ const HEADLESS_TASK_SERVICE_JAVA = `package com.agent.ultra;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import com.facebook.react.HeadlessJsTaskService;
 import com.facebook.react.bridge.Arguments;
-import com.facebook.react.jstask.HeadlessJsTaskConfig;
+import com.facebook.react.jstasks.HeadlessJsTaskConfig;
 import javax.annotation.Nullable;
 
 public class AgentHeadlessTaskService extends HeadlessJsTaskService {
@@ -2808,7 +2989,7 @@ public class AgentHeadlessTaskService extends HeadlessJsTaskService {
             return new HeadlessJsTaskConfig(
                 "AgentBackgroundTask",
                 Arguments.fromBundle(extras),
-                5000,
+                300000,
                 true
             );
         }
@@ -2855,6 +3036,7 @@ function withAgentNative(config) {
       fs.writeFileSync(path.join(javaDir, 'AgentAccessibilityService.java'), ACCESSIBILITY_SERVICE_JAVA);
       fs.writeFileSync(path.join(javaDir, 'AccessibilityBridgeModule.java'), ACCESSIBILITY_BRIDGE_JAVA);
       fs.writeFileSync(path.join(javaDir, 'AgentBackgroundService.java'), BACKGROUND_SERVICE_JAVA);
+      fs.writeFileSync(path.join(javaDir, 'AgentHeadlessTaskService.java'), HEADLESS_TASK_SERVICE_JAVA);
       const xmlDir = path.join(androidDir, 'app', 'src', 'main', 'res', 'xml');
       fs.mkdirSync(xmlDir, { recursive: true });
       fs.writeFileSync(path.join(xmlDir, 'file_paths.xml'), FILE_PROVIDER_PATHS);
@@ -3021,6 +3203,19 @@ function withAgentNative(config) {
           'android:exported': 'false',
           'android:foregroundServiceType': 'dataSync',
           'android:stopWithTask': 'false',
+        },
+      });
+    }
+
+    const hasHeadlessService = (app.service || []).some(
+      (s) => s.$['android:name'] === '.AgentHeadlessTaskService'
+    );
+    if (!hasHeadlessService) {
+      if (!app.service) app.service = [];
+      app.service.push({
+        $: {
+          'android:name': '.AgentHeadlessTaskService',
+          'android:exported': 'false',
         },
       });
     }

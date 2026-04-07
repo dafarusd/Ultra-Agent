@@ -113,9 +113,12 @@ async function openaiChatInvoke(
     stream: false,
   };
   const t0 = Date.now();
+  const bodyStr = JSON.stringify(body);
+  console.warn(`[ADAPTER_TIMING] start: model=${opts.model} provider=${route.providerId} url=${url} body_bytes=${bodyStr.length} msg_count=${opts.messages.length} max_tokens=${body.max_tokens} agent=${opts.agentId || 'unknown'}`);
   UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_start', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, msgCount: opts.messages.length, url });
   try {
-    const resp = await safeFetch(url, { method: 'POST', headers, body: JSON.stringify(body) }, REQUEST_TIMEOUT_MS);
+    const resp = await safeFetch(url, { method: 'POST', headers, body: bodyStr }, REQUEST_TIMEOUT_MS);
+    console.warn(`[ADAPTER_TIMING] fetch_done: ${Date.now() - t0}ms status=${resp.status} agent=${opts.agentId || 'unknown'}`);
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       const code: AdapterError['code'] =
@@ -125,7 +128,9 @@ async function openaiChatInvoke(
       UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_fail', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, httpStatus: resp.status, errorCode: code, latencyMs: Date.now() - t0 });
       return { ok: false, error: makeError(code, `HTTP ${resp.status}: ${text.slice(0, 200)}`, resp.status, isRetryableStatus(resp.status)) };
     }
+    const _jsonStart = Date.now();
     const data = await resp.json();
+    console.warn(`[ADAPTER_TIMING] json_parse: ${Date.now() - _jsonStart}ms total_so_far: ${Date.now() - t0}ms agent=${opts.agentId || 'unknown'}`);
     const choice = data?.choices?.[0];
     if (!choice) {
       UltraDevLog.push('SYSTEM', { event: 'adapter_invoke_fail', adapterId: 'openai_compatible_chat', providerId: route.providerId, modelId: opts.model, errorCode: 'parse', reason: 'no_choices', latencyMs: Date.now() - t0 });

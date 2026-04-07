@@ -44,69 +44,235 @@ function describeAction(tool: string, params: Record<string, any>): string {
 // TOOL DEFINITIONS
 // ─────────────────────────────────────────────────────────────────────────────
 const TOOLS = `
-app_launch        - Just open an app or website (open only, no interaction). params: {target}
+app_launch        - Open an app, website, or settings screen (open only, no interaction). params: {target}
 react_navigate    - Open an app/website AND do things inside it (tap, type, scroll, find, click). USE THIS when the user wants to DO something inside an app or site. params: {goal, appHint}
-web_search        - Search the internet for information. Returns text only. Does NOT open or interact with sites. Never put a URL here. params: {query}
+web_search        - Search the internet for information. Returns text only. params: {query}
 web_research      - Deep research a topic, return summary. params: {query}
-weather           - Get weather. params: {city?, use_current_location?, date?}
+weather           - Get weather. params: {location?, use_current_location?, date?}
+news_headlines    - Get latest news headlines. params: {topic?}
 device_location   - Get GPS coordinates and city name. params: {}
-device_info       - Get battery, RAM, storage, device model. params: {}
+device_info       - Get battery, RAM, storage, device model. params: {focus?}
 system_info       - Get CPU temp, processes, system stats. params: {}
+battery_status    - Get battery level and charging state. params: {}
 contacts_read     - Read contacts from address book. params: {name?}
 sms_send          - Send a text message. params: {to, message}
 sms_read          - Read messages from inbox. params: {limit?, filter?}
 sms_conversation  - Read SMS thread with a contact. params: {address, limit?}
 camera_capture    - Take a photo. params: {}
-screenshot        - Take a screenshot. params: {}
+screenshot        - Take a screenshot and save to gallery. params: {}
+screen_record_start - Start screen recording. params: {}
 note_create       - Create a note. params: {content}
 alarm_set         - Set an alarm. params: {time, label?}
 timer_set         - Set a timer. params: {duration, label?}
 reminder_create   - Create a reminder. params: {text, time?}
+calendar_create   - Create a calendar event. params: {title, details?, startMs?, endMs?}
 file_read         - Read a file or list directory. params: {path}
-file_write        - Write content to a file and save it. params: {filename, content}
+file_write        - Write content to a file. params: {filename, content}
+file_open         - Open a file with the default app. params: {path, mimeType?}
+open_url          - Open a URL in the browser. params: {url}
+share_content     - Share text via Android share sheet. params: {content, subject?}
+app_info          - Show app info/settings for an app. params: {target}
+clipboard_write   - Copy text to clipboard. params: {text}
+clipboard_read    - Read text from clipboard. params: {}
 volume_set        - Set volume. params: {level?, direction?, type?}
 brightness_set    - Set screen brightness. params: {level?, direction?}
 flashlight_toggle - Toggle flashlight. params: {state?}
+wifi_toggle       - Toggle Wi-Fi on/off via Quick Settings. params: {}
+bluetooth_toggle  - Toggle Bluetooth on/off via Quick Settings. params: {}
+airplane_mode     - Toggle airplane mode on/off via Quick Settings. params: {}
+do_not_disturb    - Toggle Do Not Disturb on/off via Quick Settings. params: {}
+media_play        - Play/pause media. params: {action?}
+media_next        - Skip to next track. params: {}
+image_generate    - Generate an image from a text prompt. params: {prompt}
+tts               - Convert text to speech audio. params: {text, voice?}
 read_text_on_screen - Read all visible text on screen. params: {}
 describe_screen   - Describe what is on screen. params: {}
 notification_read - Read recent notifications. params: {}
+memory_recall     - Recall something the agent learned about the user. params: {query}
+knowledge_query   - Query the agent's knowledge graph. params: {query}
+set_user_name     - Tell the agent your name. params: {name}
+set_user_info     - Store user profile info (email, phone, address). params: {email?, phone?, address?}
+install_app       - Search Play Store and install an app to gain new capabilities. params: {appName}
 `.trim();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SYSTEM PROMPT
 // ─────────────────────────────────────────────────────────────────────────────
-function buildSystemPrompt(): string {
+async function buildSystemPrompt(): Promise<string> {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-  return `You are Agent Ultra, an AI assistant running directly on an Android phone. You have real tools that control the phone. Use them.
+  // Build environment snapshot — phone state + connected devices
+  let envSnapshot = '';
+  try {
+    const { Platform } = require('react-native');
+    if (Platform.OS === 'android') {
+      const parts: string[] = [];
+      try {
+        const Battery = require('expo-battery');
+        const level = await Battery.getBatteryLevelAsync();
+        const state = await Battery.getBatteryStateAsync();
+        const charging = state === 2 ? ' (charging)' : '';
+        parts.push(`Battery: ${Math.round(level * 100)}%${charging}`);
+      } catch {}
+      try {
+        const AgentNative = (await import('../native/AgentNative')).default;
+        const apps = await AgentNative.getInstalledApps();
+        parts.push(`${apps.length} apps installed`);
+        // Connected Bluetooth devices
+        const btDevices = await AgentNative.getConnectedBluetoothDevices();
+        if (btDevices.length > 0) parts.push(`BT devices: ${btDevices.join(', ')}`);
+        // WiFi network
+        const ssid = await AgentNative.getWifiSSID();
+        if (ssid) parts.push(`WiFi: ${ssid}`);
+      } catch {}
+      try {
+        const AppCtrl = require('../native/AppController').default;
+        const state = await AppCtrl.getSystemStateSnapshot();
+        const parsed = JSON.parse(state);
+        if (parsed.wifi) parts.push(`WiFi radio: ${parsed.wifi}`);
+        if (parsed.bluetooth) parts.push(`BT radio: ${parsed.bluetooth}`);
+      } catch {}
+      if (parts.length > 0) envSnapshot = `\nPHONE STATE: ${parts.join(' | ')}`;
+    }
+  } catch {}
 
-TODAY: ${dateStr} at ${timeStr}
+  // Load learned knowledge summary — user profile + people + devices + preferences
+  let knowledgeSummary = '';
+  try {
+    const { getAgentCoreInstance } = await import('./AgentCore');
+    const core = getAgentCoreInstance();
+    const graph = core?.getCortex()?.getKnowledgeGraph();
+    const vault = core?.getVault?.();
+    if (graph) {
+      const items: string[] = [];
+      // User profile
+      const userName = vault ? await vault.get('user_preferred_name').catch(() => null) : null;
+      const userEmail = vault ? await vault.get('user_email').catch(() => null) : null;
+      const userPhone = vault ? await vault.get('user_phone').catch(() => null) : null;
+      if (userName) items.push(`User: ${userName}`);
+      if (userEmail) items.push(`Email: ${userEmail}`);
+      if (userPhone) items.push(`Phone: ${userPhone}`);
+      // Known people
+      const people = graph.getByType('person');
+      for (const p of people.slice(0, 5)) {
+        const rels = graph.getRelations(p.id);
+        const nums = rels.filter(r => r.relation.type === 'has_number').map(r => r.targetEntity.name);
+        const emails = rels.filter(r => r.relation.type === 'has_email').map(r => r.targetEntity.name);
+        const detail = nums.length ? nums[0] : emails.length ? emails[0] : '';
+        items.push(`${p.name}${detail ? ' (' + detail + ')' : ''}`);
+      }
+      // Known devices
+      const devices = graph.getByType('device' as any);
+      for (const d of devices.slice(0, 3)) items.push(`Device: ${d.name}${d.properties?.type ? ' (' + d.properties.type + ')' : ''}`);
+      // Preferences
+      const prefs = graph.getByType('preference');
+      for (const pref of prefs.slice(0, 3)) items.push(`Prefers: ${pref.name}`);
+      if (items.length > 0) knowledgeSummary = `\nKNOWN ABOUT USER: ${items.join(', ')}`;
+    }
+    // Check for proactive suggestions — things the agent noticed
+    const proactive = core?.getProactiveEngine?.();
+    if (proactive) {
+      const active = proactive.getActive().filter((s: any) => s.urgency === 'high' || s.urgency === 'medium');
+      if (active.length > 0) {
+        const notices = active.slice(0, 2).map((s: any) => s.title).join('; ');
+        knowledgeSummary += `\nNOTICED: ${notices}`;
+      }
+    }
+  } catch {}
 
-WHEN THE USER ASKS YOU TO DO SOMETHING:
-Respond with ONLY a JSON tool call — no explanation, no preamble:
-{"tool":"tool_name","params":{"key":"value"}}
+  return `You are Ultra — a capable, concise AI agent with full control of this Android phone. You solve problems, not describe solutions. You speak like a sharp assistant: confident, brief, slightly warm. Never robotic. Never verbose. Just get it done and say what happened in one sentence.
 
-WHEN YOU ARE DONE OR WANT TO TALK:
-Respond with plain text. Be direct and brief.
+TODAY: ${dateStr} at ${timeStr}${envSnapshot}${knowledgeSummary}
 
-CRITICAL RULES:
-- Only send messages (sms_send) or make calls when the user EXPLICITLY asks you to.
-- Do NOT send messages as a "helpful" follow-up. Do NOT reply to SMS threads you read.
-- Do NOT call numbers you find in the inbox. Reading SMS is for information only.
-- Always USE tools to do things. Never say "I would" or "I can" — just do it.
-- If a tool fails, tell the user what went wrong.
+HOW YOU THINK:
+1. Understand what the user actually WANTS (not just what they said)
+2. Break the problem into concrete steps
+3. Execute each step with a tool call
+4. OBSERVE the result — read what happened, what's on screen
+5. REASON about what to do next based on what you learned
+6. Continue until the problem is SOLVED, not just attempted
+7. If something fails, try a different approach — don't give up
 
-AVAILABLE TOOLS:
+RESPONSE FORMAT:
+- To use a tool: {"tool":"name","params":{...}}
+- To talk to the user: plain text (no JSON)
+- ONE tool call per response. You will see the result and can continue.
+
+PROBLEM-SOLVING RULES:
+- You have up to 12 tool calls per task. Use them wisely.
+- IMPORTANT: When web_search returns actual text results, READ THEM and answer the user directly. Do NOT open a browser or call react_navigate to "see" results you already have as text.
+- After react_navigate, you'll see what's on the screen. Use that information to decide your next step.
+- If a tool fails, try an alternative (different app, different approach, different query).
+- If you need information to solve the problem, GATHER it first (web_search, read_text_on_screen, device_info).
+- Don't stop at "I opened the page" — read the results, extract the answer, tell the user.
+- When you have enough information to answer, STOP calling tools and respond with a clear, complete answer.
+- 1-2 web searches is usually enough. Don't keep searching if you already have good results.
+
+CROSS-APP DATA FLOW:
+- You can read what's on screen (read_text_on_screen) and use that information in your next tool call
+- Example: user says "send mom the address of this restaurant" → read_text_on_screen → extract address → sms_send
+- Example: user says "what's this?" → read_text_on_screen → analyze and explain what you see
+- After react_navigate, you'll see screen content in the result — use it to answer questions or take next actions
+
+VERIFICATION:
+- After any action that changes the screen, check if it actually worked
+- Don't assume success — verify by reading the result
+- If react_navigate returns goalAchieved=false, read what's on screen and explain what happened
+- If a search returned results, READ them and give the user the actual answer
+
+BLOCKERS:
+- If you encounter a login screen, captcha, or permission dialog: STOP and tell the user "I need you to sign in / grant permission. Let me know when you're done."
+- Don't try to bypass authentication — ask the user to handle it
+- If an app crashes or closes unexpectedly, try an alternative approach
+
+SELF-EVOLUTION:
+- You can install new apps to gain capabilities you don't have (install_app)
+- If the user asks for something that requires an app you don't have (e.g. "order an Uber", "play Spotify"), install it
+- You learn from every interaction — names, preferences, contacts are remembered for next time
+- You know what apps are installed on this phone — use that to choose the best tool for each task
+- If you've seen an app's UI before, you know how to navigate it faster
+
+AUTO-FILL & FORMS:
+- You know the user's name, email, phone, and address (if they've told you via set_user_info)
+- When react_navigate encounters a sign-up form, use the stored profile to fill fields
+- Read field labels ("Name", "Email", "Phone") via accessibility and type the matching stored value
+- If you don't have info needed for a form, ASK the user — then save it with set_user_info for next time
+
+DEVICE AWARENESS:
+- You can see connected Bluetooth devices and WiFi networks in the PHONE STATE above
+- Learn which devices belong to the user: "Play music on my speaker" → you know which BT device is the speaker
+- Devices like headphones, speakers, smartwatches, cars, TVs can be referenced by name
+- If the user says "send this to my laptop", check BT devices or use share_content
+
+SAFETY:
+- NEVER send messages (sms_send) or make calls unless the user EXPLICITLY asks
+- Do NOT reply to SMS threads you read or call numbers you find
+
+TOOLS:
 ${TOOLS}
 
-TOOL SELECTION:
-- "Open X and do Y inside it" = react_navigate (goal=Y, appHint=X)
-- "Go to site X and click/find/search Y" = react_navigate (goal=Y, appHint=X)  
-- "Open X" with nothing else to do = app_launch (target=X)
-- "Search for info about X" = web_search (query=X)
-- NEVER put a URL into web_search. URLs go to app_launch or react_navigate.`;
+TOOL ROUTING (use the most direct tool available):
+- Toggle wifi/bluetooth/airplane/DND/flashlight → use the dedicated toggle tool (NOT react_navigate, NOT app_launch)
+- Set volume/brightness → volume_set / brightness_set
+- Play/pause/skip music → media_play / media_next
+- Open a settings screen → app_launch with the settings name (e.g. target="wifi settings")
+- Open an app AND interact with it → react_navigate (goal=what to do, appHint=app name)
+- Just open an app → app_launch
+- Open a URL → open_url
+- Search the internet for information → web_search
+- Copy/paste → clipboard_write / clipboard_read
+- Screenshot/photo → screenshot / camera_capture
+- Create event → calendar_create
+- Generate image → image_generate
+- Read aloud → tts
+- "My name is X" → set_user_name
+- "Install X" / "Download X" / "Get X app" → install_app
+- If a task needs an app you don't have → install_app first, then use it
+- NEVER put a URL into web_search
+- NEVER invent or guess URLs for react_navigate appHint — use app names (e.g. "chrome", "settings"), not domains
+- For web browsing tasks, set appHint to "chrome" and put the search query in goal`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,6 +356,29 @@ export class BrainExecutor {
     }
 
     // ── NORMAL PATH: save user message and build fresh context ───────────
+    // Read the current screen so the brain knows what the user is looking at
+    let screenContext = '';
+    try {
+      const { Platform } = require('react-native');
+      if (Platform.OS === 'android') {
+        const AppCtrl = require('../native/AppController').default;
+        if (AppCtrl.isAvailable()) {
+          const flat = await AppCtrl.getScreenContentFlat();
+          const nodes = JSON.parse(flat);
+          if (Array.isArray(nodes) && nodes.length > 0) {
+            const labels = nodes
+              .filter((n: any) => (n.t || n.d || '').trim())
+              .slice(0, 15)
+              .map((n: any) => (n.t || n.d || '').trim());
+            if (labels.length > 0) {
+              const pkg = await AppCtrl.getActivePackage().catch(() => 'unknown');
+              screenContext = `\n[Current screen: ${pkg} — ${labels.join(' | ')}]`;
+            }
+          }
+        }
+      }
+    } catch {}
+
     await this.conversations.addMessage(conversationId, {
       id: uid(),
       role: 'user',
@@ -197,8 +386,29 @@ export class BrainExecutor {
       createdAt: Date.now(),
     });
 
-    const systemPrompt = buildSystemPrompt();
+    const systemPrompt = await buildSystemPrompt();
     const { payload } = await this.buildContextFromConversation(conversationId, systemPrompt);
+    // Inject screen context + knowledge into the last user message
+    let knowledgeContext = '';
+    try {
+      const { getAgentCoreInstance: getCore } = await import('./AgentCore');
+      const coreInst = getCore();
+      const graph = coreInst?.getCortex()?.getKnowledgeGraph();
+      if (graph) {
+        const resolved = graph.resolve(userInput);
+        if (resolved.entity) {
+          const relStr = resolved.relations.slice(0, 5).map(r => `${r.relation.type}: ${r.targetEntity.name}`).join(', ');
+          knowledgeContext = `\n[Known: ${resolved.entity.name} (${resolved.entity.type})${relStr ? ' — ' + relStr : ''}]`;
+        }
+      }
+    } catch {}
+    const extraContext = screenContext + knowledgeContext;
+    if (extraContext && payload.length > 0) {
+      const lastMsg = payload[payload.length - 1];
+      if (lastMsg.role === 'user') {
+        lastMsg.content = lastMsg.content + extraContext;
+      }
+    }
     return this.runLoop(userInput, conversationId, taskId, payload, 0);
   }
 
@@ -212,6 +422,7 @@ export class BrainExecutor {
     const MAX_TOOL_TURNS = 12;
     let finalText = '';
     let lastCapability = '';
+    let lastToolResult: any = undefined;
 
     for (let turn = resumeTurn; turn < MAX_TOOL_TURNS; turn++) {
       DebugLog.systemEvent('BrainExecutor', `AI turn ${turn + 1}`);
@@ -268,8 +479,19 @@ export class BrainExecutor {
         toolResult = { error: e.message };
       }
 
+      lastToolResult = toolResult;
       const resultText = formatToolResult(toolResult);
       DebugLog.systemEvent('BrainExecutor', `TOOL RESULT: ${resultText.slice(0, 120)}`);
+
+      // Learn from every interaction — build persistent knowledge
+      try {
+        const { getAgentCoreInstance } = await import('./AgentCore');
+        const core = getAgentCoreInstance();
+        const graph = core?.getCortex()?.getKnowledgeGraph();
+        if (graph) {
+          graph.learnFromInteraction(userInput, toolCall.tool, resultText.slice(0, 300)).catch(() => {});
+        }
+      } catch {}
 
       messages.push({ role: 'assistant', content: rawResponse });
 
@@ -279,15 +501,19 @@ export class BrainExecutor {
         const prevMsg = messages.length >= 4 ? messages[messages.length - 3].content : '';
         const prevWasSameTool = prevMsg.includes(`"tool":"${toolCall.tool}"`);
         if (prevWasSameTool) {
-          finalText = `I wasn't able to complete that. ${toolCall.tool} failed twice: ${resultText}. Please try rephrasing or check if the required app or permission is available.`;
+          finalText = `That didn't work — ${toolCall.tool} failed twice. ${resultText.slice(0, 150)}`;
           DebugLog.systemEvent('BrainExecutor', `STUCK STOP: ${toolCall.tool} failed twice, stopping`);
           break;
         }
       }
 
+      const isSearchResult = toolCall.tool === 'web_search' && resultText.includes('Search results');
+      const followUp = isSearchResult
+        ? `\n\nYou have the search results above. Answer the user's question directly using this information. Do NOT open a browser or call react_navigate.`
+        : `\n\nContinue solving the user's request. Call another tool if needed, or give your final answer. Be concise.`;
       messages.push({
         role: 'user',
-        content: `Tool result for ${toolCall.tool}:\n${resultText}\n\nNow respond to the user or call another tool.`,
+        content: `[Tool result: ${toolCall.tool}]\n${resultText}${followUp}`,
       });
 
       if (turn === MAX_TOOL_TURNS - 1) {
@@ -296,18 +522,23 @@ export class BrainExecutor {
     }
 
     if (finalText) {
+      // Extract image path from the last tool result if present
+      let lastToolData: any = undefined;
+      if (lastToolResult && typeof lastToolResult === 'object' && lastToolResult.path) {
+        lastToolData = { path: lastToolResult.path };
+      }
       await this.conversations.addMessage(conversationId, {
         id: uid(),
         role: 'assistant',
         content: finalText,
         createdAt: Date.now(),
         source: 'ultra',
-        meta: { capability: lastCapability || undefined },
+        meta: { capability: lastCapability || undefined, data: lastToolData },
       });
     }
 
     DebugLog.systemEvent('BrainExecutor', `DONE taskId=${taskId}`);
-    return { type: 'action_result', message: finalText || 'Done.', taskId };
+    return { type: 'action_result', message: finalText || 'Done.', taskId, data: lastToolResult && typeof lastToolResult === 'object' ? { path: lastToolResult.path } : undefined };
   }
 
   private async buildContextFromConversation(
@@ -315,9 +546,23 @@ export class BrainExecutor {
     systemPrompt: string,
   ): Promise<{ payload: Array<{ role: string; content: string }> }> {
     const conv = await this.conversations.loadConversation(conversationId);
-    const msgs = conv
-      ? conv.messages.slice(-20).map((m: any) => ({ role: m.role, content: m.content }))
+    // Keep last 6 messages, then trim total payload to ~8KB of conversation
+    // (system prompt is separate ~8KB, total target <16KB to keep LLM response <3s)
+    let msgs = conv
+      ? conv.messages.slice(-6).map((m: any) => ({ role: m.role, content: m.content }))
       : [];
+    // Trim from oldest if conversation content exceeds 8KB
+    const MAX_CONV_CHARS = 8000;
+    let totalChars = msgs.reduce((sum, m) => sum + m.content.length, 0);
+    while (totalChars > MAX_CONV_CHARS && msgs.length > 2) {
+      totalChars -= msgs[0].content.length;
+      msgs = msgs.slice(1);
+    }
+    // Truncate individual messages that are too long (e.g. huge tool results)
+    msgs = msgs.map(m => ({
+      role: m.role,
+      content: m.content.length > 2000 ? m.content.slice(0, 2000) + '...(truncated)' : m.content,
+    }));
     return { payload: [{ role: 'system', content: systemPrompt }, ...msgs] };
   }
 }

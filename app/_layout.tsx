@@ -18,6 +18,7 @@ import TouchInterceptor from "@/components/TouchInterceptor";
 import { queryClient } from "@/lib/query-client";
 import { UltraDevLog } from '@/src/utils/UltraDevLog';
 import { AgentCoreProvider } from '@/src/context/AgentCoreContext';
+import '@/src/core/HeadlessReActHandler'; // registers HeadlessJS task for background ReActLoop
 
 SplashScreen.preventAutoHideAsync();
 

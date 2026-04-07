@@ -360,11 +360,13 @@ export class AiService {
   }
 
   async completeText(input: TextCompletionInput): Promise<NormalizedAiResponse> {
+    const _routeStart = Date.now();
     const route = await this.resolveRoute('chat', {
       manualModelId: input.model,
       conversationId: input.conversationId,
       preferredProviderId: input.preferredProviderId,
     });
+    console.warn(`[AISVC_TIMING] resolveRoute: ${Date.now() - _routeStart}ms agent=${input.agentId || 'unknown'} provider=${route.providerId} adapter=${route.adapterId}`);
     const registry = getAdapterRegistry();
     const adapter = registry.get(route.adapterId);
     if (!adapter) throw new Error(`Adapter '${route.adapterId}' not found`);
@@ -380,6 +382,7 @@ export class AiService {
     UltraDevLog.push('AI_REQUEST', { event: 'ai_text_start', ...routeLogFields(route), model });
     const t0 = Date.now();
     const result: AdapterResult<NormalizedAiResponse> = await adapter.invokeChat(route, opts);
+    console.warn(`[AISVC_TIMING] invokeChat: ${Date.now() - t0}ms agent=${input.agentId || 'unknown'}`);
     if (!result.ok) {
       UltraDevLog.push('ERROR', {
         event: 'ai_text_failed',

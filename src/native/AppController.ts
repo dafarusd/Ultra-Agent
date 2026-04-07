@@ -43,6 +43,7 @@ export interface AppControllerInterface {
   heartbeatPing(): Promise<{ alive: boolean; foregroundPackage: string; timestamp: number }>;
   startBackgroundService(): Promise<boolean>;
   moveTaskToBack(): Promise<boolean>;
+  performImeAction(): Promise<boolean>;
   exec?(cmd: string, args?: string): Promise<string>;
   isAvailable(): boolean;
 }
@@ -89,6 +90,7 @@ const noopController: AppControllerInterface = {
   heartbeatPing: async () => ({ alive: false, foregroundPackage: 'mock', timestamp: 0 }),
   startBackgroundService: async () => false,
   moveTaskToBack: async () => false,
+  performImeAction: async () => false,
   isAvailable: () => false,
 };
 
@@ -223,6 +225,14 @@ function createNativeController(): AppControllerInterface {
       }
       UltraDevLog.push('SYSTEM', { event: 'native_call_start', method: 'startBackgroundService' });
       return bridge.startBackgroundService();
+    },
+    performImeAction: async () => {
+      if (!native.performImeAction) return false;
+      try {
+        return await native.performImeAction();
+      } catch {
+        return false;
+      }
     },
     moveTaskToBack: async () => {
       console.warn('[NATIVE] moveTaskToBack: typeof =', typeof native.moveTaskToBack);

@@ -608,10 +608,11 @@ export class TaskExecutor {
         }
       }
       case 'sms_send': {
+        console.warn('[TASK] sms_send: to=' + params.to + ' msg_len=' + (params.message || '').length);
         DebugLog.executorEnter(taskId, 'sms_send');
         let to = params.to;
         const message = params.message || '';
-        if (!to) { DebugLog.executorExit(taskId, 'sms_send', false, 'no_recipient'); return { error: 'No recipient specified' }; }
+        if (!to) { console.warn('[TASK] sms_send: FAIL no_recipient'); DebugLog.executorExit(taskId, 'sms_send', false, 'no_recipient'); return { error: 'No recipient specified' }; }
         const avail = await SMS.isAvailableAsync();
         // FIX 3: Check if user has previously resolved this contact name.
         // If so, use the stored number directly — skip disambiguation.
@@ -630,41 +631,44 @@ export class TaskExecutor {
             this.logger.warn(`Contact memory recall failed: ${memErr.message}`);
           }
         }
-        try {
-          const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
-          const matches = data.filter((c) => c.name?.toLowerCase().includes(to.toLowerCase()));
-          if (matches.length > 1) {
-            const disambig = matches.filter(m => m.phoneNumbers && m.phoneNumbers.length > 0).map(m => ({
-              name: m.name,
-              number: m.phoneNumbers![0].number ?? '',
-              label: m.phoneNumbers![0].label || 'unknown',
-            }));
-            if (disambig.length > 1) {
-              return {
-                success: false,
-                requiresDisambiguation: true,
-                matches: disambig,
-                summary: `Found ${disambig.length} contacts named "${to}": ${disambig.map(m => `${m.name} (${m.label}: ${m.number})`).join(', ')}. Which one?`,
-              };
+        // Only do contacts lookup if `to` is still a name (not already a phone number)
+        if (!/^\+?[\d\s\-\(\)]{7,}$/.test(to)) {
+          try {
+            const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers] });
+            const matches = data.filter((c) => c.name?.toLowerCase().includes(to.toLowerCase()));
+            if (matches.length > 1) {
+              const disambig = matches.filter(m => m.phoneNumbers && m.phoneNumbers.length > 0).map(m => ({
+                name: m.name,
+                number: m.phoneNumbers![0].number ?? '',
+                label: m.phoneNumbers![0].label || 'unknown',
+              }));
+              if (disambig.length > 1) {
+                return {
+                  success: false,
+                  requiresDisambiguation: true,
+                  matches: disambig,
+                  summary: `Found ${disambig.length} contacts named "${to}": ${disambig.map(m => `${m.name} (${m.label}: ${m.number})`).join(', ')}. Which one?`,
+                };
+              }
             }
-          }
-          const match = matches[0];
-          if (match && match.phoneNumbers && match.phoneNumbers.length > 0) {
-            const realNumber = match.phoneNumbers.find(
-              (p) => p.number && p.number.replace(/\D/g, '').length >= 7
-            );
-            if (realNumber && realNumber.number) {
-              const resolved = realNumber.number;
-              DebugLog.smsResolve(taskId, to, resolved, data.length);
-              to = resolved;
+            const match = matches[0];
+            if (match && match.phoneNumbers && match.phoneNumbers.length > 0) {
+              const realNumber = match.phoneNumbers.find(
+                (p) => p.number && p.number.replace(/\D/g, '').length >= 7
+              );
+              if (realNumber && realNumber.number) {
+                const resolved = realNumber.number;
+                DebugLog.smsResolve(taskId, to, resolved, data.length);
+                to = resolved;
+              } else {
+                DebugLog.smsResolve(taskId, to, null, data.length);
+              }
             } else {
               DebugLog.smsResolve(taskId, to, null, data.length);
             }
-          } else {
-            DebugLog.smsResolve(taskId, to, null, data.length);
+          } catch (e: any) {
+            DebugLog.smsResolve(taskId, to, null, 0, e.message);
           }
-        } catch (e: any) {
-          DebugLog.smsResolve(taskId, to, null, 0, e.message);
         }
         DebugLog.smsFire(taskId, to, message);
         let smsSent = false;
@@ -676,7 +680,9 @@ export class TaskExecutor {
             const AgentNativeModule = (await import('../native/AgentNative')).default;
             if (AgentNativeModule?.sendSms) {
               const cleanPhone = to.replace(/[\s\-\(\)]/g, '');
+              console.warn('[TASK] sms_send: native attempt to=' + cleanPhone);
               const sent = await AgentNativeModule.sendSms(cleanPhone, message);
+              console.warn('[TASK] sms_send: native result=' + sent);
               if (sent) {
                 smsSent = true;
                 smsResult = 'sent_native';
@@ -725,10 +731,13 @@ export class TaskExecutor {
         };
       }
       case 'camera_capture': {
-        if (!isNative) return { error: 'Camera requires a device' };
+        console.warn('[TASK] camera_capture: entering');
+        if (!isNative) { console.warn('[TASK] camera_capture: FAIL not_native'); return { error: 'Camera requires a device' }; }
         try {
           const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          console.warn('[TASK] camera_capture: permission status=' + status);
           if (status !== 'granted') {
+            console.warn('[TASK] camera_capture: FAIL permission_denied');
             return { success: false, error: 'Camera permission not granted. Enable in Settings > Apps > Agent Ultra > Permissions.' };
           }
           const camResult = await ImagePicker.launchCameraAsync({
@@ -1571,45 +1580,53 @@ export class TaskExecutor {
           try {
             const AgentNativeModuleNav = (await import('../native/AgentNative')).default;
             const installed = await AgentNativeModuleNav.getInstalledApps();
-            const match = findBestMatch(launchTarget, installed);
-            if (match) {
+            const match = findBestMatch(launchTarget, installed, 55);
+            if (match && (match.matchType === 'exact' || match.matchType === 'directory' || match.score >= 55)) {
+              console.warn('[TASK] react_navigate: launching', match.appName, match.packageName, 'score=', match.score);
               const launchResult = await AgentNativeModuleNav.launchApp(match.packageName);
               console.warn('[TASK] launch_result:', launchResult.success);
-              if (launchResult.success) {
-                await new Promise((resolve) => setTimeout(resolve, 500));
-                console.warn('[TASK] moveTaskToBack: calling');
-                try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
-                await new Promise((resolve) => setTimeout(resolve, 2000));
-                await AppController.allowPackage(match.packageName);
-              }
             } else {
+              if (match) {
+                console.warn('[TASK] react_navigate: rejected low-confidence match:', match.appName, 'score=', match.score);
+              }
               const knownPkg = lookupPackage(launchTarget);
               if (knownPkg) {
                 const launchResult = await AgentNativeModuleNav.launchApp(knownPkg);
                 console.warn('[TASK] launch_result:', launchResult.success);
-                if (launchResult.success) {
-                  await new Promise((resolve) => setTimeout(resolve, 500));
-                  console.warn('[TASK] moveTaskToBack: calling');
-                  try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
-                  await new Promise((resolve) => setTimeout(resolve, 2000));
-                  await AppController.allowPackage(knownPkg);
-                }
               } else if (/^https?:\/\/|[\w-]+\.(com|org|net|io|co|app|dev|ai|gov|edu)(\/|$)/i.test(launchTarget)) {
-                // appHint is a URL/domain — open in browser via ACTION_VIEW
-                const url = /^https?:\/\//i.test(launchTarget) ? launchTarget : `https://${launchTarget}`;
-                DebugLog.systemEvent('ReActNav', `URL appHint "${launchTarget}" — opening via ACTION_VIEW`);
-                try {
-                  await IntentLauncher.startActivityAsync('android.intent.action.VIEW', { data: url });
-                  await new Promise((resolve) => setTimeout(resolve, 500));
-                  console.warn('[TASK] moveTaskToBack: calling');
-                  try { await AppController.moveTaskToBack(); } catch { /* ignore */ }
-                  await new Promise((resolve) => setTimeout(resolve, 3000));
-                  const browserPkg = await AppController.getActivePackage().catch(() => null);
-                  if (browserPkg) await AppController.allowPackage(browserPkg);
-                  DebugLog.systemEvent('ReActNav', `URL opened, foreground pkg=${browserPkg || 'unknown'}`);
-                } catch (urlErr: any) {
-                  this.logger.warn(`react_navigate URL open failed: ${urlErr.message}`);
+                // URL-like appHint — only open if it's a well-known domain, not an LLM hallucination
+                const KNOWN_DOMAINS = new Set([
+                  'google.com', 'youtube.com', 'reddit.com', 'twitter.com', 'x.com',
+                  'instagram.com', 'facebook.com', 'amazon.com', 'netflix.com', 'spotify.com',
+                  'tiktok.com', 'pinterest.com', 'linkedin.com', 'github.com', 'stackoverflow.com',
+                  'wikipedia.org', 'yahoo.com', 'bing.com', 'twitch.tv', 'discord.com',
+                  'slack.com', 'whatsapp.com', 'telegram.org', 'ebay.com', 'walmart.com',
+                  'target.com', 'bestbuy.com', 'craigslist.org', 'yelp.com', 'imdb.com',
+                ]);
+                const domainMatch = launchTarget.replace(/^https?:\/\//, '').replace(/^www\./, '').match(/^([\w.-]+)/);
+                const domain = domainMatch ? domainMatch[1].toLowerCase() : '';
+                if (KNOWN_DOMAINS.has(domain)) {
+                  const url = /^https?:\/\//i.test(launchTarget) ? launchTarget : `https://${launchTarget}`;
+                  DebugLog.systemEvent('ReActNav', `Known URL appHint "${launchTarget}" — opening via ACTION_VIEW`);
+                  try {
+                    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', { data: url });
+                  } catch (urlErr: any) {
+                    this.logger.warn(`react_navigate URL open failed: ${urlErr.message}`);
+                  }
+                } else {
+                  // Likely hallucinated URL — open browser instead and let ReActLoop search
+                  console.warn(`[TASK] react_navigate: rejecting unverified URL "${launchTarget}" — opening browser`);
+                  DebugLog.systemEvent('ReActNav', `Rejected unverified URL "${launchTarget}" — falling back to browser`);
+                  const browserPkg = lookupPackage('chrome') || 'com.android.chrome';
+                  try {
+                    await AgentNativeModuleNav.launchApp(browserPkg);
+                  } catch {
+                    // Browser launch failed — ReActLoop will handle whatever is on screen
+                  }
                 }
+              } else {
+                console.warn('[TASK] react_navigate: no match for appHint:', launchTarget);
+                DebugLog.systemEvent('ReActNav', `No app match for "${launchTarget}" — skipping launch`);
               }
             }
           } catch (launchErr: any) {
@@ -1617,43 +1634,77 @@ export class TaskExecutor {
           }
         }
 
+        // Delegate ReActLoop to HeadlessJS task — block until it completes
+        // so BrainExecutor's tool loop doesn't issue the next tool prematurely
+        const HEADLESS_TIMEOUT_MS = 300000; // 5 minutes, matches HeadlessJS config
         try {
-          const currentFg = await AppController.getActivePackage();
-          if (currentFg) await AppController.allowPackage(currentFg);
-        } catch (e: any) {
-          DebugLog.error('ReActNav', e?.message || 'foreground allow failed', e?.stack);
-        }
-        await AppController.allowPackage('com.android.systemui');
+          const AgentNativeModuleHeadless = (await import('../native/AgentNative')).default;
+          const { DeviceEventEmitter } = require('react-native');
 
-        const hasAiFallback = this.ai.hasApiKey();
-        const { ReActLoop } = await import('./ReActLoop');
-        const reactLoop = new ReActLoop(
-          async (prompt: string) => {
-            if (!hasAiFallback) return 'ACTION: done';
-            const aiResult = await this.ai.complete(prompt, {
-              taskId,
-              agentId: 'react',
-              maxTokens: 150,
-              temperature: 0.1,
+          const headlessResult = await new Promise<{
+            success: boolean; steps: number; goal: string;
+            finalObservation?: string; error?: string;
+          }>((resolve) => {
+            let settled = false;
+            const timer = setTimeout(() => {
+              if (!settled) {
+                settled = true;
+                sub.remove();
+                console.warn('[TASK] react_navigate: HeadlessJS timed out after', HEADLESS_TIMEOUT_MS, 'ms');
+                resolve({ success: false, steps: 0, goal, error: 'headless_timeout' });
+              }
+            }, HEADLESS_TIMEOUT_MS);
+
+            const sub = DeviceEventEmitter.addListener(
+              'headlessReActComplete',
+              (data: any) => {
+                if (data?.taskId === taskId && !settled) {
+                  settled = true;
+                  clearTimeout(timer);
+                  sub.remove();
+                  console.warn('[TASK] react_navigate: HeadlessJS completed', data);
+                  resolve(data);
+                }
+              },
+            );
+
+            // Start the HeadlessJS task (which also calls moveTaskToBack natively)
+            AgentNativeModuleHeadless.startReActTask(goal, appHint || '', taskId).catch((err: any) => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(timer);
+                sub.remove();
+                console.warn('[TASK] react_navigate: startReActTask failed:', err.message);
+                resolve({ success: false, steps: 0, goal, error: err.message });
+              }
             });
-            return aiResult.content;
-          },
-          { maxIterations: hasAiFallback ? 15 : 20, iterationDelayMs: 800, allowLLMFallback: hasAiFallback }
-        );
-        const reactResult = await reactLoop.execute(goal, appHint);
-        DebugLog.executorExit(taskId, 'react_navigate', reactResult.goalAchieved, `steps=${reactResult.steps.length} llmFallback=${hasAiFallback}`);
-        return {
-          success: reactResult.goalAchieved,
-          summary: reactResult.goalAchieved
-            ? `Completed: ${goal} in ${reactResult.steps.length} steps`
-            : `Could not complete: ${goal} after ${reactResult.steps.length} steps`,
-          data: {
-            steps: reactResult.steps.length,
-            goalAchieved: reactResult.goalAchieved,
-            finalObservation: reactResult.finalObservation.slice(0, 300),
-            llmFallbackUsed: hasAiFallback,
-          },
-        };
+          });
+
+          DebugLog.executorExit(taskId, 'react_navigate', headlessResult.success, `steps=${headlessResult.steps} headless=true`);
+          const screenInfo = (headlessResult as any).screenContent ? `\nScreen now shows: ${(headlessResult as any).screenContent}` : '';
+          return {
+            success: headlessResult.success,
+            summary: headlessResult.success
+              ? `Completed: ${goal} in ${headlessResult.steps} steps.${screenInfo}`
+              : `Could not complete: ${goal}${headlessResult.error ? ' (' + headlessResult.error + ')' : ''} after ${headlessResult.steps} steps.${screenInfo}`,
+            data: {
+              steps: headlessResult.steps,
+              goalAchieved: headlessResult.success,
+              finalObservation: headlessResult.finalObservation?.slice(0, 300) || '',
+              screenContent: (headlessResult as any).screenContent || '',
+              headless: true,
+            },
+          };
+        } catch (headlessErr: any) {
+          console.warn('[TASK] react_navigate: HeadlessJS failed:', headlessErr.message);
+          DebugLog.error('ReActNav', `HeadlessJS failed: ${headlessErr.message}`, headlessErr.stack);
+          DebugLog.executorExit(taskId, 'react_navigate', false, 'headless_error');
+          return {
+            success: false,
+            summary: `Navigation failed: ${headlessErr.message}`,
+            data: { headless: true, error: headlessErr.message },
+          };
+        }
       }
 
       case 'multi_step': {
@@ -1844,15 +1895,34 @@ export class TaskExecutor {
 
       case 'memory_recall': {
         const query = params.query || '';
-        const recallResult = await this.ai.complete(
-          `Based on our conversation history, what do you know about: "${query}"?`,
-          { taskId, agentId: 'memory_recall', maxTokens: 400 }
-        );
-        return {
-          success: true,
-          summary: recallResult.content,
-          data: { query, response: recallResult.content },
-        };
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const graph = core?.getCortex()?.getKnowledgeGraph();
+          if (graph) {
+            const contextStr = graph.getContextFor(query);
+            if (contextStr && contextStr.length > 10) {
+              return { success: true, summary: contextStr, data: { query, source: 'knowledge_graph' } };
+            }
+          }
+          // Check vault for user profile info
+          const vault = core?.getVault?.();
+          if (vault) {
+            const keys = ['user_preferred_name', 'user_email', 'user_phone', 'user_address'];
+            const matches: string[] = [];
+            for (const key of keys) {
+              try {
+                const val = await vault.get(key);
+                if (val && val.toLowerCase().includes(query.toLowerCase())) {
+                  matches.push(`${key.replace('user_', '')}: ${val}`);
+                }
+              } catch {}
+            }
+            if (matches.length > 0) {
+              return { success: true, summary: matches.join(', '), data: { query, source: 'vault' } };
+            }
+          }
+        } catch {}
+        return { success: true, summary: `I don't have specific memories about "${query}" yet.`, data: { query } };
       }
 
       case 'flashlight_toggle': {
@@ -1860,20 +1930,19 @@ export class TaskExecutor {
         const stateParam = params.state?.toLowerCase();
         if (stateParam === 'off') {
           await AgentNativeModule.setFlashlight(false);
+          this._flashlightOn = false;
           return { success: true, summary: 'Flashlight turned off' };
         } else if (stateParam === 'on') {
           await AgentNativeModule.setFlashlight(true);
+          this._flashlightOn = true;
           return { success: true, summary: 'Flashlight turned on' };
         } else {
-          if (!this._flashlightOn) {
-            await AgentNativeModule.setFlashlight(true);
-            this._flashlightOn = true;
-            return { success: true, summary: 'Flashlight turned on' };
-          } else {
-            await AgentNativeModule.setFlashlight(false);
-            this._flashlightOn = false;
-            return { success: true, summary: 'Flashlight turned off' };
-          }
+          // Toggle: flip current state. Since we can't query actual hardware state,
+          // default to ON if unknown (most common request is "turn on flashlight")
+          const newState = !this._flashlightOn;
+          await AgentNativeModule.setFlashlight(newState);
+          this._flashlightOn = newState;
+          return { success: true, summary: `Flashlight turned ${newState ? 'on' : 'off'}` };
         }
       }
       case 'alarm_set': {
@@ -1935,16 +2004,16 @@ export class TaskExecutor {
       case 'wifi_toggle': {
         const wifiDelta = await captureStateDelta(taskId, 'wifi_toggle', () => AppController.toggleQuickSetting('Wi-Fi'));
         await logUiSnapshot(taskId, 'wifi_toggle');
-        if (wifiDelta.toggled) return { success: true, summary: 'Wi-Fi toggle attempted via Quick Settings — check your status bar to confirm the change', data: { delta: wifiDelta.changed } };
+        if (wifiDelta.toggled) return { success: true, summary: 'Done — Wi-Fi toggled.', data: { delta: wifiDelta.changed } };
         await IntentLauncher.startActivityAsync('android.settings.WIFI_SETTINGS', {});
-        return { success: true, summary: 'Opened Wi-Fi settings — tap the toggle to enable/disable', data: { partial: true } };
+        return { success: true, summary: 'Couldn\'t toggle directly — opened Wi-Fi settings for you.', data: { partial: true } };
       }
       case 'bluetooth_toggle': {
         const btDelta = await captureStateDelta(taskId, 'bluetooth_toggle', () => AppController.toggleQuickSetting('Bluetooth'));
         await logUiSnapshot(taskId, 'bluetooth_toggle');
-        if (btDelta.toggled) return { success: true, summary: 'Bluetooth toggle attempted via Quick Settings — check your status bar to confirm the change', data: { delta: btDelta.changed } };
+        if (btDelta.toggled) return { success: true, summary: 'Done — Bluetooth toggled.', data: { delta: btDelta.changed } };
         await IntentLauncher.startActivityAsync('android.settings.BLUETOOTH_SETTINGS', {});
-        return { success: true, summary: 'Opened Bluetooth settings — tap the toggle to enable/disable', data: { partial: true } };
+        return { success: true, summary: 'Couldn\'t toggle directly — opened Bluetooth settings for you.', data: { partial: true } };
       }
       case 'airplane_mode': {
         const apDelta = await captureStateDelta(taskId, 'airplane_mode', async () => {
@@ -1953,9 +2022,9 @@ export class TaskExecutor {
           return r;
         });
         await logUiSnapshot(taskId, 'airplane_mode');
-        if (apDelta.toggled) return { success: true, summary: 'Airplane Mode toggle attempted via Quick Settings — check your status bar to confirm the change', data: { delta: apDelta.changed } };
+        if (apDelta.toggled) return { success: true, summary: 'Done — Airplane Mode toggled.', data: { delta: apDelta.changed } };
         await IntentLauncher.startActivityAsync('android.settings.AIRPLANE_MODE_SETTINGS', {});
-        return { success: true, summary: 'Opened Airplane Mode settings — tap the toggle', data: { partial: true } };
+        return { success: true, summary: 'Couldn\'t toggle directly — opened Airplane Mode settings for you.', data: { partial: true } };
       }
       case 'do_not_disturb': {
         const dndDelta = await captureStateDelta(taskId, 'do_not_disturb', async () => {
@@ -1964,9 +2033,9 @@ export class TaskExecutor {
           return r;
         });
         await logUiSnapshot(taskId, 'do_not_disturb');
-        if (dndDelta.toggled) return { success: true, summary: 'Do Not Disturb toggle attempted via Quick Settings — check your status bar to confirm the change', data: { delta: dndDelta.changed } };
+        if (dndDelta.toggled) return { success: true, summary: 'Done — Do Not Disturb toggled.', data: { delta: dndDelta.changed } };
         await IntentLauncher.startActivityAsync('android.settings.ZEN_MODE_SETTINGS', {});
-        return { success: true, summary: 'Opened DND settings — tap the toggle', data: { partial: true } };
+        return { success: true, summary: 'Couldn\'t toggle directly — opened DND settings for you.', data: { partial: true } };
       }
       case 'battery_status': {
         const [level, state] = await Promise.all([
@@ -2076,11 +2145,74 @@ export class TaskExecutor {
         return { success: true, summary: `Opened ${url}` };
       }
       case 'web_search': {
-        const query = encodeURIComponent(params.query || '');
-        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-          data: `https://www.google.com/search?q=${query}`,
-        });
-        return { success: true, summary: `Searching for: ${params.query}` };
+        const searchQuery = params.query || '';
+        const encodedQuery = encodeURIComponent(searchQuery);
+        console.warn(`[TASK] web_search: query="${searchQuery}"`);
+        // Fetch actual search results — do NOT open browser
+        try {
+          const searchUrl = `https://html.duckduckgo.com/html/?q=${encodedQuery}`;
+          const resp = await fetch(searchUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36' },
+          });
+          if (resp.ok) {
+            const html = await resp.text();
+            const results: string[] = [];
+            let match;
+            // Pattern 1: DuckDuckGo result__a + result__snippet
+            const p1 = /<a class="result__a"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+            while ((match = p1.exec(html)) !== null && results.length < 6) {
+              const t = match[1].replace(/<[^>]*>/g, '').trim();
+              const s = match[2].replace(/<[^>]*>/g, '').trim();
+              if (t && s) results.push(`• ${t}: ${s}`);
+            }
+            // Pattern 2: result__a titles only
+            if (results.length === 0) {
+              const p2 = /<a class="result__a"[^>]*>([\s\S]*?)<\/a>/gi;
+              while ((match = p2.exec(html)) !== null && results.length < 6) {
+                const t = match[1].replace(/<[^>]*>/g, '').trim();
+                if (t) results.push(`• ${t}`);
+              }
+            }
+            // Pattern 3: generic link extraction from result divs
+            if (results.length === 0) {
+              const p3 = /<div class="result[^"]*"[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+              while ((match = p3.exec(html)) !== null && results.length < 6) {
+                const t = match[2].replace(/<[^>]*>/g, '').trim();
+                if (t && t.length > 5 && !t.startsWith('http')) results.push(`• ${t}`);
+              }
+            }
+            // Pattern 4: brute force — find all <a> with substantial text in result sections
+            if (results.length === 0) {
+              const p4 = /<a[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+              while ((match = p4.exec(html)) !== null && results.length < 6) {
+                const t = match[1].replace(/<[^>]*>/g, '').trim();
+                if (t && t.length > 10) results.push(`• ${t}`);
+              }
+            }
+            console.warn(`[TASK] web_search: extracted ${results.length} results from ${html.length} bytes`);
+            if (results.length > 0) {
+              return { success: true, summary: `Search results for "${searchQuery}":\n${results.join('\n')}` };
+            }
+            // Even with 0 regex matches, extract raw text as last resort
+            const textOnly = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            const snippet = textOnly.slice(0, 800);
+            if (snippet.length > 50) {
+              return { success: true, summary: `Search results for "${searchQuery}" (raw):\n${snippet}` };
+            }
+          }
+        } catch (fetchErr: any) {
+          console.warn(`[TASK] web_search: fetch failed: ${fetchErr.message}`);
+        }
+        // Last resort: use the LLM's own knowledge
+        try {
+          const aiResult = await this.ai.complete(`Answer this search query concisely: "${searchQuery}"`, {
+            taskId, agentId: 'search', maxTokens: 500, temperature: 0.3,
+          });
+          if (aiResult.content) {
+            return { success: true, summary: aiResult.content };
+          }
+        } catch {}
+        return { success: false, summary: `Could not search for "${searchQuery}". No internet or search service available.` };
       }
       case 'calendar_create': {
         const now = Date.now();
@@ -2212,7 +2344,7 @@ export class TaskExecutor {
       }
 
       case 'image_generate': {
-        const prompt = request;
+        const prompt = params.prompt || request;
         if (!prompt) return { error: 'No image prompt specified' };
         try {
           const explicitImageModel = (params as any).model as string | undefined;
@@ -2237,6 +2369,7 @@ export class TaskExecutor {
           }
           return {
             success: true,
+            summary: `Image generated and saved to ${imagePath}`,
             imageCount: result.images.length,
             path: isNative ? imagePath : undefined,
             model: result.model,
@@ -2431,15 +2564,31 @@ export class TaskExecutor {
         } catch (e: any) { return { success: false, summary: `Screen description failed: ${e.message}` }; }
       }
       case 'read_text_on_screen': {
+        // Use accessibility service directly — proven reliable
+        try {
+          if (isNative && AppController.isAvailable()) {
+            const flat = await AppController.getScreenContentFlat();
+            const nodes = JSON.parse(flat);
+            if (Array.isArray(nodes) && nodes.length > 0) {
+              const pkg = await AppController.getActivePackage().catch(() => 'unknown');
+              const texts = nodes
+                .filter((n: any) => (n.t || n.d || '').trim())
+                .map((n: any) => (n.t || n.d || '').trim());
+              if (texts.length > 0) {
+                return { success: true, summary: `[${pkg}] ${texts.slice(0, 30).join(' | ')}`, data: { app: pkg, items: texts.length } };
+              }
+            }
+            return { success: true, summary: 'Screen appears empty or has no readable text.' };
+          }
+        } catch {}
+        // Fallback to vision pipeline
         try {
           const core = (await import('./AgentCore')).getAgentCoreInstance();
           const vision = core?.getCortex()?.getVisionPipeline();
-          if (!vision) return { success: false, summary: 'Vision pipeline not available' };
-          const hint: string | undefined = params.hint || undefined;
-          const result = await vision.readText(hint);
-          if (!result.success) return { success: false, summary: result.text };
-          return { success: true, summary: result.text.length > 0 ? result.text : 'No text found on screen.', data: { text: result.text } };
-        } catch (e: any) { return { success: false, summary: `Screen text reading failed: ${e.message}` }; }
+          if (!vision) return { success: false, summary: 'Screen reading not available' };
+          const result = await vision.readText(params.hint);
+          return { success: result.success, summary: result.text || 'No text found.' };
+        } catch (e: any) { return { success: false, summary: `Screen reading failed: ${e.message}` }; }
       }
       case 'vision_read': {
         try {
@@ -2460,8 +2609,9 @@ export class TaskExecutor {
           const unit = (params.unit === 'celsius') ? 'celsius' : 'fahrenheit';
           const unitSymbol = unit === 'celsius' ? '°C' : '°F';
 
-          if (params.location) {
-            const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(params.location)}&count=1&language=en&format=json`;
+          const weatherLocation = params.location || params.city || '';
+          if (weatherLocation) {
+            const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(weatherLocation)}&count=1&language=en&format=json`;
             const geoRes = await fetch(geoUrl);
             if (geoRes.ok) {
               const geoData = await geoRes.json();
@@ -2568,6 +2718,49 @@ export class TaskExecutor {
           return { success: false, summary: 'Could not fetch news headlines. Check your internet connection.' };
         } catch (e: any) {
           return { success: false, summary: `News error: ${e.message}` };
+        }
+      }
+      case 'set_user_info': {
+        try {
+          const core = (await import('./AgentCore')).getAgentCoreInstance();
+          const vault = core?.getVault?.();
+          if (!vault) return { success: false, summary: 'Secure storage not available' };
+          const saved: string[] = [];
+          if (params.email) { await vault.set('user_email', params.email); saved.push(`email: ${params.email}`); }
+          if (params.phone) { await vault.set('user_phone', params.phone); saved.push(`phone: ${params.phone}`); }
+          if (params.address) { await vault.set('user_address', params.address); saved.push(`address: ${params.address}`); }
+          if (params.name) { await vault.set('user_preferred_name', params.name); saved.push(`name: ${params.name}`); }
+          if (saved.length === 0) return { success: false, summary: 'No info provided. Send email, phone, or address.' };
+          console.warn(`[TASK] set_user_info: saved ${saved.join(', ')}`);
+          return { success: true, summary: `Got it — saved ${saved.join(', ')}. I'll use this to fill forms and personalize your experience.` };
+        } catch (e: any) { return { success: false, summary: `Couldn't save info: ${e.message}` }; }
+      }
+      case 'install_app': {
+        const appName = params.appName || params.target || '';
+        if (!appName) return { success: false, summary: 'No app name specified' };
+        console.warn(`[TASK] install_app: searching Play Store for "${appName}"`);
+        try {
+          // Open Play Store search directly
+          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: `market://search?q=${encodeURIComponent(appName)}`,
+          });
+          // Wait for Play Store to load, then use react_navigate to tap Install
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          return {
+            success: true,
+            summary: `Opened Play Store search for "${appName}". The app page should be showing — tap Install to add it to this phone.`,
+            data: { appName, playStoreOpened: true },
+          };
+        } catch (playErr: any) {
+          // Fallback: open Play Store in browser
+          try {
+            await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+              data: `https://play.google.com/store/search?q=${encodeURIComponent(appName)}`,
+            });
+            return { success: true, summary: `Opened Play Store web for "${appName}".` };
+          } catch {
+            return { success: false, summary: `Could not open Play Store for "${appName}": ${playErr.message}` };
+          }
         }
       }
       default:

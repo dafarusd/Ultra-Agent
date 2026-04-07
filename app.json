@@ -82,6 +82,7 @@
       ],
       "expo-background-fetch",
       "expo-task-manager",
+      "expo-speech-recognition",
       [
         "expo-contacts",
         {
@@ -122,7 +123,7 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "reactCompiler": false
     },
     "extra": {
       "router": {

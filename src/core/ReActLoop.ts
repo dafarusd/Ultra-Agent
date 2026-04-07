@@ -25,6 +25,7 @@ export interface ReActOptions {
   iterationDelayMs?: number;
   allowLLMFallback?: boolean;
   visionSparseThreshold?: number;
+  skipPlanning?: boolean;
 }
 
 interface FlatNode {
@@ -60,6 +61,8 @@ export class ReActLoop {
   private iterationDelayMs: number;
   private allowLLMFallback: boolean;
   private visionSparseThreshold: number;
+  private skipPlanning: boolean;
+  private _cancelled = false;
 
   constructor(
     private aiCall: (prompt: string) => Promise<string>,
@@ -69,6 +72,13 @@ export class ReActLoop {
     this.iterationDelayMs = options.iterationDelayMs ?? 1200;
     this.allowLLMFallback = options.allowLLMFallback ?? true;
     this.visionSparseThreshold = options.visionSparseThreshold ?? VISION_SPARSE_THRESHOLD;
+    this.skipPlanning = options.skipPlanning ?? false;
+  }
+
+  /** Signal the loop to stop at the next iteration check. */
+  cancel(): void {
+    this._cancelled = true;
+    console.warn('[REACT] cancel() called — will stop at next iteration');
   }
 
   private async tryGetVisionContext(): Promise<string | null> {
@@ -144,9 +154,43 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
       return { success: false, steps, finalObservation: msg, goalAchieved: false, error: 'no_service' };
     }
 
-    DebugLog.systemEvent('ReActLoop', `START goal="${goal.slice(0, 80)}" app="${appHint || 'any'}" llmFallback=${this.allowLLMFallback}`);
+    DebugLog.systemEvent('ReActLoop', `START goal="${goal.slice(0, 80)}" app="${appHint || 'any'}" llmFallback=${this.allowLLMFallback} skipPlanning=${this.skipPlanning}`);
 
+    // Resolve the expected package from appHint early — needed for foreground wait + wrong-app detection
+    let expectedPkg = '';
+    if (appHint) {
+      try {
+        const { findBestMatch: findMatch, lookupPackage: lookupPkg } = await import('./AppDirectory');
+        const knownPkg = lookupPkg(appHint.toLowerCase().trim());
+        if (knownPkg) {
+          expectedPkg = knownPkg;
+        } else {
+          const AgentNativeModule = (await import('../native/AgentNative')).default;
+          const installed = await AgentNativeModule.getInstalledApps();
+          const m = findMatch(appHint.toLowerCase().trim(), installed, 55);
+          if (m) expectedPkg = m.packageName;
+        }
+      } catch {}
+    }
+    console.warn(`[REACT] expectedPkg=${expectedPkg} appHint=${appHint || 'none'}`);
+
+    // Wait for the target app to be in foreground before observing
+    if (expectedPkg) {
+      for (let wait = 0; wait < 10; wait++) {
+        const fg = await AppController.getActivePackage().catch(() => '');
+        if (fg === expectedPkg) {
+          console.warn(`[REACT_TIMING] target_app_ready: ${expectedPkg} after ${wait * 500}ms`);
+          break;
+        }
+        await this.sleep(500);
+      }
+      // Extra settle time for the app to finish rendering
+      await this.sleep(1000);
+    }
+
+    const _observeStart = Date.now();
     let observation = await this.observe();
+    console.warn(`[REACT_TIMING] initial_observe: ${Date.now() - _observeStart}ms`);
     if (observation === 'Screen: empty or inaccessible' || observation === 'Screen: observation failed') {
       await this.sleep(1500);
       observation = await this.observe();
@@ -168,7 +212,7 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
     }
 
     let plan: string[] = [];
-    if (this.allowLLMFallback) {
+    if (this.allowLLMFallback && !this.skipPlanning) {
       plan = await this.planSteps(goal, observation, currentAppPackage);
     }
     let currentPlanStep = 0;
@@ -178,33 +222,93 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
     let lastTreePrefix = '';
     let deterministicFailCount = 0;
 
+    let wrongAppBackAttempts = 0;
+
     for (let iteration = 1; iteration <= this.maxIterations; iteration++) {
+      // ── CANCELLATION CHECK ──────────────────────────────────────────
+      if (this._cancelled) {
+        console.warn(`[REACT] CANCELLED at iteration ${iteration}`);
+        DebugLog.systemEvent('ReActLoop', `CANCELLED by user at iteration ${iteration}`);
+        return { success: false, steps, finalObservation: observation, goalAchieved: false, error: 'cancelled' };
+      }
+
       try {
         const currentPkg = await AppController.getActivePackage();
-        // Skip self-check for first 3 iterations when we have an appHint —
-        // the app needs time to launch and the user may briefly see Ultra
-        const skipSelfCheck = iteration <= 3 && !!appHint;
+        // Skip self-check only for iteration 1 when we have an appHint —
+        // moveTaskToBack needs a moment to complete
+        const skipSelfCheck = iteration === 1 && !!appHint;
         if (!skipSelfCheck && currentPkg === 'com.agent.ultra') {
           DebugLog.error('ReActLoop', `SAFETY STOP at iter ${iteration}: foreground package is Agent Ultra — aborting to prevent self-interaction`);
           return { success: false, steps, finalObservation: 'ReActLoop detected self-interaction — stopped for safety', goalAchieved: false, error: 'self_interaction' };
         }
+
+        // Wrong-app detection: if we're on a different app than expected, try to recover
+        const OVERLAY_PKGS = ['com.android.systemui', 'com.samsung.android.honeyboard',
+          'com.samsung.android.smartcapture', 'com.samsung.android.app.smartcapture'];
+        if (expectedPkg && currentPkg && currentPkg !== expectedPkg
+            && currentPkg !== 'com.agent.ultra' && !OVERLAY_PKGS.includes(currentPkg)) {
+          wrongAppBackAttempts++;
+          console.warn(`[REACT] WRONG_APP iter=${iteration}: expected=${expectedPkg} got=${currentPkg} attempt=${wrongAppBackAttempts}`);
+          DebugLog.error('ReActLoop', `WRONG APP at iter ${iteration}: expected=${expectedPkg} got=${currentPkg} (attempt ${wrongAppBackAttempts})`);
+          if (wrongAppBackAttempts >= 3) {
+            return { success: false, steps, finalObservation: `Wrong app: expected ${expectedPkg} but stuck on ${currentPkg}`, goalAchieved: false, error: 'wrong_app' };
+          }
+          // Re-launch expected app instead of just pressing Back
+          try {
+            const AgentNativeRelaunch = (await import('../native/AgentNative')).default;
+            console.warn(`[REACT] re-launching ${expectedPkg}`);
+            await AgentNativeRelaunch.launchApp(expectedPkg);
+            await this.sleep(1500);
+          } catch {
+            await AppController.performBack();
+            await this.sleep(800);
+          }
+          continue;
+        } else if (expectedPkg && currentPkg === expectedPkg) {
+          wrongAppBackAttempts = 0; // reset on correct app
+        }
+
         if (currentPkg) await AppController.allowPackage(currentPkg);
       } catch (e: any) {
         DebugLog.error('ReActLoop', `Safety check failed at iter ${iteration}: ${e?.message}`);
       }
 
       // Refresh app context each iteration
+      const _refreshStart = Date.now();
       try {
         currentAppPackage = await AppController.getActivePackage() || currentAppPackage;
       } catch { /* keep previous */ }
 
+      const _nodesStart = Date.now();
       const nodes = await this.getNodes();
+      console.warn(`[REACT_TIMING] iter=${iteration} refresh=${_nodesStart - _refreshStart}ms getNodes=${Date.now() - _nodesStart}ms nodes=${nodes.length}`);
+
+      // Auth/blocker detection — stop if we hit a login wall
+      const AUTH_PATTERNS = /\b(sign.?in|log.?in|password|captcha|verify your|enter.?code|two.?factor|2fa|create.?account|register now)\b/i;
+      const authNode = nodes.find(n => {
+        const label = (n.t || n.d || '').trim();
+        return label.length > 2 && label.length < 60 && AUTH_PATTERNS.test(label);
+      });
+      if (authNode && iteration > 1) {
+        const authLabel = (authNode.t || authNode.d || '').trim();
+        console.warn(`[REACT] AUTH_WALL detected: "${authLabel}" at iter ${iteration}`);
+        return { success: false, steps, finalObservation: `Authentication required: screen shows "${authLabel}". User needs to sign in.`, goalAchieved: false, error: 'auth_required' };
+      }
+
       const deterministicAction = nodes.length > 0 ? this.executeDeterministic(parsedGoal, nodes, steps) : null;
 
       if (deterministicAction) {
         DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: DETERMINISTIC action="${deterministicAction}"`);
         if (/^done$/i.test(deterministicAction.trim())) {
           steps.push({ iteration, observation, reasoning: 'deterministic:done', action: deterministicAction, actionResult: true, uiChanged: false });
+          // Verify we're on the correct app before declaring success
+          if (expectedPkg) {
+            const donePkg = await AppController.getActivePackage().catch(() => '');
+            if (donePkg === 'com.agent.ultra' || (donePkg && donePkg !== expectedPkg)) {
+              DebugLog.error('ReActLoop', `DONE rejected: on ${donePkg}, expected ${expectedPkg}`);
+              return { success: false, steps, finalObservation: `Goal declared done but wrong app active (${donePkg})`, goalAchieved: false, error: 'wrong_app_at_done' };
+            }
+          }
           return { success: true, steps, finalObservation: observation, goalAchieved: true };
         }
 
@@ -248,21 +352,43 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
       }
 
       deterministicFailCount++;
+
+      // Auto-scroll after 2 deterministic failures — target element may be below the fold
+      if (deterministicFailCount === 2 && nodes.length > 5) {
+        console.warn(`[REACT] auto_scroll: deterministic failed ${deterministicFailCount}x, scrolling down to find target`);
+        await AppController.performScroll('down');
+        await this.sleep(600);
+        observation = await this.observe();
+        steps.push({ iteration, observation, reasoning: 'auto_scroll', action: 'scroll(down)', actionResult: true, uiChanged: true });
+        continue;
+      }
+
       if (!this.allowLLMFallback) {
         DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: deterministic exhausted with no LLM fallback`);
         break;
       }
 
+      const _iterStart = Date.now();
       DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: Falling back to LLM (deterministic failed ${deterministicFailCount}x)`);
 
-      let enhancedObservation = observation;
-      if (nodes.length < this.visionSparseThreshold && this.allowLLMFallback) {
-        const visionCtx = await this.tryGetVisionContext();
-        if (visionCtx) {
-          enhancedObservation = `${visionCtx}\n\n${observation}`;
-          DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: sparse screen (${nodes.length} nodes), vision context prepended`);
+      // Sparse screen (1-3 nodes) = likely a dialog/overlay/tooltip blocking the real UI
+      // Dismiss it with Back instead of calling the expensive vision API
+      if (nodes.length <= 3 && nodes.length > 0) {
+        console.warn(`[REACT] sparse_screen nodes=${nodes.length} — dismissing overlay with Back`);
+        DebugLog.systemEvent('ReActLoop', `STEP ${iteration}: sparse screen (${nodes.length} nodes), dismissing overlay`);
+        await AppController.performBack();
+        await this.sleep(800);
+        observation = await this.observe();
+        const refreshedNodes = await this.getNodes();
+        console.warn(`[REACT] after_dismiss nodes=${refreshedNodes.length}`);
+        if (refreshedNodes.length > 3) {
+          // Overlay dismissed, continue with refreshed observation
+          steps.push({ iteration, observation, reasoning: 'dismiss_overlay', action: 'back()', actionResult: true, uiChanged: true });
+          continue;
         }
       }
+
+      let enhancedObservation = observation;
 
       const planContext = plan.length > 0 && currentPlanStep < plan.length
         ? `\nCURRENT STEP (${currentPlanStep + 1}/${plan.length}): ${plan[currentPlanStep]}`
@@ -275,12 +401,13 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
 Choose ONE action to make progress toward the current step.
 ACTIONS YOU CAN USE:
 - tap_index(N)   tap element by its index number
-- tap(N)         same as tap_index(N)
-- type("text")   type text into focused field
+- tap(N)         same as tap_index(N) — ALWAYS use this, never guess x,y coordinates
+- type("text")   type text into focused field (auto-presses Enter/Go)
+- submit()       press Enter/Go/Search on keyboard (use after type if needed)
 - scroll(down)   scroll the screen down
 - scroll(up)     scroll the screen up
 - back()         press the back button
-- done           goal is complete
+- done           goal is complete — ONLY use after verifying the screen shows the expected result
 
 Respond with ONLY the action. No explanation. No prefix. Just the action.`;
 
@@ -291,9 +418,13 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
       const historyLine = recentSteps ? `\nRECENT ACTIONS:\n${recentSteps}\n` : '';
 
       const userMessage = `GOAL: ${goal}${planContext}${remainingPlan}${historyLine}\n\nSCREEN:\n${enhancedObservation.slice(0, 1500)}\n\nACTION:`;
+      const fullPrompt = `${systemPrompt}\n\n${userMessage}`;
+      console.warn(`[REACT_TIMING] prompt_chars=${fullPrompt.length} est_tokens=${Math.ceil(fullPrompt.length / 4)} nodes=${nodes.length}`);
       let reasoning: string;
       try {
-        reasoning = await this.aiCall(`${systemPrompt}\n\n${userMessage}`);
+        const _aiStart = Date.now();
+        reasoning = await this.aiCall(fullPrompt);
+        console.warn(`[REACT_TIMING] aiCall: ${Date.now() - _aiStart}ms response_len=${reasoning.length}`);
       } catch (err: any) {
         DebugLog.error('ReActLoop', `AI failed at step ${iteration}: ${err.message}`);
         break;
@@ -308,6 +439,14 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
       if (/^done$/i.test(action.trim())) {
         steps.push({ iteration, observation, reasoning, action, actionResult: true, uiChanged: false });
         DebugLog.systemEvent('ReActLoop', `DONE at step ${iteration}`);
+        // Verify we're on the correct app before declaring success
+        if (expectedPkg) {
+          const donePkg = await AppController.getActivePackage().catch(() => '');
+          if (donePkg === 'com.agent.ultra' || (donePkg && donePkg !== expectedPkg)) {
+            DebugLog.error('ReActLoop', `DONE rejected: on ${donePkg}, expected ${expectedPkg}`);
+            return { success: false, steps, finalObservation: `Goal declared done but wrong app active (${donePkg})`, goalAchieved: false, error: 'wrong_app_at_done' };
+          }
+        }
         return { success: true, steps, finalObservation: observation, goalAchieved: true };
       }
 
@@ -349,7 +488,15 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
       observation = newObservation;
     }
 
-    const goalAchieved = await this.checkCompletion(parsedGoal, observation);
+    let goalAchieved = await this.checkCompletion(parsedGoal, observation);
+    // Reject goalAchieved if we're on the wrong app
+    if (goalAchieved && expectedPkg) {
+      const finalPkg = await AppController.getActivePackage().catch(() => '');
+      if (finalPkg === 'com.agent.ultra' || (finalPkg && finalPkg !== expectedPkg)) {
+        DebugLog.error('ReActLoop', `goalAchieved overridden: on ${finalPkg}, expected ${expectedPkg}`);
+        goalAchieved = false;
+      }
+    }
     DebugLog.systemEvent('ReActLoop', `COMPLETE goalAchieved=${goalAchieved} steps=${steps.length}`);
     return { success: goalAchieved, steps, finalObservation: observation, goalAchieved };
   }
@@ -441,7 +588,30 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
       }
 
       const tapMatch = a.match(/^tap\(\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
-      if (tapMatch) return await performTap(parseInt(tapMatch[1], 10), parseInt(tapMatch[2], 10));
+      if (tapMatch) {
+        // LLM guessed raw coordinates — snap to nearest node center for accuracy
+        const rawX = parseInt(tapMatch[1], 10);
+        const rawY = parseInt(tapMatch[2], 10);
+        try {
+          const flat = await getScreenContentFlat();
+          const nodes = JSON.parse(flat) as FlatNode[];
+          if (Array.isArray(nodes) && nodes.length > 0) {
+            let closest: FlatNode | null = null;
+            let closestDist = Infinity;
+            for (const n of nodes) {
+              if (!n.c && !n.e) continue; // only interactive nodes
+              const dist = Math.sqrt((n.x - rawX) ** 2 + (n.y - rawY) ** 2);
+              if (dist < closestDist) { closestDist = dist; closest = n; }
+            }
+            if (closest && closestDist < 150) {
+              DebugLog.systemEvent('ReActLoop', `TAP SNAP: (${rawX},${rawY}) → node[${closest.i}] at (${closest.x},${closest.y}) dist=${Math.round(closestDist)}`);
+              return await performTap(closest.x, closest.y);
+            }
+          }
+        } catch {}
+        // Fallback to raw coordinates if no nearby node found
+        return await performTap(rawX, rawY);
+      }
 
       // tap(N) with single arg = tap by node index (alias for tap_index(N))
       const tapSingleMatch = a.match(/^tap\(\s*(\d+)\s*\)$/i);
@@ -464,8 +634,25 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
         return false;
       }
 
+      if (/^submit\(\)$/i.test(a) || /^enter\(\)$/i.test(a)) {
+        return await AppController.performImeAction();
+      }
+
       const typeMatch = a.match(/^type\(\s*["']?(.+?)["']?\s*\)$/i);
-      if (typeMatch) return await AppController.performText('', typeMatch[1]);
+      if (typeMatch) {
+        const typed = await AppController.performText('', typeMatch[1]);
+        console.warn(`[REACT] type result=${typed} text="${typeMatch[1].slice(0, 30)}"`);
+        if (typed) {
+          // Auto-submit after typing — no sleep, fire immediately
+          try {
+            const imeResult = await AppController.performImeAction();
+            console.warn(`[REACT] auto_ime_enter result=${imeResult}`);
+          } catch (imeErr: any) {
+            console.warn(`[REACT] auto_ime_enter error: ${imeErr.message}`);
+          }
+        }
+        return typed;
+      }
 
       const swipeMatch = a.match(/^swipe\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
       if (swipeMatch) {
@@ -541,24 +728,35 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
     const raw = goal.trim();
     const g = raw.toLowerCase();
 
-    const searchMatch = raw.match(/(?:search|find|look\s*up|browse|google)\s+(?:for\s+)?["']?(.+?)["']?(?:\s+(?:in|on|using|within).*)?$/i);
+    // "search for X" / "find X" / "look up X" / "google X"
+    const searchMatch = raw.match(/(?:search|find|look\s*up|browse|google)\s+(?:for\s+)?["']?(.+?)["']?$/i);
     if (searchMatch) {
       return { action: 'search', target: 'search_field', value: searchMatch[1].trim() };
     }
 
+    // "tap X" / "click X" / "press X"
     const tapMatch = raw.match(/^(?:tap|click|press|select|choose)\s+(?:the\s+)?["']?(.+?)["']?(?:\s+button)?$/i);
     if (tapMatch) {
       return { action: 'tap', target: tapMatch[1].trim(), value: '' };
     }
 
+    // "type X" / "enter X into Y"
     const typeMatch = raw.match(/^(?:type|enter|input|fill\s+in)\s+["']?(.+?)["']?(?:\s+(?:in|into|to)\s+(.+))?$/i);
     if (typeMatch) {
       return { action: 'type', target: typeMatch[2]?.trim() || 'input_field', value: typeMatch[1].trim() };
     }
 
+    // "scroll up/down"
     const scrollMatch = raw.match(/^scroll\s+(up|down)$/i);
     if (scrollMatch) {
       return { action: 'scroll', target: scrollMatch[1].toLowerCase(), value: '' };
+    }
+
+    // If goal contains "search" anywhere, treat as search
+    const implicitSearch = raw.match(/^.*?\b(?:search|look up|find)\b.*?["'](.+?)["'].*$/i)
+      || raw.match(/^.*?\b(?:search|look up|find)\b\s+(?:for\s+)?(.+)$/i);
+    if (implicitSearch) {
+      return { action: 'search', target: 'search_field', value: implicitSearch[1].trim() };
     }
 
     return { action: 'tap', target: g.slice(0, 40), value: '' };
@@ -607,19 +805,30 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
   }
 
   private findSearchField(nodes: FlatNode[]): FlatNode | null {
+    // First try editable fields (focused text inputs)
     const editable = nodes.filter((node) => node.e);
-    if (editable.length === 0) return null;
+    if (editable.length > 0) {
+      const scored = editable
+        .map((node) => {
+          const label = `${node.t || ''} ${node.d || ''}`.trim();
+          let score = SEARCH_FIELD_HINT.test(label) ? 100 : 10;
+          if (node.c) score += 5;
+          return { node, score };
+        })
+        .sort((a, b) => b.score - a.score);
+      return scored[0]?.node ?? null;
+    }
 
-    const scored = editable
+    // Fallback: clickable nodes with search-like labels (e.g. Chrome's "Search Google or type URL")
+    const searchClickable = nodes
+      .filter((node) => node.c && SEARCH_FIELD_HINT.test(`${node.t || ''} ${node.d || ''}`))
       .map((node) => {
         const label = `${node.t || ''} ${node.d || ''}`.trim();
-        let score = SEARCH_FIELD_HINT.test(label) ? 100 : 10;
-        if (node.c) score += 5;
+        const score = /url|address|omnibox/i.test(label) ? 110 : 100;
         return { node, score };
       })
       .sort((a, b) => b.score - a.score);
-
-    return scored[0]?.node ?? null;
+    return searchClickable.length > 0 ? searchClickable[0].node : null;
   }
 
   private findSearchSubmit(nodes: FlatNode[]): FlatNode | null {
@@ -662,7 +871,20 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
 
   private executeDeterministic(parsed: ParsedGoal, nodes: FlatNode[], steps: ReActStep[]): string | null {
     const lastAction = steps.length > 0 ? steps[steps.length - 1].action.trim().toLowerCase() : '';
+    const lastUiChanged = steps.length > 0 ? steps[steps.length - 1].uiChanged : false;
 
+    // ── PATTERN 1: Dialog/popup dismissal ──────────────────────────────
+    // Only on small screens (≤10 nodes) after the first iteration — likely a blocking dialog
+    const dismissPatterns = /^(ok|got it|accept|allow|continue|not now|skip|no thanks|dismiss|close|maybe later|i agree)$/i;
+    if (steps.length > 0 && nodes.length <= 10 && nodes.length >= 2) {
+      const dialogButton = nodes.find(n => n.c && dismissPatterns.test((n.t || n.d || '').trim()));
+      if (dialogButton) {
+        console.warn(`[REACT_DET] dismiss_dialog: tapping "${(dialogButton.t || dialogButton.d || '').trim()}" node=${dialogButton.i}`);
+        return `tap_index(${dialogButton.i})`;
+      }
+    }
+
+    // ── PATTERN 2: Search task (parsed or inferred) ────────────────────
     if (parsed.action === 'search') {
       const query = parsed.value || parsed.target;
       const queryVisible = this.isQueryVisible(nodes, query);
@@ -670,53 +892,94 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
       const searchField = this.findSearchField(nodes);
       const searchSubmit = this.findSearchSubmit(nodes);
 
-      if (!lastAction && searchField) {
-        return `tap_index(${searchField.i})`;
-      }
-
-      if (lastAction.startsWith('type(')) {
-        if (searchSubmit) return `tap_index(${searchSubmit.i})`;
-        if (queryVisible && resultsVisible) return 'done';
-        return null;
-      }
-
+      // Goal already achieved — query visible + results showing
       if (queryVisible && resultsVisible) return 'done';
 
-      if (lastAction.startsWith('tap_index(') || lastAction.startsWith('tap(')) {
-        if (searchField) return `type("${this.escapeForAction(query)}")`;
+      // Just typed → auto-submit handles Enter, check for results
+      if (lastAction.startsWith('type(')) {
+        if (queryVisible && resultsVisible) return 'done';
+        if (searchSubmit) return `tap_index(${searchSubmit.i})`;
+        return null; // let LLM decide or wait for UI to update
       }
 
+      // Just tapped a field → type the query
+      if (lastAction.startsWith('tap_index(') || lastAction.startsWith('tap(')) {
+        if (!queryVisible) return `type("${this.escapeForAction(query)}")`;
+      }
+
+      // Search field visible → tap it
       if (searchField && !queryVisible) {
         return `tap_index(${searchField.i})`;
       }
 
-      if (searchSubmit && queryVisible) {
-        return `tap_index(${searchSubmit.i})`;
-      }
-
+      if (searchSubmit && queryVisible) return `tap_index(${searchSubmit.i})`;
       if (queryVisible) return 'done';
       return null;
     }
 
+    // ── PATTERN 3: Toggle task (goal mentions on/off/enable/disable/toggle) ──
+    const goalLower = `${parsed.target} ${parsed.value}`.toLowerCase();
+    const toggleMatch = goalLower.match(/(?:turn|switch|toggle|enable|disable)\s+(?:on|off)?\s*(.+?)(?:\s+(?:on|off))?$/);
+    if (toggleMatch) {
+      const toggleTarget = toggleMatch[1].trim();
+      // Find a switch/toggle node matching the target
+      const switchNode = nodes.find(n => {
+        const label = `${n.t || ''} ${n.d || ''}`.toLowerCase();
+        return n.c && label.includes(toggleTarget);
+      });
+      if (switchNode) {
+        console.warn(`[REACT_DET] toggle: tapping "${(switchNode.t || switchNode.d || '').trim()}" node=${switchNode.i}`);
+        return `tap_index(${switchNode.i})`;
+      }
+    }
+
+    // ── PATTERN 4: Direct tap target ───────────────────────────────────
     if (parsed.action === 'tap') {
       const node = this.findNodeByText(nodes, parsed.target, { clickableOnly: true, preferNonEditable: true });
       if (node) return `tap_index(${node.i})`;
+
+      // Partial match: try individual words from the target
+      const words = parsed.target.split(/\s+/).filter(w => w.length > 3);
+      for (const word of words) {
+        const partial = this.findNodeByText(nodes, word, { clickableOnly: true, preferNonEditable: true });
+        if (partial) {
+          console.warn(`[REACT_DET] partial_tap: "${word}" → node=${partial.i} "${(partial.t || partial.d || '').trim()}"`);
+          return `tap_index(${partial.i})`;
+        }
+      }
       return null;
     }
 
+    // ── PATTERN 5: Type task ───────────────────────────────────────────
     if (parsed.action === 'type') {
-      const field = parsed.target !== 'input_field'
-        ? this.findNodeByText(nodes, parsed.target, { clickableOnly: true, preferNonEditable: false }) || this.findSearchField(nodes)
-        : this.findSearchField(nodes);
       if (lastAction.startsWith('tap_index(') || lastAction.startsWith('tap(')) {
         return `type("${this.escapeForAction(parsed.value)}")`;
       }
+      const field = parsed.target !== 'input_field'
+        ? this.findNodeByText(nodes, parsed.target, { clickableOnly: true, preferNonEditable: false }) || this.findSearchField(nodes)
+        : this.findSearchField(nodes);
       if (field) return `tap_index(${field.i})`;
       return null;
     }
 
+    // ── PATTERN 6: Scroll ──────────────────────────────────────────────
     if (parsed.action === 'scroll') {
       return `scroll(${parsed.target})`;
+    }
+
+    // ── PATTERN 7: Goal text matches a visible clickable element ───────
+    // Even if parseGoal fell through to 'tap', try matching goal words against nodes
+    const goalWords = goalLower.split(/\s+/).filter(w => w.length > 3);
+    for (const word of goalWords) {
+      const match = nodes.find(n => {
+        if (!n.c) return false;
+        const label = `${n.t || ''} ${n.d || ''}`.toLowerCase();
+        return label.includes(word) && !/(systemui|status|battery|clock|wifi|signal)/i.test(label);
+      });
+      if (match) {
+        console.warn(`[REACT_DET] goal_word_match: "${word}" → node=${match.i} "${(match.t || match.d || '').trim()}"`);
+        return `tap_index(${match.i})`;
+      }
     }
 
     return null;

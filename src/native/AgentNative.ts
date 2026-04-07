@@ -46,6 +46,7 @@ export interface AgentNativeInterface {
   getConnectedBluetoothDevices(): Promise<string[]>;
   startBackgroundAgent(): Promise<boolean>;
   stopBackgroundAgent(): Promise<boolean>;
+  startReActTask(goal: string, appHint: string, taskId: string): Promise<boolean>;
   getContentUriForFile(filePath: string): Promise<string>;
 }
 
@@ -83,6 +84,7 @@ const noopModule: AgentNativeInterface = {
   getConnectedBluetoothDevices: async () => [],
   startBackgroundAgent: async () => false,
   stopBackgroundAgent: async () => false,
+  startReActTask: async () => false,
   getContentUriForFile: async (filePath: string) => filePath,
 };
 
@@ -144,6 +146,8 @@ function createNativeWrapper(): AgentNativeInterface {
       native.stopBackgroundAgent ? native.stopBackgroundAgent() : Promise.resolve(false),
     getContentUriForFile: (filePath: string) =>
       native.getContentUriForFile ? native.getContentUriForFile(filePath) : Promise.resolve(filePath),
+    startReActTask: (goal: string, appHint: string, taskId: string) =>
+      native.startReActTask ? native.startReActTask(goal, appHint, taskId) : Promise.resolve(false),
   };
 }
 

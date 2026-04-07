@@ -14,6 +14,7 @@ import {
   TouchableWithoutFeedback,
   Image,
   Share,
+  DeviceEventEmitter,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppStorage } from "@/src/utils/AppStorage";
@@ -112,6 +113,23 @@ export default function ChatScreen() {
     return () => UltraDevLog.setCurrentScreen('unknown');
   }, []);
 
+  // Voice input: listen for speech recognition results
+  useEffect(() => {
+    let sub: any = null;
+    (async () => {
+      try {
+        const { ExpoSpeechRecognitionModule } = await import('expo-speech-recognition');
+        sub = ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
+          const transcript = event.results?.[0]?.transcript;
+          if (transcript) {
+            setInput(prev => prev ? prev + ' ' + transcript : transcript);
+          }
+        });
+      } catch {}
+    })();
+    return () => { if (sub) sub.remove(); };
+  }, []);
+
   // Onboarding & biometric lock
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isAppLocked, setIsAppLocked] = useState(false);
@@ -148,6 +166,7 @@ export default function ChatScreen() {
   const [pendingReplay, setPendingReplay] = useState<{
     userInput: string;
     type: "approval";
+    pendingState?: any;
   } | null>(null);
 
   // Copy feedback
@@ -629,7 +648,7 @@ export default function ChatScreen() {
   const handleResult = useCallback(
     async (result: UltraExecutionResult, core: AgentCore, convId: string) => {
       if (result.type === "approval_required") {
-        setPendingReplay({ userInput: result.data?.replayUserInput || "", type: "approval" });
+        setPendingReplay({ userInput: result.data?.replayUserInput || "", type: "approval", pendingState: result.data?.pendingState });
       }
       await reloadMessages(core, convId);
       await refreshConversations(core);
@@ -844,7 +863,10 @@ export default function ChatScreen() {
     setStatus("Executing approved action...");
     try {
       const args: ExecuteArgs = { conversationId, userInput: replay.userInput, replay: true };
-      if (replay.type === "approval") args.approvedAction = true;
+      if (replay.type === "approval") {
+        args.approvedAction = true;
+        if (replay.pendingState) (args as any).pendingState = replay.pendingState;
+      }
       const result = await agentCore.execute(args);
       await handleResult(result, agentCore, conversationId);
       UltraDevLog.push('EFFECT', { component: 'ChatScreen', action: 'approve', success: result.type !== 'error', resultType: result.type });
@@ -1297,14 +1319,33 @@ export default function ChatScreen() {
             </View>
           )}
 
-          {/* Message content */}
+          {/* Message content — with inline image support */}
           {(() => {
             const MAX_CHARS = 4000;
             const isLong = item.content.length > MAX_CHARS;
             const isExpanded = expandedMsgs.has(item.id);
             const displayText = isLong && !isExpanded ? item.content.slice(0, MAX_CHARS) + "…" : item.content;
+
+            // Check for image paths in message data or content
+            const imagePath = item.meta?.data?.path || item.meta?.data?.uri;
+            const imageMatch = item.content.match(/(?:^|\s)(file:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp))/i)
+              || item.content.match(/(?:^|\s)(\/[\w/.-]+\.(?:png|jpg|jpeg|gif|webp))/i);
+            const inlineImageUri = imagePath || (imageMatch ? imageMatch[1] : null);
+
             return (
               <>
+                {inlineImageUri && (
+                  <Pressable onPress={() => {
+                    // Open image fullscreen
+                    try { require('expo-intent-launcher').startActivityAsync('android.intent.action.VIEW', { data: inlineImageUri.startsWith('file://') ? inlineImageUri : `file://${inlineImageUri}`, type: 'image/*' }); } catch {}
+                  }}>
+                    <Image
+                      source={{ uri: inlineImageUri.startsWith('file://') ? inlineImageUri : `file://${inlineImageUri}` }}
+                      style={{ width: 250, height: 250, borderRadius: 12, marginBottom: 8, backgroundColor: '#1a1a1a' }}
+                      resizeMode="contain"
+                    />
+                  </Pressable>
+                )}
                 <Text selectable style={[
                   styles.messageText,
                   isUser && styles.userText,
@@ -1642,6 +1683,7 @@ export default function ChatScreen() {
 
           {/* Input row: image button | text input | send button */}
           <View style={styles.inputRow}>
+            {/* Image picker */}
             <Pressable
               onPress={async () => {
                 try {
@@ -1666,6 +1708,49 @@ export default function ChatScreen() {
               <Ionicons name="image-outline" size={20} color={DIM} />
             </Pressable>
 
+            {/* Camera capture */}
+            <Pressable
+              onPress={async () => {
+                try {
+                  const ImagePicker = await import('expo-image-picker');
+                  const result = await ImagePicker.launchCameraAsync({
+                    mediaTypes: ['images'],
+                    quality: 0.7,
+                    base64: true,
+                    allowsEditing: false,
+                  });
+                  if (!result.canceled && result.assets?.[0]?.base64) {
+                    setPendingImage({
+                      uri: result.assets[0].uri,
+                      base64: result.assets[0].base64!,
+                      mimeType: result.assets[0].mimeType || 'image/jpeg',
+                    });
+                  }
+                } catch (e: any) { DebugLog.error('CameraCapture', e?.message || 'unknown'); }
+              }}
+              style={({ pressed }) => [styles.plusBtn, pressed && styles.plusBtnPressed, { marginRight: -4 }]}
+            >
+              <Ionicons name="camera-outline" size={20} color={DIM} />
+            </Pressable>
+
+            {/* Voice input — tap to dictate */}
+            <Pressable
+              onPress={async () => {
+                try {
+                  const { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } = await import('expo-speech-recognition');
+                  const available = await ExpoSpeechRecognitionModule.isRecognitionAvailable();
+                  if (!available) { Alert.alert('Speech recognition not available on this device'); return; }
+                  const perms = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+                  if (perms.status !== 'granted') { Alert.alert('Microphone permission required'); return; }
+                  ExpoSpeechRecognitionModule.start({ lang: 'en-US', interimResults: false });
+                  // Results are handled via the event listener set up in useEffect
+                } catch (e: any) { DebugLog.error('VoiceInput', e?.message || 'unknown'); Alert.alert('Voice input error', e?.message); }
+              }}
+              style={({ pressed }) => [styles.plusBtn, pressed && styles.plusBtnPressed, { marginRight: -4 }]}
+            >
+              <Ionicons name="mic-outline" size={20} color={DIM} />
+            </Pressable>
+
             <TextInput
               ref={inputRef}
               value={input}
@@ -1687,6 +1772,7 @@ export default function ChatScreen() {
                   DebugLog.uiStopRequest(!!agentCore);
                   snapUI("stop_request");
                   if (agentCore) agentCore.abortCurrentRequest();
+                  DeviceEventEmitter.emit('cancelReActLoop');
                 }}
                 style={styles.stopBtn}
               >
