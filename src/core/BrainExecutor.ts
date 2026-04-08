@@ -196,19 +196,9 @@ HOW YOU THINK:
 7. If something fails, try a different approach — don't give up
 
 RESPONSE FORMAT:
-- To use a tool: respond with ONLY a JSON object: {"tool":"name","params":{...}}
-- To talk to the user: respond with plain text (no JSON)
+- To use a tool: {"tool":"name","params":{...}}
+- To talk to the user: plain text (no JSON)
 - ONE tool call per response. You will see the result and can continue.
-- ALWAYS use a tool when the user asks you to DO something (toggle, search, set, open, send, etc.)
-- Only respond with plain text for greetings, questions you can answer from context, or after a tool result.
-
-EXAMPLES:
-User: "turn on the flashlight" → {"tool":"flashlight_toggle","params":{"state":"on"}}
-User: "what's the weather" → {"tool":"weather","params":{}}
-User: "set volume to 50" → {"tool":"volume_set","params":{"level":50}}
-User: "search for pizza near me" → {"tool":"web_search","params":{"query":"pizza near me"}}
-User: "open chrome" → {"tool":"app_launch","params":{"target":"chrome"}}
-User: "hello" → Hello! How can I help you?
 
 PROBLEM-SOLVING RULES:
 - You have up to 12 tool calls per task. Use them wisely.
@@ -263,13 +253,8 @@ SAFETY:
 TOOLS:
 ${TOOLS}
 
-CRITICAL RULES:
-- After calling a toggle tool (wifi_toggle, bluetooth_toggle, flashlight_toggle, etc.), your NEXT response MUST be plain text confirming the action. Do NOT call any more tools. The toggle already worked.
-- After calling volume_set, brightness_set, or any simple action tool, your NEXT response MUST be plain text. Do NOT call react_navigate or app_launch to "check" or "verify".
-- NEVER use react_navigate to go to Settings. Use the dedicated tools instead.
-
-TOOL ROUTING (use the most direct tool available):
-- Toggle wifi/bluetooth/airplane/DND/flashlight → use the dedicated toggle tool (NOT react_navigate, NOT app_launch, NOT settings)
+TOOL SELECTION (use the most direct tool available):
+- Toggle wifi/bluetooth/airplane/DND/flashlight → use the dedicated toggle tool (NOT react_navigate, NOT app_launch)
 - Set volume/brightness → volume_set / brightness_set
 - Play/pause/skip music → media_play / media_next
 - Open a settings screen → app_launch with the settings name (e.g. target="wifi settings")
@@ -285,9 +270,7 @@ TOOL ROUTING (use the most direct tool available):
 - "My name is X" → set_user_name
 - "Install X" / "Download X" / "Get X app" → install_app
 - If a task needs an app you don't have → install_app first, then use it
-- NEVER put a URL into web_search
-- NEVER invent or guess URLs for react_navigate appHint — use app names (e.g. "chrome", "settings"), not domains
-- For web browsing tasks, set appHint to "chrome" and put the search query in goal`;
+- NEVER put a URL into web_search`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -653,18 +636,12 @@ export class BrainExecutor {
 
       let toolCall = parseToolCall(rawResponse);
 
-      // ── INFERENCE-FIRST: on turn 0, use deterministic intent detection from the
-      // user's original request. This overrides the model's tool choice because
-      // models frequently select the wrong tool (e.g. web_search for "open calculator").
-      // On subsequent turns (tool result follow-ups), trust the model's choice.
-      if (turn === 0) {
+      // ── FALLBACK: if model responded as plain text on turn 0, try deterministic
+      // intent detection as a safety net. Trust the model's JSON when it provides it.
+      if (!toolCall && turn === 0) {
         const inferred = inferToolFromText(userInput);
         if (inferred) {
-          if (toolCall && toolCall.tool !== inferred.tool) {
-            console.warn('[BRAIN] tool_override:', toolCall.tool, '→', inferred.tool, '(inference takes priority on turn 0)');
-          } else if (!toolCall) {
-            console.warn('[BRAIN] tool_inferred:', inferred.tool, 'from user input (model returned plain text)');
-          }
+          console.warn('[BRAIN] tool_inferred:', inferred.tool, 'from user input (model returned plain text)');
           toolCall = inferred;
         }
       }
@@ -779,19 +756,8 @@ export class BrainExecutor {
     const conv = await this.conversations.loadConversation(conversationId);
     // Keep last 6 messages, then trim total payload to ~8KB of conversation
     // (system prompt is separate ~8KB, total target <16KB to keep LLM response <3s)
-    // IMPORTANT: Filter out plain-text assistant replies from context — they teach the
-    // model to respond as text instead of using tools. Only keep tool-call exchanges.
     let msgs = conv
-      ? conv.messages.slice(-6)
-          .filter((m: any) => {
-            // Always keep user messages
-            if (m.role === 'user') return true;
-            // Keep assistant messages that contain tool JSON or tool results
-            if (m.role === 'assistant' && m.content && (m.content.includes('"tool"') || m.content.includes('[Tool result'))) return true;
-            // Keep the very last assistant message (the most recent response)
-            return false;
-          })
-          .map((m: any) => ({ role: m.role, content: m.content }))
+      ? conv.messages.slice(-6).map((m: any) => ({ role: m.role, content: m.content }))
       : [];
     // Trim from oldest if conversation content exceeds 8KB
     const MAX_CONV_CHARS = 8000;
