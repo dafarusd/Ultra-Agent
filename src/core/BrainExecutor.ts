@@ -293,6 +293,71 @@ TOOL ROUTING (use the most direct tool available):
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
+// TOOL INFERENCE — when the model responds as plain text instead of JSON,
+// detect common action patterns from the user's original request and
+// synthesize the appropriate tool call.
+// ─────────────────────────────────────────────────────────────────────────────
+function inferToolFromText(userInput: string): { tool: string; params: Record<string, any> } | null {
+  const u = userInput.toLowerCase().trim();
+
+  // Toggles
+  if (/\b(flashlight|torch|flash)\b/.test(u)) {
+    const state = /\b(off|disable)\b/.test(u) ? 'off' : /\b(on|enable)\b/.test(u) ? 'on' : undefined;
+    return { tool: 'flashlight_toggle', params: state ? { state } : {} };
+  }
+  if (/\b(wi-?fi|wifi)\b/.test(u) && /\b(toggle|turn|switch|enable|disable|on|off)\b/.test(u)) {
+    return { tool: 'wifi_toggle', params: {} };
+  }
+  if (/\bbluetooth\b/.test(u) && /\b(toggle|turn|switch|enable|disable|on|off)\b/.test(u)) {
+    return { tool: 'bluetooth_toggle', params: {} };
+  }
+  if (/\b(airplane|flight)\s*mode\b/.test(u) && /\b(toggle|turn|switch|enable|disable|on|off)\b/.test(u)) {
+    return { tool: 'airplane_mode', params: {} };
+  }
+  if (/\b(do not disturb|dnd)\b/.test(u) && /\b(toggle|turn|switch|enable|disable|on|off)\b/.test(u)) {
+    return { tool: 'do_not_disturb', params: {} };
+  }
+
+  // Volume
+  const volMatch = u.match(/\bvolume\b.*?(\d+)/);
+  if (volMatch) return { tool: 'volume_set', params: { level: parseInt(volMatch[1], 10) } };
+  if (/\bvolume\s+(up|down)\b/.test(u)) {
+    const dir = u.includes('up') ? 'up' : 'down';
+    return { tool: 'volume_set', params: { direction: dir } };
+  }
+
+  // Weather
+  if (/\b(weather|forecast|temperature)\b/.test(u)) {
+    const locMatch = u.match(/(?:weather|forecast|temperature)\s+(?:in|at|for)\s+(.+)/i);
+    return { tool: 'weather', params: locMatch ? { location: locMatch[1].trim() } : {} };
+  }
+
+  // Web search
+  if (/\b(search|google|look up)\b/.test(u) && /\b(web|internet|online|for)\b/.test(u)) {
+    const queryMatch = u.match(/(?:search|google|look up)\s+(?:the\s+)?(?:web\s+)?(?:for\s+)?(.+)/i);
+    return { tool: 'web_search', params: { query: queryMatch ? queryMatch[1].trim() : userInput } };
+  }
+
+  // Battery
+  if (/\bbatter(y|ies)\b/.test(u) && /\b(level|status|percent|charge|how much)\b/.test(u)) {
+    return { tool: 'battery_status', params: {} };
+  }
+
+  // Device info
+  if (/\b(device|phone|model)\b/.test(u) && /\b(info|name|what|which)\b/.test(u)) {
+    return { tool: 'device_info', params: {} };
+  }
+
+  // Screenshot
+  if (/\bscreenshot\b/.test(u)) return { tool: 'screenshot', params: {} };
+
+  // App launch (simple "open X")
+  const openMatch = u.match(/\b(?:open|launch|start)\s+(.+)/i);
+  if (openMatch) return { tool: 'app_launch', params: { target: openMatch[1].trim() } };
+
+  return null;
+}
+
 function uid(): string {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -452,7 +517,19 @@ export class BrainExecutor {
       const rawResponse = aiResult.content.trim();
       DebugLog.systemEvent('BrainExecutor', `AI response (${rawResponse.length} chars): ${rawResponse.slice(0, 120)}`);
 
-      const toolCall = parseToolCall(rawResponse);
+      let toolCall = parseToolCall(rawResponse);
+
+      // ── FALLBACK: if model responded as plain text but user asked for an action,
+      // detect the intent and synthesize a tool call. This handles models that
+      // describe actions instead of emitting JSON.
+      if (!toolCall && turn === 0) {
+        const inferred = inferToolFromText(userInput);
+        if (inferred) {
+          console.warn('[BRAIN] tool_inferred:', inferred.tool, 'from user input (model returned plain text)');
+          toolCall = inferred;
+        }
+      }
+
       console.warn('[BRAIN] tool_selected:', toolCall ? toolCall.tool : 'NONE (plain text)');
 
       if (!toolCall) {
