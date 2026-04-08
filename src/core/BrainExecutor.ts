@@ -370,12 +370,16 @@ function inferToolFromText(userInput: string): { tool: string; params: Record<st
     return { tool: 'contacts_read', params: nameMatch ? { name: nameMatch[1].trim() } : {} };
   }
 
+  // ── SCREEN READING (before clipboard — "read" must not match clipboard_read) ──
+  if (/\b(what'?s?\s+on\s+(?:the\s+)?screen|read\s+(?:the\s+)?screen|what\s+(?:do\s+)?(?:i|you)\s+see)\b/.test(u)) return { tool: 'read_text_on_screen', params: {} };
+  if (/\b(describe|what'?s\s+showing|what\s+is\s+this)\b/.test(u) && /\bscreen\b/.test(u)) return { tool: 'describe_screen', params: {} };
+
   // ── CLIPBOARD ────────────────────────────────────────────────────────
   if (/\b(copy|clipboard)\b/.test(u) && /\b(to clipboard|copy)\b/.test(u)) {
     const textMatch = raw.match(/(?:copy)\s+(?:this\s+)?(?:to\s+clipboard\s*:?\s*)?(.+?)(?:\s+to\s+clipboard)?$/i);
     return { tool: 'clipboard_write', params: { text: textMatch ? textMatch[1].trim() : '' } };
   }
-  if (/\b(paste|read|what'?s\s+(?:on|in)\s+(?:the\s+)?clipboard)\b/.test(u)) return { tool: 'clipboard_read', params: {} };
+  if (/\b(paste|what'?s\s+(?:on|in)\s+(?:the\s+)?clipboard)\b/.test(u)) return { tool: 'clipboard_read', params: {} };
 
   // ── FILES ────────────────────────────────────────────────────────────
   if (/\b(read|show|cat|view)\s+(?:the\s+)?(?:file|document)\b/.test(u)) {
@@ -430,9 +434,7 @@ function inferToolFromText(userInput: string): { tool: string; params: Record<st
     return { tool: 'tts', params: { text: ttsMatch ? ttsMatch[1].trim() : userInput } };
   }
 
-  // ── SCREEN READING ───────────────────────────────────────────────────
-  if (/\b(what'?s?\s+on\s+(?:the\s+)?screen|read\s+(?:the\s+)?screen|what\s+(?:do\s+)?(?:i|you)\s+see)\b/.test(u)) return { tool: 'read_text_on_screen', params: {} };
-  if (/\b(describe|what'?s\s+showing|what\s+is\s+this)\b/.test(u) && /\bscreen\b/.test(u)) return { tool: 'describe_screen', params: {} };
+  // (screen reading moved above clipboard)
 
   // ── NOTIFICATIONS ────────────────────────────────────────────────────
   if (/\b(notification|notifications)\b/.test(u) && /\b(read|show|check|any|what)\b/.test(u)) return { tool: 'notification_read', params: {} };
