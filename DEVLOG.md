@@ -20,11 +20,13 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-08 (Session 11 — Build 22 compiling, 20/48 tools tested on Build 21)
+**Last updated:** 2026-04-08 (Session 11 — Build 23 deployed, brain reverted to Session 10 prompt)
 
-**App status:** Build 21 deployed on device. Model: llama-3.3-70b on Venice.ai. Inference-first tool routing — deterministic intent detection overrides model's JSON on first turn. 15/48 tools tested, all passing. TypeScript 0 errors.
+**App status:** Build 23 deployed. Brain prompt reverted to Session 10 working state. Model: llama-3.3-70b on Venice.ai. Inference is FALLBACK only (fires when model returns plain text). All real bug fixes from code audit preserved. TypeScript 0 errors. Backup on D:\AgentUltra-Backup.
 
-**Current priority:** Continue testing remaining ~33 tools. All tested tools pass with inference-first routing. Backup project to D: drive at next build.
+**Current priority:** The brain is the product. Test autonomous reasoning — multi-step tasks, natural language understanding, problem-solving. NOT toggles or command parsing. Tools are infrastructure for the brain, not user features.
+
+**LAW:** Tools, toggles, abilities, functions — none of it is for the user directly. It all exists so that no matter what the user asks, the agent can DO it. If the brain can't reason, nothing else matters.
 
 **Build/Install commands:**
 - Copy: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'` (use latest timestamp)
@@ -143,7 +145,21 @@ Build 15 installed and tested. **isServiceEnabled false positive FIXED** — no 
 
 **Key insight:** `inferToolFromText` is now the primary tool router. The LLM is relegated to handling ambiguous/complex requests that inference can't pattern-match, and providing natural language responses after tool execution. This makes Agent Ultra model-agnostic — works regardless of model quality.
 
-#### Build 21 Test Results (CURRENT)
+#### Session 11 POSTMORTEM — What Went Wrong
+
+Claude Code spent the session progressively breaking a working brain by over-engineering tool routing:
+- Build 16: Filtered conversation context — removed examples that taught the model the tool-call pattern
+- Builds 17-18: Added CRITICAL RULES, one-shot EXAMPLES — bloated prompt from 9KB to 11KB, confused the model
+- Builds 19-21: Bypassed the brain entirely with `inferToolFromText` override — turned the agent into a command parser (Siri with extra steps)
+- Builds 22: Fixed regex bugs in the inference system that shouldn't have existed
+
+**Root cause:** Treated tool routing failures as a code problem. It was a model behavior issue that should have been investigated, not worked around. Each "fix" made the brain dumber.
+
+**Build 23 reverts to Session 10 prompt** — clean, simple, working. All real bug fixes kept (approval flow, self-interaction, accessibility, Samsung settings, flashlight state, URL guard, stop button). Inference kept as fallback only.
+
+**LESSON:** The brain is the product. Never sacrifice reasoning for plumbing. Test thinking first, not toggles.
+
+#### Build 21 Test Results (HISTORICAL — inference-override era, DO NOT replicate this approach)
 
 | # | Test | Model wanted | Inference overrode to | Result |
 |---|---|---|---|---|
