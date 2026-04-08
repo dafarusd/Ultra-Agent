@@ -20,15 +20,15 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-07 (Session 11 — Build 15 compiling, Build 14 tested)
+**Last updated:** 2026-04-07 (Session 11 — Build 17 compiling, Builds 14-16 tested)
 
-**App status:** Build 15 compiling in WSL. Build 14 was installed and tested on device. 48 tools. TypeScript 0 errors.
+**App status:** Build 17 compiling. Builds 14-16 tested. Context poisoning bug found and fixed (Build 16). Brain follow-up-to-Settings loop found and fixed (Build 17). 48 tools. TypeScript 0 errors.
 
-**Current priority:** Complete systematic testing of all 48 tools. Build 14 testing revealed 5 bugs, all fixed in Build 15 code. Build 15 is compiling — once done, install and continue testing from where Build 14 left off.
+**Current priority:** Install Build 17 and continue systematic testing. 7/48 tools passed on Build 14. Context fix and brain prompt fixes need runtime verification.
 
-**Build 15 build location:** `/home/<user>/agent-ultra/build-*.apk` in WSL. Copy to Windows with: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'`
-
-**Install command:** `adb -s <device-ip>:5555 install -r build-latest.apk`
+**Build/Install commands:**
+- Copy: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'` (use latest timestamp)
+- Install: `adb -s <device-ip>:5555 install -r build-latest.apk`
 
 **Wireless ADB:** WORKING at `<device-ip>:5555`. Set up via `adb tcpip 5555` then `adb connect <device-ip>:5555`. Reconnect after WiFi drops with `adb connect <device-ip>:5555`. Do NOT test wifi_toggle or airplane_mode over wireless ADB (kills connection).
 
@@ -117,16 +117,28 @@ All 5 bugs fixed, committed as `e70de49` (Build 15).
 
 #### Phase 3: Build 15 — COMPILING (in progress)
 
-Build 15 is compiling in WSL EAS. When complete:
-1. Copy APK: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'`
+#### Build 15-16 Testing — Context Poisoning Bug Found
+
+Build 15 installed and tested. **isServiceEnabled false positive FIXED** — no more false "disabled" warnings.
+
+**CRITICAL BUG:** Model stopped calling tools entirely — responded as plain text for ALL requests (flashlight, battery, volume). Root cause: conversation history contained plain-text assistant replies that taught the model to continue responding as text instead of JSON tool calls. **FIXED in Build 16:** `buildContextFromConversation` now filters out plain-text-only assistant messages, keeping only tool-call exchanges. Also merges consecutive same-role messages to maintain API role alternation.
+
+**Build 16 verified:** After context filter fix, model correctly selected `flashlight_toggle` on first turn. But then called `react_navigate` to Settings as follow-up (wasting time and causing stuck loops).
+
+**Build 17 fixes:**
+1. Brain prompt CRITICAL RULES: after toggle/simple action, next response MUST be plain text (no more follow-up tools)
+2. Brain prompt: NEVER use react_navigate to go to Settings
+3. ReActLoop: Samsung `com.android.settings.intelligence` treated as same app as `com.android.settings` (was causing infinite wrong-app relaunch loop)
+
+Build 17 compiling. When complete:
+1. Copy: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'` (use the latest timestamped file)
 2. Install: `adb -s <device-ip>:5555 install -r build-latest.apk`
-3. Re-enable accessibility service (Settings > Accessibility > Agent Ultra)
-4. Unlock biometric gate
-5. Continue testing from where Build 14 left off
+3. Tap "Allow permission" on file access dialog if it appears
+4. Continue testing
 
 #### Remaining tests (NOT YET RUN)
 
-These must all be tested on Build 15:
+These must all be tested on Build 17:
 
 1. Flashlight OFF (re-test with inference fix)
 2. Weather
