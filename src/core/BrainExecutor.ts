@@ -620,6 +620,7 @@ export class BrainExecutor {
     let finalText = '';
     let lastCapability = '';
     let lastToolResult: any = undefined;
+    let hasBeenPushed = false;
 
     for (let turn = resumeTurn; turn < MAX_TOOL_TURNS; turn++) {
       DebugLog.systemEvent('BrainExecutor', `AI turn ${turn + 1}`);
@@ -649,6 +650,23 @@ export class BrainExecutor {
       console.warn('[BRAIN] tool_selected:', toolCall ? toolCall.tool : 'NONE (plain text)');
 
       if (!toolCall) {
+        // ── COMPLETION CHECK: did the brain actually finish the job? ──────
+        // If the user asked for an ACTION (navigate, send, open, set, create, find)
+        // but the brain only returned informational text, push it to follow through.
+        // Only push once (turn > 0 means a tool already ran) and only if we have turns left.
+        if (turn > 0 && turn < MAX_TOOL_TURNS - 2 && !hasBeenPushed) {
+          const actionWords = /\b(navigate|send|text|open|go to|take me|set|create|make|call|play|turn on|turn off|toggle|install|download|share|copy|find me|get me|show me|order|book|buy)\b/i;
+          const userWantsAction = actionWords.test(userInput);
+          const brainOnlyDescribed = !rawResponse.includes('"tool"') && rawResponse.length < 800;
+          if (userWantsAction && brainOnlyDescribed) {
+            hasBeenPushed = true;
+            console.warn('[BRAIN] PUSH: user requested action but brain gave text — pushing to follow through');
+            DebugLog.systemEvent('BrainExecutor', `PUSH: brain returned text but user requested action, pushing for follow-through`);
+            messages.push({ role: 'assistant', content: rawResponse });
+            messages.push({ role: 'user', content: 'You described what to do but didn\'t do it. Use a tool to actually complete the action. Don\'t explain — execute.' });
+            continue;
+          }
+        }
         finalText = rawResponse;
         DebugLog.systemEvent('BrainExecutor', `TEXT response, done after ${turn + 1} turns`);
         break;
