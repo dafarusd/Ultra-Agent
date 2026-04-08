@@ -665,9 +665,19 @@ export class BrainExecutor {
           toolCall,
         };
 
+        // Add approval message to the conversation so it renders in chat
+        const approvalText = `Approval required: **${description}**`;
+        await this.conversations.addMessage(conversationId, {
+          id: uid(),
+          role: 'assistant',
+          content: approvalText,
+          createdAt: Date.now(),
+          source: 'ultra',
+        });
+
         return {
           type: 'approval_required',
-          message: `Agent Ultra wants to: **${description}**\n\nAllow this action?`,
+          message: approvalText,
           taskId,
           data: {
             replayUserInput: userInput,
