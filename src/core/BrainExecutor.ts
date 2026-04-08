@@ -299,8 +299,9 @@ TOOL ROUTING (use the most direct tool available):
 // ─────────────────────────────────────────────────────────────────────────────
 function inferToolFromText(userInput: string): { tool: string; params: Record<string, any> } | null {
   const u = userInput.toLowerCase().trim();
+  const raw = userInput.trim();
 
-  // Toggles
+  // ── TOGGLES ──────────────────────────────────────────────────────────
   if (/\b(flashlight|torch|flash)\b/.test(u)) {
     const state = /\b(off|disable)\b/.test(u) ? 'off' : /\b(on|enable)\b/.test(u) ? 'on' : undefined;
     return { tool: 'flashlight_toggle', params: state ? { state } : {} };
@@ -314,46 +315,177 @@ function inferToolFromText(userInput: string): { tool: string; params: Record<st
   if (/\b(airplane|flight)\s*mode\b/.test(u) && /\b(toggle|turn|switch|enable|disable|on|off)\b/.test(u)) {
     return { tool: 'airplane_mode', params: {} };
   }
-  if (/\b(do not disturb|dnd)\b/.test(u) && /\b(toggle|turn|switch|enable|disable|on|off)\b/.test(u)) {
+  if (/\b(do not disturb|dnd|don'?t disturb)\b/.test(u)) {
     return { tool: 'do_not_disturb', params: {} };
   }
 
-  // Volume
+  // ── VOLUME / BRIGHTNESS ──────────────────────────────────────────────
   const volMatch = u.match(/\bvolume\b.*?(\d+)/);
   if (volMatch) return { tool: 'volume_set', params: { level: parseInt(volMatch[1], 10) } };
-  if (/\bvolume\s+(up|down)\b/.test(u)) {
-    const dir = u.includes('up') ? 'up' : 'down';
-    return { tool: 'volume_set', params: { direction: dir } };
-  }
+  if (/\bvolume\s+(up|down)\b/.test(u)) return { tool: 'volume_set', params: { direction: u.includes('up') ? 'up' : 'down' } };
+  if (/\b(mute|unmute|silence)\b/.test(u)) return { tool: 'volume_set', params: { level: 0 } };
+  const brightMatch = u.match(/\bbright(ness)?\b.*?(\d+)/);
+  if (brightMatch) return { tool: 'brightness_set', params: { level: parseInt(brightMatch[2], 10) } };
+  if (/\bbright(ness)?\s+(up|down|higher|lower)\b/.test(u)) return { tool: 'brightness_set', params: { direction: /up|higher/.test(u) ? 'up' : 'down' } };
 
-  // Weather
-  if (/\b(weather|forecast|temperature)\b/.test(u)) {
-    const locMatch = u.match(/(?:weather|forecast|temperature)\s+(?:in|at|for)\s+(.+)/i);
+  // ── MEDIA ────────────────────────────────────────────────────────────
+  if (/\b(play|pause|resume)\s*(music|song|audio|media|track)?\b/.test(u) && !/\bplay\s*store\b/.test(u)) return { tool: 'media_play', params: {} };
+  if (/\b(next|skip)\s*(track|song)?\b/.test(u)) return { tool: 'media_next', params: {} };
+
+  // ── WEATHER ──────────────────────────────────────────────────────────
+  if (/\b(weather|forecast|temperature outside|how (hot|cold|warm))\b/.test(u)) {
+    const locMatch = raw.match(/(?:weather|forecast|temperature)\s+(?:in|at|for|near)\s+(.+)/i);
     return { tool: 'weather', params: locMatch ? { location: locMatch[1].trim() } : {} };
   }
 
-  // Web search
-  if (/\b(search|google|look up)\b/.test(u) && /\b(web|internet|online|for)\b/.test(u)) {
-    const queryMatch = u.match(/(?:search|google|look up)\s+(?:the\s+)?(?:web\s+)?(?:for\s+)?(.+)/i);
+  // ── WEB SEARCH ───────────────────────────────────────────────────────
+  if (/\b(search|google|look\s*up|search\s*the\s*web)\b/.test(u) && /\b(for|web|internet|online|about)\b/.test(u)) {
+    const queryMatch = raw.match(/(?:search|google|look\s*up)\s+(?:the\s+)?(?:web\s+)?(?:for\s+|about\s+)?(.+)/i);
     return { tool: 'web_search', params: { query: queryMatch ? queryMatch[1].trim() : userInput } };
   }
 
-  // Battery
-  if (/\bbatter(y|ies)\b/.test(u) && /\b(level|status|percent|charge|how much)\b/.test(u)) {
-    return { tool: 'battery_status', params: {} };
+  // ── NEWS ─────────────────────────────────────────────────────────────
+  if (/\b(news|headlines|what'?s happening)\b/.test(u)) {
+    const topicMatch = raw.match(/\bnews\s+(?:about|on|for)\s+(.+)/i);
+    return { tool: 'news_headlines', params: topicMatch ? { topic: topicMatch[1].trim() } : {} };
   }
 
-  // Device info
-  if (/\b(device|phone|model)\b/.test(u) && /\b(info|name|what|which)\b/.test(u)) {
-    return { tool: 'device_info', params: {} };
+  // ── DEVICE INFO / BATTERY / LOCATION ─────────────────────────────────
+  if (/\bbatter(y|ies)\b/.test(u)) return { tool: 'battery_status', params: {} };
+  if (/\b(device|phone|model|what am i using)\b/.test(u) && /\b(info|name|what|which|am i|specs?)\b/.test(u)) return { tool: 'device_info', params: {} };
+  if (/\b(system|cpu|ram|memory|storage)\b/.test(u) && /\b(info|status|usage|how much|free)\b/.test(u)) return { tool: 'system_info', params: {} };
+  if (/\b(location|where am i|gps|coordinates)\b/.test(u)) return { tool: 'device_location', params: {} };
+
+  // ── COMMUNICATION ────────────────────────────────────────────────────
+  const smsMatch = raw.match(/\b(?:send|text)\s+(?:a\s+)?(?:message|text|sms)\s+to\s+(.+?)(?:\s+(?:saying|that says|:)\s+(.+))?$/i)
+    || raw.match(/\btext\s+(.+?)\s+(?:saying|that says|:)\s+(.+)$/i);
+  if (smsMatch) return { tool: 'sms_send', params: { to: smsMatch[1].trim(), message: (smsMatch[2] || '').trim() } };
+  if (/\b(read|show|check)\s*(my\s+)?(messages?|texts?|sms|inbox)\b/.test(u)) return { tool: 'sms_read', params: { limit: 10 } };
+  if (/\b(messages?|texts?|conversation)\s+(?:with|from)\s+(.+)/i.test(u)) {
+    const convMatch = raw.match(/(?:messages?|texts?|conversation)\s+(?:with|from)\s+(.+)/i);
+    return { tool: 'sms_conversation', params: { address: convMatch ? convMatch[1].trim() : '' } };
+  }
+  if (/\b(contacts?|address\s*book|phone\s*book)\b/.test(u) && /\b(read|show|list|find|search|who)\b/.test(u)) {
+    const nameMatch = raw.match(/(?:contact|find)\s+(.+)/i);
+    return { tool: 'contacts_read', params: nameMatch ? { name: nameMatch[1].trim() } : {} };
   }
 
-  // Screenshot
+  // ── CLIPBOARD ────────────────────────────────────────────────────────
+  if (/\b(copy|clipboard)\b/.test(u) && /\b(to clipboard|copy)\b/.test(u)) {
+    const textMatch = raw.match(/(?:copy)\s+(?:this\s+)?(?:to\s+clipboard\s*:?\s*)?(.+?)(?:\s+to\s+clipboard)?$/i);
+    return { tool: 'clipboard_write', params: { text: textMatch ? textMatch[1].trim() : '' } };
+  }
+  if (/\b(paste|read|what'?s\s+(?:on|in)\s+(?:the\s+)?clipboard)\b/.test(u)) return { tool: 'clipboard_read', params: {} };
+
+  // ── FILES ────────────────────────────────────────────────────────────
+  if (/\b(read|show|cat|view)\s+(?:the\s+)?(?:file|document)\b/.test(u)) {
+    const pathMatch = raw.match(/(?:read|show|view)\s+(?:the\s+)?(?:file\s+)?(.+)/i);
+    return { tool: 'file_read', params: { path: pathMatch ? pathMatch[1].trim() : '' } };
+  }
+  if (/\b(write|save|create)\s+(?:a\s+)?(?:file|note|document)\b/.test(u)) {
+    const writeMatch = raw.match(/(?:write|save|create)\s+(?:a\s+)?(?:file|note|document)\s+(?:called\s+)?(.+?)(?:\s+(?:with|containing|:)\s+(.+))?$/i);
+    return { tool: 'file_write', params: { filename: writeMatch ? writeMatch[1].trim() : 'note.txt', content: writeMatch?.[2]?.trim() || '' } };
+  }
+  if (/\bshare\b/.test(u)) {
+    const shareMatch = raw.match(/share\s+(.+)/i);
+    return { tool: 'share_content', params: { content: shareMatch ? shareMatch[1].trim() : '' } };
+  }
+
+  // ── ALARMS / TIMERS / REMINDERS / CALENDAR ───────────────────────────
+  if (/\b(alarm)\b/.test(u)) {
+    const timeMatch = raw.match(/(?:alarm)\s+(?:for|at)\s+(.+)/i) || raw.match(/(?:set|create)\s+(?:an?\s+)?alarm\s+(.+)/i);
+    return { tool: 'alarm_set', params: { time: timeMatch ? timeMatch[1].trim() : '' } };
+  }
+  if (/\btimer\b/.test(u)) {
+    const durMatch = raw.match(/(?:timer)\s+(?:for|of)\s+(.+)/i) || raw.match(/(?:set|start)\s+(?:a\s+)?timer\s+(.+)/i);
+    return { tool: 'timer_set', params: { duration: durMatch ? durMatch[1].trim() : '' } };
+  }
+  if (/\bremind(er)?\b/.test(u)) {
+    const remMatch = raw.match(/remind\s+(?:me\s+)?(?:to\s+)?(.+)/i);
+    return { tool: 'reminder_create', params: { text: remMatch ? remMatch[1].trim() : userInput } };
+  }
+  if (/\b(calendar|event|schedule|appointment)\b/.test(u) && /\b(create|add|schedule|new|set)\b/.test(u)) {
+    const evtMatch = raw.match(/(?:create|add|schedule)\s+(?:a\s+)?(?:calendar\s+)?(?:event\s+)?(?:for\s+|called\s+)?(.+)/i);
+    return { tool: 'calendar_create', params: { title: evtMatch ? evtMatch[1].trim() : '' } };
+  }
+
+  // ── NOTES ────────────────────────────────────────────────────────────
+  if (/\b(note|write\s+down|jot\s+down)\b/.test(u)) {
+    const noteMatch = raw.match(/(?:note|write down|jot down)\s*:?\s*(.+)/i) || raw.match(/(?:create|make)\s+(?:a\s+)?note\s*:?\s*(.+)/i);
+    return { tool: 'note_create', params: { content: noteMatch ? noteMatch[1].trim() : userInput } };
+  }
+
+  // ── CAMERA / SCREENSHOT / SCREEN RECORD ──────────────────────────────
   if (/\bscreenshot\b/.test(u)) return { tool: 'screenshot', params: {} };
+  if (/\b(take\s+a\s+photo|take\s+a\s+picture|camera|selfie|capture\s+photo)\b/.test(u)) return { tool: 'camera_capture', params: {} };
+  if (/\b(screen\s*record|record\s+(?:the\s+)?screen|start\s+recording)\b/.test(u)) return { tool: 'screen_record_start', params: {} };
 
-  // App launch (simple "open X")
-  const openMatch = u.match(/\b(?:open|launch|start)\s+(.+)/i);
-  if (openMatch) return { tool: 'app_launch', params: { target: openMatch[1].trim() } };
+  // ── IMAGE / TTS / VIDEO ──────────────────────────────────────────────
+  if (/\b(generate|create|make|draw)\s+(?:an?\s+)?(?:image|picture|art|illustration)\b/.test(u)) {
+    const promptMatch = raw.match(/(?:generate|create|make|draw)\s+(?:an?\s+)?(?:image|picture|art|illustration)\s+(?:of\s+)?(.+)/i);
+    return { tool: 'image_generate', params: { prompt: promptMatch ? promptMatch[1].trim() : userInput } };
+  }
+  if (/\b(read\s+aloud|say\s+this|speak|text\s+to\s+speech|tts)\b/.test(u)) {
+    const ttsMatch = raw.match(/(?:read aloud|say|speak)\s+(.+)/i);
+    return { tool: 'tts', params: { text: ttsMatch ? ttsMatch[1].trim() : userInput } };
+  }
+
+  // ── SCREEN READING ───────────────────────────────────────────────────
+  if (/\b(what'?s?\s+on\s+(?:the\s+)?screen|read\s+(?:the\s+)?screen|what\s+(?:do\s+)?(?:i|you)\s+see)\b/.test(u)) return { tool: 'read_text_on_screen', params: {} };
+  if (/\b(describe|what'?s\s+showing|what\s+is\s+this)\b/.test(u) && /\bscreen\b/.test(u)) return { tool: 'describe_screen', params: {} };
+
+  // ── NOTIFICATIONS ────────────────────────────────────────────────────
+  if (/\b(notification|notifications)\b/.test(u) && /\b(read|show|check|any|what)\b/.test(u)) return { tool: 'notification_read', params: {} };
+
+  // ── USER PROFILE / MEMORY ────────────────────────────────────────────
+  const nameMatch = raw.match(/\bmy\s+name\s+is\s+(.+)/i) || raw.match(/\bcall\s+me\s+(.+)/i);
+  if (nameMatch) return { tool: 'set_user_name', params: { name: nameMatch[1].trim() } };
+  if (/\bmy\s+(email|phone|address)\s+is\s+/i.test(u)) {
+    const infoMatch = raw.match(/my\s+(email|phone|address)\s+is\s+(.+)/i);
+    if (infoMatch) return { tool: 'set_user_info', params: { [infoMatch[1].toLowerCase()]: infoMatch[2].trim() } };
+  }
+  if (/\b(remember|recall|what\s+do\s+you\s+know\s+about|do\s+you\s+know)\b/.test(u)) {
+    const memMatch = raw.match(/(?:remember|recall|know about)\s+(.+)/i);
+    return { tool: 'memory_recall', params: { query: memMatch ? memMatch[1].trim() : userInput } };
+  }
+  if (/\bknowledge\b/.test(u) && /\b(query|what|search)\b/.test(u)) {
+    const kgMatch = raw.match(/knowledge\s+(?:query\s+)?(.+)/i);
+    return { tool: 'knowledge_query', params: { query: kgMatch ? kgMatch[1].trim() : userInput } };
+  }
+
+  // ── APP MANAGEMENT ───────────────────────────────────────────────────
+  if (/\b(install|download|get)\s+(?:the\s+)?(.+?)(?:\s+app)?\s*$/i.test(u)) {
+    const installMatch = raw.match(/(?:install|download|get)\s+(?:the\s+)?(.+?)(?:\s+app)?\s*$/i);
+    return { tool: 'install_app', params: { appName: installMatch ? installMatch[1].trim() : '' } };
+  }
+  if (/\b(app\s*info|info\s+(?:about|for|on)\s+(?:the\s+)?app)\b/.test(u)) {
+    const appInfoMatch = raw.match(/(?:app\s*info|info\s+(?:about|for|on))\s+(?:the\s+)?(.+)/i);
+    return { tool: 'app_info', params: { target: appInfoMatch ? appInfoMatch[1].trim() : '' } };
+  }
+
+  // ── URL ──────────────────────────────────────────────────────────────
+  const urlMatch = u.match(/\b(?:open|go to|visit|navigate to)\s+(https?:\/\/\S+)/i)
+    || u.match(/\b(?:open|go to|visit)\s+([\w-]+\.(?:com|org|net|io|co|ai|dev|gov|edu)\S*)/i);
+  if (urlMatch) {
+    const url = urlMatch[1].startsWith('http') ? urlMatch[1] : `https://${urlMatch[1]}`;
+    return { tool: 'open_url', params: { url } };
+  }
+
+  // ── REACT NAVIGATE (do something inside an app) ──────────────────────
+  const reactMatch = raw.match(/\b(?:search|find|look for|order|book|buy|play)\s+(.+?)\s+(?:on|in|using|with)\s+(.+)/i);
+  if (reactMatch) {
+    return { tool: 'react_navigate', params: { goal: `${reactMatch[1].trim()}`, appHint: reactMatch[2].trim() } };
+  }
+
+  // ── APP LAUNCH (simple "open X" — must be last, catches broadly) ─────
+  const openMatch = raw.match(/\b(?:open|launch|start|run)\s+(?:the\s+)?(.+)/i);
+  if (openMatch) {
+    const target = openMatch[1].trim();
+    // Don't match if it's a URL (handled above) or a file
+    if (!/^https?:\/\//.test(target) && !/\.\w{2,4}$/.test(target)) {
+      return { tool: 'app_launch', params: { target } };
+    }
+  }
 
   return null;
 }
