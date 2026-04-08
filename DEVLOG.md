@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-08 (Session 11 — Build 21 deployed, 15/48 tools tested)
+**Last updated:** 2026-04-08 (Session 11 — Build 22 compiling, 20/48 tools tested on Build 21)
 
 **App status:** Build 21 deployed on device. Model: llama-3.3-70b on Venice.ai. Inference-first tool routing — deterministic intent detection overrides model's JSON on first turn. 15/48 tools tested, all passing. TypeScript 0 errors.
 
