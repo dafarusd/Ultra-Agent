@@ -20,13 +20,22 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-08 (Session 11 — Build 23 deployed, brain reverted to Session 10 prompt)
+**Last updated:** 2026-04-08 (Session 11 close — Build 26 deployed, brain follow-through + auth wall fixed)
 
-**App status:** Build 23 deployed. Brain prompt reverted to Session 10 working state. Model: llama-3.3-70b on Venice.ai. Inference is FALLBACK only (fires when model returns plain text). All real bug fixes from code audit preserved. TypeScript 0 errors. Backup on D:\AgentUltra-Backup.
+**App status:** Build 26 fresh-installed on device. Brain prompt = Session 10 (clean). Brain follow-through push added (Build 25). Auth wall exceptions for Maps/Chrome banners (Build 26). Inference fallback only. Model: llama-3.3-70b on Venice.ai. TypeScript 0 errors.
 
-**Current priority:** The brain is the product. Test autonomous reasoning — multi-step tasks, natural language understanding, problem-solving. NOT toggles or command parsing. Tools are infrastructure for the brain, not user features.
+**Current priority:** Fix ReActLoop execution issues — IME_ENTER not firing after type(), self-interaction blocking gallery/photos. These are subsystem D (device control), not brain.
 
-**LAW:** Tools, toggles, abilities, functions — none of it is for the user directly. It all exists so that no matter what the user asks, the agent can DO it. If the brain can't reason, nothing else matters.
+**LAW:** The brain is the product. Tools are infrastructure. Everything exists so the agent can DO whatever the user asks. If the brain can't reason, nothing else matters. Never sacrifice brain intelligence for tool plumbing.
+
+**What's PROVEN on Build 26:**
+- Brain chains tools autonomously (web_search → react_navigate, 5-7 tool calls per request)
+- Brain follow-through push works (when brain describes instead of acts, it gets pushed to execute)
+- Auth wall no longer blocks Maps "Sign in to save your searches"
+- Maps navigation reached directions screen with route showing
+- Brain found specific restaurants/gas stations by name and address using GPS coordinates
+- Brain sent SMS with approval gate visible and functional
+- GasBuddy appHint — brain knew the right app for gas prices
 
 **Build/Install commands:**
 - Copy: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'` (use latest timestamp)
@@ -36,6 +45,8 @@ Read this file at the start of every session to understand previous work.
 **Wireless ADB:** WORKING at `<device-ip>:5555`. Set up via `adb tcpip 5555` then `adb connect <device-ip>:5555`. Reconnect after WiFi drops with `adb connect <device-ip>:5555`. Do NOT test wifi_toggle or airplane_mode over wireless ADB (kills connection).
 
 **Known blockers:**
+- **IME_ENTER not firing after type()** — ReActLoop types text into search fields but doesn't submit. Cursor blinks but Enter/Search never fires. This blocks Chrome search, Maps search, and any app that requires pressing Enter after typing. Fix is in ReActLoop executeAction / performImeAction.
+- **Self-interaction detection too aggressive** — blocks gallery/photos navigation. ReActLoop aborts when Agent Ultra briefly appears in foreground during app switching.
 - Accessibility service must be manually re-enabled after every APK reinstall.
 - BiometricGate requires fingerprint after force-stop — cannot automate past it.
 - Build time ~35 minutes with WSL Linux SDK.
@@ -145,7 +156,29 @@ Build 15 installed and tested. **isServiceEnabled false positive FIXED** — no 
 
 **Key insight:** `inferToolFromText` is now the primary tool router. The LLM is relegated to handling ambiguous/complex requests that inference can't pattern-match, and providing natural language responses after tool execution. This makes Agent Ultra model-agnostic — works regardless of model quality.
 
-#### Session 11 POSTMORTEM — What Went Wrong
+#### Session 11 End — Builds 24-26
+
+**Build 24:** Approval message now saves to conversation and renders in chat. Previously invisible.
+
+**Build 25:** Brain follow-through push. When the user asks for an ACTION but the brain returns descriptive text after running a tool, the loop pushes the model back in: "You described what to do but didn't do it. Use a tool to actually complete the action." Fires once per request, only after at least one tool has run. Addresses SKILLS_REFERENCE Failure Class F (autonomy theater).
+
+**Build 26:** Auth wall exceptions. "Sign in to save your searches" and similar suggestion banners in Maps/Chrome no longer trigger auth_required abort. Maps navigation works on unsigned-in devices.
+
+**Test results (Build 26, clean install):**
+- "find me the cheapest gas station near me and navigate me there"
+  - Brain selected react_navigate → Maps → directions screen appeared with route
+  - Second run: brain got pushed → selected react_navigate with appHint "GasBuddy" and goal "show cheapest gas stations in Girard, OH" — knew the right app and user's city
+  - Execution stopped at Google search bar — typed query but IME_ENTER didn't fire (cursor blinked, no submit)
+  - Brain reasoning: PROVEN. Execution layer (ReActLoop IME): BLOCKED.
+
+**Next session priorities (in order):**
+1. Fix IME_ENTER in ReActLoop — text gets typed but never submitted
+2. Fix self-interaction detection — too aggressive, blocks gallery/photos
+3. Continue testing remaining tools (camera, image gen, TTS, file ops, etc.)
+4. Progress feedback UI — user sees "Processing..." for minutes with no indication of what's happening
+5. Public-ready polish (onboarding, settings UX, offline handling, error messages)
+
+#### Session 11 POSTMORTEM — What Went Wrong (Builds 16-22)
 
 Claude Code spent the session progressively breaking a working brain by over-engineering tool routing:
 - Build 16: Filtered conversation context — removed examples that taught the model the tool-call pattern
