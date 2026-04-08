@@ -245,7 +245,11 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
         // Wrong-app detection: if we're on a different app than expected, try to recover
         const OVERLAY_PKGS = ['com.android.systemui', 'com.samsung.android.honeyboard',
           'com.samsung.android.smartcapture', 'com.samsung.android.app.smartcapture'];
-        if (expectedPkg && currentPkg && currentPkg !== expectedPkg
+        // Samsung settings uses a separate package for search — treat as same app
+        const isSameApp = currentPkg === expectedPkg
+          || (expectedPkg === 'com.android.settings' && currentPkg?.startsWith('com.android.settings'))
+          || (expectedPkg?.startsWith('com.android.settings') && currentPkg === 'com.android.settings');
+        if (expectedPkg && currentPkg && !isSameApp
             && currentPkg !== 'com.agent.ultra' && !OVERLAY_PKGS.includes(currentPkg)) {
           wrongAppBackAttempts++;
           console.warn(`[REACT] WRONG_APP iter=${iteration}: expected=${expectedPkg} got=${currentPkg} attempt=${wrongAppBackAttempts}`);
@@ -264,7 +268,7 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
             await this.sleep(800);
           }
           continue;
-        } else if (expectedPkg && currentPkg === expectedPkg) {
+        } else if (expectedPkg && isSameApp) {
           wrongAppBackAttempts = 0; // reset on correct app
         }
 

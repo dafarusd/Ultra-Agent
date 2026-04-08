@@ -253,8 +253,13 @@ SAFETY:
 TOOLS:
 ${TOOLS}
 
+CRITICAL RULES:
+- After calling a toggle tool (wifi_toggle, bluetooth_toggle, flashlight_toggle, etc.), your NEXT response MUST be plain text confirming the action. Do NOT call any more tools. The toggle already worked.
+- After calling volume_set, brightness_set, or any simple action tool, your NEXT response MUST be plain text. Do NOT call react_navigate or app_launch to "check" or "verify".
+- NEVER use react_navigate to go to Settings. Use the dedicated tools instead.
+
 TOOL ROUTING (use the most direct tool available):
-- Toggle wifi/bluetooth/airplane/DND/flashlight → use the dedicated toggle tool (NOT react_navigate, NOT app_launch)
+- Toggle wifi/bluetooth/airplane/DND/flashlight → use the dedicated toggle tool (NOT react_navigate, NOT app_launch, NOT settings)
 - Set volume/brightness → volume_set / brightness_set
 - Play/pause/skip music → media_play / media_next
 - Open a settings screen → app_launch with the settings name (e.g. target="wifi settings")
