@@ -651,13 +651,18 @@ export class BrainExecutor {
 
       let toolCall = parseToolCall(rawResponse);
 
-      // ── FALLBACK: if model responded as plain text but user asked for an action,
-      // detect the intent and synthesize a tool call. This handles models that
-      // describe actions instead of emitting JSON.
-      if (!toolCall && turn === 0) {
+      // ── INFERENCE-FIRST: on turn 0, use deterministic intent detection from the
+      // user's original request. This overrides the model's tool choice because
+      // models frequently select the wrong tool (e.g. web_search for "open calculator").
+      // On subsequent turns (tool result follow-ups), trust the model's choice.
+      if (turn === 0) {
         const inferred = inferToolFromText(userInput);
         if (inferred) {
-          console.warn('[BRAIN] tool_inferred:', inferred.tool, 'from user input (model returned plain text)');
+          if (toolCall && toolCall.tool !== inferred.tool) {
+            console.warn('[BRAIN] tool_override:', toolCall.tool, '→', inferred.tool, '(inference takes priority on turn 0)');
+          } else if (!toolCall) {
+            console.warn('[BRAIN] tool_inferred:', inferred.tool, 'from user input (model returned plain text)');
+          }
           toolCall = inferred;
         }
       }
