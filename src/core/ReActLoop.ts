@@ -301,10 +301,15 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
       }
 
       // Auth/blocker detection — stop if we hit a login wall
+      // Exclude dismissable suggestions like "Sign in to save your searches" (Maps, Chrome)
       const AUTH_PATTERNS = /\b(sign.?in|log.?in|password|captcha|verify your|enter.?code|two.?factor|2fa|create.?account|register now)\b/i;
+      const AUTH_EXCEPTIONS = /\b(sign in to save|sign in to sync|sign in for a better|sign in to get suggestions)\b/i;
       const authNode = nodes.find(n => {
         const label = (n.t || n.d || '').trim();
-        return label.length > 2 && label.length < 60 && AUTH_PATTERNS.test(label);
+        if (label.length <= 2 || label.length >= 60) return false;
+        if (!AUTH_PATTERNS.test(label)) return false;
+        if (AUTH_EXCEPTIONS.test(label)) return false;
+        return true;
       });
       if (authNode && iteration > 1) {
         const authLabel = (authNode.t || authNode.d || '').trim();
