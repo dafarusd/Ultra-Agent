@@ -2064,17 +2064,10 @@ public class AgentAccessibilityService extends AccessibilityService {
                 result = target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
                 Log.i(TAG, "IME_ENTER: ACTION_IME_ENTER result=" + result);
             }
-            // Fallback: ACTION_SEARCH (triggers search IME action)
+            // Fallback: try clicking the node itself (some search fields submit on click)
             if (!result) {
-                // EditorInfo.IME_ACTION_SEARCH = 3, IME_ACTION_GO = 2, IME_ACTION_DONE = 6
-                android.os.Bundle args = new android.os.Bundle();
-                args.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_IME_ACTION_ID, 3); // SEARCH
-                result = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT != 0 ? 0x02000000 : 0, args);
-                if (!result) {
-                    // Try ACTION_NEXT (Tab/Enter behavior)
-                    result = target.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY);
-                }
-                Log.i(TAG, "IME_ENTER: fallback actions result=" + result);
+                result = target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Log.i(TAG, "IME_ENTER: ACTION_CLICK fallback result=" + result);
             }
             target.recycle();
         } else {
