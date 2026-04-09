@@ -20,22 +20,36 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-08 (Session 11 close — Build 26 deployed, brain follow-through + auth wall fixed)
+**Last updated:** 2026-04-09 (Session 12 close — Build 29 deployed, brain upgrade P1-P8 + IME fix)
 
-**App status:** Build 26 fresh-installed on device. Brain prompt = Session 10 (clean). Brain follow-through push added (Build 25). Auth wall exceptions for Maps/Chrome banners (Build 26). Inference fallback only. Model: llama-3.3-70b on Venice.ai. TypeScript 0 errors.
+**App status:** Build 29 installed on device. Brain prompt restructured (P1). Context window expanded to 12KB (P2). Task planning added (P3). Structured feedback (P4). Dynamic maxTokens (P5). Task memory (P6). ReActLoop improved (P7). WRITE_SECURE_SETTINGS bridge added (P8). IME_ENTER triple fallback added. Model: llama-3.3-70b on Venice.ai. TypeScript 0 errors.
 
-**Current priority:** Fix ReActLoop execution issues — IME_ENTER not firing after type(), self-interaction blocking gallery/photos. These are subsystem D (device control), not brain.
+**Current priority:** Execution layer reliability — bluetooth/DND toggles still fail via QS automation, IME_ENTER fix untested on Build 29, conversation context bleeds between tasks. Brain intelligence is improved but execution prevents end-to-end proof.
 
 **LAW:** The brain is the product. Tools are infrastructure. Everything exists so the agent can DO whatever the user asks. If the brain can't reason, nothing else matters. Never sacrifice brain intelligence for tool plumbing.
 
-**What's PROVEN on Build 26:**
-- Brain chains tools autonomously (web_search → react_navigate, 5-7 tool calls per request)
-- Brain follow-through push works (when brain describes instead of acts, it gets pushed to execute)
-- Auth wall no longer blocks Maps "Sign in to save your searches"
-- Maps navigation reached directions screen with route showing
-- Brain found specific restaurants/gas stations by name and address using GPS coordinates
-- Brain sent SMS with approval gate visible and functional
-- GasBuddy appHint — brain knew the right app for gas prices
+**What's PROVEN on Build 29 (from logcat):**
+- P3 task planning generates and follows multi-step plans (4-5 steps, followed in order)
+- P5 dynamic maxTokens working (2000/1500/2500 for first/mid/final turns)
+- P2 expanded context tracks 27+ message chains without losing original goal
+- Brain chains tools across multi-step tasks (web_search → device_location → react_navigate → app_launch)
+- Brain recovery: sms_send fail → contacts_read → retry (adapts to errors)
+- Tool selection correct for flashlight, web_search, react_navigate, device_location, camera, sms_send, contacts_read
+- Amazon app launched and navigated autonomously via HeadlessJS (exact match score=100)
+- System prompt reduced from ~4.5KB to ~3.7KB, freeing context for actual reasoning
+
+**What's PARTIALLY PROVEN:**
+- P6 task memory — code deployed, recording happening, but shortcut reuse not yet triggered
+- P7 visible-only filtering — code deployed, but no react_navigate test with off-screen elements
+- P8 WRITE_SECURE_SETTINGS — permission granted, Java bridge added, but bluetooth/DND not tested via direct API (QS fallback still failing on Samsung split tiles)
+- IME_ENTER triple fallback — code deployed (focused editable → any editable → keyboard gesture tap + 200ms delay + retry), but no Chrome search test on Build 29
+
+**What's NOT WORKING:**
+- Bluetooth/DND toggles via QS automation — Samsung split tile tap still unreliable
+- WRITE_SECURE_SETTINGS not in manifest on Build 28 (fixed in Build 29's app.json but pm grant result unverified on Build 29)
+- SMS to=undefined — params restored in TOOLS (Build 28+) but not retested
+- Brain over-searches — "MAX 2 web_searches" rule added but not verified
+- Conversation context bleeds between tasks (no new-chat reset between tests)
 
 **Build/Install commands:**
 - Copy: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'` (use latest timestamp)
@@ -45,11 +59,16 @@ Read this file at the start of every session to understand previous work.
 **Wireless ADB:** WORKING at `<device-ip>:5555`. Set up via `adb tcpip 5555` then `adb connect <device-ip>:5555`. Reconnect after WiFi drops with `adb connect <device-ip>:5555`. Do NOT test wifi_toggle or airplane_mode over wireless ADB (kills connection).
 
 **Known blockers:**
-- **IME_ENTER not firing after type()** — ReActLoop types text into search fields but doesn't submit. Cursor blinks but Enter/Search never fires. This blocks Chrome search, Maps search, and any app that requires pressing Enter after typing. Fix is in ReActLoop executeAction / performImeAction.
-- **Self-interaction detection too aggressive** — blocks gallery/photos navigation. ReActLoop aborts when Agent Ultra briefly appears in foreground during app switching.
+- **Bluetooth/DND toggles unreliable** — QS automation taps Samsung split tiles but doesn't actually toggle. WRITE_SECURE_SETTINGS direct API is the fix but needs manifest permission verification on Build 29.
+- **IME_ENTER** — Triple fallback added (focused editable → any editable → keyboard gesture tap) but untested on Build 29. Previous builds showed intermittent success.
+- **SMS to=undefined** — Brain calls sms_send but LLM doesn't populate `to` param. Params restored in TOOLS string (Build 28+) but untested.
+- **Brain over-searches** — Runs 4-7 web_searches instead of using results. "MAX 2" rule added but untested.
+- **Conversation bleed** — Context from previous tasks contaminates next task. No new-chat reset between requests.
+- **Self-interaction detection too aggressive** — blocks gallery/photos navigation.
 - Accessibility service must be manually re-enabled after every APK reinstall.
 - BiometricGate requires fingerprint after force-stop — cannot automate past it.
 - Build time ~35 minutes with WSL Linux SDK.
+- **Google Play accessibility policy** — Apps using AccessibilityService face extra scrutiny. Android 17 preview introduces Advanced Protection Mode that may block non-tool accessibility apps entirely. Long-term viability uncertain.
 
 ---
 
@@ -67,11 +86,15 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 - **No startForeground() in HeadlessJS service.** Android 14+ (targetSDK 35) requires foregroundServiceType for startForeground(). HeadlessJsTaskService base class handles lifecycle without it. The notification/channel/startForeground code was removed after it caused MissingForegroundServiceTypeException crashes.
 - **react_navigate blocks the tool loop.** TaskExecutor awaits a Promise that resolves when HeadlessJS emits `headlessReActComplete`. BrainExecutor cannot issue the next tool until react_navigate finishes. 300s timeout matches HeadlessJS config.
 - **Fuzzy match threshold is 55 in react_navigate.** Matches below 55 (non-exact, non-directory) are rejected. The app_launch case has its own confidence handling with user confirmation for ambiguous matches.
-- **type() auto-submits via IME_ENTER.** After performText succeeds, performImeAction fires automatically. Explicit submit()/enter() actions also available. Uses ACTION_IME_ENTER (API 30+).
+- **type() auto-submits via IME_ENTER with triple fallback.** After performText succeeds, 200ms pause, then: (1) ACTION_IME_ENTER on focused editable, (2) ACTION_IME_ENTER on any editable + ACTION_CLICK, (3) gesture tap on keyboard Enter/Search/Go button. Retries once after 500ms if first attempt fails.
 - **Planning call skipped in HeadlessJS ReActLoop.** `skipPlanning: true` eliminates the 30-40s planning LLM call before the first iteration. The per-iteration prompt already includes the goal and screen state — planning was redundant latency.
 - **GATE blocks com.agent.ultra at Java level.** `checkPackageAllowed()` returns false for Agent Ultra's own package. This prevents any tap/text/scroll/swipe on the agent's own UI at the native accessibility layer, regardless of JS-side checks.
 - **goalAchieved requires package verification.** All three paths to goalAchieved=true (deterministic done, LLM done, post-loop checkCompletion) verify `currentPkg === expectedPkg`. If on wrong app or on com.agent.ultra, goalAchieved is forced to false.
-- **Toggle tools exposed to LLM.** `wifi_toggle`, `bluetooth_toggle`, `airplane_mode`, `do_not_disturb` added to BrainExecutor's TOOLS string with routing hints so LLM picks them over react_navigate for toggle requests. TaskExecutor already handles all four via `toggleQuickSetting()` Java implementation.
+- **Toggle tools try direct API first, QS fallback.** Toggle handlers (wifi, bluetooth, airplane) call `setSecureSetting()` via WRITE_SECURE_SETTINGS permission. If that fails (permission not granted), falls back to QS tile automation. DND still uses QS only. Grant with: `adb shell pm grant com.agent.ultra android.permission.WRITE_SECURE_SETTINGS`.
+- **Brain system prompt restructured (Session 12).** Tools in 8 categories, dynamic state at top, 8 numbered rules, ~3.7KB total. Params included for tools that need specific names (sms_send, react_navigate, web_search). Tool reliability ranking: direct > app_launch > react_navigate.
+- **BrainExecutor has task planning.** Multi-step requests get a planning LLM call before the tool loop. Plan stored as string[], step pointer injected into feedback, advances on success. Single-step tasks skip planning.
+- **BrainExecutor context window is 12KB.** Sliding window keeps last 10 messages, always preserves first user message, 3KB limit for tool results, 2KB for others. Same-role messages separated with `---` not merged.
+- **Task memory persisted in AsyncStorage.** Per-tool success/failure tracking + successful multi-step tool sequences (shortcuts). Reliability warnings and known approaches injected into system prompt.
 - **toggleQuickSetting logging uses Log.i(TAG).** All QS_TOGGLE and QS_TAP logs go through `Log.i(TAG, ...)` with the `AgentA11y` tag, visible in `adb logcat -s AgentA11y:*`. Previous `emitA11yLog` calls only went to JS event queue (invisible in logcat).
 - **47 tools exposed to LLM.** Full inventory wired — every user-facing TaskExecutor handler has a TOOLS entry. 15+ internal/dangerous/dormant handlers intentionally excluded (file_delete, self_modify, app_build, etc.). See Session 9 continued (2) entry for complete inventory table.
 - **SettingsDirectory reachable via app_launch.** "Open wifi settings" → app_launch {target:"wifi settings"} → resolveSettingsIntent → WIFI_SETTINGS intent. No dedicated settings_open tool needed.
@@ -82,6 +105,143 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 12 — Brain Intelligence Upgrade + IME Fix (2026-04-08 through 2026-04-09)
+
+- **Date:** 2026-04-08 to 2026-04-09
+- **Subsystems:** A (Brain/Cognition), D (Actions/Device Control), H (Build/Release)
+
+#### What was done
+
+Full brain architecture audit followed by 8-priority intelligence upgrade, informed by academic research (UI-TARS, AutoDroid, Mobile-Agent-E, ReCAP).
+
+**P1 — System prompt restructured (BrainExecutor.ts):**
+- Tools grouped into 8 categories (DEVICE CONTROL, APPS & NAVIGATION, INFORMATION, etc.) with 1-line descriptions
+- Dynamic state (PHONE STATE, KNOWN ABOUT USER) moved to top of prompt
+- Rules reduced from ~15 mixed paragraphs to 8 numbered items
+- Tool reliability ranking added: direct tools > app_launch > react_navigate
+- Prompt size reduced from ~4.5KB to ~3.7KB
+- TOOL SELECTION decision tree removed (was a crutch, model selects correctly with descriptive names)
+- SELF-EVOLUTION, AUTO-FILL, DEVICE AWARENESS prose sections cut
+
+**P2 — Context window expanded (BrainExecutor.ts):**
+- Sliding window: 12KB budget (was 8KB), 10 recent messages (was 6)
+- Tool results get 3KB limit (was 2KB) — they contain actionable data
+- First user message always preserved (brain never forgets what it was asked)
+- Same-role messages separated with `---` instead of merged (preserves semantic boundaries)
+
+**P3 — Task planning added (BrainExecutor.ts):**
+- `isMultiStepIntent()` detects compound tasks (2+ action verbs, connectors like "and then")
+- `planTask()` calls LLM once to produce 2-5 step JSON plan before tool loop
+- Plan injected into context; current step pointer advances on success
+- Single-step tasks skip planning (no overhead)
+- PROVEN in logs: generated plans like `web_search → device_location → react_navigate → app_launch` and followed them step by step
+
+**P4 — Structured tool feedback (BrainExecutor.ts):**
+- `buildToolFeedback()` produces: `[RESULT: tool] STATUS: success/failed`, `TURNS_LEFT: N/12`, `CURRENT_STEP: N/M`
+- Post-action verification prompt for react_navigate results
+- Web search special handling: "Answer directly, do NOT open browser"
+- Generic "Continue solving..." boilerplate removed
+
+**P5 — Dynamic maxTokens (BrainExecutor.ts):**
+- Turn 0: 2000 tokens (initial reasoning)
+- Turns 1-10: 1500 tokens (tool calls are short)
+- Final turn (11+): 2500 tokens (synthesis answer)
+
+**P6 — Task memory (BrainExecutor.ts):**
+- `TaskMemory` stored in AsyncStorage with tool reliability + task shortcuts
+- `recordToolResult()` tracks per-tool success/failure counts
+- `recordTaskShortcut()` saves successful multi-step tool sequences
+- `getTaskMemoryHints()` injects reliability warnings and known approaches into system prompt
+- Max 20 shortcuts stored, pruned by usage count
+
+**P7 — ReActLoop improvements (ReActLoop.ts):**
+- LLM prompt upgraded: reasoning requirement (`ACTION: tap(5) // reason`), negative examples, type hints on node labels (`(button)`, `(menu-item)`, `(input)`)
+- Visible-only element filtering: nodes with `y < 0` or `y > screenHeight` excluded from observation
+- Action extraction strips `// reason` comments from `ACTION:` prefix responses
+
+**P8 — WRITE_SECURE_SETTINGS (withAgentNative.js, TaskExecutor.ts, AppController.ts):**
+- `setSecureSetting(namespace, key, value)` and `getSecureSetting(namespace, key)` added to Java bridge
+- Toggle handlers try direct API first (`Settings.Global.putInt()`), fall back to QS automation
+- Airplane mode broadcasts `ACTION_AIRPLANE_MODE_CHANGED` after setting change
+- `android.permission.WRITE_SECURE_SETTINGS` added to app.json permissions
+- Grant command: `adb -s <device-ip>:5555 shell pm grant com.agent.ultra android.permission.WRITE_SECURE_SETTINGS`
+
+**IME_ENTER triple fallback (withAgentNative.js, ReActLoop.ts):**
+- Strategy 1: `ACTION_IME_ENTER` on focused editable node (original)
+- Strategy 2: `ACTION_IME_ENTER` on ANY editable node + `ACTION_CLICK` fallback (catches keyboard-stole-focus case)
+- Strategy 3: Gesture tap on keyboard's Search/Go/Enter button via accessibility tree scan
+- `findAnyEditable()` — finds editable nodes regardless of focus state
+- `findKeyboardEnter()` — scans IME window for Enter/Search/Go/Done buttons
+- 200ms delay between type and IME (let keyboard process), retry after 500ms if first attempt fails
+
+**Bug fixes during testing:**
+- SMS `to=undefined` — params restored for sms_send, react_navigate, web_search, contacts_read in TOOLS string (had been removed in P1)
+- Over-searching — "MAX 2 web_searches per task" added to rules
+- Build failure — `ACTION_ARGUMENT_IME_ACTION_ID` invalid symbol removed, replaced with `ACTION_CLICK` fallback
+
+#### Builds this session
+
+| Build | Commit | What changed |
+|---|---|---|
+| 27 | 4a8c932 | P1-P8 brain upgrade (all 8 priorities) |
+| 28 | 337d851 | SMS params fix + search cap + WRITE_SECURE_SETTINGS in manifest |
+| 29 | e8a1ced | IME_ENTER triple fallback + Java compile fix |
+
+#### Test results (Build 27, logcat analysis)
+
+| Test | Tools used | Result | Issue |
+|---|---|---|---|
+| Gas search + navigate (1st) | PLAN(4) → web_search → device_location → react_navigate → app_launch → PUSH → open_url → react_navigate → read_text_on_screen → 4x web_search | Brain followed plan but over-searched (7 total) | Over-searching |
+| Gas search + navigate (2nd) | web_search → web_search → web_search → react_navigate → web_search | 4 searches, gave up with text | Over-searching |
+| Camera | camera_capture | PASS | — |
+| Multi-step (5-step) | PLAN(5) → react_navigate → do_not_disturb → device_info → system_info → note_create → PUSH → react_navigate → open_url | All 5 plan steps followed | 59s + 30s latency spikes |
+| SMS | sms_send(to=undefined) → contacts_read → sms_send(to=undefined) | FAIL × 3 | Params missing from TOOLS |
+
+#### Test results (Build 29, partial)
+
+| Test | Result | Detail |
+|---|---|---|
+| Flashlight on | PASS | Brain selected flashlight_toggle, executed correctly |
+| Amazon "order gpu" | Brain worked | react_navigate → Amazon launched, HeadlessJS ran, ReActLoop iterated inside Amazon UI |
+| WRITE_SECURE_SETTINGS | UNVERIFIED | Permission granted via pm grant, but bluetooth toggle not tested |
+| IME_ENTER | UNVERIFIED | Code deployed but no Chrome search test run |
+
+#### Session 12 honest assessment
+
+**What improved (PROVEN):**
+- Brain now plans multi-step tasks before executing (P3)
+- Context window holds 27+ messages without losing the original goal (P2)
+- System prompt is 20% smaller and better structured (P1)
+- Dynamic token allocation matches task phase (P5)
+- Task memory infrastructure in place (P6)
+
+**What's SOURCE-FIXED BUT RUNTIME-UNPROVEN:**
+- IME_ENTER triple fallback (deployed but no Chrome test)
+- WRITE_SECURE_SETTINGS direct toggles (bridge added but toggle test inconclusive)
+- SMS params fix (TOOLS updated but no sms_send test on Build 28+)
+- Over-searching cap (rule added but no test)
+- Visible-only element filtering in ReActLoop
+
+**What's still broken:**
+- Bluetooth/DND QS toggle — Samsung split tile tap doesn't actually toggle
+- Conversation context bleeds between tasks
+- Brain took 2 turns to select flashlight_toggle (plain text first, then PUSH, then correct tool) — was 1 turn on Build 26
+
+**Developer status:** Exhausted, questioning whether to continue. Real concerns: Google Play accessibility policy may block distribution, Android 17 Advanced Protection Mode threatens the approach, execution layer (toggles, IME) prevents end-to-end reliability despite brain improvements.
+
+**Revert point:** `git revert HEAD~2` to return to Build 26 (7603aa3) if brain regressions confirmed.
+
+#### What to pick up if continuing
+
+1. Test IME_ENTER on Chrome search — this is the gate for proving brain + execution work together
+2. Verify WRITE_SECURE_SETTINGS bluetooth toggle — `adb shell settings get global bluetooth_on` before/after
+3. Test SMS with restored params
+4. Fix conversation bleed — clear/reset context between unrelated tasks
+5. Investigate why flashlight takes 2 turns instead of 1 (possible prompt regression)
+
+- **Status:** PARTIALLY PROVEN. Brain intelligence upgrades deployed and working (planning, context, feedback). Execution layer fixes deployed but unverified. Multiple known issues remain.
+- **Next:** Verify execution layer fixes (IME, toggles, SMS) or reassess project direction.
 
 ### Session 11 — Code Audit + Bug Fixes + Testing (2026-04-07)
 
