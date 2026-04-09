@@ -692,10 +692,17 @@ Respond: ACTION: <action> // <one-word reason>`;
         const typed = await AppController.performText('', typeMatch[1]);
         console.warn(`[REACT] type result=${typed} text="${typeMatch[1].slice(0, 30)}"`);
         if (typed) {
-          // Auto-submit after typing — no sleep, fire immediately
+          // Brief pause to let keyboard process input before pressing Enter
+          await new Promise(r => setTimeout(r, 200));
           try {
             const imeResult = await AppController.performImeAction();
             console.warn(`[REACT] auto_ime_enter result=${imeResult}`);
+            if (!imeResult) {
+              // Retry once after longer pause — some keyboards are slow
+              await new Promise(r => setTimeout(r, 500));
+              const retryResult = await AppController.performImeAction();
+              console.warn(`[REACT] auto_ime_enter retry result=${retryResult}`);
+            }
           } catch (imeErr: any) {
             console.warn(`[REACT] auto_ime_enter error: ${imeErr.message}`);
           }

@@ -2010,11 +2010,11 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     public boolean performImeAction() {
         Log.i(TAG, "IME_ENTER: firing");
-        // Search all windows for a focused editable field — getRootInActiveWindow
-        // returns the keyboard window when the keyboard is showing, not the app.
+        // Strategy 1: Find focused OR any editable field across all windows
         AccessibilityNodeInfo target = null;
         try {
             java.util.List<AccessibilityWindowInfo> windows = getWindows();
+            // Pass 1: look for focused editable
             for (AccessibilityWindowInfo w : windows) {
                 if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
                     AccessibilityNodeInfo wRoot = w.getRoot();
@@ -2022,34 +2022,136 @@ public class AgentAccessibilityService extends AccessibilityService {
                         target = findFocusedEditable(wRoot);
                         wRoot.recycle();
                         if (target != null) {
-                            Log.i(TAG, "IME_ENTER: found editable in window pkg=" + (target.getPackageName() != null ? target.getPackageName() : "null"));
+                            Log.i(TAG, "IME_ENTER: found focused editable in window pkg=" + (target.getPackageName() != null ? target.getPackageName() : "null"));
                             break;
                         }
                     }
                 }
             }
+            // Pass 2: if no focused editable, find ANY editable (focus may be on keyboard)
+            if (target == null) {
+                for (AccessibilityWindowInfo w : windows) {
+                    if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                        AccessibilityNodeInfo wRoot = w.getRoot();
+                        if (wRoot != null) {
+                            target = findAnyEditable(wRoot);
+                            wRoot.recycle();
+                            if (target != null) {
+                                Log.i(TAG, "IME_ENTER: found non-focused editable in window pkg=" + (target.getPackageName() != null ? target.getPackageName() : "null"));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         } catch (Exception e) {
-            Log.i(TAG, "IME_ENTER: window scan failed, trying getRootInActiveWindow");
+            Log.i(TAG, "IME_ENTER: window scan failed: " + e.getMessage());
         }
-        // Fallback to getRootInActiveWindow
+        // Pass 3: fallback to getRootInActiveWindow
         if (target == null) {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root != null) {
                 target = findFocusedEditable(root);
+                if (target == null) target = findAnyEditable(root);
                 root.recycle();
             }
         }
+
         boolean result = false;
         if (target != null) {
+            // Try ACTION_IME_ENTER first (API 30+)
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 result = target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+                Log.i(TAG, "IME_ENTER: ACTION_IME_ENTER result=" + result);
+            }
+            // Fallback: ACTION_SEARCH (triggers search IME action)
+            if (!result) {
+                // EditorInfo.IME_ACTION_SEARCH = 3, IME_ACTION_GO = 2, IME_ACTION_DONE = 6
+                android.os.Bundle args = new android.os.Bundle();
+                args.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_IME_ACTION_ID, 3); // SEARCH
+                result = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT != 0 ? 0x02000000 : 0, args);
+                if (!result) {
+                    // Try ACTION_NEXT (Tab/Enter behavior)
+                    result = target.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY);
+                }
+                Log.i(TAG, "IME_ENTER: fallback actions result=" + result);
             }
             target.recycle();
         } else {
-            Log.i(TAG, "IME_ENTER: no focused editable found in any window");
+            Log.i(TAG, "IME_ENTER: no editable found in any window");
         }
-        Log.i(TAG, "IME_ENTER: result=" + result);
+
+        // Strategy 2: If node-based approach failed, try KEYCODE_ENTER via instrumentation
+        if (!result) {
+            Log.i(TAG, "IME_ENTER: node approach failed, trying gesture tap on keyboard Enter");
+            // Find the keyboard search/go/enter button via accessibility
+            try {
+                java.util.List<AccessibilityWindowInfo> windows = getWindows();
+                for (AccessibilityWindowInfo w : windows) {
+                    if (w.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                        AccessibilityNodeInfo kbRoot = w.getRoot();
+                        if (kbRoot != null) {
+                            AccessibilityNodeInfo enterBtn = findKeyboardEnter(kbRoot);
+                            if (enterBtn != null) {
+                                android.graphics.Rect bounds = new android.graphics.Rect();
+                                enterBtn.getBoundsInScreen(bounds);
+                                int cx = bounds.centerX();
+                                int cy = bounds.centerY();
+                                Log.i(TAG, "IME_ENTER: tapping keyboard enter at " + cx + "," + cy);
+                                android.accessibilityservice.GestureDescription.Builder gb = new android.accessibilityservice.GestureDescription.Builder();
+                                android.graphics.Path p = new android.graphics.Path();
+                                p.moveTo(cx, cy);
+                                gb.addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 50));
+                                dispatchGesture(gb.build(), null, null);
+                                result = true;
+                                enterBtn.recycle();
+                            }
+                            kbRoot.recycle();
+                        }
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                Log.i(TAG, "IME_ENTER: keyboard gesture failed: " + e.getMessage());
+            }
+        }
+
+        Log.i(TAG, "IME_ENTER: final result=" + result);
         return result;
+    }
+
+    // Find any editable node (not necessarily focused) — keyboard may have stolen focus
+    private AccessibilityNodeInfo findAnyEditable(AccessibilityNodeInfo root) {
+        if (root.isEditable()) return AccessibilityNodeInfo.obtain(root);
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo child = root.getChild(i);
+            if (child != null) {
+                AccessibilityNodeInfo found = findAnyEditable(child);
+                if (found != null) { child.recycle(); return found; }
+                child.recycle();
+            }
+        }
+        return null;
+    }
+
+    // Find the Enter/Search/Go button on the keyboard
+    private AccessibilityNodeInfo findKeyboardEnter(AccessibilityNodeInfo root) {
+        String desc = root.getContentDescription() != null ? root.getContentDescription().toString().toLowerCase() : "";
+        String text = root.getText() != null ? root.getText().toString().toLowerCase() : "";
+        if (root.isClickable() && (desc.contains("enter") || desc.contains("search") || desc.contains("go") ||
+            text.contains("enter") || text.contains("search") || text.contains("go") ||
+            desc.contains("done") || text.contains("done"))) {
+            return AccessibilityNodeInfo.obtain(root);
+        }
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo child = root.getChild(i);
+            if (child != null) {
+                AccessibilityNodeInfo found = findKeyboardEnter(child);
+                if (found != null) { child.recycle(); return found; }
+                child.recycle();
+            }
+        }
+        return null;
     }
 
     public boolean performBack() { Log.i(TAG, "BACK: fired"); return performGlobalAction(GLOBAL_ACTION_BACK); }
