@@ -419,19 +419,24 @@ Respond with ONLY a JSON array of strings. No explanation. Example:
         ? `\nFULL PLAN:\n${plan.map((s, i) => `  ${i < currentPlanStep ? '✓' : i === currentPlanStep ? '→' : ' '} ${i + 1}. ${s}`).join('\n')}`
         : '';
 
-      const systemPrompt = `You control an Android phone. You are inside the app: ${currentAppPackage || 'unknown'}.
-Choose ONE action to make progress toward the current step.
-ACTIONS YOU CAN USE:
-- tap_index(N)   tap element by its index number
-- tap(N)         same as tap_index(N) — ALWAYS use this, never guess x,y coordinates
-- type("text")   type text into focused field (auto-presses Enter/Go)
-- submit()       press Enter/Go/Search on keyboard (use after type if needed)
-- scroll(down)   scroll the screen down
-- scroll(up)     scroll the screen up
-- back()         press the back button
-- done           goal is complete — ONLY use after verifying the screen shows the expected result
+      const systemPrompt = `You control an Android phone. You are inside: ${currentAppPackage || 'unknown'}.
+Choose ONE action to make progress toward the goal.
 
-Respond with ONLY the action. No explanation. No prefix. Just the action.`;
+ACTIONS:
+- tap(N)         tap element by index number — ALWAYS use this, never guess coordinates
+- type("text")   type into focused field (auto-submits)
+- submit()       press Enter/Go/Search on keyboard
+- scroll(down)   scroll down to reveal more content
+- scroll(up)     scroll up
+- back()         go back to previous screen
+- done           goal complete — ONLY after verifying the screen shows the expected result
+
+CRITICAL:
+- Do NOT tap back() unless the current screen is clearly wrong for the goal.
+- Do NOT type into a field that already contains the correct text.
+- Only tap elements shown in the SCREEN list below. Off-screen elements are not available.
+
+Respond: ACTION: <action> // <one-word reason>`;
 
       // Build step history for context (last 4 steps)
       const recentSteps = steps.slice(-4).map(s =>
@@ -529,7 +534,15 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
       const nodes = JSON.parse(flat) as FlatNode[];
       if (!Array.isArray(nodes) || nodes.length === 0) return 'Screen: empty or inaccessible';
 
-      // Only show interactive nodes — skip empty labels and view-only noise
+      // P7: Get screen dimensions for visible-only filtering
+      let screenHeight = 2400; // reasonable default
+      try {
+        const { Dimensions } = require('react-native');
+        const { height } = Dimensions.get('screen');
+        if (height > 0) screenHeight = height;
+      } catch {}
+
+      // Only show interactive, VISIBLE nodes — filter off-screen elements
       const tappable: string[] = [];
       const typeable: string[] = [];
       const scrollable: string[] = [];
@@ -537,8 +550,22 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
       for (const n of nodes) {
         const label = (n.t || n.d || '').trim().slice(0, 50);
         if (!label) continue; // skip blank nodes
-        if (n.e) typeable.push(`  [${n.i}] ${label}`);
-        else if (n.c) tappable.push(`  [${n.i}] ${label}`);
+        // P7: Visible-only filter — skip elements above or below the screen
+        if (typeof n.y === 'number' && (n.y < 0 || n.y > screenHeight)) continue;
+
+        // P7: Enrich labels with type hints for better LLM decisions
+        let typeHint = '';
+        const lLower = label.toLowerCase();
+        if (n.e) {
+          typeHint = ' (input)';
+        } else if (n.c) {
+          if (/\b(ok|cancel|done|save|submit|send|close|accept|deny|allow|skip|next|back|yes|no)\b/i.test(lLower)) typeHint = ' (button)';
+          else if (/\b(settings|account|about|privacy|security|general|display|sound|battery)\b/i.test(lLower)) typeHint = ' (menu-item)';
+          else if (n.s) typeHint = ' (tab)';
+        }
+
+        if (n.e) typeable.push(`  [${n.i}] ${label}${typeHint}`);
+        else if (n.c) tappable.push(`  [${n.i}] ${label}${typeHint}`);
         else if (n.s && !tappable.length) scrollable.push(`  [${n.i}] ${label}`);
       }
 
@@ -563,9 +590,9 @@ Respond with ONLY the action. No explanation. No prefix. Just the action.`;
   private extractAction(text: string): string | null {
     const t = text.trim();
 
-    // 1. Strict prefix match: "ACTION: tap_index(5)"
+    // 1. Strict prefix match: "ACTION: tap(5) // reason" — strip comment
     const strict = t.match(/^ACTION:\s*(.+)$/im);
-    if (strict) return strict[1].trim();
+    if (strict) return strict[1].replace(/\s*\/\/.*$/, '').trim();
 
     // 2. Bare action on its own line or as the whole response
     const bare = t.match(/^(tap_index\(\s*\d+\s*\)|tap\(\s*\d+(?:\s*,\s*\d+)?\s*\)|type\(["']?[^)]+["']?\)|scroll\((?:up|down|forward|backward)\)|swipe\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)|back\(\)|home\(\)|done)$/i);

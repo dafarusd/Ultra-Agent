@@ -2012,6 +2012,18 @@ export class TaskExecutor {
         return { success: true, summary: 'Opened display settings for brightness' };
       }
       case 'wifi_toggle': {
+        // P8: Try direct API first (WRITE_SECURE_SETTINGS), fallback to QS automation
+        try {
+          const current = await AppController.getSecureSetting('global', 'wifi_on');
+          if (current >= 0) {
+            const newState = current === 0 ? 1 : 0;
+            await AppController.setSecureSetting('global', 'wifi_on', newState);
+            console.warn(`[TASK] wifi_toggle: direct API ${current} → ${newState}`);
+            return { success: true, summary: `Done — Wi-Fi ${newState ? 'enabled' : 'disabled'}.` };
+          }
+        } catch (e: any) {
+          console.warn(`[TASK] wifi_toggle: direct API failed (${e.message}), falling back to QS`);
+        }
         const wifiDelta = await captureStateDelta(taskId, 'wifi_toggle', () => AppController.toggleQuickSetting('Wi-Fi'));
         await logUiSnapshot(taskId, 'wifi_toggle');
         if (wifiDelta.toggled) return { success: true, summary: 'Done — Wi-Fi toggled.', data: { delta: wifiDelta.changed } };
@@ -2019,6 +2031,17 @@ export class TaskExecutor {
         return { success: true, summary: 'Couldn\'t toggle directly — opened Wi-Fi settings for you.', data: { partial: true } };
       }
       case 'bluetooth_toggle': {
+        try {
+          const current = await AppController.getSecureSetting('global', 'bluetooth_on');
+          if (current >= 0) {
+            const newState = current === 0 ? 1 : 0;
+            await AppController.setSecureSetting('global', 'bluetooth_on', newState);
+            console.warn(`[TASK] bluetooth_toggle: direct API ${current} → ${newState}`);
+            return { success: true, summary: `Done — Bluetooth ${newState ? 'enabled' : 'disabled'}.` };
+          }
+        } catch (e: any) {
+          console.warn(`[TASK] bluetooth_toggle: direct API failed (${e.message}), falling back to QS`);
+        }
         const btDelta = await captureStateDelta(taskId, 'bluetooth_toggle', () => AppController.toggleQuickSetting('Bluetooth'));
         await logUiSnapshot(taskId, 'bluetooth_toggle');
         if (btDelta.toggled) return { success: true, summary: 'Done — Bluetooth toggled.', data: { delta: btDelta.changed } };
@@ -2026,6 +2049,17 @@ export class TaskExecutor {
         return { success: true, summary: 'Couldn\'t toggle directly — opened Bluetooth settings for you.', data: { partial: true } };
       }
       case 'airplane_mode': {
+        try {
+          const current = await AppController.getSecureSetting('global', 'airplane_mode_on');
+          if (current >= 0) {
+            const newState = current === 0 ? 1 : 0;
+            await AppController.setSecureSetting('global', 'airplane_mode_on', newState);
+            console.warn(`[TASK] airplane_mode: direct API ${current} → ${newState}`);
+            return { success: true, summary: `Done — Airplane Mode ${newState ? 'enabled' : 'disabled'}.` };
+          }
+        } catch (e: any) {
+          console.warn(`[TASK] airplane_mode: direct API failed (${e.message}), falling back to QS`);
+        }
         const apDelta = await captureStateDelta(taskId, 'airplane_mode', async () => {
           let r = await AppController.toggleQuickSetting('Airplane');
           if (!r) r = await AppController.toggleQuickSetting('Flight');

@@ -30,6 +30,8 @@ export interface AppControllerInterface {
   performQuickSettings(): Promise<boolean>;
   takeScreenshot(): Promise<boolean>;
   toggleQuickSetting(tileLabel: string): Promise<boolean>;
+  setSecureSetting(namespace: string, key: string, value: number): Promise<boolean>;
+  getSecureSetting(namespace: string, key: string): Promise<number>;
   setVolume(streamType: string, level: number): Promise<number>;
   getVolume(streamType: string): Promise<number>;
   adjustVolume(direction: 'up' | 'down'): Promise<number>;
@@ -77,6 +79,8 @@ const noopController: AppControllerInterface = {
   performQuickSettings: async () => false,
   takeScreenshot: async () => false,
   toggleQuickSetting: async () => false,
+  setSecureSetting: async () => false,
+  getSecureSetting: async () => -1,
   setVolume: async () => 0,
   getVolume: async () => 0,
   adjustVolume: async () => 0,
@@ -188,6 +192,13 @@ function createNativeController(): AppControllerInterface {
     toggleQuickSetting: (tileLabel: string) => {
       UltraDevLog.push('SYSTEM', { event: 'native_call_start', method: 'toggleQuickSetting', tileLabel });
       return native.toggleQuickSetting ? native.toggleQuickSetting(tileLabel) : Promise.resolve(false);
+    },
+    setSecureSetting: (namespace: string, key: string, value: number) => {
+      UltraDevLog.push('SYSTEM', { event: 'native_call_start', method: 'setSecureSetting', namespace, key, value });
+      return native.setSecureSetting ? native.setSecureSetting(namespace, key, value) : Promise.resolve(false);
+    },
+    getSecureSetting: (namespace: string, key: string) => {
+      return native.getSecureSetting ? native.getSecureSetting(namespace, key) : Promise.resolve(-1);
     },
     setVolume: (streamType: string, level: number) => {
       UltraDevLog.push('SYSTEM', { event: 'native_call_start', method: 'setVolume', streamType, level });

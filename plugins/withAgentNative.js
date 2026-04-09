@@ -2678,6 +2678,66 @@ public class AccessibilityBridgeModule extends ReactContextBaseJavaModule {
         }).start();
     }
 
+    // P8: Direct system settings toggle via WRITE_SECURE_SETTINGS permission
+    // Grant with: adb shell pm grant com.agent.ultra android.permission.WRITE_SECURE_SETTINGS
+    @ReactMethod
+    public void setSecureSetting(String namespace, String key, int value, Promise promise) {
+        try {
+            android.content.ContentResolver resolver = reactContext.getContentResolver();
+            boolean success;
+            if ("global".equals(namespace)) {
+                success = android.provider.Settings.Global.putInt(resolver, key, value);
+            } else if ("secure".equals(namespace)) {
+                success = android.provider.Settings.Secure.putInt(resolver, key, value);
+            } else if ("system".equals(namespace)) {
+                success = android.provider.Settings.System.putInt(resolver, key, value);
+            } else {
+                promise.reject("INVALID_NAMESPACE", "Use 'global', 'secure', or 'system'");
+                return;
+            }
+            Log.i(TAG, "setSecureSetting: " + namespace + "/" + key + "=" + value + " result=" + success);
+            if (success) {
+                // For airplane mode, broadcast the state change so radios actually respond
+                if ("airplane_mode_on".equals(key)) {
+                    Intent intent = new Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED);
+                    intent.putExtra("state", value != 0);
+                    reactContext.sendBroadcast(intent);
+                    Log.i(TAG, "setSecureSetting: broadcast AIRPLANE_MODE_CHANGED state=" + (value != 0));
+                }
+                promise.resolve(true);
+            } else {
+                promise.reject("WRITE_FAILED", "Settings.putInt returned false — WRITE_SECURE_SETTINGS permission may not be granted");
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "setSecureSetting: SecurityException — permission not granted: " + e.getMessage());
+            promise.reject("PERMISSION_DENIED", "WRITE_SECURE_SETTINGS not granted. Run: adb shell pm grant com.agent.ultra android.permission.WRITE_SECURE_SETTINGS");
+        } catch (Exception e) {
+            Log.e(TAG, "setSecureSetting: " + e.getMessage());
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void getSecureSetting(String namespace, String key, Promise promise) {
+        try {
+            android.content.ContentResolver resolver = reactContext.getContentResolver();
+            int value;
+            if ("global".equals(namespace)) {
+                value = android.provider.Settings.Global.getInt(resolver, key, -1);
+            } else if ("secure".equals(namespace)) {
+                value = android.provider.Settings.Secure.getInt(resolver, key, -1);
+            } else if ("system".equals(namespace)) {
+                value = android.provider.Settings.System.getInt(resolver, key, -1);
+            } else {
+                promise.reject("INVALID_NAMESPACE", "Use 'global', 'secure', or 'system'");
+                return;
+            }
+            promise.resolve(value);
+        } catch (Exception e) {
+            promise.reject("ERROR", e.getMessage());
+        }
+    }
+
     @ReactMethod
     public void startBackgroundService(Promise promise) {
         try {

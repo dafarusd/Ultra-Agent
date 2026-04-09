@@ -3,6 +3,115 @@ import type { TaskExecutor } from './TaskExecutor';
 import type { ConversationManager } from '../services/ConversationManager';
 import type { UltraExecutionResult } from '../types/ultra';
 import { UltraDevLog as DebugLog } from '../utils/UltraDevLog';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P6: TASK MEMORY — track tool reliability + successful task shortcuts
+// ─────────────────────────────────────────────────────────────────────────────
+const TASK_MEMORY_KEY = 'brain_task_memory';
+
+interface ToolReliability {
+  successes: number;
+  failures: number;
+  lastFailure?: string;
+}
+
+interface TaskShortcut {
+  goalPattern: string;
+  tools: string[];
+  count: number;
+}
+
+interface TaskMemory {
+  toolReliability: Record<string, ToolReliability>;
+  shortcuts: TaskShortcut[];
+}
+
+let _taskMemoryCache: TaskMemory | null = null;
+
+async function loadTaskMemory(): Promise<TaskMemory> {
+  if (_taskMemoryCache) return _taskMemoryCache;
+  try {
+    const raw = await AsyncStorage.getItem(TASK_MEMORY_KEY);
+    if (raw) {
+      _taskMemoryCache = JSON.parse(raw);
+      return _taskMemoryCache!;
+    }
+  } catch {}
+  _taskMemoryCache = { toolReliability: {}, shortcuts: [] };
+  return _taskMemoryCache;
+}
+
+async function saveTaskMemory(mem: TaskMemory): Promise<void> {
+  _taskMemoryCache = mem;
+  try {
+    await AsyncStorage.setItem(TASK_MEMORY_KEY, JSON.stringify(mem));
+  } catch {}
+}
+
+async function recordToolResult(tool: string, success: boolean, errorMsg?: string): Promise<void> {
+  const mem = await loadTaskMemory();
+  if (!mem.toolReliability[tool]) mem.toolReliability[tool] = { successes: 0, failures: 0 };
+  if (success) {
+    mem.toolReliability[tool].successes++;
+  } else {
+    mem.toolReliability[tool].failures++;
+    if (errorMsg) mem.toolReliability[tool].lastFailure = errorMsg.slice(0, 100);
+  }
+  await saveTaskMemory(mem);
+}
+
+async function recordTaskShortcut(userInput: string, tools: string[]): Promise<void> {
+  if (tools.length < 2) return;
+  const mem = await loadTaskMemory();
+  // Extract a simplified goal pattern (first few action words)
+  const pattern = userInput.toLowerCase().replace(/[^a-z ]/g, '').trim().slice(0, 60);
+  const toolKey = tools.join(',');
+  // Check if we already have this shortcut
+  const existing = mem.shortcuts.find(s => s.tools.join(',') === toolKey);
+  if (existing) {
+    existing.count++;
+    existing.goalPattern = pattern;
+  } else {
+    mem.shortcuts.push({ goalPattern: pattern, tools, count: 1 });
+    // Keep max 20 shortcuts, remove least used
+    if (mem.shortcuts.length > 20) {
+      mem.shortcuts.sort((a, b) => b.count - a.count);
+      mem.shortcuts = mem.shortcuts.slice(0, 20);
+    }
+  }
+  await saveTaskMemory(mem);
+}
+
+// Build reliability + shortcut hints for the system prompt
+async function getTaskMemoryHints(userInput: string): Promise<string> {
+  const mem = await loadTaskMemory();
+  const hints: string[] = [];
+
+  // Reliability warnings for unreliable tools (>40% failure rate, min 3 uses)
+  for (const [tool, stats] of Object.entries(mem.toolReliability)) {
+    const total = stats.successes + stats.failures;
+    if (total >= 3 && stats.failures / total > 0.4) {
+      hints.push(`${tool}: unreliable (${stats.failures}/${total} recent fails). Consider alternatives.`);
+    }
+  }
+
+  // Shortcut matches — find shortcuts whose tools might match this request
+  const uLower = userInput.toLowerCase();
+  for (const shortcut of mem.shortcuts) {
+    if (shortcut.count >= 2) {
+      // Simple keyword overlap check
+      const patternWords = shortcut.goalPattern.split(' ').filter(w => w.length > 3);
+      const matchCount = patternWords.filter(w => uLower.includes(w)).length;
+      if (matchCount >= 2 || matchCount / patternWords.length > 0.5) {
+        hints.push(`KNOWN APPROACH: For similar tasks, ${shortcut.tools.join(' → ')} has worked before.`);
+        break; // Only one shortcut hint
+      }
+    }
+  }
+
+  return hints.length > 0 ? '\nTASK MEMORY:\n' + hints.join('\n') : '';
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DESTRUCTIVE TOOLS — require explicit user confirmation before executing
@@ -44,55 +153,36 @@ function describeAction(tool: string, params: Record<string, any>): string {
 // TOOL DEFINITIONS
 // ─────────────────────────────────────────────────────────────────────────────
 const TOOLS = `
-app_launch        - Open an app, website, or settings screen (open only, no interaction). params: {target}
-react_navigate    - Open an app/website AND do things inside it (tap, type, scroll, find, click). USE THIS when the user wants to DO something inside an app or site. params: {goal, appHint}
-web_search        - Search the internet for information. Returns text only. params: {query}
-web_research      - Deep research a topic, return summary. params: {query}
-weather           - Get weather. params: {location?, use_current_location?, date?}
-news_headlines    - Get latest news headlines. params: {topic?}
-device_location   - Get GPS coordinates and city name. params: {}
-device_info       - Get battery, RAM, storage, device model. params: {focus?}
-system_info       - Get CPU temp, processes, system stats. params: {}
-battery_status    - Get battery level and charging state. params: {}
-contacts_read     - Read contacts from address book. params: {name?}
-sms_send          - Send a text message. params: {to, message}
-sms_read          - Read messages from inbox. params: {limit?, filter?}
-sms_conversation  - Read SMS thread with a contact. params: {address, limit?}
-camera_capture    - Take a photo. params: {}
-screenshot        - Take a screenshot and save to gallery. params: {}
-screen_record_start - Start screen recording. params: {}
-note_create       - Create a note. params: {content}
-alarm_set         - Set an alarm. params: {time, label?}
-timer_set         - Set a timer. params: {duration, label?}
-reminder_create   - Create a reminder. params: {text, time?}
-calendar_create   - Create a calendar event. params: {title, details?, startMs?, endMs?}
-file_read         - Read a file or list directory. params: {path}
-file_write        - Write content to a file. params: {filename, content}
-file_open         - Open a file with the default app. params: {path, mimeType?}
-open_url          - Open a URL in the browser. params: {url}
-share_content     - Share text via Android share sheet. params: {content, subject?}
-app_info          - Show app info/settings for an app. params: {target}
-clipboard_write   - Copy text to clipboard. params: {text}
-clipboard_read    - Read text from clipboard. params: {}
-volume_set        - Set volume. params: {level?, direction?, type?}
-brightness_set    - Set screen brightness. params: {level?, direction?}
-flashlight_toggle - Toggle flashlight. params: {state?}
-wifi_toggle       - Toggle Wi-Fi on/off via Quick Settings. params: {}
-bluetooth_toggle  - Toggle Bluetooth on/off via Quick Settings. params: {}
-airplane_mode     - Toggle airplane mode on/off via Quick Settings. params: {}
-do_not_disturb    - Toggle Do Not Disturb on/off via Quick Settings. params: {}
-media_play        - Play/pause media. params: {action?}
-media_next        - Skip to next track. params: {}
-image_generate    - Generate an image from a text prompt. params: {prompt}
-tts               - Convert text to speech audio. params: {text, voice?}
-read_text_on_screen - Read all visible text on screen. params: {}
-describe_screen   - Describe what is on screen. params: {}
-notification_read - Read recent notifications. params: {}
-memory_recall     - Recall something the agent learned about the user. params: {query}
-knowledge_query   - Query the agent's knowledge graph. params: {query}
-set_user_name     - Tell the agent your name. params: {name}
-set_user_info     - Store user profile info (email, phone, address). params: {email?, phone?, address?}
-install_app       - Search Play Store and install an app to gain new capabilities. params: {appName}
+DEVICE CONTROL (instant, ~99% reliable):
+  wifi_toggle, bluetooth_toggle, airplane_mode, do_not_disturb, flashlight_toggle
+  volume_set, brightness_set, media_play, media_next
+
+APPS & NAVIGATION (use app_launch to just open, react_navigate to open AND interact):
+  app_launch — open app/settings/website (no interaction)
+  react_navigate — open app AND do things inside it (tap, type, scroll). Use when user wants to DO something in an app
+  open_url — open a URL in browser
+  install_app — search Play Store and install an app
+  app_info — show app info/settings
+
+INFORMATION (fast, no UI needed):
+  web_search — search internet, returns text results directly
+  web_research — deep research a topic
+  weather, news_headlines, device_location, device_info, system_info, battery_status
+
+COMMUNICATION:
+  sms_send, sms_read, sms_conversation, contacts_read
+
+SCREEN & CAPTURE:
+  read_text_on_screen, describe_screen, screenshot, camera_capture, screen_record_start, notification_read
+
+FILES & CLIPBOARD:
+  file_read, file_write, file_open, clipboard_write, clipboard_read, share_content
+
+CREATION:
+  note_create, alarm_set, timer_set, reminder_create, calendar_create, image_generate, tts
+
+MEMORY & PROFILE:
+  memory_recall, knowledge_query, set_user_name, set_user_info
 `.trim();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,95 +272,23 @@ async function buildSystemPrompt(): Promise<string> {
     }
   } catch {}
 
-  return `You are Ultra — a capable, concise AI agent with full control of this Android phone. You solve problems, not describe solutions. You speak like a sharp assistant: confident, brief, slightly warm. Never robotic. Never verbose. Just get it done and say what happened in one sentence.
+  return `You are Ultra — a capable, concise AI agent controlling this Android phone.
+${envSnapshot}${knowledgeSummary}
+TODAY: ${dateStr} at ${timeStr}
 
-TODAY: ${dateStr} at ${timeStr}${envSnapshot}${knowledgeSummary}
+FORMAT: To use a tool: {"tool":"name","params":{...}} — To talk: plain text. ONE tool call per response.
 
-HOW YOU THINK:
-1. Understand what the user actually WANTS (not just what they said)
-2. Break the problem into concrete steps
-3. Execute each step with a tool call
-4. OBSERVE the result — read what happened, what's on screen
-5. REASON about what to do next based on what you learned
-6. Continue until the problem is SOLVED, not just attempted
-7. If something fails, try a different approach — don't give up
-
-RESPONSE FORMAT:
-- To use a tool: {"tool":"name","params":{...}}
-- To talk to the user: plain text (no JSON)
-- ONE tool call per response. You will see the result and can continue.
-
-PROBLEM-SOLVING RULES:
-- You have up to 12 tool calls per task. Use them wisely.
-- IMPORTANT: When web_search returns actual text results, READ THEM and answer the user directly. Do NOT open a browser or call react_navigate to "see" results you already have as text.
-- After react_navigate, you'll see what's on the screen. Use that information to decide your next step.
-- If a tool fails, try an alternative (different app, different approach, different query).
-- If you need information to solve the problem, GATHER it first (web_search, read_text_on_screen, device_info).
-- Don't stop at "I opened the page" — read the results, extract the answer, tell the user.
-- When you have enough information to answer, STOP calling tools and respond with a clear, complete answer.
-- 1-2 web searches is usually enough. Don't keep searching if you already have good results.
-
-CROSS-APP DATA FLOW:
-- You can read what's on screen (read_text_on_screen) and use that information in your next tool call
-- Example: user says "send mom the address of this restaurant" → read_text_on_screen → extract address → sms_send
-- Example: user says "what's this?" → read_text_on_screen → analyze and explain what you see
-- After react_navigate, you'll see screen content in the result — use it to answer questions or take next actions
-
-VERIFICATION:
-- After any action that changes the screen, check if it actually worked
-- Don't assume success — verify by reading the result
-- If react_navigate returns goalAchieved=false, read what's on screen and explain what happened
-- If a search returned results, READ them and give the user the actual answer
-
-BLOCKERS:
-- If you encounter a login screen, captcha, or permission dialog: STOP and tell the user "I need you to sign in / grant permission. Let me know when you're done."
-- Don't try to bypass authentication — ask the user to handle it
-- If an app crashes or closes unexpectedly, try an alternative approach
-
-SELF-EVOLUTION:
-- You can install new apps to gain capabilities you don't have (install_app)
-- If the user asks for something that requires an app you don't have (e.g. "order an Uber", "play Spotify"), install it
-- You learn from every interaction — names, preferences, contacts are remembered for next time
-- You know what apps are installed on this phone — use that to choose the best tool for each task
-- If you've seen an app's UI before, you know how to navigate it faster
-
-AUTO-FILL & FORMS:
-- You know the user's name, email, phone, and address (if they've told you via set_user_info)
-- When react_navigate encounters a sign-up form, use the stored profile to fill fields
-- Read field labels ("Name", "Email", "Phone") via accessibility and type the matching stored value
-- If you don't have info needed for a form, ASK the user — then save it with set_user_info for next time
-
-DEVICE AWARENESS:
-- You can see connected Bluetooth devices and WiFi networks in the PHONE STATE above
-- Learn which devices belong to the user: "Play music on my speaker" → you know which BT device is the speaker
-- Devices like headphones, speakers, smartwatches, cars, TVs can be referenced by name
-- If the user says "send this to my laptop", check BT devices or use share_content
-
-SAFETY:
-- NEVER send messages (sms_send) or make calls unless the user EXPLICITLY asks
-- Do NOT reply to SMS threads you read or call numbers you find
-
-TOOLS:
 ${TOOLS}
 
-TOOL SELECTION (use the most direct tool available):
-- Toggle wifi/bluetooth/airplane/DND/flashlight → use the dedicated toggle tool (NOT react_navigate, NOT app_launch)
-- Set volume/brightness → volume_set / brightness_set
-- Play/pause/skip music → media_play / media_next
-- Open a settings screen → app_launch with the settings name (e.g. target="wifi settings")
-- Open an app AND interact with it → react_navigate (goal=what to do, appHint=app name)
-- Just open an app → app_launch
-- Open a URL → open_url
-- Search the internet for information → web_search
-- Copy/paste → clipboard_write / clipboard_read
-- Screenshot/photo → screenshot / camera_capture
-- Create event → calendar_create
-- Generate image → image_generate
-- Read aloud → tts
-- "My name is X" → set_user_name
-- "Install X" / "Download X" / "Get X app" → install_app
-- If a task needs an app you don't have → install_app first, then use it
-- NEVER put a URL into web_search`;
+RULES:
+1. Understand what the user WANTS, break it into steps, execute each with a tool call. You get up to 12 tool calls.
+2. ALWAYS prefer direct tools over UI automation: toggles > app_launch > react_navigate. Only use react_navigate when you need to interact INSIDE an app.
+3. When web_search returns text results, READ THEM and answer directly. Do NOT open a browser to see results you already have.
+4. After every tool call, VERIFY the result. If it failed, try a different approach. If the same tool fails twice, stop and tell the user.
+5. Read screen content (read_text_on_screen) to gather data, then use it in the next tool call. Example: read address on screen → sms_send it.
+6. When you have enough information to answer, STOP calling tools and give a clear, complete answer.
+7. If you hit a login screen, captcha, or permission dialog: STOP and ask the user to handle it.
+8. NEVER send messages or make calls unless the user EXPLICITLY asks. Do NOT reply to SMS threads or call found numbers.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -506,21 +524,97 @@ function formatToolResult(result: any): string {
   if (result.summary) return result.summary;
   try {
     const str = JSON.stringify(result);
-    return str.length > 1500 ? str.slice(0, 1500) + '...' : str;
+    return str.length > 2500 ? str.slice(0, 2500) + '...' : str;
   } catch {
     return String(result);
   }
 }
 
+// P4: Structured tool result feedback with turn budget, plan context, and verification
+function buildToolFeedback(
+  toolName: string,
+  resultText: string,
+  turn: number,
+  maxTurns: number,
+  plan: string[] | null,
+  planStep: number,
+  isSuccess: boolean,
+): string {
+  const status = isSuccess ? 'success' : 'failed';
+  const turnsLeft = maxTurns - turn - 1;
+  let feedback = `[RESULT: ${toolName}] STATUS: ${status}\nDATA: ${resultText}`;
+  feedback += `\nTURNS_LEFT: ${turnsLeft}/${maxTurns}`;
+  if (plan && planStep < plan.length) {
+    feedback += `\nCURRENT_STEP: ${planStep + 1}/${plan.length} — "${plan[planStep]}"`;
+  }
+  // Post-action verification for ambiguous results
+  if (isSuccess && !resultText.startsWith('Error:') && toolName === 'react_navigate') {
+    feedback += '\nVERIFY: Check the result — did this achieve the intended outcome? If not, try a different approach.';
+  }
+  // Web search special handling
+  if (toolName === 'web_search' && resultText.includes('Search results')) {
+    feedback += '\nYou have the search results above. Answer the user directly. Do NOT open a browser.';
+  } else {
+    feedback += '\nDECIDE: Answer the user, or call the next tool.';
+  }
+  return feedback;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // BRAIN EXECUTOR
 // ─────────────────────────────────────────────────────────────────────────────
+// Multi-step intent detection — does the user want more than one action?
+function isMultiStepIntent(input: string): boolean {
+  const u = input.toLowerCase();
+  const actionVerbs = /\b(find|search|open|navigate|send|text|call|set|create|make|play|turn|toggle|install|download|order|book|buy|get|show|take|go)\b/g;
+  const matches = u.match(actionVerbs);
+  if (matches && matches.length >= 2) return true;
+  // Connectors that imply multi-step: "and then", "then", "after that", "and"
+  if (/\b(and then|then|after that)\b/.test(u)) return true;
+  // "find X and send/text/navigate" patterns
+  if (/\b(find|search|look up)\b.*\b(send|text|navigate|go|open|call)\b/.test(u)) return true;
+  return false;
+}
+
 export class BrainExecutor {
   constructor(
     private ai: ModelRouter,
     private executor: TaskExecutor,
     private conversations: ConversationManager,
   ) {}
+
+  // Plan a multi-step task before entering the tool loop
+  private async planTask(
+    userInput: string,
+    messages: Array<{ role: string; content: string }>,
+    taskId: string,
+  ): Promise<string[] | null> {
+    try {
+      const planPrompt = [
+        { role: 'system', content: 'You are a task planner. Given a user request and available tools, produce a concise plan of 2-5 concrete steps. Return ONLY a JSON array of strings. No explanation.' },
+        { role: 'user', content: `Task: "${userInput}"\nAvailable tools: app_launch, react_navigate, web_search, web_research, weather, news_headlines, device_location, device_info, system_info, battery_status, contacts_read, sms_send, sms_read, sms_conversation, camera_capture, screenshot, note_create, alarm_set, timer_set, reminder_create, calendar_create, file_read, file_write, open_url, share_content, clipboard_write, clipboard_read, volume_set, brightness_set, flashlight_toggle, wifi_toggle, bluetooth_toggle, airplane_mode, do_not_disturb, media_play, media_next, image_generate, tts, read_text_on_screen, describe_screen, notification_read, memory_recall, knowledge_query, set_user_name, set_user_info, install_app, app_info` },
+      ];
+      const result = await this.ai.completeWithConversation(planPrompt, {
+        taskId,
+        agentId: 'brain',
+        maxTokens: 500,
+        temperature: 0.1,
+      });
+      const text = result.content.trim();
+      // Extract JSON array from response
+      const arrMatch = text.match(/\[[\s\S]*\]/);
+      if (arrMatch) {
+        const steps = JSON.parse(arrMatch[0]);
+        if (Array.isArray(steps) && steps.length >= 2 && steps.every((s: any) => typeof s === 'string')) {
+          console.warn(`[BRAIN] PLAN: ${steps.length} steps: ${steps.join(' → ')}`);
+          return steps;
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[BRAIN] planTask failed: ${e.message}`);
+    }
+    return null;
+  }
 
   async execute(
     userInput: string,
@@ -583,7 +677,10 @@ export class BrainExecutor {
       createdAt: Date.now(),
     });
 
-    const systemPrompt = await buildSystemPrompt();
+    let systemPrompt = await buildSystemPrompt();
+    // P6: Inject task memory hints (reliability warnings + known shortcuts)
+    const memoryHints = await getTaskMemoryHints(userInput);
+    if (memoryHints) systemPrompt += memoryHints;
     const { payload } = await this.buildContextFromConversation(conversationId, systemPrompt);
     // Inject screen context + knowledge into the last user message
     let knowledgeContext = '';
@@ -622,13 +719,33 @@ export class BrainExecutor {
     let lastToolResult: any = undefined;
     let hasBeenPushed = false;
 
+    // ── TASK PLANNING: decompose multi-step tasks before tool loop ──────
+    let plan: string[] | null = null;
+    let planStep = 0;
+    if (resumeTurn === 0 && isMultiStepIntent(userInput)) {
+      DebugLog.systemEvent('BrainExecutor', 'Multi-step intent detected, planning...');
+      plan = await this.planTask(userInput, messages, taskId);
+      if (plan) {
+        DebugLog.systemEvent('BrainExecutor', `Plan: ${plan.length} steps`);
+        // Inject plan into context so the brain knows the strategy
+        const planText = plan.map((s, i) => `${i + 1}. ${s}`).join('\n');
+        messages.push({ role: 'user', content: `[PLAN for this task]\n${planText}\n\nStart with step 1. Call the appropriate tool.` });
+      }
+    }
+
+    // Track tool sequence for task memory (P6)
+    const toolSequence: Array<{ tool: string; success: boolean }> = [];
+
     for (let turn = resumeTurn; turn < MAX_TOOL_TURNS; turn++) {
       DebugLog.systemEvent('BrainExecutor', `AI turn ${turn + 1}`);
+
+      // P5: Dynamic maxTokens — more for initial reasoning and final synthesis
+      const maxTokens = turn === 0 ? 2000 : turn >= MAX_TOOL_TURNS - 2 ? 2500 : 1500;
 
       const aiResult = await this.ai.completeWithConversation(messages, {
         taskId,
         agentId: 'brain',
-        maxTokens: 1500,
+        maxTokens,
         temperature: 0.2,
       });
 
@@ -717,7 +834,20 @@ export class BrainExecutor {
 
       lastToolResult = toolResult;
       const resultText = formatToolResult(toolResult);
-      DebugLog.systemEvent('BrainExecutor', `TOOL RESULT: ${resultText.slice(0, 120)}`);
+      const isFailure = resultText.startsWith('Error:') || resultText.startsWith('Could not');
+      const isSuccess = !isFailure;
+      DebugLog.systemEvent('BrainExecutor', `TOOL RESULT (${isSuccess ? 'ok' : 'fail'}): ${resultText.slice(0, 120)}`);
+
+      // Track tool sequence for task memory
+      toolSequence.push({ tool: toolCall.tool, success: isSuccess });
+      // P6: Record tool reliability
+      recordToolResult(toolCall.tool, isSuccess, isFailure ? resultText.slice(0, 100) : undefined).catch(() => {});
+
+      // Advance plan step on success
+      if (isSuccess && plan && planStep < plan.length) {
+        planStep++;
+        DebugLog.systemEvent('BrainExecutor', `Plan step advanced to ${planStep}/${plan.length}`);
+      }
 
       // Learn from every interaction — build persistent knowledge
       try {
@@ -732,7 +862,6 @@ export class BrainExecutor {
       messages.push({ role: 'assistant', content: rawResponse });
 
       // Stuck detector: if the same tool fails twice in a row, stop and report honestly
-      const isFailure = resultText.startsWith('Error:') || resultText.startsWith('Could not');
       if (isFailure) {
         const prevMsg = messages.length >= 4 ? messages[messages.length - 3].content : '';
         const prevWasSameTool = prevMsg.includes(`"tool":"${toolCall.tool}"`);
@@ -743,18 +872,22 @@ export class BrainExecutor {
         }
       }
 
-      const isSearchResult = toolCall.tool === 'web_search' && resultText.includes('Search results');
-      const followUp = isSearchResult
-        ? `\n\nYou have the search results above. Answer the user's question directly using this information. Do NOT open a browser or call react_navigate.`
-        : `\n\nContinue solving the user's request. Call another tool if needed, or give your final answer. Be concise.`;
+      // P4: Structured feedback with turn budget, plan context, and verification
+      const feedback = buildToolFeedback(toolCall.tool, resultText, turn, MAX_TOOL_TURNS, plan, planStep, isSuccess);
       messages.push({
         role: 'user',
-        content: `[Tool result: ${toolCall.tool}]\n${resultText}${followUp}`,
+        content: feedback,
       });
 
       if (turn === MAX_TOOL_TURNS - 1) {
         finalText = `Ran ${toolCall.tool}: ${resultText}`;
       }
+    }
+
+    // P6: Save successful tool sequence as shortcut for future reuse
+    const successfulTools = toolSequence.filter(t => t.success).map(t => t.tool);
+    if (successfulTools.length >= 2 && finalText && !finalText.startsWith('That didn\'t work')) {
+      recordTaskShortcut(userInput, successfulTools).catch(() => {});
     }
 
     if (finalText) {
@@ -782,33 +915,64 @@ export class BrainExecutor {
     systemPrompt: string,
   ): Promise<{ payload: Array<{ role: string; content: string }> }> {
     const conv = await this.conversations.loadConversation(conversationId);
-    // Keep last 6 messages, then trim total payload to ~8KB of conversation
-    // (system prompt is separate ~8KB, total target <16KB to keep LLM response <3s)
-    let msgs = conv
-      ? conv.messages.slice(-6).map((m: any) => ({ role: m.role, content: m.content }))
-      : [];
-    // Trim from oldest if conversation content exceeds 8KB
-    const MAX_CONV_CHARS = 8000;
-    let totalChars = msgs.reduce((sum, m) => sum + m.content.length, 0);
-    while (totalChars > MAX_CONV_CHARS && msgs.length > 2) {
-      totalChars -= msgs[0].content.length;
-      msgs = msgs.slice(1);
+    if (!conv || conv.messages.length === 0) {
+      return { payload: [{ role: 'system', content: systemPrompt }] };
     }
-    // Ensure proper role alternation (merge consecutive same-role messages)
-    const merged: typeof msgs = [];
-    for (const m of msgs) {
-      if (merged.length > 0 && merged[merged.length - 1].role === m.role) {
-        merged[merged.length - 1].content += '\n' + m.content;
+
+    const allMsgs = conv.messages.map((m: any) => ({ role: m.role, content: m.content }));
+
+    // Priority-based context allocation:
+    // 1. Always keep the first user message (original request) and the latest messages
+    // 2. Prioritize tool results (contain actionable data) over assistant messages
+    // 3. 12KB total budget, 3KB per tool result, 2KB for others
+    const MAX_CONV_CHARS = 12000;
+    const MAX_TOOL_RESULT_CHARS = 3000;
+    const MAX_OTHER_CHARS = 2000;
+
+    // Truncate individual messages based on type
+    const truncated = allMsgs.map(m => {
+      const isToolResult = m.role === 'user' && m.content.startsWith('[Tool result:');
+      const limit = isToolResult ? MAX_TOOL_RESULT_CHARS : MAX_OTHER_CHARS;
+      return {
+        role: m.role,
+        content: m.content.length > limit ? m.content.slice(0, limit) + '...(truncated)' : m.content,
+      };
+    });
+
+    // Always preserve: first user message + last 10 messages (sliding window)
+    let msgs: typeof truncated = [];
+    if (truncated.length <= 12) {
+      msgs = truncated;
+    } else {
+      const firstUser = truncated.find(m => m.role === 'user');
+      const recent = truncated.slice(-10);
+      // Only add first user if it's not already in the recent window
+      if (firstUser && !recent.includes(firstUser)) {
+        msgs = [firstUser, ...recent];
       } else {
-        merged.push({ ...m });
+        msgs = recent;
       }
     }
-    msgs = merged;
-    // Truncate individual messages that are too long (e.g. huge tool results)
-    msgs = msgs.map(m => ({
-      role: m.role,
-      content: m.content.length > 2000 ? m.content.slice(0, 2000) + '...(truncated)' : m.content,
-    }));
-    return { payload: [{ role: 'system', content: systemPrompt }, ...msgs] };
+
+    // Trim from oldest (after first) if still over budget
+    let totalChars = msgs.reduce((sum, m) => sum + m.content.length, 0);
+    while (totalChars > MAX_CONV_CHARS && msgs.length > 2) {
+      totalChars -= msgs[1].content.length;
+      msgs.splice(1, 1);
+    }
+
+    // Ensure proper role alternation — prefix tool results to distinguish from user messages
+    // instead of merging which destroys semantic boundaries
+    const alternated: typeof msgs = [];
+    for (const m of msgs) {
+      if (alternated.length > 0 && alternated[alternated.length - 1].role === m.role) {
+        // Same role consecutive — merge with separator to satisfy API role alternation
+        alternated[alternated.length - 1].content += '\n---\n' + m.content;
+      } else {
+        alternated.push({ ...m });
+      }
+    }
+
+    return { payload: [{ role: 'system', content: systemPrompt }, ...alternated] };
   }
 }
