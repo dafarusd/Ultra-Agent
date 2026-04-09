@@ -158,19 +158,22 @@ DEVICE CONTROL (instant, ~99% reliable):
   volume_set, brightness_set, media_play, media_next
 
 APPS & NAVIGATION (use app_launch to just open, react_navigate to open AND interact):
-  app_launch — open app/settings/website (no interaction)
-  react_navigate — open app AND do things inside it (tap, type, scroll). Use when user wants to DO something in an app
-  open_url — open a URL in browser
-  install_app — search Play Store and install an app
-  app_info — show app info/settings
+  app_launch — open app/settings/website (no interaction). params: {target}
+  react_navigate — open app AND do things inside it (tap, type, scroll). params: {goal, appHint}
+  open_url — open a URL in browser. params: {url}
+  install_app — search Play Store and install an app. params: {appName}
+  app_info — show app info/settings. params: {target}
 
 INFORMATION (fast, no UI needed):
-  web_search — search internet, returns text results directly
-  web_research — deep research a topic
+  web_search — search internet, returns text results directly. params: {query}
+  web_research — deep research a topic. params: {query}
   weather, news_headlines, device_location, device_info, system_info, battery_status
 
 COMMUNICATION:
-  sms_send, sms_read, sms_conversation, contacts_read
+  sms_send — send SMS. params: {to, message}
+  sms_read — read inbox messages
+  sms_conversation — read thread with contact. params: {address}
+  contacts_read — search contacts. params: {name?}
 
 SCREEN & CAPTURE:
   read_text_on_screen, describe_screen, screenshot, camera_capture, screen_record_start, notification_read
@@ -283,7 +286,7 @@ ${TOOLS}
 RULES:
 1. Understand what the user WANTS, break it into steps, execute each with a tool call. You get up to 12 tool calls.
 2. ALWAYS prefer direct tools over UI automation: toggles > app_launch > react_navigate. Only use react_navigate when you need to interact INSIDE an app.
-3. When web_search returns text results, READ THEM and answer directly. Do NOT open a browser to see results you already have.
+3. When web_search returns text results, READ THEM and answer directly. Do NOT open a browser to see results you already have. MAX 2 web_searches per task — after 2 searches, use what you have.
 4. After every tool call, VERIFY the result. If it failed, try a different approach. If the same tool fails twice, stop and tell the user.
 5. Read screen content (read_text_on_screen) to gather data, then use it in the next tool call. Example: read address on screen → sms_send it.
 6. When you have enough information to answer, STOP calling tools and give a clear, complete answer.
