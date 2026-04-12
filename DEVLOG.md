@@ -1166,46 +1166,59 @@ EAS cloud builds cached stale native code (Sessions 5-6 blocker). Local Windows 
 
 ---
 
-## Local Build Reference (WSL)
+## Local Build Reference (Framework Laptop / Native Ubuntu)
 
-All builds run in WSL Ubuntu. EAS cloud builds cache stale native code. Local Windows Gradle builds crash with `useState` null. WSL-based `eas build --local` is the only working pipeline.
+All builds run on the Framework Laptop 16 (AMD Ryzen AI 300, 16 cores, 30 GB RAM) running native Ubuntu. EAS cloud builds cache stale native code and cannot be trusted for config plugin changes. `eas build --local` on this machine is the working pipeline — ~8 minute Gradle build, ~10 minute total including prebuild and Metro bundle.
 
-### Prerequisites (one-time setup)
+Historical note: previous environment was WSL Ubuntu on a Windows laptop. Build times there were ~70–80 minutes. Local Windows-native Gradle builds failed with `useState` null. The WSL setup also required a `C:\au` junction for the ninja 260-char path limit — not relevant on Linux-native paths.
 
-- **WSL Ubuntu** with Node.js, npm, JDK 17 (`/usr/lib/jvm/java-17-openjdk-amd64`)
-- **Windows symlink:** `C:\au` is a junction to the project root (required for ninja 260-char path limit)
-- **Signing keystore:** `[local path]` (alias: `agent-ultra`, password: `[removed]`)
-- **Android SDK:** `C:\Android` (also accessible from WSL via `/mnt/c/Android`)
-- **Bracketed paste fix:** Run `printf '\e[?2004l'` once per WSL terminal session before build commands
+### Prerequisites (one-time setup, already done on this machine)
+
+- **OS:** Ubuntu (Framework Laptop 16)
+- **Project root:** `~/projects/Audit-Discuss-Build`
+- **Node.js:** v22.x (apt default is fine; RN 0.81/Expo needs ≥20)
+- **JDK 17:** `/usr/lib/jvm/java-17-openjdk-amd64` (installed via `sudo apt install openjdk-17-jdk`)
+- **Android SDK:** `~/Android/` with `platform-tools`, `platforms;android-36`, `build-tools;36.0.0`, `ndk;27.1.12297006` (Gradle auto-installed the NDK on first build)
+- **eas-cli:** installed globally to user prefix — `npm config set prefix ~/.npm-global && npm install -g eas-cli`. Binary at `~/.npm-global/bin/eas`.
+- **Signing keystore:** managed by EAS cloud. `eas login` once as `dafarusd` and credentials are fetched automatically per build. No local `.keystore` file, no `credentials.json` in the project.
+- **Env vars (persisted in `~/.bashrc`):**
+  ```
+  export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+  export ANDROID_HOME=$HOME/Android
+  export ANDROID_SDK_ROOT=$HOME/Android
+  export PATH=$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/build-tools/36.0.0
+  export PATH=$HOME/.npm-global/bin:$PATH
+  ```
 
 ### Build steps
 
-1. **rsync source from Windows to WSL:**
+1. **Install dependencies (if package.json changed, or node_modules missing):**
    ```
-   rsync -av --delete /mnt/c/au/ ~/agent-ultra/ --exclude node_modules --exclude .git --exclude android --exclude ios
+   cd ~/projects/Audit-Discuss-Build && npm install
    ```
+   `patch-package` runs automatically via `postinstall` and applies `patches/expo-asset+12.0.12.patch`.
 
-2. **Install dependencies (if package.json changed):**
+2. **EAS local build:**
    ```
-   cd ~/agent-ultra && npm install
+   cd ~/projects/Audit-Discuss-Build && eas build --local --profile preview --platform android --non-interactive
    ```
+   This handles prebuild + Gradle + Metro bundling + APK packaging + signing. Expect ~10 minutes end-to-end on this hardware. Output APK is written to the project root as `build-<timestamp>.apk`.
 
-3. **EAS local build:**
+3. **Install to phone over wireless ADB:**
    ```
-   cd ~/agent-ultra && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 npx eas build --local --profile preview --platform android
+   adb connect <device-ip>:5555
+   adb -s <device-ip>:5555 install -r build-<timestamp>.apk
    ```
-   This handles prebuild + Gradle + metro bundling. Takes ~70-80 minutes.
+   If `adb connect` is refused, the phone has rebooted and `adb tcpip 5555` mode reset. Re-pair via Android 11+ Wireless Debugging:
+   - Phone: Settings → Developer options → Wireless debugging → "Pair device with pairing code"
+   - Read the pairing IP:port and 6-digit code
+   - `adb pair <pair-ip>:<pair-port>` (enter code when prompted)
+   - Then read the main "IP address & Port" from the Wireless Debugging screen and `adb connect <ip>:<port>`
 
-4. **Copy APK to Windows + install:**
-   ```
-   cp ~/agent-ultra/build-*.apk /mnt/c/au/
-   adb install -r /path/to/build-*.apk
-   ```
-
-5. **Re-enable accessibility service** (required after every reinstall):
+4. **Re-enable accessibility service** (required after every reinstall):
    Settings → Accessibility → Installed apps → Agent Ultra → toggle ON
 
-6. **Capture logs:**
+5. **Capture logs:**
    ```
    appid=$(adb shell pidof com.agent.ultra)
    adb logcat --pid=$appid
@@ -1213,12 +1226,19 @@ All builds run in WSL Ubuntu. EAS cloud builds cache stale native code. Local Wi
 
 ### When to re-run which step
 
-| Change made | rsync needed? | npm install? | Full EAS build? | Reinstall? | Re-enable a11y? |
-|---|---|---|---|---|---|
-| TypeScript/JS source only | Yes | No | Yes | Yes | Yes |
-| withAgentNative.js (config plugin) | Yes | No | Yes (prebuild --clean runs automatically) | Yes | Yes |
-| app.json changes | Yes | No | Yes | Yes | Yes |
-| package.json / new dependency | Yes | Yes | Yes | Yes | Yes |
+| Change made | npm install? | Full EAS build? | Reinstall? | Re-enable a11y? |
+|---|---|---|---|---|
+| TypeScript/JS source only | No | Yes | Yes | Yes |
+| `withAgentNative.js` (config plugin) | No | Yes (prebuild --clean runs automatically) | Yes | Yes |
+| `app.json` changes | No | Yes | Yes | Yes |
+| `package.json` / new dependency | Yes | Yes | Yes | Yes |
+
+### Wireless ADB behavior notes
+
+- `adb tcpip 5555` mode does NOT survive phone reboots — always verify with `adb devices` first
+- Do NOT test `wifi_toggle` or `airplane_mode` capabilities over wireless ADB — they kill the connection
+- Android 11+ wireless pairing: every time you open "Pair device with pairing code", a NEW port and NEW code are generated. Run `adb pair` within seconds or the dialog expires.
+- After pairing, you may see a ghost mDNS device entry (`adb-XXXXX._adb-tls-connect._tcp`) alongside the real IP:port device. Target commands with `adb -s <ip>:<port>` to disambiguate.
 
 ---
 
