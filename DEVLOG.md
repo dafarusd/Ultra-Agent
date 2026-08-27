@@ -106,6 +106,37 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
+### Session 14e — M5: proof suite + two structural fixes it exposed (2026-08-27, branch `native`)
+
+#### The suite (tools/suite.sh — sends tasks, waits for the brain's RUN COMPLETE marker, captures logcat + screenshot per task)
+
+| Task | Verdict | Evidence |
+|---|---|---|
+| t01 "what is my battery level" | **PASS** | `battery_status` → real 100% charging |
+| t02 "open chrome" | **PASS + live gate win** | Chrome launched; model's unprompted `open_url www.google.com` (not in request) **BLOCKED by the gate** |
+| t03 "open wikipedia.org" | **PASS** (rerun) | opened; gate allowed (www-normalized) |
+| t04 "search the web for the capital of Japan" | **PARTIAL** | tool executed; DDG served page boilerplate in this environment — extraction returned chrome, not answers. Tool-quality issue, not loop issue |
+| t05 clipboard round-trip | **PASS** | write "hello world" → read back "hello world" |
+| t06 "create a note saying buy milk tomorrow" | **PASS** | note-*.txt on disk in app storage |
+| t07 "turn on the flashlight" | **PARTIAL** | CameraManager API returned success ×2; physical light unverified (no torch-state dump on this Samsung) — API-level proof only |
+| t08 "open chrome and go to google.com" | **PASS via recovery** | see below |
+
+#### Structural fixes the suite exposed (both proven after the fix)
+
+1. **Text entry into unfocused fields (the old IME-class bug, native root cause).** Navigator symptom: `TEXT: result=false` ×9 with healthy perception. Two-part fix:
+   - `ReActNavigator.focusFirstEditable()` — bare `type("…")` now taps the first editable node before typing (nothing can receive text without focus).
+   - `AgentAccessibilityService.performText` gained the **multi-window scan** `performImeAction` already had: once the keyboard opens, `getRootInActiveWindow()` is the IME window, not the target app. After: `TEXT: result=true` in Chrome's omnibox + `IME_ENTER result=true`.
+2. **Perception dropouts when the app backgrounds** (t03 first run: "accessibility service not running" mid-task). Fixes: `AgentController.serviceOrWait()` polls 3s across bind races; `UltraApplication` now starts `AgentBackgroundService` (ported foreground service, sticky) at app create to resist Samsung's background kill on this 3.5GB device.
+
+#### Unplanned live gate evidence
+
+t08 rerun: model saw "open wikipedia.org" in visible chat history from t03 and tried to open it mid-task → **gate BLOCKED `open_url www.wikipedia.org`** ("does not trace to the user's request"). Cross-task contamination stopped deterministically — the exact attack-adjacent behavior the research gate was built for.
+
+#### Environment honesty notes
+
+- Phone DNS flaked for ~10 min after my airplane/wifi toggles (example.com NXDOMAIN while google.com resolved) — environmental, not the app; t08's first evidence was poisoned by it and re-run clean.
+- The model repeats successful calls (opened the same URL twice) and over-searches on weak results — known Build 29 traits carried by the shared prompt; tuning is post-M5 polish.
+
 ### Session 14d — M4: the phone is the AI (on-device model, measured + integrated) (2026-08-27, branch `native`)
 
 #### The spike — measured on bare metal before integrating anything

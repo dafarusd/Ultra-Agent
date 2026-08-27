@@ -75,6 +75,7 @@ class Brain(context: Context) {
         messages += OpenAiClient.ChatMessage("user", userInput)
 
         runLoop(ai, userInput, messages)
+        android.util.Log.i("UltraBrain", "RUN COMPLETE")
     }
 
     private fun emit(text: String) {

@@ -532,9 +532,38 @@ public class AgentAccessibilityService extends AccessibilityService {
     public boolean performText(String selector, String text) {
         if (!checkPackageAllowed()) return false;
         Log.i(TAG, "TEXT: selector=" + selector + " text=" + text.substring(0, Math.min(text.length(), 30)) + " pkg=" + currentPackage);
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) return false;
-        AccessibilityNodeInfo target = selector.isEmpty() ? findFocusedEditable(root) : findNode(root, selector);
+        // Multi-window scan (same pattern as performImeAction): once the
+        // keyboard opens, getRootInActiveWindow() is the IME window, not the
+        // target app — proven failure on Chrome's omnibox (TEXT result=false
+        // loop). Search application windows first, active window last.
+        AccessibilityNodeInfo target = null;
+        AccessibilityNodeInfo root = null;
+        try {
+            java.util.List<AccessibilityWindowInfo> windows = getWindows();
+            for (AccessibilityWindowInfo w : windows) {
+                if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    AccessibilityNodeInfo wRoot = w.getRoot();
+                    if (wRoot != null) {
+                        CharSequence wPkg = wRoot.getPackageName();
+                        if (wPkg != null && "com.agent.ultra".contentEquals(wPkg)) { wRoot.recycle(); continue; }
+                        target = selector.isEmpty() ? findFocusedEditable(wRoot) : findNode(wRoot, selector);
+                        if (target == null && selector.isEmpty()) target = findAnyEditable(wRoot);
+                        wRoot.recycle();
+                        if (target != null) break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.i(TAG, "TEXT: window scan failed: " + e.getMessage());
+        }
+        if (target == null) {
+            root = getRootInActiveWindow();
+            if (root != null) {
+                target = selector.isEmpty() ? findFocusedEditable(root) : findNode(root, selector);
+                if (target == null && selector.isEmpty()) target = findAnyEditable(root);
+            }
+        }
+        if (target == null && root == null) return false;
         boolean result = false;
         if (target != null) {
             Bundle args = new Bundle();
@@ -542,7 +571,7 @@ public class AgentAccessibilityService extends AccessibilityService {
             result = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
             target.recycle();
         }
-        root.recycle();
+        if (root != null) root.recycle();
         Log.i(TAG, "TEXT: result=" + result);
         return result;
     }

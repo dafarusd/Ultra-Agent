@@ -169,9 +169,11 @@ ACTION:"""
         Regex("type\\(\\s*(\\d*)\\s*,?\\s*[\"']([^)]+)[\"']\\s*\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
             val idx = m.groupValues[1].toIntOrNull()
             val text = m.groupValues[2]
-            // Empty selector → service types into the focused editable field.
-            // With an index, resolve the node's label as the selector.
+            // Empty selector → the service types into the FOCUSED editable field.
+            // If nothing is focused (the proven Chrome failure: TEXT result=false
+            // forever), tap the first editable node to focus it first.
             val selector = if (idx == null) "" else labelForIndex(idx) ?: return false
+            if (idx == null) focusFirstEditable()
             val ok = controller.typeInto(selector, text)
             if (ok) { delay(300); controller.imeEnter() }
             return ok
@@ -201,6 +203,25 @@ ACTION:"""
         } catch (_: Exception) {
             false
         }
+    }
+
+    /** Tap the first editable node's center so performText("") has focus. */
+    private suspend fun focusFirstEditable() {
+        try {
+            val arr = JSONArray(controller.screenFlat())
+            for (i in 0 until arr.length()) {
+                val n = arr.getJSONObject(i)
+                if (n.optBoolean("e", false)) {
+                    val x = n.optInt("x", -1)
+                    val y = n.optInt("y", -1)
+                    if (x >= 0 && y >= 0) {
+                        controller.tap(x, y)
+                        delay(500)
+                    }
+                    return
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     /** Look up a node's text/description label by flat-list index. */

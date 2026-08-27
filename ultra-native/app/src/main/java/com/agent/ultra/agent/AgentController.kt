@@ -28,6 +28,21 @@ class AgentController(private val context: Context) {
 
     val serviceRunning: Boolean get() = AgentAccessibilityService.isRunning()
 
+    /**
+     * The service can be momentarily unbound (bind races after process start,
+     * Samsung background churn). Poll briefly before declaring it absent.
+     */
+    private suspend fun serviceOrWait(): AgentAccessibilityService? = withContext(Dispatchers.IO) {
+        var svc = service
+        var tries = 0
+        while (svc == null && tries < 6) {
+            tries++
+            try { Thread.sleep(500) } catch (_: InterruptedException) {}
+            svc = service
+        }
+        svc
+    }
+
     // ── Perception ──────────────────────────────────────────────────────
 
     /**
@@ -36,7 +51,7 @@ class AgentController(private val context: Context) {
      * after Chrome launched) — retry with backoff before reporting empty.
      */
     suspend fun screenFlat(): String = withContext(Dispatchers.IO) {
-        val svc = service ?: return@withContext "[]"
+        val svc = serviceOrWait() ?: return@withContext "[]"
         var result = svc.getScreenContentFlat() ?: "[]"
         var tries = 0
         while ((result == "[]" || result.isBlank()) && tries < 4) {
