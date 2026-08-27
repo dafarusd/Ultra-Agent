@@ -106,6 +106,30 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
+### Session 14b — M2 core: the brain loop runs on the native build (2026-08-27, branch `native`)
+
+#### What was done
+
+- `provider/ProviderConfig.kt` — SharedPreferences-backed, dev-seeds once from `Android/data/.../files/ultra_provider.json` (adb-pushable; keeps key entry automatable with zero UI taps).
+- `provider/OpenAiClient.kt` — minimal OpenAI-compatible `/chat/completions` client (OkHttp). Proven against OpenRouter `meta-llama/llama-3.3-70b-instruct` (same model family as the Venice-proven Build 29 brain).
+- `agent/AgentController.kt` — in-process device layer replacing the RN bridge: a11y service calls (screenFlat/tap/swipe/type/scroll/ime/back/home), app launch + fuzzy package find, flashlight, Wi-Fi, Bluetooth, DND (notification-policy path with zen_mode fallback), volume, SMS, battery/device info.
+- `agent/Tools.kt` — the dispatcher: read_text_on_screen, describe_screen, app_launch, open_url, react_navigate, web_search (DuckDuckGo scrape ported verbatim), device_info, battery_status, system_info, flashlight/wifi/bluetooth/dnd toggles, volume_set, sms_send. Failures start with `Error:` per the brain's success heuristic.
+- `agent/ReActNavigator.kt` — perceive→think→act→verify: indexed TAPPABLE/TYPEABLE/SCROLLABLE observation lists, `ACTION:`/bare-line parsing, tap-by-index via coordinates, empty-selector typing into the focused field + IME submit, stuck detector with scroll recovery, 15-iteration budget, done-gating that rejects completion off the target app.
+- `agent/Brain.kt` — the 12-turn loop ported from BrainExecutor.ts: same system-prompt shape, balanced-JSON tool parsing, dynamic maxTokens (2000/1500/2500), push-once follow-through, same-tool-twice stuck stop, structured `[RESULT]` feedback. **Fix-in-port #1 (conversation bleed):** history window is rebuilt fresh per request from the last 8 visible chat messages, 4KB char cap — tool traces never enter it.
+- ChatScreen wires Send → `brain.run()` on a coroutine with a thinking state.
+
+#### Verification (PROVEN on device, logcat + screenshots)
+
+- "what is the battery level" → `TOOL CALL: battery_status` → `Battery: 100% (charging)` → correct spoken answer. Full model→tool→device→answer loop.
+- "open chrome" → `app_launch {Chrome}` launched; model self-escalated to `react_navigate {goal: go to google.com}`; navigator's tap on Chrome's UI dispatched and completed (perception+action through the ported service PROVEN) but the perception stream went `root=null` mid-navigation and the navigator exhausted its budget with an honest error; the brain then recovered via `open_url` and google.com loaded (screenshot).
+
+#### Known gaps (named, not hidden)
+
+- `SCREEN_FLAT: root=null` bursts during app transitions — the window scan and root fallback both went null for several seconds while Chrome settled. Needs retry/backoff in observe() (SOURCE-IDENTIFIED, fix not yet shipped).
+- The confirmation gate for destructive tools currently logs and continues ("auto-approved in this build") — M3's policy gate replaces it; do not ship beyond dev before that lands.
+- sms_read/contacts_read/device_location and the rest of the proven catalog not yet ported.
+- First-send quirk in the harness (not the app): `adb shell input text` needs `%s` for spaces.
+
 ### Session 14 — M1: native Kotlin skeleton lives on device (2026-08-27, branch `native`)
 
 - **Subsystems:** D (Actions/Device Control), H (Build/Release)

@@ -23,11 +23,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.agent.ultra.AgentAccessibilityService
+import com.agent.ultra.agent.Brain
+import kotlinx.coroutines.launch
 
 data class ChatMessage(val fromUser: Boolean, val text: String)
 
@@ -38,7 +42,11 @@ object ChatStore {
 
 @Composable
 fun ChatScreen() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val brain = remember { Brain(context.applicationContext) }
     var input by remember { mutableStateOf("") }
+    var thinking by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     var a11yRunning by remember { mutableStateOf(AgentAccessibilityService.isRunning()) }
 
@@ -72,7 +80,11 @@ fun ChatScreen() {
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = if (a11yRunning) "agent: ready" else "agent: a11y off",
+                text = when {
+                    thinking -> "agent: thinking…"
+                    a11yRunning -> "agent: ready"
+                    else -> "agent: a11y off"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             )
@@ -122,18 +134,24 @@ fun ChatScreen() {
                 maxLines = 4,
             )
             Button(
+                enabled = !thinking,
                 onClick = {
                     val text = input.trim()
                     if (text.isEmpty()) return@Button
                     ChatStore.messages.add(ChatMessage(fromUser = true, text = text))
                     input = ""
-                    // M1 shell: brain arrives at M2.
-                    ChatStore.messages.add(
-                        ChatMessage(
-                            fromUser = false,
-                            text = "Native shell online. Brain wiring lands at M2 — this message proves the UI loop.",
-                        ),
-                    )
+                    thinking = true
+                    scope.launch {
+                        try {
+                            brain.run(text)
+                        } catch (e: Exception) {
+                            ChatStore.messages.add(
+                                ChatMessage(false, "Error: brain fault — ${e.message}")
+                            )
+                        } finally {
+                            thinking = false
+                        }
+                    }
                 },
             ) {
                 Text("Send")
