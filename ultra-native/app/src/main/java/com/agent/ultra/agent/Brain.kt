@@ -201,6 +201,7 @@ RULES:
         private const val TOOL_CATALOG = """
 DEVICE CONTROL (instant, ~99% reliable):
   wifi_toggle, bluetooth_toggle, do_not_disturb, flashlight_toggle, volume_set
+  media_play, media_next
 
 APPS & NAVIGATION (use app_launch to just open, react_navigate to open AND interact):
   app_launch — open app (no interaction). params: {target}
@@ -209,10 +210,15 @@ APPS & NAVIGATION (use app_launch to just open, react_navigate to open AND inter
 
 INFORMATION (fast, no UI needed):
   web_search — search internet, returns text results directly. params: {query}
-  device_info, system_info, battery_status
+  device_info, system_info, battery_status, device_location
 
 COMMUNICATION:
   sms_send — send SMS. params: {to, message}
+  sms_read — read inbox. params: {limit?}
+  contacts_read — search contacts. params: {name?}
+
+FILES & CLIPBOARD & CREATION:
+  clipboard_write {text}, clipboard_read, note_create {text}, alarm_set {hour, minute?, label?}
 
 SCREEN:
   read_text_on_screen, describe_screen

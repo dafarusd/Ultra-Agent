@@ -105,6 +105,32 @@ class Tools(
                         else -> "Error: SMS send failed"
                     }
                 }
+                "sms_read" -> controller.readSms(params.optInt("limit", 10))
+                "contacts_read" -> controller.readContacts(params.optString("name"))
+
+                // ── Location / clipboard / media / alarms / notes ────
+                "device_location" -> controller.lastKnownLocation()
+                "clipboard_write" -> {
+                    val text = params.optString("text")
+                    if (text.isBlank()) "Error: missing text"
+                    else if (controller.clipboardWrite(text)) "Copied to clipboard"
+                    else "Error: clipboard write failed"
+                }
+                "clipboard_read" -> controller.clipboardRead()
+                "media_play" -> if (controller.mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)) "Play/pause toggled" else "Error: media key failed"
+                "media_next" -> if (controller.mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)) "Skipped to next track" else "Error: media key failed"
+                "alarm_set" -> {
+                    val hour = params.optInt("hour", -1)
+                    val minute = params.optInt("minute", 0)
+                    if (hour !in 0..23) "Error: alarm_set needs hour (0-23) and optional minute"
+                    else if (controller.setAlarm(hour, minute, params.optString("label", "Ultra alarm"))) "Alarm set for %02d:%02d".format(hour, minute)
+                    else "Error: alarm failed"
+                }
+                "note_create" -> {
+                    val text = params.optString("text")
+                    if (text.isBlank()) "Error: missing text"
+                    else controller.createNote(text)
+                }
 
                 else -> "Error: unknown tool '$tool'"
             }

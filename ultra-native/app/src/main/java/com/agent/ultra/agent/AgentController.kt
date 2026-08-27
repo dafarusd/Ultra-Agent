@@ -195,6 +195,133 @@ class AgentController(private val context: Context) {
         true
     } catch (_: Exception) { false }
 
+    fun readSms(limit: Int): String = try {
+        val cursor = context.contentResolver.query(
+            Uri.parse("content://sms/inbox"),
+            arrayOf("address", "body", "date"), null, null, "date DESC"
+        ) ?: return "Error: could not query SMS inbox"
+        val out = mutableListOf<String>()
+        cursor.use {
+            while (it.moveToNext() && out.size < limit) {
+                val addr = it.getString(0) ?: "unknown"
+                val body = (it.getString(1) ?: "").take(160)
+                out += "From $addr: $body"
+            }
+        }
+        if (out.isEmpty()) "No SMS messages found" else out.joinToString("\n")
+    } catch (e: SecurityException) {
+        "Error: SMS permission not granted"
+    } catch (e: Exception) {
+        "Error: ${e.message}"
+    }
+
+    fun readContacts(nameQuery: String): String = try {
+        val selection: String?
+        val args: Array<String>?
+        if (nameQuery.isBlank()) {
+            selection = null; args = null
+        } else {
+            selection = android.provider.ContactsContract.Contacts.DISPLAY_NAME + " LIKE ?"
+            args = arrayOf("%$nameQuery%")
+        }
+        val cursor = context.contentResolver.query(
+            android.provider.ContactsContract.Contacts.CONTENT_URI,
+            arrayOf(android.provider.ContactsContract.Contacts._ID,
+                android.provider.ContactsContract.Contacts.DISPLAY_NAME,
+                android.provider.ContactsContract.Contacts.HAS_PHONE_NUMBER),
+            selection, args,
+            android.provider.ContactsContract.Contacts.DISPLAY_NAME + " ASC"
+        ) ?: return "Error: could not query contacts"
+        val out = mutableListOf<String>()
+        cursor.use {
+            while (it.moveToNext() && out.size < 10) {
+                val id = it.getString(0)
+                val name = it.getString(1) ?: continue
+                val hasPhone = it.getInt(2) > 0
+                var phone = ""
+                if (hasPhone) {
+                    val pc = context.contentResolver.query(
+                        android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                        arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+                        android.provider.ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
+                        arrayOf(id), null)
+                    pc?.use { p -> if (p.moveToFirst()) phone = p.getString(0) ?: "" }
+                }
+                out += if (phone.isNotBlank()) "$name — $phone" else name
+            }
+        }
+        if (out.isEmpty()) "No contacts matching '$nameQuery'" else out.joinToString("\n")
+    } catch (e: SecurityException) {
+        "Error: contacts permission not granted"
+    } catch (e: Exception) {
+        "Error: ${e.message}"
+    }
+
+    // ── Location / clipboard / media / alarms / notes ───────────────────
+
+    fun lastKnownLocation(): String = try {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        val providers = listOf(android.location.LocationManager.GPS_PROVIDER,
+            android.location.LocationManager.NETWORK_PROVIDER,
+            android.location.LocationManager.PASSIVE_PROVIDER)
+        var best: android.location.Location? = null
+        for (p in providers) {
+            try {
+                val l = lm.getLastKnownLocation(p)
+                if (l != null && (best == null || l.time > best!!.time)) best = l
+            } catch (_: SecurityException) {}
+        }
+        if (best == null) "Error: no known location yet"
+        else "Location: %.5f, %.5f (±%.0fm)".format(best.latitude, best.longitude, best.accuracy)
+    } catch (e: Exception) {
+        "Error: ${e.message}"
+    }
+
+    fun clipboardWrite(text: String): Boolean = try {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("ultra", text))
+        true
+    } catch (_: Exception) { false }
+
+    fun clipboardRead(): String = try {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = cm.primaryClip
+        if (clip == null || clip.itemCount == 0) "Clipboard is empty"
+        else clip.getItemAt(0).coerceToText(context)?.toString() ?: "Clipboard is empty"
+    } catch (_: Exception) { "Error: clipboard read failed" }
+
+    fun mediaKey(keyCode: Int): Boolean = try {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
+        val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
+        am.dispatchMediaKeyEvent(down)
+        am.dispatchMediaKeyEvent(up)
+        true
+    } catch (_: Exception) { false }
+
+    fun setAlarm(hour: Int, minute: Int, label: String): Boolean = try {
+        val i = Intent(android.provider.AlarmClock.ACTION_SET_ALARM)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+            .putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
+            .putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
+            .putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+        context.startActivity(i)
+        true
+    } catch (e: Exception) {
+        android.util.Log.w("AgentUltra", "setAlarm failed", e)
+        false
+    }
+
+    fun createNote(text: String): String = try {
+        val dir = java.io.File(context.filesDir, "notes").apply { mkdirs() }
+        val f = java.io.File(dir, "note-${System.currentTimeMillis()}.txt")
+        f.writeText(text)
+        "Note saved: ${f.name}"
+    } catch (e: Exception) {
+        "Error: ${e.message}"
+    }
+
     // ── Device info ─────────────────────────────────────────────────────
 
     fun batteryStatus(): String {
