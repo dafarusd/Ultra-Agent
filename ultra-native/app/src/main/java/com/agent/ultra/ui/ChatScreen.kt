@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.agent.ultra.AgentAccessibilityService
 import com.agent.ultra.agent.Brain
+import com.agent.ultra.local.LocalModelEngine
 import kotlinx.coroutines.launch
 
 data class ChatMessage(val fromUser: Boolean, val text: String)
@@ -45,6 +46,7 @@ fun ChatScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val brain = remember { Brain(context.applicationContext) }
+    val localEngine = remember { LocalModelEngine(context.applicationContext) }
     var input by remember { mutableStateOf("") }
     var thinking by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -143,7 +145,22 @@ fun ChatScreen() {
                     thinking = true
                     scope.launch {
                         try {
-                            brain.run(text)
+                            if (text.startsWith("/local ")) {
+                                // Dev path: raw on-device generation (M4 spike proof)
+                                val prompt = text.removePrefix("/local ").trim()
+                                val bubble = ChatMessage(false, "")
+                                ChatStore.messages.add(bubble)
+                                val idx = ChatStore.messages.size - 1
+                                val r = localEngine.generate(prompt, 300) { piece ->
+                                    ChatStore.messages[idx] =
+                                        ChatMessage(false, ChatStore.messages[idx].text + piece)
+                                }
+                                r.onFailure {
+                                    ChatStore.messages[idx] = ChatMessage(false, "Error: ${it.message}")
+                                }
+                            } else {
+                                brain.run(text)
+                            }
                         } catch (e: Exception) {
                             ChatStore.messages.add(
                                 ChatMessage(false, "Error: brain fault — ${e.message}")

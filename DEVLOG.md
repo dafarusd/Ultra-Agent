@@ -106,6 +106,39 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
+### Session 14d — M4: the phone is the AI (on-device model, measured + integrated) (2026-08-27, branch `native`)
+
+#### The spike — measured on bare metal before integrating anything
+
+Cross-compiled llama.cpp's `llama-bench` for arm64 (NDK 27.1, `GGML_OPENMP=OFF` — the phone has no libomp), pushed to `/data/local/tmp`, ran on the A15 5G:
+
+| Model | Weights | Prompt eval | Generation | Verdict |
+|---|---|---|---|---|
+| Gemma 3 1B Q4_K_M (4 threads) | 762 MiB | 16.56 tok/s | **10.11 tok/s** | PICKED |
+| Gemma 3 1B Q4_K_M (6 threads) | 762 MiB | 20.54 tok/s | 9.24 tok/s | tg regresses (big.LITTLE) |
+| Qwen3-1.7B Q4_K_M (4 threads) | 1.19 GiB | 10.10 tok/s | 6.70 tok/s | not worth 2× memory |
+
+10 tok/s = ~20s for a 200-token agent decision — workable for background steps; chat is functional. The gate research's capability ladder says 1B won't drive a reliable multi-step tool loop, so the design lands exactly as measured: **cloud drives the tool loop; the on-device model is the offline brain and fast path.**
+
+#### Integration
+
+- `app/src/main/cpp/ultra_llm.cpp` + CMake — JNI shim against llama.cpp static libs (staged at `~/llama-android/{lib,include}`, build recipe: clone llama.cpp, cmake with the NDK android toolchain for arm64, `-DGGML_OPENMP=OFF`, copy `libllama.a`/`libggml*.a` + headers). API: load(path, threads, ctx) → handle; generate(handle, prompt, maxTokens, temp, tokenCallback) streams pieces; free.
+- `local/LlmNative.kt` + `local/LocalModelEngine.kt` — model at `files/models/gemma3-1b-q4km.gguf` (adb-staged via run-as), `ensureLoaded()` memory guard (ActivityManager availMem ≥ 500MB — **mmap'd weights are pageable; the first guard used `_SC_AVPHYS_PAGES` and refused wrongly**; logging shows avail/need), 4 threads, 4K ctx.
+- Hybrid routing in Brain: no provider → local; cloud call fails → "(cloud unreachable — answering on-device)" → local. `/local <text>` forces on-device from the chat box.
+- Model delivery for dev: `adb push` to /data/local/tmp, then `run-as com.agent.ultra cp` into app storage. A first-run download flow is the product path (noted, not built).
+
+#### Verification (PROVEN on device, screenshots)
+
+- Load: 2.9s, ctx 4096, 4 threads (logcat UltraLlm).
+- `/local what is the capital of france` → "The capital of France is Paris." — on-device, streamed.
+- **Full offline test: airplane mode ON + `svc wifi disable` + no SIM** → "what color is the sky today" → cloud call fails → fallback notice → "**Blue.**" The app carried its brain through a dead network.
+
+#### Harness notes (so they never cost time again)
+
+- Play Protect "Don't send" dialog appears on most installs with variable delay; the install script dismisses it but still misses sometimes — verify `dumpsys package … lastUpdateTime` actually changed before testing (one silent no-op install cost a stale-code test run).
+- An "Android App Compatibility" system dialog appeared once after the native-lib build; dismissed with "Don't Show Again".
+- adb harness: `input text` needs `%s` for spaces; RN screens are invisible to uiautomator but Compose screens are fully dumpable; `uitap.sh` + `install.sh` in this repo's tooling dir are the reliable tap-by-text and install primitives.
+
 ### Session 14c — M3: the gatellml policy gate runs on the phone (2026-08-27, branch `native`)
 
 #### What was done

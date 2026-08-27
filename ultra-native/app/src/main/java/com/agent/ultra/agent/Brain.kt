@@ -25,6 +25,7 @@ class Brain(context: Context) {
     private val tools: Tools
     private val client: OpenAiClient?
     private val gate: Gate
+    private val local = com.agent.ultra.local.LocalModelEngine(context)
 
     init {
         val cfg = ProviderConfig.load(context)
@@ -48,7 +49,12 @@ class Brain(context: Context) {
     suspend fun run(userInput: String) {
         val ai = client
         if (ai == null) {
-            emit("No AI provider configured. Push ultra_provider.json to the app's files dir or add settings UI.")
+            // Offline/unconfigured path: the on-device model is the brain.
+            if (!local.ensureLoaded()) {
+                emit("No AI provider configured and no on-device model present.")
+                return
+            }
+            emitLocal(userInput)
             return
         }
 
@@ -75,6 +81,20 @@ class Brain(context: Context) {
         ChatStore.messages.add(ChatMessage(fromUser = false, text = text))
     }
 
+    /** Direct local answer for the offline path — no tool loop at 1B scale. */
+    private suspend fun emitLocal(userInput: String) {
+        val bubble = ChatMessage(false, "")
+        ChatStore.messages.add(bubble)
+        val idx = ChatStore.messages.size - 1
+        val prompt = "You are Ultra, a concise assistant on an offline Android phone. " +
+            "Answer briefly and honestly.\n\nUser: $userInput\nUltra:"
+        local.generate(prompt, 400) { piece ->
+            ChatStore.messages[idx] = ChatMessage(false, ChatStore.messages[idx].text + piece)
+        }.onFailure {
+            ChatStore.messages[idx] = ChatMessage(false, "Error: on-device model failed — ${it.message}")
+        }
+    }
+
     private suspend fun runLoop(
         ai: OpenAiClient,
         userInput: String,
@@ -91,7 +111,14 @@ class Brain(context: Context) {
         for (turn in 0 until maxTurns) {
             val maxTokens = if (turn == 0) 2000 else if (turn >= maxTurns - 2) 2500 else 1500
             val reply = ai.complete(messages, maxTokens, 0.2).getOrElse {
-                emit("Error: model call failed — ${it.message}")
+                // Cloud failed (offline, quota, outage) — the on-device model
+                // answers what it can rather than dying.
+                if (local.ensureLoaded()) {
+                    emit("(cloud unreachable — answering on-device)")
+                    emitLocal(userInput)
+                } else {
+                    emit("Error: model call failed — ${it.message}")
+                }
                 return
             }
             val raw = reply.trim()
