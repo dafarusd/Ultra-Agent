@@ -1,6 +1,8 @@
 package com.agent.ultra.agent
 
 import android.content.Context
+import com.agent.ultra.gate.Gate
+import com.agent.ultra.gate.Manifest
 import com.agent.ultra.provider.OpenAiClient
 import com.agent.ultra.provider.ProviderConfig
 import com.agent.ultra.ui.ChatMessage
@@ -22,12 +24,23 @@ class Brain(context: Context) {
     private val controller = AgentController(context)
     private val tools: Tools
     private val client: OpenAiClient?
+    private val gate: Gate
 
     init {
         val cfg = ProviderConfig.load(context)
         client = if (cfg.isUsable) OpenAiClient(cfg) else null
         tools = Tools(context, controller)
         if (client != null) tools.navigator = ReActNavigator(controller, client)
+        gate = Gate(loadManifest(context))
+    }
+
+    private fun loadManifest(context: Context): Manifest = try {
+        context.assets.open("ultra.manifest.json").bufferedReader().use { r ->
+            Manifest.fromJson(JSONObject(r.readText()))
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("UltraBrain", "manifest load failed — gate will deny everything", e)
+        Manifest.fromJson(JSONObject("""{"tools":[]}"""))
     }
 
     val configured: Boolean get() = client != null
@@ -72,6 +85,8 @@ class Brain(context: Context) {
         var finalText = ""
         var lastTool = ""
         var lastToolFailed = false
+        // One security episode per user request; secrets accumulate across tools.
+        val episode = Gate.Episode(userInput)
 
         for (turn in 0 until maxTurns) {
             val maxTokens = if (turn == 0) 2000 else if (turn >= maxTurns - 2) 2500 else 1500
@@ -96,15 +111,29 @@ class Brain(context: Context) {
                 break
             }
 
-            // Confirmation gate — destructive tools ask first (the gatellml
-            // gate lands at M3 and will take this over deterministically)
+            // ── POLICY GATE (M3) — deterministic, no model judgment ──
+            val verdict = gate.enforceCall(episode, toolCall.first, toolCall.second)
+            if (!verdict.allowed) {
+                val blockMsg = Gate.renderBlock(verdict)
+                android.util.Log.i("UltraGate", "BLOCK ${toolCall.first}: ${verdict.violations.firstOrNull()?.hint}")
+                messages += OpenAiClient.ChatMessage("assistant", raw)
+                messages += OpenAiClient.ChatMessage("user",
+                    "[RESULT: ${toolCall.first}] STATUS: blocked\nDATA: $blockMsg\nDECIDE: Continue with the rest of the task, or answer the user.")
+                lastTool = toolCall.first
+                lastToolFailed = true
+                continue
+            }
+
+            // Confirmation notice for destructive tools — UX layer; the gate
+            // above is the enforcement layer.
             if (Tools.DESTRUCTIVE.contains(toolCall.first)) {
                 val desc = describeAction(toolCall.first, toolCall.second)
-                emit("Approval required: $desc\n(Auto-approved in this build — M3 replaces this with the policy gate.)")
+                emit("About to: $desc")
             }
 
             android.util.Log.i("UltraBrain", "TOOL CALL: ${toolCall.first} params=${toolCall.second.toString().take(120)}")
             val resultText = tools.execute(toolCall.first, toolCall.second)
+            episode.observeSecrets(resultText)
             val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
             android.util.Log.i("UltraBrain", "TOOL RESULT (${if (failed) "fail" else "ok"}): ${resultText.take(120)}")
 

@@ -106,6 +106,28 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
+### Session 14c — M3: the gatellml policy gate runs on the phone (2026-08-27, branch `native`)
+
+#### What was done
+
+- **`gate/` package — a faithful Kotlin port of gatellml's measured runtime** (origins/contracts/manifest/runtime, one file each, semantics identical to the Python): origins mint by substring-membership against the user's request; deny-by-default for undeclared tools; taint-egress; the 8 contract kinds; structured block-and-continue messages.
+- `assets/ultra.manifest.json` — every brain tool declared with effects and contracts (the vacuity lesson: completeness is mandatory). sms_send = egress + recipient_traceable(to) + not_tainted(message) + spoof_check; open_url = egress + domain_in_request(url); web_search = egress + not_tainted(query) + spoof_check; reads uncontracted; device toggles mutate-uncontracted.
+- Brain wiring: one `Gate.Episode` per user request; `enforceCall` before execution; blocks return the research's BLOCK message as the tool result and the episode continues; secrets from tool results accumulate per-episode (`observeSecrets`).
+- **Unit tests: 12/12 pass** — the 11 cases from gatellml's `test_lang.py` ported verdict-for-verdict, plus one regression test from the live device finding below.
+
+#### Live device findings (the gate earning its keep)
+
+1. **False positive caught on-device:** "open google.com" → model sent `url=https://www.google.com` → `domain_in_request` blocked it (`www.google.com` ∉ "open google.com"). Same class as the research's display-name gap. Fixed at the contract level: leading `www.` normalized away on both sides; `AnyArgTraceable` extended to atom/domain-token-level traces for model paraphrases. Regression test: `wwwPrefixNormalizedOnDeviceCase`.
+2. **After the fix, both directions verified live:** the identical call now passes and the page opens; untraced domains still block (unit-level).
+3. Observed: model self-escalated to `react_navigate {goal:"search for weather"}` unasked. Gate allowed it — appHint traced to the request. Mission creep is a model-quality issue, not a gate gap; noted.
+4. Harness lesson: Play Protect dialog timing varies; installs must verify `lastUpdateTime` actually changed (one "successful" install silently hadn't landed and a test ran stale code).
+
+#### Status
+
+- Gate: **PROVEN** (unit parity + live block + live allow).
+- The old auto-approve confirmation stub is now UX-only ("About to: …"); the deterministic gate is the enforcement layer.
+- Known honest limits (from the research, still true here): Tier-B speech-act injections (the model merely repeating a poisoned sentence) are unreachable by any tool-mediating gate; the referential-target flow ("text mom" where the number comes from contacts_read) blocks until the user confirms the number — by design, to be addressed by a resolve/confirm channel later.
+
 ### Session 14b — M2 core: the brain loop runs on the native build (2026-08-27, branch `native`)
 
 #### What was done
