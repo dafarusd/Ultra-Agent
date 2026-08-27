@@ -30,9 +30,21 @@ class AgentController(private val context: Context) {
 
     // ── Perception ──────────────────────────────────────────────────────
 
+    /**
+     * Flat a11y node list. The service can briefly return empty/null while an
+     * app is settling after a transition (proven on device: root=null bursts
+     * after Chrome launched) — retry with backoff before reporting empty.
+     */
     suspend fun screenFlat(): String = withContext(Dispatchers.IO) {
         val svc = service ?: return@withContext "[]"
-        svc.getScreenContentFlat() ?: "[]"
+        var result = svc.getScreenContentFlat() ?: "[]"
+        var tries = 0
+        while ((result == "[]" || result.isBlank()) && tries < 4) {
+            tries++
+            try { Thread.sleep(700) } catch (_: InterruptedException) {}
+            result = svc.getScreenContentFlat() ?: "[]"
+        }
+        result
     }
 
     fun activePackage(): String = service?.getActivePackage() ?: ""
