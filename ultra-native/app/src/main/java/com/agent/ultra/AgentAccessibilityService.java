@@ -1,0 +1,1100 @@
+package com.agent.ultra;
+
+import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
+import android.accessibilityservice.GestureDescription;
+import android.graphics.Path;
+import android.graphics.Rect;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+import android.util.Log;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
+public class AgentAccessibilityService extends AccessibilityService {
+    private static final String TAG = "AgentA11y";
+    private static AgentAccessibilityService instance;
+    private static final Object instanceLock = new Object();
+    private String currentPackage = "";
+    private static final Set<String> allowedPackages = Collections.synchronizedSet(new HashSet<String>());
+    private static final Set<String> blockedPackages = new java.util.concurrent.ConcurrentSkipListSet<>();
+    public interface UiTreeListener {
+        void onUiTreeChanged(String packageName, long timestamp);
+    }
+    private static volatile UiTreeListener uiTreeListener = null;
+
+    public static void setUiTreeListener(UiTreeListener l) { uiTreeListener = l; }
+    public static AgentAccessibilityService getInstance() {
+        synchronized (instanceLock) { return instance; }
+    }
+    public static boolean isRunning() {
+        synchronized (instanceLock) { return instance != null; }
+    }
+    public static void allowPackage(String pkg) { allowedPackages.add(pkg); }
+    public static void revokePackage(String pkg) { allowedPackages.remove(pkg); }
+    public static boolean isPackageAllowed(String pkg) { return allowedPackages.contains(pkg); }
+    public static void blockPackage(String pkg) { blockedPackages.add(pkg); allowedPackages.remove(pkg); }
+    public static void unblockPackage(String pkg) { blockedPackages.remove(pkg); }
+    public static boolean isPackageBlocked(String pkg) { return blockedPackages.contains(pkg); }
+    public static java.util.List<String> getBlockedPackages() { return new java.util.ArrayList<>(blockedPackages); }
+
+    // === UltraDevLog v4: A11y Event Stream ===
+    private long lastContentChangedLog = 0;
+    private static final long CONTENT_THROTTLE_MS = 2000;
+    private String lastLoggedWindowPkg = "";
+    private String lastLoggedWindowCls = "";
+    private static final java.util.concurrent.ConcurrentLinkedQueue<String> pendingA11yLogs =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    private void emitA11yLog(String category, String jsonData) {
+        long ts = System.currentTimeMillis();
+        pendingA11yLogs.add("{\"cat\":\"" + category + "\",\"t\":" + ts + ",\"data\":" + jsonData + "}");
+        while (pendingA11yLogs.size() > 500) { pendingA11yLogs.poll(); }
+    }
+
+    public static java.util.List<String> drainPendingLogs() {
+        java.util.List<String> result = new java.util.ArrayList<>();
+        String entry;
+        while ((entry = pendingA11yLogs.poll()) != null) { result.add(entry); }
+        return result;
+    }
+
+    public String getCurrentPackage() { return currentPackage; }
+
+    @Override
+    public void onServiceConnected() {
+        super.onServiceConnected();
+        synchronized (instanceLock) { instance = this; }
+        AccessibilityServiceInfo info = getServiceInfo();
+        if (info == null) info = new AccessibilityServiceInfo();
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+            | AccessibilityEvent.TYPE_VIEW_CLICKED
+            | AccessibilityEvent.TYPE_VIEW_SCROLLED
+            | AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
+        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
+        info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            | AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        info.notificationTimeout = 100;
+        setServiceInfo(info);
+        Log.i(TAG, "Accessibility service connected, capabilities=" + info.getCapabilities());
+        try {
+            getSharedPreferences("ultra_a11y", MODE_PRIVATE)
+                .edit()
+                .putString("state", "connected")
+                .putLong("connected_at", System.currentTimeMillis())
+                .putLong("last_event", System.currentTimeMillis())
+                .apply();
+        } catch (Exception e) {}
+        android.util.Log.i("AgentA11y", "SERVICE_CONNECTED");
+        // === UltraDevLog v4: Crash survival ===
+        final Thread.UncaughtExceptionHandler prevHandler = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(e.toString()).append("\n");
+                    for (StackTraceElement el : e.getStackTrace()) { sb.append("  ").append(el.toString()).append("\n"); }
+                    Throwable cause = e.getCause();
+                    if (cause != null) {
+                        sb.append("Caused by: ").append(cause.toString()).append("\n");
+                        for (StackTraceElement el : cause.getStackTrace()) { sb.append("  ").append(el.toString()).append("\n"); }
+                    }
+                    java.io.File f = new java.io.File(getFilesDir(), "ultra_crash.log");
+                    java.io.FileWriter fw = new java.io.FileWriter(f, true);
+                    fw.write("\n=== CRASH " + new java.util.Date().toString() + " thread=" + t.getName() + " ===\n");
+                    fw.write(sb.toString());
+                    fw.close();
+                    emitA11yLog("CRASH_NATIVE", "{\"thread\":\"" + t.getName() + "\",\"error\":\"" +
+                        e.toString().replace("\"", "'").replace("\n", " ").replace("\\", "") + "\"}");
+                } catch (Exception ignored) { }
+                if (prevHandler != null) { prevHandler.uncaughtException(t, e); }
+            }
+        });
+    }
+
+    @Override
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null) return;
+        try {
+            getSharedPreferences("ultra_a11y", MODE_PRIVATE)
+                .edit()
+                .putLong("last_event", System.currentTimeMillis())
+                .putString("last_event_pkg", event.getPackageName() != null ? event.getPackageName().toString() : "")
+                .apply();
+        } catch (Exception e) {}
+        if (event.getPackageName() != null) {
+            String prevPkg = currentPackage;
+            currentPackage = event.getPackageName().toString();
+            if (!currentPackage.equals(prevPkg) && !"com.android.systemui".equals(currentPackage) && !"com.samsung.android.honeyboard".equals(currentPackage)) {
+                Log.i(TAG, "PKG_CHANGE: " + prevPkg + " -> " + currentPackage);
+            }
+        }
+        int type = event.getEventType();
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            emitUiTreeChanged();
+        }
+        // === UltraDevLog v4: Event stream ===
+        try {
+            switch (type) {
+                case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED: {
+                    String pkg = currentPackage;
+                    String cls = event.getClassName() != null ? event.getClassName().toString() : "null";
+                    if (!pkg.equals(lastLoggedWindowPkg) || !cls.equals(lastLoggedWindowCls)) {
+                        lastLoggedWindowPkg = pkg;
+                        lastLoggedWindowCls = cls;
+                        emitA11yLog("A11Y_WINDOW", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\"}");
+                    }
+                    break;
+                }
+                case AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED: {
+                    String pkg = currentPackage;
+                    java.util.List<CharSequence> tl = event.getText();
+                    String txt = (tl != null && !tl.isEmpty()) ? tl.get(0).toString() : "";
+                    if (txt.length() > 100) txt = txt.substring(0, 100);
+                    if (txt.matches(".*[A-Za-z0-9_-]{20,}.*")) { txt = "[REDACTED_TOKEN]"; }
+                    txt = txt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");
+                    emitA11yLog("A11Y_NOTIF", "{\"pkg\":\"" + pkg + "\",\"text\":\"" + txt + "\"}");
+                    break;
+                }
+                case AccessibilityEvent.TYPE_VIEW_CLICKED: {
+                    String pkg = currentPackage;
+                    boolean isOwnApp = "com.agent.ultra".equals(pkg);
+                    boolean isSystemUi = "com.android.systemui".equals(pkg);
+                    boolean isAllowed = isOwnApp || isSystemUi || isPackageAllowed(pkg);
+                    String cls = event.getClassName() != null ? event.getClassName().toString() : "null";
+                    if (isAllowed) {
+                        java.util.List<CharSequence> tl = event.getText();
+                        String txt = (tl != null && !tl.isEmpty()) ? tl.get(0).toString() : "";
+                        if (txt.length() > 50) txt = txt.substring(0, 50);
+                        if (txt.matches(".*[A-Za-z0-9_-]{20,}.*")) { txt = "[REDACTED_LONG_TOKEN]"; }
+                        txt = txt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");
+                        String desc = event.getContentDescription() != null ? event.getContentDescription().toString() : "";
+                        if (desc.length() > 50) desc = desc.substring(0, 50);
+                        if (desc.matches(".*[A-Za-z0-9_-]{20,}.*")) { desc = "[REDACTED]"; }
+                        desc = desc.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");
+                        emitA11yLog("A11Y_CLICK", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\",\"text\":\"" + txt + "\",\"desc\":\"" + desc + "\"}");
+                    } else {
+                        emitA11yLog("A11Y_CLICK", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\",\"text\":\"[external]\",\"desc\":\"[external]\"}");
+                    }
+                    break;
+                }
+                case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED: {
+                    long now = System.currentTimeMillis();
+                    if (now - lastContentChangedLog > CONTENT_THROTTLE_MS) {
+                        lastContentChangedLog = now;
+                        emitA11yLog("A11Y_CONTENT", "{\"pkg\":\"" + currentPackage + "\"}");
+                    }
+                    break;
+                }
+            }
+        } catch (Exception ignored) { }
+    }
+
+    private void emitUiTreeChanged() {
+        UiTreeListener l = uiTreeListener;
+        if (l == null) return;
+        try {
+            l.onUiTreeChanged(currentPackage, System.currentTimeMillis());
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onInterrupt() {
+        Log.w(TAG, "Interrupted");
+        try {
+            getSharedPreferences("ultra_a11y", MODE_PRIVATE)
+                .edit()
+                .putString("state", "interrupted")
+                .putLong("interrupted_at", System.currentTimeMillis())
+                .apply();
+        } catch (Exception e) {}
+        android.util.Log.w("AgentA11y", "SERVICE_INTERRUPTED");
+    }
+
+    @Override
+    public void onDestroy() {
+        synchronized (instanceLock) { instance = null; }
+        try {
+            getSharedPreferences("ultra_a11y", MODE_PRIVATE)
+                .edit()
+                .putString("state", "destroyed")
+                .putLong("destroyed_at", System.currentTimeMillis())
+                .apply();
+        } catch (Exception e) {}
+        android.util.Log.w("AgentA11y", "SERVICE_DESTROYED");
+        super.onDestroy();
+    }
+
+    public String getActivePackage() { Log.i(TAG, "GET_PKG: " + currentPackage); return currentPackage; }
+
+    public String getScreenContent() {
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return "{}";
+            JSONObject tree = nodeToJson(root, 0, 5);
+            root.recycle();
+            return tree.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "getScreenContent error", e);
+            return "{\"error\":\"" + e.getMessage() + "\"}";
+        }
+    }
+
+    private JSONObject nodeToJson(AccessibilityNodeInfo node, int depth, int maxDepth) {
+        JSONObject obj = new JSONObject();
+        try {
+            obj.put("class", node.getClassName() != null ? node.getClassName().toString() : "");
+            obj.put("text", node.getText() != null ? node.getText().toString() : "");
+            obj.put("desc", node.getContentDescription() != null ? node.getContentDescription().toString() : "");
+            obj.put("id", node.getViewIdResourceName() != null ? node.getViewIdResourceName() : "");
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            obj.put("bounds", bounds.flattenToString());
+            obj.put("clickable", node.isClickable());
+            obj.put("scrollable", node.isScrollable());
+            obj.put("editable", node.isEditable());
+            obj.put("enabled", node.isEnabled());
+            obj.put("focused", node.isFocused());
+            if (depth < maxDepth && node.getChildCount() > 0) {
+                JSONArray children = new JSONArray();
+                for (int i = 0; i < node.getChildCount() && i < 50; i++) {
+                    AccessibilityNodeInfo child = node.getChild(i);
+                    if (child != null) {
+                        children.put(nodeToJson(child, depth + 1, maxDepth));
+                        child.recycle();
+                    }
+                }
+                obj.put("children", children);
+            }
+        } catch (Exception e) {
+            try { obj.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return obj;
+    }
+
+    public String dumpWindowStack() {
+        try {
+            java.util.List<AccessibilityWindowInfo> windows = getWindows();
+            StringBuilder sb = new StringBuilder();
+            sb.append("WINDOWS: count=").append(windows.size());
+            for (int i = 0; i < windows.size(); i++) {
+                AccessibilityWindowInfo w = windows.get(i);
+                AccessibilityNodeInfo root = w.getRoot();
+                String pkg = "null";
+                if (root != null) {
+                    pkg = root.getPackageName() != null ? root.getPackageName().toString() : "null";
+                    root.recycle();
+                }
+                sb.append(" | w").append(i).append("=[layer=").append(w.getLayer())
+                  .append(" type=").append(w.getType())
+                  .append(" pkg=").append(pkg)
+                  .append(" focused=").append(w.isFocused())
+                  .append("]");
+            }
+            String result = sb.toString();
+            Log.i(TAG, result);
+            return result;
+        } catch (Exception e) {
+            Log.i(TAG, "WINDOWS: error=" + e.getMessage());
+            return "error";
+        }
+    }
+
+    public String getScreenContentFlat() {
+        AtomicReference<String> result = new AtomicReference<>("[]");
+        CountDownLatch latch = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                // Find the target app window, not Agent Ultra's own window
+                AccessibilityNodeInfo root = null;
+                try {
+                    java.util.List<AccessibilityWindowInfo> windows = getWindows();
+                    // First pass: find type=1 (application) window that isn't Agent Ultra
+                    for (AccessibilityWindowInfo w : windows) {
+                        if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                            AccessibilityNodeInfo wRoot = w.getRoot();
+                            if (wRoot != null) {
+                                CharSequence pkg = wRoot.getPackageName();
+                                if (pkg == null || !"com.agent.ultra".contentEquals(pkg)) {
+                                    root = wRoot;
+                                    Log.i(TAG, "SCREEN_FLAT: using_window pkg=" + pkg + " layer=" + w.getLayer());
+                                    break;
+                                }
+                                wRoot.recycle();
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "SCREEN_FLAT: window scan failed: " + e.getMessage());
+                }
+                // Fallback to default if no other app window found
+                if (root == null) {
+                    root = getRootInActiveWindow();
+                    Log.i(TAG, "SCREEN_FLAT: fallback to getRootInActiveWindow");
+                    // GATE: if fallback returns Agent Ultra's own window, reject it
+                    if (root != null) {
+                        CharSequence fbPkg = root.getPackageName();
+                        if (fbPkg != null && "com.agent.ultra".contentEquals(fbPkg)) {
+                            Log.i(TAG, "SCREEN_FLAT: BLOCKED self-read via fallback — returning empty");
+                            root.recycle();
+                            root = null;
+                        }
+                    }
+                }
+                if (root != null) {
+                    CharSequence rootPkg = root.getPackageName();
+                    Log.i(TAG, "SCREEN_FLAT: root_pkg=" + (rootPkg != null ? rootPkg.toString() : "null"));
+                    dumpWindowStack();
+                    JSONArray flat = new JSONArray();
+                    flattenNode(root, flat);
+                    root.recycle();
+                    if (flat.length() > 0) {
+                        try {
+                            String firstLabel = flat.getJSONObject(0).optString("t", "") + "|" + flat.getJSONObject(0).optString("d", "");
+                            String secondLabel = flat.length() > 1 ? flat.getJSONObject(1).optString("t", "") + "|" + flat.getJSONObject(1).optString("d", "") : "";
+                            Log.i(TAG, "SCREEN_FLAT: nodes=" + flat.length() + " first=[" + firstLabel + "] second=[" + secondLabel + "]");
+                        } catch (Exception ignored) {
+                            Log.i(TAG, "SCREEN_FLAT: nodes=" + flat.length());
+                        }
+                    }
+                    result.set(flat.toString());
+                } else {
+                    Log.i(TAG, "SCREEN_FLAT: root=null");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "getScreenContentFlat error", e);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try { latch.await(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        return result.get();
+    }
+
+    private void flattenNode(AccessibilityNodeInfo node, JSONArray flat) {
+        if (node == null) return;
+        String text = node.getText() != null ? node.getText().toString().trim() : "";
+        String desc = node.getContentDescription() != null ? node.getContentDescription().toString().trim() : "";
+        boolean hasContent = !text.isEmpty() || !desc.isEmpty();
+        boolean interactive = node.isClickable() || node.isScrollable() || node.isEditable();
+        if (hasContent || interactive) {
+            try {
+                Rect bounds = new Rect();
+                node.getBoundsInScreen(bounds);
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    JSONObject obj = new JSONObject();
+                    obj.put("i", flat.length());
+                    obj.put("t", text);
+                    obj.put("d", desc);
+                    obj.put("c", node.isClickable());
+                    obj.put("e", node.isEditable());
+                    obj.put("s", node.isScrollable());
+                    obj.put("x", bounds.centerX());
+                    obj.put("y", bounds.centerY());
+                    flat.put(obj);
+                }
+            } catch (Exception ignored) {}
+        }
+        for (int i = 0; i < Math.min(node.getChildCount(), 60); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                flattenNode(child, flat);
+                child.recycle();
+            }
+        }
+    }
+
+    public boolean waitForUiChange(int timeoutMs) {
+        Log.i(TAG, "WAIT_UI: timeout=" + timeoutMs);
+        String initial = getScreenContentFlat();
+        long start = System.currentTimeMillis();
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            try { Thread.sleep(150); } catch (InterruptedException e) { Log.i(TAG, "WAIT_UI: changed=false (interrupted)"); return false; }
+            String current = getScreenContentFlat();
+            if (!current.equals(initial) && !current.equals("[]")) { Log.i(TAG, "WAIT_UI: changed=true"); return true; }
+        }
+        Log.i(TAG, "WAIT_UI: changed=false");
+        return false;
+    }
+    private boolean checkPackageAllowed() {
+        // Never allow actions on Agent Ultra's own UI — prevents self-interaction
+        if ("com.agent.ultra".equals(currentPackage)) {
+            emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_SELF\",\"pkg\":\"" + currentPackage + "\"}");
+            Log.i(TAG, "GATE: BLOCKED_SELF pkg=" + currentPackage);
+            return false;
+        }
+        if (isPackageBlocked(currentPackage)) {
+            emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_USER\",\"pkg\":\"" + currentPackage + "\"}");
+            Log.i(TAG, "GATE: BLOCKED_USER pkg=" + currentPackage);
+            return false;
+        }
+        if (!isPackageAllowed(currentPackage)) {
+            allowPackage(currentPackage);
+            emitA11yLog("A11Y_GATE", "{\"action\":\"AUTO_ALLOWED\",\"pkg\":\"" + currentPackage + "\"}");
+            Log.i(TAG, "GATE: AUTO_ALLOWED pkg=" + currentPackage);
+        }
+        emitA11yLog("A11Y_GATE", "{\"action\":\"PASSED\",\"pkg\":\"" + currentPackage + "\"}");
+        Log.i(TAG, "GATE: PASSED pkg=" + currentPackage);
+        return true;
+    }
+    public boolean performTap(int x, int y) {
+        if (!checkPackageAllowed()) {
+            emitA11yLog("A11Y_TAP", "{\"action\":\"BLOCKED\",\"x\":" + x + ",\"y\":" + y + ",\"pkg\":\"" + currentPackage + "\"}");
+            Log.i(TAG, "TAP: BLOCKED x=" + x + " y=" + y + " pkg=" + currentPackage);
+            return false;
+        }
+        emitA11yLog("A11Y_TAP", "{\"action\":\"DISPATCH\",\"x\":" + x + ",\"y\":" + y + ",\"pkg\":\"" + currentPackage + "\"}");
+        Log.i(TAG, "TAP: DISPATCH x=" + x + " y=" + y + " pkg=" + currentPackage);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicBoolean success = new AtomicBoolean(false);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                Path path = new Path();
+                path.moveTo(x, y);
+                GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 50))
+                    .build();
+                dispatchGesture(gesture, new GestureResultCallback() {
+                    @Override
+                    public void onCompleted(GestureDescription g) {
+                        emitA11yLog("A11Y_TAP", "{\"action\":\"COMPLETED\",\"x\":" + x + ",\"y\":" + y + "}");
+                        Log.i(TAG, "TAP: COMPLETED x=" + x + " y=" + y);
+                        success.set(true); latch.countDown();
+                    }
+                    @Override
+                    public void onCancelled(GestureDescription g) {
+                        emitA11yLog("A11Y_TAP", "{\"action\":\"CANCELLED\",\"x\":" + x + ",\"y\":" + y + "}");
+                        Log.i(TAG, "TAP: CANCELLED x=" + x + " y=" + y);
+                        latch.countDown();
+                    }
+                }, null);
+            } catch (Exception e) {
+                emitA11yLog("A11Y_TAP", "{\"action\":\"ERROR\",\"x\":" + x + ",\"y\":" + y + ",\"error\":\"" + e.getMessage() + "\"}");
+                Log.i(TAG, "TAP: ERROR x=" + x + " y=" + y + " error=" + e.getMessage());
+                Log.e(TAG, "performTap error", e); latch.countDown();
+            }
+        });
+        try { latch.await(5, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        boolean result = success.get();
+        if (!result) { emitA11yLog("A11Y_TAP", "{\"action\":\"TIMEOUT_OR_FAIL\",\"x\":" + x + ",\"y\":" + y + "}"); Log.i(TAG, "TAP: TIMEOUT_OR_FAIL x=" + x + " y=" + y); }
+        return result;
+    }
+    public boolean performSwipe(int x1, int y1, int x2, int y2, int durationMs) {
+        if (!checkPackageAllowed()) return false;
+        Log.i(TAG, "SWIPE: " + x1 + "," + y1 + " -> " + x2 + "," + y2 + " pkg=" + currentPackage);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicBoolean success = new AtomicBoolean(false);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                Path path = new Path();
+                path.moveTo(x1, y1);
+                path.lineTo(x2, y2);
+                GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, Math.max(durationMs, 100)))
+                    .build();
+                dispatchGesture(gesture, new GestureResultCallback() {
+                    @Override
+                    public void onCompleted(GestureDescription g) { Log.i(TAG, "SWIPE: COMPLETED"); success.set(true); latch.countDown(); }
+                    @Override
+                    public void onCancelled(GestureDescription g) { Log.i(TAG, "SWIPE: CANCELLED"); latch.countDown(); }
+                }, null);
+            } catch (Exception e) { Log.e(TAG, "performSwipe error", e); latch.countDown(); }
+        });
+        try { latch.await(6, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        return success.get();
+    }
+
+    public boolean performClick(String selector) {
+        if (!checkPackageAllowed()) return false;
+        Log.i(TAG, "CLICK: selector=" + selector + " pkg=" + currentPackage);
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) return false;
+        AccessibilityNodeInfo target = findNode(root, selector);
+        boolean result = false;
+        if (target != null) { result = target.performAction(AccessibilityNodeInfo.ACTION_CLICK); target.recycle(); }
+        root.recycle();
+        return result;
+    }
+
+    public boolean performText(String selector, String text) {
+        if (!checkPackageAllowed()) return false;
+        Log.i(TAG, "TEXT: selector=" + selector + " text=" + text.substring(0, Math.min(text.length(), 30)) + " pkg=" + currentPackage);
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) return false;
+        AccessibilityNodeInfo target = selector.isEmpty() ? findFocusedEditable(root) : findNode(root, selector);
+        boolean result = false;
+        if (target != null) {
+            Bundle args = new Bundle();
+            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
+            result = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
+            target.recycle();
+        }
+        root.recycle();
+        Log.i(TAG, "TEXT: result=" + result);
+        return result;
+    }
+
+    public boolean performScroll(String direction) {
+        if (!checkPackageAllowed()) return false;
+        Log.i(TAG, "SCROLL: direction=" + direction + " pkg=" + currentPackage);
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) return false;
+        AccessibilityNodeInfo scrollable = findScrollable(root);
+        boolean result = false;
+        if (scrollable != null) {
+            int action = "up".equals(direction) || "backward".equals(direction)
+                ? AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                : AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
+            result = scrollable.performAction(action);
+            scrollable.recycle();
+        }
+        root.recycle();
+        Log.i(TAG, "SCROLL: result=" + result);
+        return result;
+    }
+
+    public boolean performImeAction() {
+        Log.i(TAG, "IME_ENTER: firing");
+        // Strategy 1: Find focused OR any editable field across all windows
+        AccessibilityNodeInfo target = null;
+        try {
+            java.util.List<AccessibilityWindowInfo> windows = getWindows();
+            // Pass 1: look for focused editable
+            for (AccessibilityWindowInfo w : windows) {
+                if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    AccessibilityNodeInfo wRoot = w.getRoot();
+                    if (wRoot != null) {
+                        target = findFocusedEditable(wRoot);
+                        wRoot.recycle();
+                        if (target != null) {
+                            Log.i(TAG, "IME_ENTER: found focused editable in window pkg=" + (target.getPackageName() != null ? target.getPackageName() : "null"));
+                            break;
+                        }
+                    }
+                }
+            }
+            // Pass 2: if no focused editable, find ANY editable (focus may be on keyboard)
+            if (target == null) {
+                for (AccessibilityWindowInfo w : windows) {
+                    if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                        AccessibilityNodeInfo wRoot = w.getRoot();
+                        if (wRoot != null) {
+                            target = findAnyEditable(wRoot);
+                            wRoot.recycle();
+                            if (target != null) {
+                                Log.i(TAG, "IME_ENTER: found non-focused editable in window pkg=" + (target.getPackageName() != null ? target.getPackageName() : "null"));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.i(TAG, "IME_ENTER: window scan failed: " + e.getMessage());
+        }
+        // Pass 3: fallback to getRootInActiveWindow
+        if (target == null) {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root != null) {
+                target = findFocusedEditable(root);
+                if (target == null) target = findAnyEditable(root);
+                root.recycle();
+            }
+        }
+
+        boolean result = false;
+        if (target != null) {
+            // Try ACTION_IME_ENTER first (API 30+)
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                result = target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+                Log.i(TAG, "IME_ENTER: ACTION_IME_ENTER result=" + result);
+            }
+            // Fallback: try clicking the node itself (some search fields submit on click)
+            if (!result) {
+                result = target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Log.i(TAG, "IME_ENTER: ACTION_CLICK fallback result=" + result);
+            }
+            target.recycle();
+        } else {
+            Log.i(TAG, "IME_ENTER: no editable found in any window");
+        }
+
+        // Strategy 2: If node-based approach failed, try KEYCODE_ENTER via instrumentation
+        if (!result) {
+            Log.i(TAG, "IME_ENTER: node approach failed, trying gesture tap on keyboard Enter");
+            // Find the keyboard search/go/enter button via accessibility
+            try {
+                java.util.List<AccessibilityWindowInfo> windows = getWindows();
+                for (AccessibilityWindowInfo w : windows) {
+                    if (w.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                        AccessibilityNodeInfo kbRoot = w.getRoot();
+                        if (kbRoot != null) {
+                            AccessibilityNodeInfo enterBtn = findKeyboardEnter(kbRoot);
+                            if (enterBtn != null) {
+                                android.graphics.Rect bounds = new android.graphics.Rect();
+                                enterBtn.getBoundsInScreen(bounds);
+                                int cx = bounds.centerX();
+                                int cy = bounds.centerY();
+                                Log.i(TAG, "IME_ENTER: tapping keyboard enter at " + cx + "," + cy);
+                                android.accessibilityservice.GestureDescription.Builder gb = new android.accessibilityservice.GestureDescription.Builder();
+                                android.graphics.Path p = new android.graphics.Path();
+                                p.moveTo(cx, cy);
+                                gb.addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 50));
+                                dispatchGesture(gb.build(), null, null);
+                                result = true;
+                                enterBtn.recycle();
+                            }
+                            kbRoot.recycle();
+                        }
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                Log.i(TAG, "IME_ENTER: keyboard gesture failed: " + e.getMessage());
+            }
+        }
+
+        Log.i(TAG, "IME_ENTER: final result=" + result);
+        return result;
+    }
+
+    // Find any editable node (not necessarily focused) — keyboard may have stolen focus
+    private AccessibilityNodeInfo findAnyEditable(AccessibilityNodeInfo root) {
+        if (root.isEditable()) return AccessibilityNodeInfo.obtain(root);
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo child = root.getChild(i);
+            if (child != null) {
+                AccessibilityNodeInfo found = findAnyEditable(child);
+                if (found != null) { child.recycle(); return found; }
+                child.recycle();
+            }
+        }
+        return null;
+    }
+
+    // Find the Enter/Search/Go button on the keyboard
+    private AccessibilityNodeInfo findKeyboardEnter(AccessibilityNodeInfo root) {
+        String desc = root.getContentDescription() != null ? root.getContentDescription().toString().toLowerCase() : "";
+        String text = root.getText() != null ? root.getText().toString().toLowerCase() : "";
+        if (root.isClickable() && (desc.contains("enter") || desc.contains("search") || desc.contains("go") ||
+            text.contains("enter") || text.contains("search") || text.contains("go") ||
+            desc.contains("done") || text.contains("done"))) {
+            return AccessibilityNodeInfo.obtain(root);
+        }
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo child = root.getChild(i);
+            if (child != null) {
+                AccessibilityNodeInfo found = findKeyboardEnter(child);
+                if (found != null) { child.recycle(); return found; }
+                child.recycle();
+            }
+        }
+        return null;
+    }
+
+    public boolean performBack() { Log.i(TAG, "BACK: fired"); return performGlobalAction(GLOBAL_ACTION_BACK); }
+    public boolean performHome() { Log.i(TAG, "HOME: fired"); return performGlobalAction(GLOBAL_ACTION_HOME); }
+    public boolean performQuickSettings() { return performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS); }
+    public boolean performNotifications() { return performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); }
+    public boolean performRecents() { return performGlobalAction(GLOBAL_ACTION_RECENTS); }
+    public boolean takeScreenshot() {
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            return performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT);
+        }
+        return false;
+    }
+
+    // === UltraDevLog v4: System State Snapshot ===
+    public String getSystemStateSnapshot() {
+        try {
+            org.json.JSONObject state = new org.json.JSONObject();
+            // DND
+            android.app.NotificationManager nm = (android.app.NotificationManager)
+                getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                int filter = nm.getCurrentInterruptionFilter();
+                String dndLabel;
+                switch (filter) {
+                    case 1: dndLabel = "ALL"; break;
+                    case 2: dndLabel = "PRIORITY"; break;
+                    case 3: dndLabel = "NONE"; break;
+                    case 4: dndLabel = "ALARMS"; break;
+                    default: dndLabel = "UNKNOWN"; break;
+                }
+                state.put("dnd", dndLabel);
+                state.put("dnd_raw", filter);
+            }
+            // Wi-Fi
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+            if (wm != null) { state.put("wifi", wm.isWifiEnabled()); }
+            // Bluetooth
+            android.bluetooth.BluetoothAdapter bt = android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+            if (bt != null) {
+                int s = bt.getState();
+                state.put("bluetooth", s == 12 ? "ON" : s == 10 ? "OFF" : s == 11 ? "TURNING_ON" : s == 13 ? "TURNING_OFF" : "UNKNOWN");
+            }
+            // Power saver
+            android.os.PowerManager pm = (android.os.PowerManager)
+                getSystemService(android.content.Context.POWER_SERVICE);
+            if (pm != null) { state.put("powerSaver", pm.isPowerSaveMode()); }
+            // Ringer
+            android.media.AudioManager am = (android.media.AudioManager)
+                getSystemService(android.content.Context.AUDIO_SERVICE);
+            if (am != null) {
+                int r = am.getRingerMode();
+                state.put("ringer", r == 0 ? "SILENT" : r == 1 ? "VIBRATE" : r == 2 ? "NORMAL" : "UNKNOWN");
+                state.put("vol_media", am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC));
+                state.put("vol_ring", am.getStreamVolume(android.media.AudioManager.STREAM_RING));
+            }
+            // Brightness
+            try {
+                state.put("brightness", android.provider.Settings.System.getInt(
+                    getContentResolver(), android.provider.Settings.System.SCREEN_BRIGHTNESS));
+            } catch (Exception ignored) { state.put("brightness", -1); }
+            return state.toString();
+        } catch (Exception e) {
+            return "{\"error\":\"" + e.getMessage() + "\"}";
+        }
+    }
+
+    public boolean tapQuickSettingsTile(String tileLabel) {
+        allowPackage("com.android.systemui");
+        Log.i(TAG, "QS_TAP: start tile=" + tileLabel);
+        try {
+            Thread.sleep(400);
+            // Samsung One UI renders QS panel in a separate window from status bar.
+            // getRootInActiveWindow() often returns the wrong SystemUI window (status bar with 4 children).
+            // Scan ALL windows to find the one containing QS tiles.
+            android.view.accessibility.AccessibilityNodeInfo root = null;
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) {
+                android.view.accessibility.AccessibilityNodeInfo bestRoot = null;
+                int bestChildren = 0;
+                for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                    android.view.accessibility.AccessibilityNodeInfo winRoot = win.getRoot();
+                    if (winRoot == null) continue;
+                    CharSequence pkg = winRoot.getPackageName();
+                    if (pkg != null && "com.android.systemui".equals(pkg.toString())) {
+                        int childCount = winRoot.getChildCount();
+                        Log.i(TAG, "QS_TAP: systemui_window children=" + childCount + " type=" + win.getType());
+                        if (childCount > bestChildren) {
+                            if (bestRoot != null) bestRoot.recycle();
+                            bestRoot = winRoot;
+                            bestChildren = childCount;
+                        } else {
+                            winRoot.recycle();
+                        }
+                    } else {
+                        winRoot.recycle();
+                    }
+                }
+                root = bestRoot;
+            }
+            if (root == null) {
+                // Fallback to getRootInActiveWindow if getWindows didn't find SystemUI
+                root = getRootInActiveWindow();
+            }
+            if (root == null) {
+                Log.i(TAG, "QS_TAP: no_root — no SystemUI window found");
+                return false;
+            }
+            // Log what window we're reading
+            CharSequence rootPkg = root.getPackageName();
+            Log.i(TAG, "QS_TAP: root_pkg=" + (rootPkg != null ? rootPkg : "null") + " children=" + root.getChildCount());
+
+            // Build search labels: include the original label + variant without hyphen (Wi-Fi -> WiFi)
+            java.util.List<String> searchLabels = new java.util.ArrayList<>();
+            searchLabels.add(tileLabel);
+            if (tileLabel.contains("-")) searchLabels.add(tileLabel.replace("-", ""));
+            if (!tileLabel.contains("-") && tileLabel.toLowerCase().startsWith("wifi")) searchLabels.add("Wi-Fi");
+
+            java.util.List<android.view.accessibility.AccessibilityNodeInfo> nodes = new java.util.ArrayList<>();
+            int textMatches = 0;
+            android.view.accessibility.AccessibilityNodeInfo byDesc = null;
+
+            for (String label : searchLabels) {
+                java.util.List<android.view.accessibility.AccessibilityNodeInfo> found =
+                    root.findAccessibilityNodeInfosByText(label);
+                if (found != null) { nodes.addAll(found); textMatches += found.size(); }
+                android.view.accessibility.AccessibilityNodeInfo descNode = findByContentDesc(root, label);
+                if (descNode != null && byDesc == null) { byDesc = descNode; nodes.add(0, descNode); }
+            }
+
+            // Samsung QS tile labels may include state suffix ("Wi-Fi, Connected" or "Bluetooth, On")
+            if (nodes.size() <= 1) {
+                String[] suffixes = {", On", ", Off", ", Connected", ", Disconnected", ", Enabled", ", Disabled"};
+                for (String label : searchLabels) {
+                    for (String suffix : suffixes) {
+                        java.util.List<android.view.accessibility.AccessibilityNodeInfo> extra =
+                            root.findAccessibilityNodeInfosByText(label + suffix);
+                        if (extra != null) nodes.addAll(extra);
+                        android.view.accessibility.AccessibilityNodeInfo extraDesc = findByContentDesc(root, label + suffix);
+                        if (extraDesc != null) nodes.add(0, extraDesc);
+                    }
+                }
+            }
+            Log.i(TAG, "QS_TAP: search tile=" + tileLabel + " text_matches=" + textMatches + " desc_match=" + (byDesc != null) + " total=" + nodes.size());
+
+            // Filter out nodes in status bar / notification area (y < 500)
+            // Samsung QS tiles start at y~500+ after full panel expansion
+            java.util.List<android.view.accessibility.AccessibilityNodeInfo> filteredNodes = new java.util.ArrayList<>();
+            for (android.view.accessibility.AccessibilityNodeInfo candidate : nodes) {
+                android.graphics.Rect cb2 = new android.graphics.Rect();
+                candidate.getBoundsInScreen(cb2);
+                int centerY2 = (cb2.top + cb2.bottom) / 2;
+                CharSequence cText = candidate.getText();
+                CharSequence cDesc = candidate.getContentDescription();
+                String nodeInfo = "text=" + (cText != null ? cText : "null") + " desc=" + (cDesc != null ? cDesc : "null") + " y=" + centerY2 + " clickable=" + candidate.isClickable() + " bounds=" + cb2.toShortString();
+                if (centerY2 < 500) {
+                    Log.i(TAG, "QS_TAP: skip_node (above_qs_area) " + nodeInfo);
+                } else {
+                    Log.i(TAG, "QS_TAP: candidate " + nodeInfo);
+                    filteredNodes.add(candidate);
+                }
+            }
+            if (filteredNodes.isEmpty() && !nodes.isEmpty()) {
+                // All filtered out — pick the node with HIGHEST y (furthest from status bar)
+                android.view.accessibility.AccessibilityNodeInfo bestNode = null;
+                int bestY = -1;
+                for (android.view.accessibility.AccessibilityNodeInfo n : nodes) {
+                    android.graphics.Rect nb = new android.graphics.Rect();
+                    n.getBoundsInScreen(nb);
+                    int cy = (nb.top + nb.bottom) / 2;
+                    if (cy > bestY) { bestY = cy; bestNode = n; }
+                }
+                if (bestNode != null) filteredNodes.add(bestNode);
+                Log.i(TAG, "QS_TAP: all nodes below y=500, using best_y=" + bestY);
+            }
+            if (filteredNodes.isEmpty()) {
+                Log.i(TAG, "QS_TAP: no_match tile=" + tileLabel + " — zero candidates after filter");
+                root.recycle();
+                return false;
+            }
+
+            for (android.view.accessibility.AccessibilityNodeInfo node : filteredNodes) {
+                // Get the node's own bounds for reference
+                android.graphics.Rect nodeBounds = new android.graphics.Rect();
+                node.getBoundsInScreen(nodeBounds);
+
+                // Strategy 1: walk up to find the QS tile container
+                // Samsung split tiles (Wi-Fi, BT, Mobile Data) have TWO clickable zones:
+                //   - LEFT side: icon area — tapping toggles on/off
+                //   - RIGHT side: text/label area — tapping opens settings
+                // We want the ICON side (toggle), so we tap the LEFT quarter of the tile.
+                android.view.accessibility.AccessibilityNodeInfo current = node;
+                android.view.accessibility.AccessibilityNodeInfo clickableAncestor = null;
+                int ancestorDepth = -1;
+                for (int depth = 0; depth < 6; depth++) {
+                    if (current == null) break;
+                    if (current.isClickable()) {
+                        clickableAncestor = current;
+                        ancestorDepth = depth;
+                        break;
+                    }
+                    current = current.getParent();
+                }
+
+                if (clickableAncestor != null) {
+                    android.graphics.Rect bounds = new android.graphics.Rect();
+                    clickableAncestor.getBoundsInScreen(bounds);
+                    // Check if this is a split tile: wide tile (width > 2x height) = likely split
+                    boolean isSplitTile = bounds.width() > bounds.height() * 2;
+                    int tapX, tapY;
+                    if (isSplitTile) {
+                        // Tap the LEFT quarter — icon/toggle area on Samsung
+                        tapX = bounds.left + bounds.width() / 4;
+                        tapY = (bounds.top + bounds.bottom) / 2;
+                        Log.i(TAG, "QS_TAP: SPLIT_TILE detected — tapping icon side at " + tapX + "," + tapY + " bounds=" + bounds.toShortString());
+                    } else {
+                        tapX = (bounds.left + bounds.right) / 2;
+                        tapY = (bounds.top + bounds.bottom) / 2;
+                        Log.i(TAG, "QS_TAP: simple_tile — tapping center at " + tapX + "," + tapY + " bounds=" + bounds.toShortString());
+                    }
+                    Log.i(TAG, "QS_TAP: found_clickable_ancestor depth=" + ancestorDepth + " bounds=" + bounds.toShortString());
+                    // Always use gesture tap for QS tiles — ACTION_CLICK often opens settings on Samsung
+                    Log.i(TAG, "QS_TAP: gesture_tap at " + tapX + "," + tapY);
+                    boolean g = tapAtPoint(tapX, tapY);
+                    Log.i(TAG, "QS_TAP: gesture_tap result=" + g);
+                    root.recycle();
+                    return g;
+                }
+
+                // Strategy 2: no clickable ancestor — gesture tap on node bounds
+                if (!nodeBounds.isEmpty()) {
+                    int nx = (nodeBounds.left + nodeBounds.right) / 2;
+                    int ny = nodeBounds.top + (nodeBounds.height() / 3);
+                    Log.i(TAG, "QS_TAP: no_clickable_ancestor, gesture_tap at " + nx + "," + ny + " bounds=" + nodeBounds.toShortString());
+                    root.recycle();
+                    return tapAtPoint(nx, ny);
+                }
+            }
+            Log.i(TAG, "QS_TAP: exhausted all candidates, no tap fired");
+            root.recycle();
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "QS_TAP: error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean tapAtCenter(android.graphics.Rect bounds) {
+        return tapAtPoint((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+    }
+
+    private boolean tapAtPoint(int x, int y) {
+        android.graphics.Path path = new android.graphics.Path();
+        path.moveTo(x, y);
+        android.accessibilityservice.GestureDescription.Builder builder =
+            new android.accessibilityservice.GestureDescription.Builder();
+        builder.addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 150));
+        final boolean[] done = {false};
+        final boolean[] success = {false};
+        dispatchGesture(builder.build(), new android.accessibilityservice.AccessibilityService.GestureResultCallback() {
+            @Override
+            public void onCompleted(android.accessibilityservice.GestureDescription g) {
+                success[0] = true; done[0] = true;
+            }
+            @Override
+            public void onCancelled(android.accessibilityservice.GestureDescription g) {
+                done[0] = true;
+            }
+        }, null);
+        long waitStart = System.currentTimeMillis();
+        while (!done[0] && System.currentTimeMillis() - waitStart < 1500) {
+            try { Thread.sleep(20); } catch (InterruptedException ignored) {}
+        }
+        return success[0];
+    }
+
+    public boolean toggleQuickSetting(String tileLabel) {
+        Log.i(TAG, "QS_TOGGLE: start tile=" + tileLabel);
+        allowPackage("com.android.systemui");
+        android.graphics.Point screenSize = new android.graphics.Point();
+        try {
+            android.view.WindowManager wm = (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+            if (wm != null) wm.getDefaultDisplay().getRealSize(screenSize);
+        } catch (Exception ignored) { screenSize.set(1080, 2340); }
+        int cx = screenSize.x / 2;
+        int h = screenSize.y;
+        Log.i(TAG, "QS_TOGGLE: screen=" + screenSize.x + "x" + h + " center_x=" + cx);
+
+        // Swipe 1: pull down notification shade
+        boolean swipe1 = swipeRaw(cx, 10, cx, h / 2, 300);
+        Log.i(TAG, "QS_TOGGLE: swipe_shade result=" + swipe1);
+        try { Thread.sleep(600); } catch (InterruptedException ignored) {}
+
+        // Swipe 2: expand to full QS tiles
+        boolean swipe2 = swipeRaw(cx, h / 4, cx, h * 3 / 4, 300);
+        Log.i(TAG, "QS_TOGGLE: swipe_expand result=" + swipe2);
+        try { Thread.sleep(800); } catch (InterruptedException ignored) {}
+
+        boolean result = tapQuickSettingsTile(tileLabel);
+        Log.i(TAG, "QS_TOGGLE: first_attempt tile=" + tileLabel + " result=" + result);
+        if (!result) {
+            // Scroll QS panel to find hidden tiles
+            Log.i(TAG, "QS_TOGGLE: scrolling QS panel to find hidden tile");
+            swipeRaw(cx, h / 2, cx, h / 4, 200);
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+            result = tapQuickSettingsTile(tileLabel);
+            Log.i(TAG, "QS_TOGGLE: second_attempt tile=" + tileLabel + " result=" + result);
+        }
+
+        // Always dismiss the shade
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+        Log.i(TAG, "QS_TOGGLE: dismissing shade, toggle_result=" + result);
+        swipeRaw(cx, h * 3 / 4, cx, 10, 250);
+        try { Thread.sleep(400); } catch (InterruptedException ignored) {}
+        // Double-ensure shade is gone
+        performGlobalAction(GLOBAL_ACTION_BACK);
+        Log.i(TAG, "QS_TOGGLE: complete tile=" + tileLabel + " result=" + result);
+        return result;
+    }
+
+    // Swipe helper that bypasses checkPackageAllowed — needed for system UI swipes
+    private boolean swipeRaw(int x1, int y1, int x2, int y2, int durationMs) {
+        final boolean[] done = {false};
+        final boolean[] success = {false};
+        android.graphics.Path path = new android.graphics.Path();
+        path.moveTo(x1, y1);
+        path.lineTo(x2, y2);
+        android.accessibilityservice.GestureDescription gesture =
+            new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, Math.max(durationMs, 100)))
+                .build();
+        dispatchGesture(gesture, new android.accessibilityservice.AccessibilityService.GestureResultCallback() {
+            @Override
+            public void onCompleted(android.accessibilityservice.GestureDescription g) { success[0] = true; done[0] = true; }
+            @Override
+            public void onCancelled(android.accessibilityservice.GestureDescription g) { done[0] = true; }
+        }, null);
+        long ws = System.currentTimeMillis();
+        while (!done[0] && System.currentTimeMillis() - ws < 3000) {
+            try { Thread.sleep(20); } catch (InterruptedException ignored) {}
+        }
+        return success[0];
+    }
+
+    private AccessibilityNodeInfo findFocusedEditable(AccessibilityNodeInfo root) {
+        if (root.isEditable() && root.isFocused()) return AccessibilityNodeInfo.obtain(root);
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo child = root.getChild(i);
+            if (child != null) {
+                AccessibilityNodeInfo found = findFocusedEditable(child);
+                if (found != null) { child.recycle(); return found; }
+                child.recycle();
+            }
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findNode(AccessibilityNodeInfo root, String selector) {
+        List<AccessibilityNodeInfo> byText = root.findAccessibilityNodeInfosByText(selector);
+        if (byText != null && !byText.isEmpty()) return byText.get(0);
+        List<AccessibilityNodeInfo> byId = root.findAccessibilityNodeInfosByViewId(selector);
+        if (byId != null && !byId.isEmpty()) return byId.get(0);
+        return findByContentDesc(root, selector);
+    }
+
+    private AccessibilityNodeInfo findByContentDesc(AccessibilityNodeInfo node, String desc) {
+        if (node.getContentDescription() != null &&
+            node.getContentDescription().toString().toLowerCase().contains(desc.toLowerCase())) {
+            return AccessibilityNodeInfo.obtain(node);
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                AccessibilityNodeInfo found = findByContentDesc(child, desc);
+                if (found != null) { child.recycle(); return found; }
+                child.recycle();
+            }
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findScrollable(AccessibilityNodeInfo node) {
+        if (node.isScrollable()) return AccessibilityNodeInfo.obtain(node);
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                AccessibilityNodeInfo found = findScrollable(child);
+                if (found != null) { child.recycle(); return found; }
+                child.recycle();
+            }
+        }
+        return null;
+    }
+}

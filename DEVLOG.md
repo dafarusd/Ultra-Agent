@@ -106,6 +106,47 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
+### Session 14 — M1: native Kotlin skeleton lives on device (2026-08-27, branch `native`)
+
+- **Subsystems:** D (Actions/Device Control), H (Build/Release)
+- **Strategic context:** Owner direction — Ultra becomes the AI, not an API client (the Mind Meld pattern: deterministic spine + shipped model + validation gate). Native Kotlin rewrite begun; Expo app stays on `main` at Build 30.
+
+#### What was done
+
+- New `ultra-native/` Gradle project (AGP 8.7.3, Kotlin 2.0.21, Compose BOM 2024.12.01, JDK 17 — Aundrea's proven versions). Package `com.agent.ultra`, versionCode 6 / `2.0.0-native`.
+- **Ported the two proven Java services out of the Expo plugin into plain Android sources:**
+  - `AgentAccessibilityService.java` (57KB) — 4-point surgery only: removed 3 RN imports + the one `DeviceEventEmitter` emit site, replaced with a `UiTreeListener` interface. Everything else byte-identical.
+  - `AgentBackgroundService.java` — verbatim (zero RN coupling).
+  - The RN bridge classes (`AccessibilityBridgeModule`, `AgentNativePackage`, `AgentHeadlessTaskService`) are intentionally NOT ported — Kotlin code will call the service directly in-process. On-device APK build chain (ApkPackager/Signer) also not ported; its role in the native architecture is an open decision, documented not deleted (still in the plugin on `main`).
+- Compose chat shell: `MainActivity` + `ChatScreen` (message list, input, send) + dark-only theme (matches the app's established identity) + live a11y status line. Brain stub returns a marker line; real wiring is M2.
+- Signing: Expo project's debug keystore copied to `ultra-native/app/debug.keystore` and used for all build types — install-over continuity confirmed on device (v1.3.1 → v2.0.0-native with no uninstall).
+
+#### Device findings that cost time (so they never cost it again)
+
+1. **Play Protect dialog on first install of the new signature class** — "Send app for a security check?" Chose Don't send; install proceeded.
+2. **Android 16 restricted-settings enforcement silently reverts a11y enables** for shell-installed apps (`settings put secure enabled_accessibility_services` reads back null; the settings-UI toggle + Allow dialog silently no-ops). `appops set … ACCESS_RESTRICTED_SETTINGS allow` alone is NOT sufficient on this build.
+   **Fix that holds: reinstall with the installer recorded as Play Store — `adb install -r -i com.android.vending <apk>`** — after which `settings put secure enabled_accessibility_services …` sticks.
+3. **Force-stop still reverts the a11y enable on this device.** Workflow rule: after any `am force-stop`, re-run the two `settings put` lines. Fully scriptable; no manual step ever again:
+
+```
+adb install -r -i com.android.vending ultra-native/app/build/outputs/apk/debug/app-debug.apk
+adb shell settings put secure enabled_accessibility_services com.agent.ultra/com.agent.ultra.AgentAccessibilityService
+adb shell settings put secure accessibility_enabled 1
+```
+
+#### Verification (all PROVEN on the A15 5G, screenshots on file)
+
+- `./gradlew assembleDebug` — first build 1m14s, incremental 5s. APK 12.5MB (vs Expo's 128MB).
+- Install-over Build 30 succeeded; app launches to the chat shell (title, dark theme, input, Send).
+- **Perception live:** a11y service bound (`dumpsys accessibility`), prefs `state=connected`, logcat `AgentA11y: PKG_CHANGE: -> com.android.chrome` when Chrome opened.
+- UI status line reflects service state live ("agent: ready").
+- Known cosmetic caveat: first screenshot iteration had the title invisible (light-scheme text on black window) — fixed by forcing the dark scheme; Compose semantics (uiautomator) see everything regardless.
+
+#### Open / next (M2)
+
+- Port the brain: 12-turn tool loop + tool registry + ReActLoop in Kotlin, calling the a11y service in-process (no bridge). Fix-in-port list from Build 29: conversation bleed between tasks, self-interaction over-blocking, BT/DND via direct settings API, SMS `to=undefined`.
+- AI provider config: no key on the device yet; needed for first brain test.
+
 ### Session 13 — Build 30: biometric gate removed + permission-onboarding fix (2026-08-27)
 
 - **Date:** 2026-08-27
