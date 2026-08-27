@@ -22,7 +22,6 @@ import { getAgentCoreInstance } from "@/src/core/AgentCore";
 import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
 import UsageIndicator, { ModelUsage } from "@/components/UsageIndicator";
 import BlockedAppsTab from "@/components/BlockedAppsTab";
-import { BiometricGate } from "@/src/security/BiometricGate";
 import type {
   ApiProvider,
   AuthMode,
@@ -133,8 +132,6 @@ export default function SettingsScreen() {
   // ── Security ─────────────────────────────────────────────
   const [backupExporting, setBackupExporting] = useState(false);
   const [backupImporting, setBackupImporting] = useState(false);
-  const [biometricGate] = useState(() => new BiometricGate());
-  const [lockTimeout, setLockTimeout] = useState(0);
 
   // ── Load on mount ────────────────────────────────────────
   useEffect(() => {
@@ -142,7 +139,6 @@ export default function SettingsScreen() {
     loadProviders();
     loadCostData();
     loadLimits();
-    initBiometric();
   }, []);
 
   useEffect(() => {
@@ -194,14 +190,6 @@ export default function SettingsScreen() {
       setDailyLimit(dl || '0');
       const tl = await vault.get('task_cost_limit');
       setTaskLimit(tl || '0');
-    } catch {}
-  }, []);
-
-  const initBiometric = useCallback(async () => {
-    try {
-      const vault = await SecureVault.initialize();
-      await biometricGate.init(vault);
-      setLockTimeout(biometricGate.getLockTimeout());
     } catch {}
   }, []);
 
@@ -785,30 +773,6 @@ export default function SettingsScreen() {
         {/* ══ TAB: SECURITY ══ */}
         {tab === 'security' && (
           <>
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>App Lock</Text>
-              <Text style={styles.cardSubtitle}>
-                Require biometric authentication after the app has been in the background.
-              </Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                {[0, 1, 5, 15, 30, 60].map(mins => {
-                  const label = mins === 0 ? 'Never' : mins < 60 ? `${mins}m` : '1h';
-                  const active = lockTimeout === mins;
-                  return (
-                    <Pressable
-                      key={mins}
-                      style={[styles.btn, active ? styles.primaryBtn : styles.secondaryBtn, { paddingHorizontal: 14 }]}
-                      onPress={async () => {
-                        await biometricGate.setLockTimeout(mins);
-                        setLockTimeout(mins);
-                      }}
-                    >
-                      <Text style={active ? styles.primaryBtnText : styles.secondaryBtnText}>{label}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Preferences Backup</Text>
               <Text style={styles.cardSubtitle}>

@@ -106,6 +106,39 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
+### Session 13 — Build 30: biometric gate removed + permission-onboarding fix (2026-08-27)
+
+- **Date:** 2026-08-27
+- **Subsystems:** E (Permissions/Security), H (Build/Release)
+- **Device:** Galaxy A15 5G (SM-S156V, Dimensity 6100+, 3.5GB RAM, Android 16) over USB adb — new test device, replacing the S25 as the bench target.
+
+#### What was done
+
+**BiometricGate removed entirely (owner directive: no gates between the agent and automation).**
+- Deleted `src/security/BiometricGate.ts` (only consumer of `expo-local-authentication`).
+- `app/index.tsx`: removed the startup `authenticateIfNeeded` call, the `isAppLocked` state + ref, the full-screen lock overlay, and `lockStyles`.
+- `app/settings.tsx`: removed the "App Lock" card, `biometricGate`/`lockTimeout` state, and `initBiometric`.
+- `app.json`: removed `USE_BIOMETRIC`/`USE_FINGERPRINT` permissions and the `expo-local-authentication` plugin. Version 1.3.0→1.3.1, versionCode 4→5.
+- Repo-wide grep + `tsc --noEmit` both clean after removal.
+
+**Permission-onboarding bug found and fixed (same class as the biometric wall — a gate blocking automation).**
+- Root cause: `PermissionBroker` used RN `PermissionsAndroid.check()` for `MANAGE_EXTERNAL_STORAGE`, which always returns false for special-access permissions → the app deep-linked to the system "All files access" page on EVERY cold start, granted or not.
+- Fix: new native method `isAllFilesAccessGranted()` in the plugin's AgentNativeModule template (`plugins/withAgentNative.js`) calling `Environment.isExternalStorageManager()`; wrapper added in `src/native/AgentNative.ts`; both checks in PermissionBroker routed through it.
+
+**Build pipeline: EAS login removed from the loop.** `eas whoami` = not logged in, and signing was the only thing EAS cloud provided. Built with `npx expo prebuild --clean` + `cd android && ./gradlew assembleRelease` — release signed with the template debug keystore, no Expo account needed. ~8 min clean, ~3 min incremental.
+
+#### Verification (all PROVEN on device, screenshots on file)
+
+- Build 30 (v1.3.1/vc5) installed on the A15 5G; `tsc` 0 errors.
+- Force-stop → cold start lands directly on the chat UI: no lock screen, no permission dialog, no settings redirect (mCurrentFocus = com.agent.ultra.MainActivity, visually confirmed).
+- All runtime permissions granted via `pm grant`; WRITE_SECURE_SETTINGS granted; MANAGE_EXTERNAL_STORAGE appop allow; battery-optimization whitelist added (`dumpsys deviceidle whitelist +com.agent.ultra`).
+- **Accessibility service enabled via adb** (`settings put secure enabled_accessibility_services com.agent.ultra/com.agent.ultra.AgentAccessibilityService`) — the old manual re-enable step is now automated.
+
+#### Open / next
+
+- No AI provider configured on this install ("Add AI provider" status shown) — needed before brain testing.
+- Native Kotlin rewrite begins next (branch `native`): ports the Java accessibility service out of the Expo plugin; brain, gate, and on-device model follow. Expo app stays on `main`, untouched from here.
+
 ### Session 12 — Brain Intelligence Upgrade + IME Fix (2026-04-08 through 2026-04-09)
 
 - **Date:** 2026-04-08 to 2026-04-09

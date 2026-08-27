@@ -28,7 +28,6 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { UltraDevLog as DebugLog, UltraDevLog } from "@/src/utils/UltraDevLog";
 import { classifyModelType } from "@/src/utils/classifyModelType";
 import type { AgentCore } from "@/src/core/AgentCore";
-import { BiometricGate } from "@/src/security/BiometricGate";
 import type { ExecuteArgs } from "@/src/core/AgentCore";
 import { useAgentCore } from "@/src/context/AgentCoreContext";
 import type { ChatMessage, UltraExecutionResult, ConversationMeta, PromptTrace } from "@/src/types/ultra";
@@ -130,10 +129,8 @@ export default function ChatScreen() {
     return () => { if (sub) sub.remove(); };
   }, []);
 
-  // Onboarding & biometric lock
+  // Onboarding
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [isAppLocked, setIsAppLocked] = useState(false);
-  const biometricGateRef = useRef<BiometricGate | null>(null);
 
   // Core state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -578,19 +575,6 @@ export default function ChatScreen() {
             }, 3000);
           }
         }
-
-        // Biometric gate — load biometric_timeout (ms) override if set
-        const gate = new BiometricGate();
-        await gate.init(vault!);
-        const biometricTimeout = await vault!.get('biometric_timeout').catch(() => null);
-        if (biometricTimeout !== null) {
-          const timeoutMs = parseInt(biometricTimeout, 10) || 0;
-          const mins = Math.round(timeoutMs / 60000);
-          if (mins !== gate.getLockTimeout()) await gate.setLockTimeout(mins);
-        }
-        biometricGateRef.current = gate;
-        const authed = await gate.authenticateIfNeeded('Unlock Agent Ultra');
-        setIsAppLocked(!authed);
 
         if (!core.hasApiKey()) {
           setStatus("Add AI provider in Settings → AI Providers");
@@ -1480,28 +1464,6 @@ export default function ChatScreen() {
     );
   }
 
-  if (isAppLocked) {
-    return (
-      <View style={[lockStyles.root, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
-        <Ionicons name="lock-closed" size={56} color={ACCENT} />
-        <Text style={lockStyles.title}>Agent Ultra Locked</Text>
-        <Text style={lockStyles.sub}>Authenticate to continue</Text>
-        <Pressable
-          style={lockStyles.btn}
-          onPress={async () => {
-            const gate = biometricGateRef.current;
-            if (!gate) return;
-            const ok = await gate.authenticate();
-            if (ok) setIsAppLocked(false);
-          }}
-        >
-          <Ionicons name="finger-print" size={20} color={BG} />
-          <Text style={lockStyles.btnText}>Unlock</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
   return (
     <View style={[styles.container, { paddingTop: insets.top + webTopInset }]} testID="ChatScreen">
 
@@ -1974,18 +1936,6 @@ const styles = StyleSheet.create({
   sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, justifyContent: "center", alignItems: "center" },
   sendBtnDisabled: { backgroundColor: SURFACE },
   stopBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#333", justifyContent: "center", alignItems: "center" },
-});
-
-const lockStyles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', gap: 16 },
-  title: { fontSize: 24, fontWeight: '700', color: '#e0e0e0', fontFamily: 'Inter_700Bold' },
-  sub: { fontSize: 14, color: '#666', fontFamily: 'Inter_400Regular', marginBottom: 8 },
-  btn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: ACCENT, borderRadius: 12,
-    paddingVertical: 14, paddingHorizontal: 28,
-  },
-  btnText: { color: BG, fontWeight: '700', fontSize: 16, fontFamily: 'Inter_700Bold' },
 });
 
 const renameStyles = StyleSheet.create({

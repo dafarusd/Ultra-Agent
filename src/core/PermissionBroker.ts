@@ -145,11 +145,12 @@ export class PermissionBroker {
 
     // Fourth pass: MANAGE_EXTERNAL_STORAGE — special app access on Android 11+.
     // Cannot be batched. Opens system settings intent if not already granted.
+    // NOTE: PermissionsAndroid.check() always returns false for this permission;
+    // the truthful check is Environment.isExternalStorageManager() via AgentNative.
     if (apiLevel >= 30) {
       try {
-        const { check, PERMISSIONS } = PermissionsAndroid;
-        const manageStoragePerm = 'android.permission.MANAGE_EXTERNAL_STORAGE';
-        const alreadyManage = await check(manageStoragePerm as any).catch(() => false);
+        const AgentNative = (await import('../native/AgentNative')).default;
+        const alreadyManage = await AgentNative.isAllFilesAccessGranted().catch(() => false);
         if (alreadyManage) {
           this.granted.add('MANAGE_EXTERNAL_STORAGE');
           DebugLog.permissionStatus('MANAGE_EXTERNAL_STORAGE', 'already granted');
@@ -161,7 +162,7 @@ export class PermissionBroker {
             { data: 'package:com.agent.ultra' }
           ).catch(() => {});
           // Re-check after settings return
-          const grantedAfter = await check(manageStoragePerm as any).catch(() => false);
+          const grantedAfter = await AgentNative.isAllFilesAccessGranted().catch(() => false);
           if (grantedAfter) {
             this.granted.add('MANAGE_EXTERNAL_STORAGE');
             DebugLog.permissionStatus('MANAGE_EXTERNAL_STORAGE', 'granted after settings');

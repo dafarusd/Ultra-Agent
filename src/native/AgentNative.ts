@@ -33,6 +33,7 @@ export interface AgentNativeInterface {
   installApk(apkPath: string): Promise<string>;
   exec(command: string, workDir: string): Promise<string>;
   getStorageInfo(): Promise<{ total: number; free: number; used: number }>;
+  isAllFilesAccessGranted(): Promise<boolean>;
   getInstalledApps(): Promise<Array<{ packageName: string; appName: string }>>;
   launchApp(packageName: string): Promise<{ success: boolean; packageName?: string; error?: string }>;
   setFlashlight(on: boolean): Promise<boolean>;
@@ -71,6 +72,7 @@ const noopModule: AgentNativeInterface = {
   installApk: async () => 'AgentNative not available',
   exec: async () => 'AgentNative not available',
   getStorageInfo: async () => ({ total: 0, free: 0, used: 0 }),
+  isAllFilesAccessGranted: async () => false,
   getInstalledApps: async () => [],
   launchApp: async () => ({ success: false, error: 'AgentNative not available' }),
   setFlashlight: async () => false,
@@ -122,6 +124,7 @@ function createNativeWrapper(): AgentNativeInterface {
       return native.exec(command, workDir);
     },
     getStorageInfo: () => native.getStorageInfo(),
+    isAllFilesAccessGranted: () => native.isAllFilesAccessGranted ? native.isAllFilesAccessGranted() : Promise.resolve(false),
     getInstalledApps: () => native.getInstalledApps ? native.getInstalledApps() : Promise.resolve([]),
     launchApp: (packageName: string) => native.launchApp ? native.launchApp(packageName) : Promise.resolve({ success: false, error: 'launchApp not available' }),
     setFlashlight: (on: boolean) => native.setFlashlight ? native.setFlashlight(on) : Promise.resolve(false),

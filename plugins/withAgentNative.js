@@ -385,6 +385,19 @@ public class AgentNativeModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
+    public void isAllFilesAccessGranted(Promise promise) {
+        try {
+            boolean granted = true;
+            if (Build.VERSION.SDK_INT >= 30) {
+                granted = android.os.Environment.isExternalStorageManager();
+            }
+            promise.resolve(granted);
+        } catch (Exception e) {
+            promise.reject("STORAGE_CHECK_ERROR", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
     public void getInstalledApps(Promise promise) {
         try {
             android.content.pm.PackageManager pm = ctx.getPackageManager();
