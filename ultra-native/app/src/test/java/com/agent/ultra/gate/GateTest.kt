@@ -156,6 +156,32 @@ class GateTest {
     }
 
     @Test
+    fun confirmChannelMintsUserAttestedTarget() {
+        // The resolve/confirm channel: a referential target blocks, the
+        // operator confirms it, the same call then passes.
+        val m = egressManifest()
+        val ep = episode("email the same participants as last week")
+        val gate = Gate(m)
+        val blocked = gate.enforceCall(ep, "send_email", JSONObject("""{"to":"sarah.connor@gmail.com"}"""))
+        assertFalse(blocked.allowed)
+        assertTrue("traceability blocks must be confirmable", blocked.confirmable)
+        ep.confirm("sarah.connor@gmail.com")
+        val allowed = gate.enforceCall(ep, "send_email", JSONObject("""{"to":"sarah.connor@gmail.com"}"""))
+        assertTrue(allowed.allowed)
+    }
+
+    @Test
+    fun taintEgressNeverConfirmable() {
+        val secrets = findSecrets("password: hunter2secret123")
+        val m = manifestOf("send_email" to spec("send_email", listOf("egress"), emptyList()))
+        val ep = episode()
+        ep.secrets += secrets
+        val v = Gate(m).enforceCall(ep, "send_email", JSONObject("""{"body":"leak password: hunter2secret123"}"""))
+        assertFalse(v.allowed)
+        assertFalse("taint must never be confirmable", v.confirmable)
+    }
+
+    @Test
     fun wwwPrefixNormalizedOnDeviceCase() {
         // Live on-device finding (2026-08-27): "open google.com" with
         // url=https://www.google.com false-positived. www. ≡ bare domain.

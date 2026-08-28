@@ -14,6 +14,19 @@ class Gate(private val manifest: Manifest) {
     class Episode(userRequest: String) {
         val requestNorm: String = norm(userRequest)
         val secrets = mutableListOf<String>()
+        /** Targets the operator explicitly confirmed this episode (the
+         * resolve/confirm channel — gatellml SPEC §2 R4 made live). */
+        private val confirmed = mutableSetOf<String>()
+
+        /** The effective trusted text: the request plus user-confirmed targets. */
+        val effectiveRequestNorm: String
+            get() = if (confirmed.isEmpty()) requestNorm
+            else requestNorm + " " + confirmed.joinToString(" ")
+
+        fun confirm(target: String) {
+            val n = norm(target)
+            if (n.isNotEmpty()) confirmed += n
+        }
 
         /** Call after each tool result: collect secret-shaped material. */
         fun observeSecrets(toolResult: String) {
@@ -23,13 +36,30 @@ class Gate(private val manifest: Manifest) {
 
     data class Violation(val rule: String, val arg: String?, val hint: String)
 
-    data class Verdict(val allowed: Boolean, val violations: List<Violation> = emptyList()) {
+    data class Verdict(
+        val allowed: Boolean,
+        val violations: List<Violation> = emptyList(),
+        /** True when every violation is traceability-class — i.e. an operator
+         * confirmation could legitimately cure it. Taint, spoof, and
+         * undeclared-tool violations are never confirmable. */
+    ) {
         val rule: String? get() = violations.firstOrNull()?.rule
+        val confirmable: Boolean
+            get() = violations.isNotEmpty() && violations.all {
+                it.rule in CONFIRMABLE_RULES
+            }
+
+        companion object {
+            private val CONFIRMABLE_RULES = setOf(
+                "recipient_traceable", "any_arg_traceable", "atom_in_request",
+                "domain_in_request", "origin_subset",
+            )
+        }
     }
 
     private fun mintOrigin(text: String, ep: Episode): OriginSet {
         val n = norm(text)
-        return if (n.isNotEmpty() && n in ep.requestNorm) OriginSet(setOf(UserOrigin))
+        return if (n.isNotEmpty() && n in ep.effectiveRequestNorm) OriginSet(setOf(UserOrigin))
         else OriginSet(setOf(ToolOrigin()))
     }
 
@@ -62,7 +92,7 @@ class Gate(private val manifest: Manifest) {
         }
 
         for (c in spec.requires) {
-            val why = c.check(bindings, ep.requestNorm)
+            val why = c.check(bindings, ep.effectiveRequestNorm)
             if (why != null) violations += Violation(c.name, c.arg, why)
         }
 

@@ -179,6 +179,48 @@ fun ChatScreen(
             }
         }
 
+        // Policy-gate confirmation card (the resolve/confirm channel)
+        brain.pendingConfirm?.let { pending ->
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        "The policy gate paused this action:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        pending.description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 6.dp),
+                    )
+                    if (pending.targets.isNotEmpty()) {
+                        Text(
+                            "Target: " + pending.targets.joinToString(", "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.padding(top = 10.dp),
+                    ) {
+                        Button(onClick = { scope.launch { brain.resolvePending(true) } }) {
+                            Text("Confirm")
+                        }
+                        TextButton(onClick = { scope.launch { brain.resolvePending(false) } }) {
+                            Text("Cancel")
+                        }
+                    }
+                }
+            }
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()

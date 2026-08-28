@@ -1,6 +1,9 @@
 package com.agent.ultra.agent
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.agent.ultra.gate.Gate
 import com.agent.ultra.gate.Manifest
 import com.agent.ultra.provider.OpenAiClient
@@ -44,6 +47,43 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     }
 
     val configured: Boolean get() = client != null
+
+    /** Non-null while a confirmable policy-gate block waits on the operator.
+     * The chat UI renders a confirm/cancel card from this. */
+    var pendingConfirm by mutableStateOf<PendingConfirm?>(null)
+
+    data class PendingConfirm(
+        val description: String,
+        val targets: List<String>,
+        internal val tool: String,
+        internal val params: JSONObject,
+        internal val rawAssistant: String,
+        internal val messages: MutableList<OpenAiClient.ChatMessage>,
+        internal val turn: Int,
+        internal val episode: Gate.Episode,
+        internal val userInput: String,
+    )
+
+    /** The operator's decision on a paused action. */
+    suspend fun resolvePending(approved: Boolean) {
+        val p = pendingConfirm ?: return
+        pendingConfirm = null
+        val ai = client ?: return
+        if (!approved) {
+            emit("Cancelled: ${p.description}")
+            return
+        }
+        // The operator's tap mints the targets as user-attested for this episode.
+        p.targets.forEach { p.episode.confirm(it) }
+        android.util.Log.i("UltraGate", "CONFIRMED ${p.tool} targets=${p.targets}")
+        val resultText = tools.execute(p.tool, p.params)
+        p.episode.observeSecrets(resultText)
+        val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
+        p.messages += OpenAiClient.ChatMessage("assistant", p.rawAssistant)
+        p.messages += OpenAiClient.ChatMessage("user",
+            "[RESULT: ${p.tool}] STATUS: ${if (failed) "failed" else "success"}\nDATA: ${resultText.take(2500)}\nDECIDE: Answer the user, or call the next tool.")
+        runLoop(ai, p.userInput, p.messages, startTurn = p.turn + 1, episodeOverride = p.episode)
+    }
 
     suspend fun run(userInput: String) {
         val ai = client
@@ -100,6 +140,8 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         ai: OpenAiClient,
         userInput: String,
         messages: MutableList<OpenAiClient.ChatMessage>,
+        startTurn: Int = 0,
+        episodeOverride: Gate.Episode? = null,
     ) {
         val maxTurns = 12
         var hasBeenPushed = false
@@ -107,9 +149,9 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         var lastTool = ""
         var lastToolFailed = false
         // One security episode per user request; secrets accumulate across tools.
-        val episode = Gate.Episode(userInput)
+        val episode = episodeOverride ?: Gate.Episode(userInput)
 
-        for (turn in 0 until maxTurns) {
+        for (turn in startTurn until maxTurns) {
             val maxTokens = if (turn == 0) 2000 else if (turn >= maxTurns - 2) 2500 else 1500
             val reply = ai.complete(messages, maxTokens, 0.2).getOrElse {
                 // Cloud failed (offline, quota, outage) — the on-device model
@@ -144,6 +186,20 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             if (!verdict.allowed) {
                 val blockMsg = Gate.renderBlock(verdict)
                 android.util.Log.i("UltraGate", "BLOCK ${toolCall.first}: ${verdict.violations.firstOrNull()?.hint}")
+                if (verdict.confirmable) {
+                    // Resolve/confirm channel: pause and ask the operator.
+                    // Their tap mints the targets user-attested (SPEC §2 R4, live).
+                    val targets = verdict.violations.mapNotNull { v ->
+                        v.arg?.let { a -> toolCall.second.optString(a).takeIf { it.isNotBlank() } }
+                    }.distinct()
+                    val desc = describeAction(toolCall.first, toolCall.second)
+                    pendingConfirm = PendingConfirm(
+                        desc, targets, toolCall.first, toolCall.second, raw,
+                        messages, turn, episode, userInput,
+                    )
+                    emit("Paused by policy gate: $desc")
+                    return
+                }
                 messages += OpenAiClient.ChatMessage("assistant", raw)
                 messages += OpenAiClient.ChatMessage("user",
                     "[RESULT: ${toolCall.first}] STATUS: blocked\nDATA: $blockMsg\nDECIDE: Continue with the rest of the task, or answer the user.")
