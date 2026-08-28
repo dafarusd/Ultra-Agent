@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16h — release build on the S24 Ultra; per-device model choice)
+**Last updated:** 2026-08-28 (Session 16i — navigator budget fix; release published; announced)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
@@ -72,7 +72,7 @@ Read this file at the start of every session to understand previous work.
 
 ### What is NOT working
 
-- Navigator step efficiency is model-tuned, not fixed. It takes more steps than it needs to.
+- Navigator step efficiency: the budget-exhaustion case is fixed (a goal visible on screen ends the run without a model turn). Step counts inside unfamiliar apps are still model-tuned.
 - The 1B model echoes the prompt's few-shot examples as chatter before its real answer. The parser holds; the logs are ugly.
 - Cross-task contamination still triggers gate confirmation cards mid-suite. This is by design — the operator resolves it — but it interrupts unattended runs.
 - Dead code: `Brain.kt` builds a local-route prompt at line 222 that line 243 immediately overwrites.
@@ -141,6 +141,59 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16i — navigator budget fix, release build, announcement (2026-08-28, branch `native`)
+
+#### The navigator stops burning its budget (PROVEN)
+
+The measured failure, carried since Session 14e: "go to google.com in Chrome" loaded the page on step one and then spent the remaining fourteen steps deciding whether it was finished.
+
+- **`goalSatisfied()` checks the screen directly** instead of waiting for the model to declare `done`. When the goal names a destination and the screen shows it, that is the answer — no model turn required. Checked before the loop as well, so a launch that already satisfies the goal costs zero steps.
+- **History speaks plainly**: an action is recorded as `NO CHANGE - do not repeat this` or `FAILED - do not repeat this`, and the prompt forbids repeating those. A no-op repeated twice triggers an explicit "you are repeating yourself" line.
+
+```
+before:  Error: navigation incomplete after 15 steps: iteration budget exhausted
+after:   Goal achieved after 2 steps
+repeat:  Goal achieved after 0 steps: already showing the goal
+```
+
+#### Two bugs found while filming the demo
+
+1. **"brain fault — the coroutine scope left the composition."** Runs were launched from the chat screen's own composition scope, so opening Settings mid-task cancelled the task and printed an error. Agent work is process-scoped now (`ChatStore.agentScope`, a SupervisorJob), `thinking` moved with it, and `CancellationException` is no longer rendered as a fault.
+2. **The 7B was running the fast path.** "What is my battery level" took tens of seconds where the cloud takes about one. A large model is the offline brain, not the quick answer: above 2.5 GB the local route is reserved for being offline and for an explicit `/local`.
+
+#### Release build, and the on-device model on the owner's phone
+
+`release` already shared the debug keystore, so the release APK **installed over the top with settings intact** — verified by re-running the allowlist refusal on it. `debuggable` is gone, so `run-as` no longer works and configuration is UI-only from here.
+
+Qwen2.5 7B (4,466 MB) downloaded through the app's own UI and loaded in **4.46 s**, answering `/local what is the capital of France` with no network.
+
+Two download bugs surfaced doing it: progress never rendered because `onProgress` wrote Compose state from OkHttp's IO thread (the same class of bug as the chat crash), and two downloads could run at once onto the same `model.part`, producing a corrupt file of exactly the right size. Progress hops to the main thread and reports once a second; `downloadModel` is single-flight.
+
+#### Published
+
+- **Source private**: `github.com/dafarusd/Ultra-Agent`, branch `native`. Verified 404 unauthenticated.
+- **Public download**: `github.com/dafarusd/Ultra-Agent-Release` — README plus the APK, which pulls 15,014,327 bytes with no login.
+- **Announcement posted** to @Dafarusd, opening "A local LLM running on Android. On the phone itself." Every number in it verified against a run from today, per the publishing rule. X moved the account into graduated access while posting.
+- A competitor found it within minutes: **@TonyZ278264 ("LocalLLM")**, building an on-device LLM app for iOS, asked how long 4.4 GB stays resident before Android reclaims it. Answered honestly with nothing proprietary — memory-mapped weights, 4.5 s cold load, and that footprint is why the app scores models against the device.
+- **Every public repo now links back to @Dafarusd**: `everyvoice`, `gate`, `mindmeld`, `sentinel-public`, `Ultra-Agent-Release`. Standing rule from this session.
+
+#### The video: recorded, not shipped
+
+A 3:34 walkthrough was recorded and cut to 1:47 at 2x. **The owner reviewed it and declined to post it**, for two reasons worth keeping:
+
+1. **The conversation drawer shows the test queries** — "read my last text message", "open youtube" — which read badly out of context even though both were deliberate safety tests.
+2. **It does not show a real multi-step task.** The demo proves the app runs; it does not prove the agent *does* anything hard. That is a fair reading and it is a gap in the demo, not only in the film.
+
+He will record his own. Files kept at `~/Videos/agent-ultra-demo-2x.mp4` (1:47) and `agent-ultra-demo-full-3m34.mp4`.
+
+**Harness limitation, now reproducible:** X's composer will not bind a video placed into its file input programmatically. Three attempts, two encodings, 1.7 MB and 5.6 MB, in both a post and a reply. The upload reports "Preparing media…" and completes, then the post publishes without it. **Attaching media to X is hand-only** — same class as the account-switch limitation already logged. Belongs in `vault/publishing/log.md`.
+
+#### Open
+
+- The demo needs a genuine multi-step task to be worth showing. That is the honest next piece of work, not a filming problem.
+- Three repos still have no GitHub description: `everyvoice`, `sentinel-public`, `Ultra-Agent-Release`. Descriptions are API-only and could not be set over SSH.
+- The About screen's tool count has now rotted twice (24 → 30 → 31). It should read from the manifest rather than a literal.
 
 ### Session 16h — release build, and models chosen per device (2026-08-28, branch `native`)
 
