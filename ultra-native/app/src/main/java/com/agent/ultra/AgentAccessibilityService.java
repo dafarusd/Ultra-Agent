@@ -240,6 +240,36 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     public String getActivePackage() { Log.i(TAG, "GET_PKG: " + currentPackage); return currentPackage; }
 
+    /**
+     * Foreground package computed from LIVE windows, not event history.
+     * currentPackage goes stale when this service re-binds after another app
+     * already came forward (proven on device: tracker stuck on systemui while
+     * Chrome was visibly in front). Falls back to the event tracker if the
+     * window scan finds nothing.
+     */
+    public String getForegroundPackage() {
+        try {
+            java.util.List<AccessibilityWindowInfo> windows = getWindows();
+            AccessibilityWindowInfo best = null;
+            for (AccessibilityWindowInfo w : windows) {
+                if (w.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+                if (w.getRoot() == null) continue;
+                if (best == null || w.getLayer() > best.getLayer()) best = w;
+            }
+            if (best != null) {
+                CharSequence pkg = best.getRoot().getPackageName();
+                if (pkg != null) {
+                    String p = pkg.toString();
+                    Log.i(TAG, "FG_PKG(live): " + p);
+                    return p;
+                }
+            }
+        } catch (Exception e) {
+            Log.i(TAG, "FG_PKG live scan failed: " + e.getMessage());
+        }
+        return currentPackage;
+    }
+
     public String getScreenContent() {
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();

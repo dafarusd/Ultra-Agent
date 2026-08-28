@@ -148,6 +148,7 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         var finalText = ""
         var lastTool = ""
         var lastToolFailed = false
+        var lastParams = ""
         // One security episode per user request; secrets accumulate across tools.
         val episode = episodeOverride ?: Gate.Episode(userInput)
 
@@ -216,10 +217,23 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             }
 
             android.util.Log.i("UltraBrain", "TOOL CALL: ${toolCall.first} params=${toolCall.second.toString().take(120)}")
+
+            // Duplicate-call dedupe: the same tool with identical params just
+            // succeeded → tell the model it's done instead of re-firing.
+            // (Observed on-device: open_url fired twice per task.)
+            if (lastTool == toolCall.first && !lastToolFailed &&
+                toolCall.second.toString() == lastParams) {
+                messages += OpenAiClient.ChatMessage("assistant", raw)
+                messages += OpenAiClient.ChatMessage("user",
+                    "[RESULT: ${toolCall.first}] STATUS: success\nDATA: Already done — this exact call just succeeded. Do not repeat it.\nDECIDE: Answer the user, or call a DIFFERENT tool.")
+                continue
+            }
+
             val resultText = tools.execute(toolCall.first, toolCall.second)
             episode.observeSecrets(resultText)
             val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
-            android.util.Log.i("UltraBrain", "TOOL RESULT (${if (failed) "fail" else "ok"}): ${resultText.take(120)}")
+            val verification = if (!failed) verifyAction(toolCall.first, toolCall.second) else null
+            android.util.Log.i("UltraBrain", "TOOL RESULT (${if (failed) "fail" else "ok"}): ${resultText.take(120)}${verification ?: ""}")
 
             // Stuck detector: same tool failed twice in a row → stop honestly
             if (failed && lastToolFailed && lastTool == toolCall.first) {
@@ -228,9 +242,11 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             }
             lastTool = toolCall.first
             lastToolFailed = failed
+            lastParams = toolCall.second.toString()
 
             messages += OpenAiClient.ChatMessage("assistant", raw)
-            messages += OpenAiClient.ChatMessage("user", buildFeedback(toolCall.first, resultText, turn, maxTurns, failed))
+            messages += OpenAiClient.ChatMessage("user",
+                buildFeedback(toolCall.first, resultText + (verification ?: ""), turn, maxTurns, failed))
 
             if (turn == maxTurns - 1) finalText = "Ran ${toolCall.first}: ${resultText.take(300)}"
         }
@@ -265,6 +281,49 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     private fun userWantsAction(input: String): Boolean =
         Regex("\\b(navigate|send|text|open|go to|take me|set|create|make|call|play|turn on|turn off|toggle|install|download|share|copy|find me|get me|show me|order|book|buy)\\b",
             RegexOption.IGNORE_CASE).containsMatchIn(input)
+
+    /**
+     * Deterministic post-action verification — no model judgment. Returns a
+     * "\nVERIFIED: …"/"\nUNVERIFIED: …" suffix for known-verifiable tools,
+     * null when nothing can be checked.
+     */
+    private suspend fun verifyAction(tool: String, params: JSONObject): String? {
+        return try {
+            when (tool) {
+                "app_launch" -> {
+                    // Launch transitions run through systemui first on this
+                    // device — check twice before declaring failure.
+                    val target = controller.findPackage(params.optString("target")) ?: ""
+                    var active = ""
+                    for (waitMs in listOf(1500L, 2500L)) {
+                        kotlinx.coroutines.delay(waitMs)
+                        active = controller.activePackage()
+                        if (active == target) break
+                    }
+                    if (active.isNotBlank() && active == target) "\nVERIFIED: $active is in front"
+                    else "\nUNVERIFIED: expected $target in front, found '${active.ifBlank { "nothing" }}'"
+                }
+                "open_url" -> {
+                    var active = ""
+                    for (waitMs in listOf(1500L, 2500L)) {
+                        kotlinx.coroutines.delay(waitMs)
+                        active = controller.activePackage()
+                        if (active.contains("chrome") || active.contains("browser") || active.contains("firefox")) break
+                    }
+                    if (active.contains("chrome") || active.contains("browser") || active.contains("firefox"))
+                        "\nVERIFIED: a browser ($active) is in front"
+                    else "\nUNVERIFIED: foreground is '$active'"
+                }
+                "clipboard_write" -> {
+                    val want = params.optString("text")
+                    val got = controller.clipboardRead()
+                    if (got.contains(want)) "\nVERIFIED: clipboard holds the text"
+                    else "\nUNVERIFIED: clipboard reads '$got'"
+                }
+                else -> null
+            }
+        } catch (_: Exception) { null }
+    }
 
     private fun describeAction(tool: String, params: JSONObject): String = when (tool) {
         "sms_send" -> "Send a text to ${params.optString("to").ifBlank { "unknown" }}: \"${params.optString("message")}\""

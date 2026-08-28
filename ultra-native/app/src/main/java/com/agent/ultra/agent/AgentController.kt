@@ -62,7 +62,8 @@ class AgentController(private val context: Context) {
         result
     }
 
-    fun activePackage(): String = service?.getActivePackage() ?: ""
+    /** Foreground app from live windows (falls back to the event tracker). */
+    fun activePackage(): String = service?.getForegroundPackage() ?: service?.getActivePackage() ?: ""
 
     suspend fun waitForUiChange(timeoutMs: Int): Boolean = withContext(Dispatchers.IO) {
         service?.waitForUiChange(timeoutMs) ?: false
