@@ -28,6 +28,7 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     private val tools: Tools
     private val client: OpenAiClient?
     private val gate: Gate
+    private val taskMemory = com.agent.ultra.data.UltraDatabase.get(context).taskMemory()
 
     init {
         val cfg = ProviderConfig.load(context)
@@ -125,8 +126,61 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         messages += kept.asReversed()
         messages += OpenAiClient.ChatMessage("user", userInput)
 
+        // Task memory: prior successful sequence for this request, and any
+        // tools with a failing record, become a system-side hint.
+        memoryHint(userInput)?.let {
+            android.util.Log.i("UltraBrain", "MEMORY HINT injected: ${it.take(100)}")
+            messages.add(1, OpenAiClient.ChatMessage("system", it))
+        }
+
         runLoop(ai, userInput, messages)
         android.util.Log.i("UltraBrain", "RUN COMPLETE")
+    }
+
+    private fun requestKey(input: String): String =
+        input.lowercase().replace(Regex("[^a-z0-9 ]"), "").replace(Regex("\\s+"), " ").trim()
+
+    private suspend fun memoryHint(userInput: String): String? {
+        return try {
+            val parts = mutableListOf<String>()
+            val shortcut = taskMemory.shortcutFor(requestKey(userInput))
+            if (shortcut != null && shortcut.successCount > 0) {
+                parts += "MEMORY: this request previously succeeded with: ${shortcut.toolsCsv}. Prefer that sequence."
+            }
+            val unreliable = taskMemory.unreliableTools()
+            if (unreliable.isNotEmpty()) {
+                parts += "UNRELIABLE TOOLS (failing recently): " +
+                    unreliable.take(3).joinToString { "${it.tool} (${it.failures} failures)" } +
+                    ". Prefer alternatives when possible."
+            }
+            if (parts.isEmpty()) null else parts.joinToString("\n")
+        } catch (_: Exception) { null }
+    }
+
+    private suspend fun recordMemory(userInput: String, sequence: List<Pair<String, Boolean>>) {
+        try {
+            for ((tool, ok) in sequence) {
+                val cur = taskMemory.reliabilityFor(tool)
+                val next = com.agent.ultra.data.ToolReliabilityEntity(
+                    tool,
+                    (cur?.successes ?: 0) + (if (ok) 1 else 0),
+                    (cur?.failures ?: 0) + (if (ok) 0 else 1),
+                    if (ok) "" else "recent failure",
+                )
+                taskMemory.upsertReliability(next)
+            }
+            val successes = sequence.filter { it.second }.map { it.first }
+            if (successes.isNotEmpty()) {
+                val key = requestKey(userInput)
+                val cur = taskMemory.shortcutFor(key)
+                taskMemory.upsertShortcut(
+                    com.agent.ultra.data.TaskShortcutEntity(
+                        key, successes.joinToString(" → "),
+                        (cur?.successCount ?: 0) + 1, System.currentTimeMillis(),
+                    )
+                )
+            }
+        } catch (_: Exception) {}
     }
 
     private fun emit(text: String) {
@@ -178,6 +232,42 @@ clipboard_write {"text":"..."}
 
 User: $userInput
 JSON:"""
+        // Few-shot examples — 1B models map intents reliably with them, not
+        // without (measured: zero-shot picked flashlight_toggle for 'open
+        // chrome'). Trimmed catalog for the local route.
+        prompt = """You are Ultra, an on-device Android agent. Reply with EXACTLY one JSON tool call and nothing else.
+
+TOOLS:
+flashlight_toggle {"on":true|false}
+wifi_toggle {"on":true|false}
+bluetooth_toggle {"on":true|false}
+do_not_disturb {"on":true|false}
+volume_set {"percent":0-100}
+alarm_set {"hour":0-23,"minute":0-59,"label":"..."}
+note_create {"text":"..."}
+app_launch {"target":"app name"}
+battery_status {}
+clipboard_read {}
+clipboard_write {"text":"..."}
+
+EXAMPLES:
+User: turn on the flashlight
+JSON: {"tool":"flashlight_toggle","params":{"on":true}}
+
+User: open chrome
+JSON: {"tool":"app_launch","params":{"target":"chrome"}}
+
+User: set an alarm for 7 30 am
+JSON: {"tool":"alarm_set","params":{"hour":7,"minute":30,"label":"Ultra alarm"}}
+
+User: what's my battery level
+JSON: {"tool":"battery_status","params":{}}
+
+User: turn off wifi
+JSON: {"tool":"wifi_toggle","params":{"on":false}}
+
+User: $userInput
+JSON:"""
         repeat(2) { attempt ->
             val out = local.generate(prompt, 200).getOrElse { return false }
             android.util.Log.i("UltraBrain", "LOCAL turn $attempt: ${out.take(120)}")
@@ -221,6 +311,8 @@ JSON:"""
         var lastParams = ""
         // One security episode per user request; secrets accumulate across tools.
         val episode = episodeOverride ?: Gate.Episode(userInput)
+        // Task memory: track this run's tool outcomes.
+        val toolSequence = mutableListOf<Pair<String, Boolean>>()
 
         for (turn in startTurn until maxTurns) {
             val maxTokens = if (turn == 0) 2000 else if (turn >= maxTurns - 2) 2500 else 1500
@@ -317,6 +409,7 @@ JSON:"""
             val resultText = tools.execute(toolCall.first, toolCall.second)
             episode.observeSecrets(resultText)
             val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
+            toolSequence += toolCall.first to !failed
             val verification = if (!failed) verifyAction(toolCall.first, toolCall.second) else null
             android.util.Log.i("UltraBrain", "TOOL RESULT (${if (failed) "fail" else "ok"}): ${resultText.take(120)}${verification ?: ""}")
 
@@ -351,6 +444,7 @@ JSON:"""
             // Every turn ended in a block or failure — never end silently.
             emit("I couldn't complete that — the policy gate stopped the action and I had no safe alternative. Try rephrasing, or confirm the target if I ask.")
         }
+        recordMemory(userInput, toolSequence)
     }
 
     // ── Parsing & prompt (ported shapes) ───────────────────────────────
