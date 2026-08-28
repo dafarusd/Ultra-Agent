@@ -106,6 +106,30 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
+### Session 15 — M6 shell parity + capability advances (2026-08-27, branch `native`)
+
+Owner directive mid-session: "make this the leading and most capable AI agent." M6 ordering and genome exclusion confirmed by owner.
+
+#### Shell parity (M6.1, M6.2 — both PROVEN on device)
+
+- **Settings screen** (`ui/SettingsScreen.kt`): provider editor (base URL/API key/model) — kills the adb-seeded `ultra_provider.json` dev backdoor; on-device model panel (status, 806MB download with progress bar, unload); About with version + gate + a11y status. Provider save bumps a `configVersion` key that rebuilds the Brain with the new config. Verified: save → back → tool loop answers from real device state.
+- **Conversations** (`data/` Room layer + `ui/ChatStore.kt` rework): conversations + messages tables; drawer (☰) with auto-titled list, new-chat, delete; persistence survives force-stop (verified: relaunch restored the full conversation). Header shows the current conversation title.
+
+#### Capability advances (the "leading agent" work)
+
+1. **Gate resolve/confirm channel — gatellml SPEC §2 R4 made live.** The paper's untested gap ("no interactive channel") is closed: traceability-class blocks pause the run and render a confirm/cancel card in chat with the target shown; the operator's tap mints the target user-attested for the episode (`effectiveRequestNorm`); the loop resumes and executes. Taint/spoof/undeclared are never confirmable. Tests 14/14; live on device: "open the wikipedia site" → gate blocked the paraphrase → Confirm → opened wikipedia.org.
+2. **Duplicate-call dedupe** — same tool+params immediately after a success gets "already done" feedback instead of re-firing (killed the double-open_url pattern).
+3. **Deterministic post-action verification** — app_launch/open_url verify the foreground app via a NEW live-window scan (`getForegroundPackage()`), clipboard_write reads back. Exposed that the event-sourced package tracker goes stale on rebind; live windows are now ground truth. PROVEN: "open chrome" → VERIFIED: com.android.chrome in front.
+4. **Local-first router** — the on-device 1B model handles simple device commands (toggles, alarms, notes, launches, clipboard, battery) with zero cloud calls; complex work escalates automatically. Measured model trait: Gemma 3 1B emits tool NAMES, not JSON — so a deterministic engine (`parseBareToolCall`) shapes params from the request (the mindmeld split: model owns intent, engine owns structure). PROVEN: "turn off the flashlight" → bare name → {"on":false} → gate → executed, fully on-device.
+
+#### Open (named, queued)
+
+- Quick-action row + model chip (M6.3), screenshot/camera/notification tools (M6.4).
+- Cloud-loop streaming (SSE) for live token feedback.
+- web_search extraction quality (DDG boilerplate in this network environment).
+- Navigator step-efficiency tuning.
+- Voice input.
+
 ### Session 14e — M5: proof suite + two structural fixes it exposed (2026-08-27, branch `native`)
 
 #### The suite (tools/suite.sh — sends tasks, waits for the brain's RUN COMPLETE marker, captures logcat + screenshot per task)
