@@ -78,8 +78,15 @@ class Tools(
                 "app_launch" -> {
                     val target = params.optString("target")
                     val pkg = controller.findPackage(target)
-                    if (pkg != null && controller.launchApp(pkg)) "Launched $target ($pkg)"
-                    else "Error: no launchable app matching '$target'"
+                    when {
+                        pkg == null -> "Error: no launchable app matching '$target'"
+                        !com.agent.ultra.AgentAccessibilityService.agentMayUse(pkg) ->
+                            "Error: '$target' is not on the user's allowed-apps list, so it " +
+                                "cannot be opened or read. Do not retry. Tell the user which " +
+                                "app it was; they can change the list in Settings."
+                        controller.launchApp(pkg) -> "Launched $target ($pkg)"
+                        else -> "Error: could not launch '$target'"
+                    }
                 }
                 "open_url" -> {
                     val url = params.optString("url")

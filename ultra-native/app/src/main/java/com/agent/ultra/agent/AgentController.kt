@@ -113,6 +113,13 @@ class AgentController(private val context: Context) {
     // ── Apps ────────────────────────────────────────────────────────────
 
     fun launchApp(packageName: String): Boolean {
+        // Launching goes through an Intent, not the accessibility service, so
+        // the app policy has to be asked here too. Otherwise "only apps I
+        // choose" would still put a bank on screen — unreadable, but open.
+        if (!AgentAccessibilityService.agentMayUse(packageName)) {
+            android.util.Log.i("UltraNav", "launch refused by app policy: $packageName")
+            return false
+        }
         val intent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return false
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)

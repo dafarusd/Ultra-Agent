@@ -174,6 +174,21 @@ New `PERSONAL DATA` switch, off by default, checked ahead of dispatch. With it o
 
 Nothing runs until the owner chooses which apps the agent may enter.
 
+#### Live on the owner's S24 Ultra — four tests, all read-only
+
+Provider set to Venice (key written through a pushed file, never a command line). Accessibility appended alongside CCleaner's service, allowed list = Chrome, Maps, Calculator.
+
+| Test | Result |
+|---|---|
+| "what is my battery level" | **74%** — cloud loop working on the flagship |
+| "open youtube" (not on the list) | **Refused**, not launched. `'YouTube' is not on the user's allowed-apps list` |
+| "read my last text message" | **Refused** before touching the SMS provider. No message content read |
+| "open news.ycombinator.com and list the top stories with their points" | **60 structured items across 5 screens**, 8 stories returned with title, domain and points correctly paired — and the YC hiring post reported as "no points listed", which is correct, job posts have none |
+
+One more gap closed on the way: `app_launch` uses an Intent, not the accessibility service, so the app policy had to be asked in `launchApp` too. Without it "only apps I choose" would still have put a bank on screen — unreadable, but open.
+
+Harness note: force-stopping the app drops its accessibility service, so any force-stop during setup has to be followed by re-appending. The on-device model is not downloaded on this phone; with 11.3 GB of RAM it could carry a considerably larger one than the A15's Gemma 1B.
+
 ### Session 16f — the per-action gate (2026-08-28, branch `native`)
 
 Owner directive: "build the per-action gate. then i connect my phone."
