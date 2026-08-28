@@ -256,6 +256,53 @@ fun ChatScreen(
             }
         }
 
+        // Per-action gate: the navigator is about to tap something that commits.
+        com.agent.ultra.agent.ActionGate.pending?.let { p ->
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        "About to press something that commits",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Text(
+                        "\u201C${p.label}\u201D",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(vertical = 6.dp),
+                    )
+                    Text(
+                        "in ${p.app}  ·  matched \u201C${p.reason}\u201D",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
+                    )
+                    Text(
+                        "Nothing happens unless you press Do it. Ignoring this cancels the action.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.padding(top = 10.dp),
+                    ) {
+                        Button(onClick = { com.agent.ultra.agent.ActionGate.resolve(true) }) {
+                            Text("Do it")
+                        }
+                        TextButton(onClick = { com.agent.ultra.agent.ActionGate.resolve(false) }) {
+                            Text("Don't")
+                        }
+                    }
+                }
+            }
+        }
+
         // Policy-gate confirmation card (the resolve/confirm channel)
         brain.pendingConfirm?.let { pending ->
             Surface(

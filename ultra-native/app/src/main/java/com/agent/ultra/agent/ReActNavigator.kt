@@ -164,7 +164,13 @@ ACTION:"""
             return tapNodeIndex(m.groupValues[1].toInt())
         }
         Regex("tap\\((\\d+)\\s*,\\s*(\\d+)\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
-            return controller.tap(m.groupValues[1].toInt(), m.groupValues[2].toInt())
+            val x = m.groupValues[1].toInt()
+            val y = m.groupValues[2].toInt()
+            // A raw-coordinate tap hides what it is hitting; look it up before
+            // letting it through, or the gate is trivially bypassed by the
+            // model choosing coordinates over an index.
+            if (!approveTap(labelAtPoint(x, y), "tap($x,$y)")) return false
+            return controller.tap(x, y)
         }
         Regex("type\\(\\s*(\\d*)\\s*,?\\s*[\"']([^)]+)[\"']\\s*\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
             val idx = m.groupValues[1].toIntOrNull()
@@ -196,13 +202,58 @@ ACTION:"""
                 if (n.optInt("i", -1) == index) {
                     val x = n.optInt("x", -1)
                     val y = n.optInt("y", -1)
-                    if (x >= 0 && y >= 0) return controller.tap(x, y)
+                    val label = n.optString("t").ifBlank { n.optString("d") }.trim()
+                    if (x >= 0 && y >= 0) {
+                        if (!approveTap(label, "tap_index($index)")) return false
+                        return controller.tap(x, y)
+                    }
                 }
             }
             false
         } catch (_: Exception) {
             false
         }
+    }
+
+    /**
+     * Stop and ask before a tap that commits something. Everything else runs
+     * untouched — a gate that fires on every tap gets waved through.
+     */
+    private suspend fun approveTap(label: String, action: String): Boolean {
+        val reason = ActionGate.commitmentIn(label) ?: return true
+        val pkg = controller.activePackage()
+        val approved = ActionGate.approve(action, label, pkg ?: "this app", reason)
+        if (!approved) {
+            android.util.Log.i("UltraNav", "action refused by operator: \"$label\"")
+            return false
+        }
+        // Answering the card put Ultra in front. Tapping now would hit Ultra's
+        // own UI at the target's coordinates, so put the target back first.
+        if (pkg != null && controller.activePackage() != pkg) {
+            controller.launchApp(pkg)
+            delay(1500)
+        }
+        return true
+    }
+
+    /** What is at these coordinates, so a raw tap can be described. */
+    private suspend fun labelAtPoint(x: Int, y: Int): String {
+        return try {
+            val arr = JSONArray(controller.screenFlat())
+            var best = ""
+            var bestDist = Int.MAX_VALUE
+            for (i in 0 until arr.length()) {
+                val n = arr.getJSONObject(i)
+                val label = n.optString("t").ifBlank { n.optString("d") }.trim()
+                if (label.isBlank()) continue
+                val dx = n.optInt("x", -9999) - x
+                val dy = n.optInt("y", -9999) - y
+                val d = dx * dx + dy * dy
+                if (d < bestDist) { bestDist = d; best = label }
+            }
+            // Only trust a nearby node; a distant one is not what was tapped.
+            if (bestDist <= 40_000) best else ""
+        } catch (_: Exception) { "" }
     }
 
     /** Tap the first editable node's center so performText("") has focus. */

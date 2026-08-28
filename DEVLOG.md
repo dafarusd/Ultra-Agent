@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16e — protected apps)
+**Last updated:** 2026-08-28 (Session 16f — per-action gate)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
@@ -101,7 +101,7 @@ The install script handles the Play Protect "Don't send" dialog, re-enables the 
 
 - **Whatever the agent reads goes to the cloud model.** Screen contents, SMS, contacts, notifications and location all travel to Venice as tool results so the model can decide the next step. The gate's taint rule stops secrets leaving via *egress tools*; it does not and cannot stop the brain call itself.
 - **Protected apps** (Settings → PROTECTED APPS) are refused at the native layer for both reading and acting. Seeded on first run from package-name hints; the user owns the list.
-- **`react_navigate` taps are not individually gated.** Approving a goal approves every action inside it. Protecting an app is the only hard boundary today.
+- **`react_navigate` taps that commit something now stop and ask** — pay, buy, order, confirm, submit, send, transfer, delete, subscribe, book and similar, on both indexed and coordinate taps. Ordinary taps run untouched by design. Typing is not gated; the button after it is.
 - **Notification logging is off by default** and skips protected apps.
 - Any force-stop silently disables the accessibility service — the agent's eyes and hands — and the header chip is the only signal.
 
@@ -140,6 +140,49 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16f — the per-action gate (2026-08-28, branch `native`)
+
+Owner directive: "build the per-action gate. then i connect my phone."
+
+The policy gate checked that `react_navigate`'s *goal* traced to the request and had nothing to say about the taps that followed. Approving "book me a table" approved every tap inside the app, including one labelled "Confirm and pay". This closes that.
+
+#### The rule
+
+A tap stops and asks **only when its target label reads like a commitment**. Reading, scrolling, going back and tapping ordinary controls run untouched. That restraint is the design, not laziness: a gate that interrupts constantly gets approved reflexively, which is worse than no gate.
+
+Matching is positional rather than substring — a button is imperative ("Place your order", "Send", "Buy now") where a navigation item that shares the word is not ("Your Orders", "Order history"). **Both tap paths are covered**, indexed *and* raw-coordinate: a coordinate tap resolves what is nearest first, otherwise the gate is bypassed by the model choosing coordinates over an index.
+
+Two words were deliberately dropped after they failed their own tests: **"sign"** ("Sign in") and **"apply"** ("Apply filters"). Cookie-consent phrasings are excluded for the same reason — consent to tracking is a real decision, but not the class this gate protects, and its frequency would train the operator to tap through without reading. Those are knowing gaps, written down rather than hidden.
+
+**Unit tests: 6/6, 20 overall with the policy gate.** The cases are the specification — money buttons, outbound and destructive actions, navigation that merely shares a word, ordinary controls, punctuation and casing, and a paragraph of prose that mentions "send" without being a button.
+
+#### The hole found by testing it
+
+First live run: the gate fired and withheld the tap correctly — and **the confirmation card was invisible**. The navigator drives another app, so Ultra is in the background when the question appears. A card nobody can see is a gate that silently denies everything after its two-minute timeout: safe, and useless.
+
+Fixed both directions. The gate now brings Ultra to the front to ask, and on approval the navigator **puts the target app back before tapping** — otherwise the tap would land on Ultra's own UI at the target's coordinates.
+
+#### Proven on device, against a page built for the purpose
+
+A local page served over `adb reverse` with a dead "Send" button — nothing real could fire.
+
+```
+UltraActionGate: PAUSED:   tap_index(3) on "Send" in com.android.chrome (matched "send")
+UltraActionGate: RESOLVED: denied — "Send"
+UltraNav: action refused by operator: "Send"
+
+UltraActionGate: PAUSED:   tap_index(3) on "Send" in com.android.chrome (matched "send")
+UltraActionGate: RESOLVED: approved — "Send"
+```
+
+The card names the exact label, the app, and the word that matched, and says plainly that ignoring it cancels the action. An unanswered prompt is a denial, never an approval.
+
+#### Open
+
+- **Approval is per-tap, not per-run.** When the navigator retries a step that produced no visible change, it asks again. Safe, and repetitive.
+- The task-memory success rule counts "model produced a final answer with no tool failures" as success. A model that gives up gracefully looks identical to one that succeeded — observed live: a run that never pressed the button was recorded as `app_launch → web_search`. Needs a real completion check, not an absence-of-errors check.
+- Typing is not gated; the commitment is the button that follows it. `typeInto` auto-fires IME_ENTER, so a form that submits on Enter is a gap.
 
 ### Session 16e — protected apps: the safety net that had no rope in it (2026-08-28, branch `native`)
 
