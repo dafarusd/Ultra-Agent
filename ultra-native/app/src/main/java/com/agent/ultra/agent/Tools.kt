@@ -226,12 +226,22 @@ class Tools(
      * come out as one clean document.
      */
     private suspend fun deepRead(maxScrolls: Int): String {
-        val seen = LinkedHashSet<String>()
+        val seen = LinkedHashSet<String>()                       // flat fallback
+        val items = LinkedHashMap<String, ScreenStructure.Item>() // structured rows
         val first = controller.screenFlat()
         if (first == "[]" || first.isBlank()) {
             return "Error: screen empty or accessibility service not running"
         }
-        seen += labelsOf(first)
+        suspend fun absorb(flat: String): Int {
+            val before = seen.size + items.size
+            seen += labelsOf(flat)
+            for (it in ScreenStructure.items(ScreenStructure.parse(controller.screenTree()))) {
+                items.putIfAbsent(it.signature, it)
+            }
+            return seen.size + items.size - before
+        }
+        absorb(first)
+
         var scrolls = 0
         var stoppedBecause = "reached the end of the page"
         while (scrolls < maxScrolls) {
@@ -241,14 +251,25 @@ class Tools(
             }
             scrolls++
             kotlinx.coroutines.delay(SCROLL_SETTLE_MS)
-            val before = seen.size
-            seen += labelsOf(controller.screenFlat())
-            val gained = seen.size - before
-            android.util.Log.i("UltraPerceive", "deep scroll $scrolls: +$gained new (total ${seen.size})")
+            val gained = absorb(controller.screenFlat())
+            android.util.Log.i("UltraPerceive", "deep scroll $scrolls: +$gained new (labels ${seen.size}, items ${items.size})")
             if (gained == 0) break
             if (seen.size >= MAX_DEEP_LABELS) { stoppedBecause = "hit the ${MAX_DEEP_LABELS}-item limit"; break }
         }
         if (scrolls >= maxScrolls) stoppedBecause = "hit the $maxScrolls-scroll limit"
+
+        // Structured when the screen genuinely has a repeating list; flat when
+        // it does not. Inventing groups where there are none is how a wrong
+        // pairing gets stated confidently.
+        if (items.size >= 3) {
+            val rows = items.values.sortedBy { it.top }
+            val (body, shown) = ScreenStructure.render(rows, DEEP_BUDGET)
+            android.util.Log.i("UltraPerceive", "deep read: STRUCTURED ${rows.size} items, $scrolls scrolls")
+            val omitted = if (shown < rows.size) "\n… ${rows.size - shown} more items not shown (output limit)." else ""
+            return "Read ${rows.size} list items across ${scrolls + 1} screen(s) — $stoppedBecause.\n" +
+                "Each numbered item's lines belong together; they come from the same element on the page.\n\n" +
+                body + omitted
+        }
 
         val all = seen.toList()
         val out = StringBuilder()
@@ -260,10 +281,11 @@ class Tools(
             used += l.length + 1
             shown++
         }
-        val header = "Read ${all.size} items across ${scrolls + 1} screen(s) — $stoppedBecause.\n"
+        android.util.Log.i("UltraPerceive", "deep read: FLAT ${all.size} labels, $scrolls scrolls")
         val footer = if (shown < all.size) "\n… ${all.size - shown} more items not shown (output limit)." else ""
-        android.util.Log.i("UltraPerceive", "deep read: ${all.size} labels, $scrolls scrolls, $used chars")
-        return header + out.toString().trimEnd() + footer
+        return "Read ${all.size} items across ${scrolls + 1} screen(s) — $stoppedBecause. " +
+            "No repeating list structure on this screen, so these are in page order.\n" +
+            out.toString().trimEnd() + footer
     }
 
     /** Web search: DDG instant-answer JSON first, Wikipedia second, HTML

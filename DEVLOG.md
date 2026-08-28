@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16c — deep perception; task memory rewritten)
+**Last updated:** 2026-08-28 (Session 16d — structured extraction)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
@@ -34,6 +34,7 @@ Read this file at the start of every session to understand previous work.
 |---|---|
 | `agent/Brain.kt` | 12-turn cloud tool loop, local-first router, task-memory hints, streaming |
 | `agent/Tools.kt` | 31-tool dispatcher; failures start with `Error:` |
+| `agent/ScreenStructure.kt` | rebuilds the a11y tree and groups labels into list items |
 | `agent/Recipes.kt` | named, replayable tool sequences; user-attested on replay |
 | `VoiceActivity.kt` | hands-free assist session — listen, run, speak back |
 | `ui/Speaker.kt` | on-device text-to-speech with logged start/done |
@@ -61,7 +62,7 @@ Read this file at the start of every session to understand previous work.
 - The answer is still spoken with the app in the background: backgrounded to the launcher after transcription, the tool still ran and `SPEAK START` still fired.
 - The on-device model is switchable in Settings — five verified presets plus a custom GGUF URL.
 - Recipes: a two-tool run saved by name and replayed from a fresh conversation, gate-approved.
-- Deep perception: 126 items read across 11 screens of an Amazon results page, yielding real product names and prices. The same request returned "not available" before.
+- Deep perception: an Amazon results page read across 20 screens and returned as **grouped items** — product name paired with its own price, straight from the accessibility tree rather than inferred. The same request returned "not available" two sessions ago.
 - Task memory recalls across rewordings, stores the arguments, and refuses to record a task that failed.
 
 ### What is PARTIALLY PROVEN
@@ -131,6 +132,66 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16d — structured extraction: which price belongs to which product (2026-08-28, branch `native`)
+
+Owner directive: "do the structured extraction."
+
+Deep reading had solved *how much* the agent could see. It had not solved *what belongs with what* — the output was a flat label list, and the pairing of a price to a product was the model's inference. Inference is where a confident wrong answer comes from.
+
+#### The first attempt failed, and the failure was informative
+
+Grouping by the parent links in `getScreenContentFlat` produced items whose prices were paired correctly with their own deal context but had **no product names**:
+
+> 1. Unknown product - $34.99 (Limited time deal, Typical: $159.99)
+
+Cause, found by dumping the live Amazon tree: `getScreenContentFlat` only emits **labelled or interactive** nodes and links each child to its nearest *emitted* ancestor. Amazon's mobile page is built from unlabelled wrapper `View`s, so the entire card hierarchy collapsed into one flat fan-out. The item boundaries were destroyed before any grouping code could see them.
+
+#### `getScreenTree()` — a second native read that keeps the structure
+
+Every node with real bounds, containers included, capped at 3000 nodes and depth 60. **Deliberately separate from `getScreenContentFlat`**: the navigator taps by index into that list, and adding containers would shift every index out from under it.
+
+#### Container selection: uniformity, not size
+
+Three scorings were tried against a dumped live Amazon page before writing any Kotlin — offline iteration, no rebuild cycle:
+
+| Scoring | What it picked |
+|---|---|
+| most item-shaped children | the page banner (125 flat children) |
+| children × median height | the sign-in row — **virtualised list rows report zero bounds**, so area is meaningless here |
+| children × uniformity × substance | **the product grid** |
+
+The winning signal is that a real list's children all carry a *similar amount* of content — the Amazon grid's children had identical label counts. Multiplying by median labels per item breaks the tie against a fourteen-entry navigation menu of two words each, which is perfectly uniform and carries nothing.
+
+When no container scores, the read falls back to flat with a line saying so. Inventing groups where there are none is exactly the failure being fixed.
+
+Also filtered: `ref=…` tracking parameters and opaque ids, which are labels to a screen reader and noise to a reader. Repeated titles (pages emit them once per image link, heading and anchor) are collapsed.
+
+#### Result — same request, same page
+
+Before deep reading: *"the price of the first result is not available."*
+After deep reading, flat: prices with no idea which product they belonged to.
+After structured extraction:
+
+> 1. Apple AirPods Pro 3 Wireless Earbuds - $199.99 (List: $249.00)
+> 2. Wireless Earbuds, Bluetooth 5.3 Headphones - $19.98 (Typical price: $249.99)
+> 3. Active Noise Cancelling Ear Buds 48H Wireless Earbuds - $34.99 (Typical: $159.99)
+> 4. Apple AirPods 4 Wireless Earbuds - **No price listed**
+
+Item 4 is the part worth noticing: it reported a missing price instead of borrowing the one above it. The pairing comes from the tree now, not from the model's guess.
+
+This is not a shopping feature. The same shape — a container of uniform, multi-field children — is an inbox, a chat thread, a feed, a file list, a settings page.
+
+#### Regression
+
+Gate unit tests 14/14. Device suite 9/9; t08 still detours through a `react_navigate` that exhausts its 15-step budget and recovers via `open_url` — the known navigator issue, unchanged. Flashlight off at the end.
+
+#### Open
+
+- The navigator's step efficiency, still.
+- Deep reads leave the page where they finished scrolling.
+- Item fields are ordered, not named. `price` is tagged when exactly one price appears in a row; title, rating and delivery are not distinguished from each other.
+- Container selection is validated against one real page shape. It falls back safely, but a second and third page type deserve the same offline check.
 
 ### Session 16c — deep perception, and memory that learns the right lesson (2026-08-28, branch `native`)
 

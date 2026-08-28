@@ -389,7 +389,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                     Log.i(TAG, "SCREEN_FLAT: root_pkg=" + (rootPkg != null ? rootPkg.toString() : "null"));
                     dumpWindowStack();
                     JSONArray flat = new JSONArray();
-                    flattenNode(root, flat);
+                    flattenNode(root, flat, -1, 0);
                     root.recycle();
                     if (flat.length() > 0) {
                         try {
@@ -415,11 +415,113 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     private void flattenNode(AccessibilityNodeInfo node, JSONArray flat) {
+        flattenNode(node, flat, -1, 0);
+    }
+
+    /**
+     * The full structural tree, containers included.
+     *
+     * getScreenContentFlat() emits only labelled or interactive nodes, so a
+     * page built from unlabelled wrapper Views — which is most of the modern
+     * web — collapses into one flat fan-out and the item boundaries are lost
+     * before anything can group them. This keeps every node with real bounds,
+     * so a consumer can rebuild the tree and see which labels belong together.
+     *
+     * Kept separate from getScreenContentFlat on purpose: the navigator taps
+     * by index into that list, and adding containers would shift every index.
+     */
+    public String getScreenTree() {
+        AtomicReference<String> result = new AtomicReference<>("[]");
+        CountDownLatch latch = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            AccessibilityNodeInfo root = null;
+            try {
+                try {
+                    java.util.List<AccessibilityWindowInfo> windows = getWindows();
+                    for (AccessibilityWindowInfo w : windows) {
+                        if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                            AccessibilityNodeInfo wRoot = w.getRoot();
+                            if (wRoot != null) {
+                                CharSequence pkg = wRoot.getPackageName();
+                                if (pkg == null || !"com.agent.ultra".contentEquals(pkg)) { root = wRoot; break; }
+                                wRoot.recycle();
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+                if (root == null) {
+                    root = getRootInActiveWindow();
+                    if (root != null) {
+                        CharSequence fbPkg = root.getPackageName();
+                        if (fbPkg != null && "com.agent.ultra".contentEquals(fbPkg)) { root.recycle(); root = null; }
+                    }
+                }
+                if (root != null) {
+                    JSONArray tree = new JSONArray();
+                    treeNode(root, tree, -1, 0);
+                    Log.i(TAG, "SCREEN_TREE: nodes=" + tree.length());
+                    result.set(tree.toString());
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "getScreenTree error", e);
+            } finally {
+                if (root != null) root.recycle();
+                latch.countDown();
+            }
+        });
+        try { latch.await(6, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        return result.get();
+    }
+
+    private static final int TREE_NODE_LIMIT = 3000;
+
+    private void treeNode(AccessibilityNodeInfo node, JSONArray tree, int parent, int depth) {
+        if (node == null || tree.length() >= TREE_NODE_LIMIT || depth > 60) return;
+        int me = parent;
+        try {
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            String text = node.getText() != null ? node.getText().toString().trim() : "";
+            String desc = node.getContentDescription() != null ? node.getContentDescription().toString().trim() : "";
+            JSONObject obj = new JSONObject();
+            obj.put("i", tree.length());
+            obj.put("p", parent);
+            obj.put("dep", depth);
+            obj.put("t", text);
+            obj.put("d", desc);
+            obj.put("c", node.isClickable());
+            obj.put("tp", bounds.top);
+            obj.put("b", bounds.bottom);
+            me = tree.length();
+            tree.put(obj);
+        } catch (Exception ignored) {}
+        for (int i = 0; i < Math.min(node.getChildCount(), 200); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                treeNode(child, tree, me, depth + 1);
+                child.recycle();
+            }
+        }
+    }
+
+    /**
+     * Flatten the node tree, keeping enough structure to reconstruct it.
+     *
+     * A flat list of labels cannot say which price belongs to which product.
+     * Each emitted node now carries the index of its nearest emitted ancestor
+     * ("p") plus its full bounds, so the consumer can rebuild the tree and
+     * group labels into the items they actually belong to.
+     *
+     * @param parent index in `flat` of the nearest ancestor that was emitted,
+     *               or -1 when this node hangs directly off the root.
+     */
+    private void flattenNode(AccessibilityNodeInfo node, JSONArray flat, int parent, int depth) {
         if (node == null) return;
         String text = node.getText() != null ? node.getText().toString().trim() : "";
         String desc = node.getContentDescription() != null ? node.getContentDescription().toString().trim() : "";
         boolean hasContent = !text.isEmpty() || !desc.isEmpty();
         boolean interactive = node.isClickable() || node.isScrollable() || node.isEditable();
+        int myIndex = parent;
         if (hasContent || interactive) {
             try {
                 Rect bounds = new Rect();
@@ -427,6 +529,8 @@ public class AgentAccessibilityService extends AccessibilityService {
                 if (bounds.width() > 0 && bounds.height() > 0) {
                     JSONObject obj = new JSONObject();
                     obj.put("i", flat.length());
+                    obj.put("p", parent);
+                    obj.put("dep", depth);
                     obj.put("t", text);
                     obj.put("d", desc);
                     obj.put("c", node.isClickable());
@@ -434,6 +538,11 @@ public class AgentAccessibilityService extends AccessibilityService {
                     obj.put("s", node.isScrollable());
                     obj.put("x", bounds.centerX());
                     obj.put("y", bounds.centerY());
+                    obj.put("l", bounds.left);
+                    obj.put("tp", bounds.top);
+                    obj.put("r", bounds.right);
+                    obj.put("b", bounds.bottom);
+                    myIndex = flat.length();
                     flat.put(obj);
                 }
             } catch (Exception ignored) {}
@@ -442,7 +551,7 @@ public class AgentAccessibilityService extends AccessibilityService {
         for (int i = 0; i < Math.min(node.getChildCount(), 200); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
-                flattenNode(child, flat);
+                flattenNode(child, flat, myIndex, depth + 1);
                 child.recycle();
             }
         }

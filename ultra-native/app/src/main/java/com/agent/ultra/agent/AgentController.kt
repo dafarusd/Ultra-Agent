@@ -90,6 +90,13 @@ class AgentController(private val context: Context) {
         service?.performScroll(direction) ?: false
     }
 
+    /** The full structural tree, containers included — for grouping labels
+     * into the items they belong to. Separate from screenFlat(), whose
+     * indices the navigator taps by. */
+    suspend fun screenTree(): String = withContext(Dispatchers.IO) {
+        serviceOrWait()?.getScreenTree() ?: "[]"
+    }
+
     /** Scroll the largest scrollable container in the target app's window —
      * for reading a whole page rather than nudging whatever is nearest. */
     suspend fun scrollDeep(direction: String): Boolean = withContext(Dispatchers.IO) {
