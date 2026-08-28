@@ -70,4 +70,66 @@ class OpenAiClient(private val config: ProviderConfig) {
             Result.failure(e)
         }
     }
+
+    /**
+     * Streaming variant: SSE deltas delivered via onToken, full text returned.
+     * Falls back to a clean failure if the endpoint can't stream.
+     */
+    suspend fun completeStreaming(
+        messages: List<ChatMessage>,
+        maxTokens: Int,
+        temperature: Double,
+        onToken: (String) -> Unit,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val msgs = JSONArray()
+            for (m in messages) {
+                msgs.put(JSONObject().put("role", m.role).put("content", m.content))
+            }
+            val bodyJson = JSONObject()
+                .put("model", config.model)
+                .put("messages", msgs)
+                .put("max_tokens", maxTokens)
+                .put("temperature", temperature)
+                .put("stream", true)
+
+            val req = Request.Builder()
+                .url(config.baseUrl.trimEnd('/') + "/chat/completions")
+                .addHeader("Authorization", "Bearer ${config.apiKey}")
+                .addHeader("Content-Type", "application/json")
+                .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val body = resp.body?.string().orEmpty()
+                    return@withContext Result.failure(Exception("HTTP ${resp.code}: ${body.take(300)}"))
+                }
+                val full = StringBuilder()
+                resp.body!!.source().use { source ->
+                    while (!source.exhausted()) {
+                        val line = source.readUtf8Line() ?: break
+                        if (!line.startsWith("data:")) continue
+                        val data = line.removePrefix("data:").trim()
+                        if (data == "[DONE]") break
+                        try {
+                            val delta = JSONObject(data)
+                                .getJSONArray("choices")
+                                .getJSONObject(0)
+                                .optJSONObject("delta")
+                                ?.optString("content", "") ?: ""
+                            if (delta.isNotEmpty()) {
+                                full.append(delta)
+                                onToken(delta)
+                            }
+                        } catch (_: Exception) { /* non-JSON SSE line skipped */ }
+                    }
+                }
+                if (full.isBlank()) Result.failure(Exception("empty stream"))
+                else Result.success(full.toString())
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

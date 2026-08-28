@@ -224,7 +224,18 @@ JSON:"""
 
         for (turn in startTurn until maxTurns) {
             val maxTokens = if (turn == 0) 2000 else if (turn >= maxTurns - 2) 2500 else 1500
-            val reply = ai.complete(messages, maxTokens, 0.2).getOrElse {
+            // Stream the turn into a live bubble; the bubble is removed if the
+            // turn ends up being a tool call (raw JSON isn't user-facing).
+            val streamMsg = ChatMessage(false, "")
+            ChatStore.addToState(streamMsg)
+            var streamIdx: Int = ChatStore.messages.size - 1
+            val reply = ai.completeStreaming(messages, maxTokens, 0.2) { piece ->
+                if (streamIdx in ChatStore.messages.indices) {
+                    ChatStore.messages[streamIdx] = ChatStore.messages[streamIdx]
+                        .copy(text = ChatStore.messages[streamIdx].text + piece)
+                }
+            }.getOrElse {
+                if (streamIdx in ChatStore.messages.indices) ChatStore.messages.removeAt(streamIdx)
                 // Cloud failed (offline, quota, outage) — the on-device model
                 // answers what it can rather than dying.
                 if (local.ensureLoaded()) {
@@ -238,6 +249,9 @@ JSON:"""
             val raw = reply.trim()
 
             var toolCall = parseToolCall(raw)
+            if (toolCall != null && streamIdx in ChatStore.messages.indices) {
+                ChatStore.messages.removeAt(streamIdx)
+            }
 
             if (toolCall == null) {
                 // Push-once: user asked for an action, brain only described it
@@ -249,6 +263,7 @@ JSON:"""
                     continue
                 }
                 finalText = raw
+                android.util.Log.i("UltraBrain", "FINAL TEXT (${raw.length} chars), streamBubble idx=$streamIdx, lastMsg='${ChatStore.messages.lastOrNull()?.text?.take(40)}'")
                 break
             }
 
@@ -321,7 +336,21 @@ JSON:"""
             if (turn == maxTurns - 1) finalText = "Ran ${toolCall.first}: ${resultText.take(300)}"
         }
 
-        if (finalText.isNotBlank()) emit(finalText)
+        if (finalText.isNotBlank()) {
+            // The final answer already streamed into a visible bubble — persist
+            // it rather than double-emitting. Bubbles removed for tool turns
+            // never reach here.
+            val last = ChatStore.messages.lastOrNull()
+            android.util.Log.i("UltraBrain", "EMIT TAIL: finalText=${finalText.length}ch lastMsg='${last?.text?.take(40)}' match=${last?.text == finalText}")
+            if (last != null && !last.fromUser && last.text == finalText) {
+                ChatStore.persist(last)
+            } else {
+                emit(finalText)
+            }
+        } else if (lastToolFailed) {
+            // Every turn ended in a block or failure — never end silently.
+            emit("I couldn't complete that — the policy gate stopped the action and I had no safe alternative. Try rephrasing, or confirm the target if I ask.")
+        }
     }
 
     // ── Parsing & prompt (ported shapes) ───────────────────────────────
