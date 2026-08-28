@@ -97,6 +97,15 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             return
         }
 
+        // Local-first routing: simple device commands run on the on-device
+        // model — faster, free, private, works offline. Complex or ambiguous
+        // requests go straight to the cloud loop. A local miss escalates.
+        if (isSimpleLocalIntent(userInput) && local.ensureLoaded()) {
+            val handled = runLocalLoop(userInput)
+            if (handled) return
+            emit("(on-device model couldn't map that — trying the cloud)")
+        }
+
         // Fresh-window history: last exchanges from this conversation, char-capped.
         // (Fix-in-port: Build 29's context bleed came from carrying tool traces
         // across unrelated requests — tool feedback never enters this window.)
@@ -134,6 +143,64 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             ChatStore.messages[idx] = ChatStore.messages[idx].copy(text = "Error: on-device model failed — ${it.message}")
         }
         ChatStore.persist(ChatStore.messages[idx])
+    }
+
+    /** Conservative classifier: only commands that map cleanly to the local
+     * tool subset route on-device. Anything else goes cloud. */
+    private fun isSimpleLocalIntent(input: String): Boolean {
+        val u = input.lowercase()
+        return Regex(
+            "\\b(flashlight|torch|wi-?fi|bluetooth|do not disturb|dnd|volume|brightness|" +
+                "airplane|alarm|timer|battery|clipboard|note this|open|launch|start)\\b"
+        ).containsMatchIn(u)
+    }
+
+    /** The on-device tool loop: compact catalog, max 2 turns, gate enforced. */
+    private suspend fun runLocalLoop(userInput: String): Boolean {
+        val episode = Gate.Episode(userInput)
+        var prompt = """You are Ultra, an on-device Android agent. Reply with EXACTLY one JSON tool call and nothing else.
+
+TOOLS:
+flashlight_toggle {"on":true|false}
+wifi_toggle {"on":true|false}
+bluetooth_toggle {"on":true|false}
+do_not_disturb {"on":true|false}
+volume_set {"percent":0-100}
+alarm_set {"hour":0-23,"minute":0-59,"label":"..."}
+note_create {"text":"..."}
+app_launch {"target":"app name"}
+battery_status {}
+clipboard_read {}
+clipboard_write {"text":"..."}
+
+User: $userInput
+JSON:"""
+        repeat(2) { attempt ->
+            val out = local.generate(prompt, 200).getOrElse { return false }
+            android.util.Log.i("UltraBrain", "LOCAL turn $attempt: ${out.take(120)}")
+            // The 1B model reliably emits the tool NAME, not the JSON wrapper
+            // (measured on-device). Parse both: JSON first, bare name second —
+            // a deterministic engine shapes the params either way.
+            val call = parseToolCall(out) ?: parseBareToolCall(out, userInput) ?: run {
+                prompt += "\n\nThat was not a JSON tool call. Reply with ONLY the JSON."
+                return@repeat
+            }
+            val verdict = gate.enforceCall(episode, call.first, call.second)
+            if (!verdict.allowed) {
+                android.util.Log.i("UltraGate", "LOCAL BLOCK ${call.first}: ${verdict.violations.firstOrNull()?.hint}")
+                emit("Blocked by policy gate: ${verdict.violations.firstOrNull()?.hint}")
+                return true
+            }
+            android.util.Log.i("UltraBrain", "LOCAL TOOL: ${call.first} ${call.second.toString().take(80)}")
+            val result = tools.execute(call.first, call.second)
+            episode.observeSecrets(result)
+            val verification = verifyAction(call.first, call.second) ?: ""
+            val failed = result.startsWith("Error:")
+            emit((if (failed) "Tried on-device: $result" else "$result (on-device)") + verification)
+            android.util.Log.i("UltraBrain", "RUN COMPLETE (local, tool=${call.first}, ok=${!failed})")
+            return true
+        }
+        return false
     }
 
     private suspend fun runLoop(
@@ -257,8 +324,7 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     // ── Parsing & prompt (ported shapes) ───────────────────────────────
 
     /** First balanced {...} containing a "tool" key, code fences stripped. */
-    private fun parseToolCall(text: String): Pair<String, JSONObject>? {
-        val cleaned = text.replace("```json", "").replace("```", "").trim()
+    private fun parseToolCall(text: String): Pair<String, JSONObject>? {        val cleaned = text.replace("```json", "").replace("```", "").trim()
         val start = cleaned.indexOf('{')
         if (start < 0) return null
         var depth = 0
@@ -276,6 +342,49 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             if (tool.isBlank()) null
             else tool to (obj.optJSONObject("params") ?: JSONObject())
         } catch (_: Exception) { null }
+    }
+
+    /** Bare tool-name fallback for the 1B model: it emits the intent name, a
+     * deterministic engine shapes params from the request text. */
+    private fun parseBareToolCall(output: String, request: String): Pair<String, JSONObject>? {
+        val names = listOf(
+            "flashlight_toggle", "wifi_toggle", "bluetooth_toggle", "do_not_disturb",
+            "volume_set", "alarm_set", "note_create", "app_launch",
+            "battery_status", "clipboard_read", "clipboard_write",
+        )
+        val found = names.firstOrNull { n -> Regex("(^|\\W)$n(\\W|$)").containsMatchIn(output.trim()) }
+            ?: return null
+        val u = request.lowercase()
+        val params = JSONObject()
+        when {
+            found.endsWith("_toggle") || found == "do_not_disturb" ->
+                params.put("on", !Regex("\\b(off|disable)\\b").containsMatchIn(u))
+            found == "volume_set" ->
+                params.put("percent", Regex("(\\d{1,3})").find(u)?.value?.toIntOrNull() ?: 50)
+            found == "alarm_set" -> {
+                val m = Regex("(\\d{1,2})(:(\\d{2}))?\\s*(am|pm)?").find(u) ?: return null
+                var hour = m.groupValues[1].toInt()
+                if (m.groupValues[4] == "pm" && hour < 12) hour += 12
+                if (m.groupValues[4] == "am" && hour == 12) hour = 0
+                params.put("hour", hour)
+                params.put("minute", m.groupValues[3].toIntOrNull() ?: 0)
+                params.put("label", "Ultra alarm")
+            }
+            found == "app_launch" -> {
+                val m = Regex("(?:open|launch|start)\\s+(.+)$").find(u) ?: return null
+                params.put("target", m.groupValues[1].trim())
+            }
+            found == "note_create" -> {
+                val m = Regex("note(?:\\s+this)?:?\\s+(.+)$").find(u) ?: return null
+                params.put("text", m.groupValues[1].trim())
+            }
+            found == "clipboard_write" -> {
+                val m = Regex("copy\\s+(.+?)(?:\\s+to\\s+(?:my\\s+)?clipboard)?$").find(u) ?: return null
+                params.put("text", m.groupValues[1].trim())
+            }
+            // battery_status / clipboard_read take no params
+        }
+        return found to params
     }
 
     private fun userWantsAction(input: String): Boolean =
