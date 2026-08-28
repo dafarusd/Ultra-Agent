@@ -44,4 +44,8 @@ send_task "t05_clipboard" "copy the words hello world to my clipboard then tell 
 send_task "t06_note"      "create a note saying buy milk tomorrow"
 send_task "t07_flash"     "turn on the flashlight"
 send_task "t08_nav"       "open chrome and go to google.com"
+
+# Leave the device as we found it. t07 turns the torch on; a suite that walks
+# away with the light burning drains the battery and heats the phone.
+send_task "t09_flash_off" "turn off the flashlight"
 echo "=== suite done ==="

@@ -210,6 +210,16 @@ fun ChatScreen(
                 ChatStore.add(ChatMessage(true, cmd))
                 scope.launch { brain.run(cmd) }
             }) { Text("📍") }
+            // Hands-free session. Reachable here too, so it works before the
+            // user has made Ultra their assistant app.
+            TextButton(onClick = {
+                try {
+                    context.startActivity(
+                        android.content.Intent(context, com.agent.ultra.VoiceActivity::class.java)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {}
+            }) { Text("🎧") }
         }
 
         LazyColumn(

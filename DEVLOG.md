@@ -20,9 +20,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 15b close — native Kotlin build, branch `native` at `2c1e5d4`)
+**Last updated:** 2026-08-28 (Session 16 close — the ear, recipes, Venice provider)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs an OpenAI-compatible provider; an on-device Gemma 3 1B model handles the offline and fast paths. 26 tools, all declared in the policy gate manifest. Final device regression: **8/8 PASS**.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
 **The Expo / React Native app at the repo root is superseded.** `src/`, `app/`, `components/`, `server/`, `android/`, `ios/`, `app.json`, and `eas.json` belong to the old build. Nothing on the active path reads them — do not fix bugs there. The "Local Build Reference" section at the bottom of this file documents the **old** EAS/Expo build and applies only to that dead tree. The `BRAIN_*`, `REPLIT_*`, and `*_PROOF.md` files in the repo root are from the same era.
 
@@ -33,7 +33,10 @@ Read this file at the start of every session to understand previous work.
 | File | Role |
 |---|---|
 | `agent/Brain.kt` | 12-turn cloud tool loop, local-first router, task-memory hints, streaming |
-| `agent/Tools.kt` | 26-tool dispatcher; failures start with `Error:` |
+| `agent/Tools.kt` | 30-tool dispatcher; failures start with `Error:` |
+| `agent/Recipes.kt` | named, replayable tool sequences; user-attested on replay |
+| `VoiceActivity.kt` | hands-free assist session — listen, run, speak back |
+| `ui/Speaker.kt` | on-device text-to-speech with logged start/done |
 | `agent/AgentController.kt` | In-process device layer — a11y, launch, toggles, SMS, clipboard, location |
 | `agent/ReActNavigator.kt` | perceive → think → act → verify UI navigation, 15-iteration budget |
 | `gate/` | Kotlin port of the gatellml policy gate — origins, contracts, manifest, runtime |
@@ -53,10 +56,13 @@ Read this file at the start of every session to understand previous work.
 - Deterministic post-action verification via a live window scan.
 - Conversations survive force-stop.
 - Streaming answers render live; tool-call turns retract the bubble.
+- Hands-free: spoken words → on-device transcription → tool call → spoken answer, proven acoustically with no human in the loop.
+- Recipes: a two-tool run saved by name and replayed from a fresh conversation, gate-approved.
 
 ### What is PARTIALLY PROVEN
 
-- **Voice input** — the recognizer session starts (confirmed in logcat), but transcription has never been tested. It cannot be driven over adb.
+- **Voice output** — `SPEAK START` / `SPEAK DONE` prove the engine spoke. Nobody has heard the phone. **Engine-verified, NOT ear-verified.**
+- **Voice input with a real human voice** — proven only against a synthetic voice played through a laptop speaker, where transcription is phrase-dependent ("what is the battery level" works, "what is the capital of Japan" returns NO_MATCH). One sentence from a person would settle it.
 - **Flashlight** — the CameraManager API reports success. This Samsung has no torch-state dump, so there is no proof the light physically came on.
 
 ### What is NOT working
@@ -112,7 +118,8 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 - **Live window scan is ground truth.** The event-sourced package tracker goes stale on service rebind. `getForegroundPackage()` rescans windows, and `app_launch` / `open_url` verify against it.
 - **Duplicate calls are deduped.** The same tool with identical params right after a success gets "already done" feedback instead of re-firing.
 - **Task memory is Room-backed (DB v2).** Successful tool sequences per normalized request, plus per-tool reliability counters. Hints are injected as a system message on a repeat request.
-- **The provider is configured in Settings**, not by pushing a file. The `ultra_provider.json` adb backdoor is gone. Saving bumps a `configVersion` key that rebuilds the Brain.
+- **The provider is configured in Settings.** Base URL, key, and model are edited on the phone; saving bumps a `configVersion` key that rebuilds the Brain. A dev seed path still exists as a fallback: if no key is stored, `ProviderConfig` reads `Android/data/com.agent.ultra/files/ultra_provider.json` once. It is never consulted after a key is saved.
+- **Cloud provider is Venice** (`https://api.venice.ai/api/v1`, `llama-3.3-70b`). Venice prepends its own ~1000-token system prompt unless `venice_parameters.include_venice_system_prompt` is false. Measured on llama-3.3-70b: with it on, prompt_tokens goes 26 → 1081 and the chat template breaks. `OpenAiClient` sends the flag for venice.ai hosts only.
 - **Two-Claude workflow.** Chat Claude (claude.ai) = strategy, planning, architecture. Claude Code = execution, validation, commits. Solution files from Chat Claude are validated against the real codebase before applying.
 
 ---
@@ -120,6 +127,74 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16 — M7.1 the ear, M7.2 recipes, Venice provider (2026-08-28, branch `native`)
+
+Owner directive: "go with 1 and 2, the ear and recipes… use my venice api instead of openrouter… complete polish… an AI agent like no other."
+
+#### Provider moved to Venice (PROVEN)
+
+Key found at `~/.config/opencode/.env` (`VENICE_API_KEY`), base URL `https://api.venice.ai/api/v1`. Benchmarked four Venice models against the app's real system prompt: **`llama-3.3-70b` picked 5/5 tools correctly at a 1.44s median** — the others missed the battery case by answering in prose. Same model family Build 29 proved, now on his own account. Written to the phone's SharedPreferences through a pushed file so the key never entered a command line.
+
+**The trap, measured:** Venice prepends its own ~1000-token system prompt by default. On `llama-3.3-70b` that takes prompt_tokens from 26 to 1081 and **breaks the chat template outright** — replies come back as `assistant<|end_header_id|>assistant\assistant…`, or the model answers questions about itself instead of the user's. On device it produced "You are currently running as the Llama 3.3 70B model." as the final answer to every task, while the tools underneath ran correctly. `OpenAiClient` now sends `venice_parameters.include_venice_system_prompt = false`, for venice.ai hosts only.
+
+#### M7.1 — the ear (PROVEN end to end, acoustically)
+
+- `VoiceActivity` registered for `ACTION_ASSIST` / `VOICE_COMMAND`, shows over the lock screen, opens the mic on entry. `onNewIntent` restarts listening — `singleTask` means a repeat assist gesture never reaches `onCreate`, so without it the mic opened exactly once per process.
+- `Speaker`: on-device `TextToSpeech`, queue/start/done logged under `UltraSpeak` so speak-back is verifiable from a machine that cannot hear the phone. Speech text is stripped of emoji, code fences, raw tool JSON, and URLs are read as domains.
+- `VoiceInput` gained state and error callbacks, prefers the offline recognizer, and names every recognizer error code.
+- Hands-free is reachable from the quick-action row (🎧) before the user has made Ultra their assistant app; Settings has a "Choose assistant app" shortcut and a speak-answers toggle for typed use.
+
+**The acoustic test (the plan from the opencode session, carried out):** laptop speaks through its own speaker, phone listens through the air, no human involved.
+
+```
+UltraVoice: LISTENING
+UltraVoice: HEARD: "What is the battery level"
+UltraBrain: LOCAL turn 0: {"tool":"battery_status","params":{}}
+UltraBrain: RUN COMPLETE (local, tool=battery_status, ok=true)
+UltraSpeak: SPEAK QUEUE (36 chars) → SPEAK START
+```
+
+Spoken words → on-device transcription → tool call → real device state → spoken answer. Reproduced twice. The error path was proven too: a phrase it could not catch spoke "I didn't catch that" and logged the full QUEUE → START → DONE lifecycle.
+
+**Honest limits.** Recognition of a *synthetic* voice over air is phrase-dependent — "what is the battery level" transcribed reliably, "what is the capital of Japan" returned `ERROR_NO_MATCH` twice. That is a property of a text-to-speech voice played into a microphone, not of the app. **NOT ear-verified:** nobody has heard the phone speak; `SPEAK START`/`SPEAK DONE` is engine-level proof. Both need one sentence from a human voice and one listen.
+
+#### M7.2 — recipes (PROVEN on device)
+
+A recipe is the user promoting a successful run into something they can name and re-run. `RecipeEntity` + `RecipeDao`, DB v3 with a **real 2→3 migration** — conversations and task memory are user data now, not dev scratch, so the destructive fallback is no longer the migration path.
+
+Proven sequence, each step in a fresh conversation:
+
+1. "tell me my battery level and then read my notifications" → `battery_status` → `notification_read`
+2. "save that as morning briefing" → `Saved recipe "morning briefing": battery_status → notification_read`
+3. "run my morning briefing" (new chat) → `RECIPE RUN morning briefing (2 steps)` → both steps executed, gate allowed both
+
+**Gate semantics for replay.** On replay the stored arguments no longer appear in the user's words — "run morning briefing" contains no URL — so every traceability contract would block. The steps were user-attested when the recipe was named, so replay mints them as confirmed targets for that episode via the existing `Episode.confirm`. Taint, spoof, and undeclared-tool checks are untouched and still apply. All four recipe tools are declared in the manifest (deny-by-default means an undeclared tool cannot run at all).
+
+**Matching a recipe name is deterministic, not model-judged.** Measured: llama-3.3-70b read "run my morning briefing" as a question and answered "You are currently running as the Llama 3.3 70B model." A recipe name is a string the user chose; resolving it is a lookup. The engine now owns that, the same split as the local router.
+
+#### Bugs found and fixed while testing
+
+1. **Process crash — Compose state written off the main thread.** `java.lang.IllegalStateException: Reading a state that was created after the snapshot was taken`, thrown in the global snapshot observer, killing the app mid-run. Cause: streaming callbacks wrote `ChatStore.messages` from OkHttp's IO threads and the on-device model's worker. Every mutation now funnels through a main-thread hop, and streamed bubbles are addressed **by id, not index** — indices shift when anything else is added or removed mid-stream.
+2. **Local-route runs never fed task memory**, so "save that as X" after an on-device command had nothing to save.
+3. **Dead code in `runLocalLoop`** — a prompt built and immediately overwritten. Removed.
+4. **1B chatter** — the model replayed its own few-shot examples after its answer. Output is now cut at the first echoed turn; logs are clean.
+5. **`install.sh` missed dialogs** — it matched one button label with a straight apostrophe. It now matches every variant (Samsung uses a curly one), polls the whole install window, and **fails loudly if `lastUpdateTime` did not change** rather than letting a test run against stale code.
+6. **Two model loads** — `LocalModelEngine` is process-wide now, so the voice session shares the one 800MB context instead of loading its own.
+7. The a11y chip in the header is red and tappable when the service is off — one tap to the settings screen that fixes it.
+
+#### Regression
+
+- Gate unit tests: **14/14**, unchanged.
+- Device suite: **8/8**, every task selecting the right tool. Dedupe confirmed working (repeat calls log `TOOL CALL` with no `TOOL RESULT`).
+- `suite.sh` now turns the flashlight **off** after t07 — the suite used to walk away with the torch burning.
+
+#### Open
+
+- Navigator step efficiency is still model-tuned, not fixed. Untouched this session.
+- Wake word deliberately not built: always-on audio costs battery, adds Play-policy risk, and needs a bundled wake engine. The assist gesture is the shipped path and needs no always-on mic.
+- t05's third `clipboard_write` was not deduped because a different tool ran in between. Correct per the rule, still wasteful.
+- Recognition quality for a real human voice, and whether the phone is actually audible, are both unverified.
 
 ### Session 15b — voice, streaming, search quality, task memory, final regression 8/8 (2026-08-27, branch `native`)
 

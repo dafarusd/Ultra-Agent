@@ -95,6 +95,11 @@ class VoiceInput(
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "recognizer busy"
             SpeechRecognizer.ERROR_SERVER -> "server error"
             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "no speech heard"
+            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "too many requests"
+            SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "recognizer disconnected"
+            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "language not supported"
+            SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "language pack not installed"
+            SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT -> "cannot check language support"
             else -> "error $code"
         }
     }

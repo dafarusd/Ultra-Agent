@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -174,6 +175,45 @@ fun SettingsScreen(
             }
         }
 
+        // ── Recipes ───────────────────────────────────────────────────
+        SectionTitle("ROUTINES")
+        val recipeDao = remember { com.agent.ultra.data.UltraDatabase.get(context).recipes() }
+        var recipeList by remember {
+            mutableStateOf<List<com.agent.ultra.data.RecipeEntity>>(emptyList())
+        }
+        LaunchedEffect(Unit) { recipeList = recipeDao.list() }
+        if (recipeList.isEmpty()) {
+            Text(
+                "None yet. Run a task, then say \"save that as morning briefing\" — " +
+                    "after that, \"run my morning briefing\" replays the whole thing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        } else {
+            for (r in recipeList) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(r.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            steps(r.stepsJson) +
+                                if (r.runCount > 0) "  ·  run ${r.runCount}×" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        )
+                    }
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            recipeDao.delete(r.name)
+                            recipeList = recipeDao.list()
+                        }
+                    }) { Text("Delete") }
+                }
+            }
+        }
+
         // ── Voice ─────────────────────────────────────────────────────
         SectionTitle("VOICE")
         var speak by remember { mutableStateOf(UltraPrefs.speakAnswers(context)) }
@@ -244,3 +284,9 @@ private fun SectionTitle(text: String) {
         modifier = Modifier.padding(top = 8.dp),
     )
 }
+
+/** Tool names out of a recipe's stored step list, for display. */
+private fun steps(json: String): String = try {
+    val arr = org.json.JSONArray(json)
+    (0 until arr.length()).joinToString(" → ") { arr.getJSONObject(it).optString("tool") }
+} catch (_: Exception) { "—" }
