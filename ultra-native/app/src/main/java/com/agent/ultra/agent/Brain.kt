@@ -206,6 +206,11 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
      * tool subset route on-device. Anything else goes cloud. */
     private fun isSimpleLocalIntent(input: String): Boolean {
         val u = input.lowercase()
+        // Compounds and URL-like targets exceed the 1B model's measured
+        // competence (suite t03/t05/t08): those go cloud.
+        if (Regex("\\b(and then|then|after that| and )\\b").containsMatchIn(u)) return false
+        if (Regex("[a-z0-9-]+\\.(com|org|net|io|edu|gov)\\b").containsMatchIn(u)) return false
+        if (u.contains("http")) return false
         return Regex(
             "\\b(flashlight|torch|wi-?fi|bluetooth|do not disturb|dnd|volume|brightness|" +
                 "airplane|alarm|timer|battery|clipboard|note this|open|launch|start)\\b"
