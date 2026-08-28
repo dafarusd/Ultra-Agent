@@ -106,6 +106,28 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 
 <!-- Add new entries at the top. Most recent first. -->
 
+### Session 15b — voice, streaming, search quality, task memory, final regression 8/8 (2026-08-27, branch `native`)
+
+#### Shipped this session (all device-verified unless stated)
+
+- **Voice input** (`ui/VoiceInput.kt`): mic button on the input row; on-device SpeechRecognizer (SODA) fills the box for review before Send. PROVEN: session start confirmed in logcat; transcription NOT automatable over adb — untested, honestly.
+- **SSE streaming** (`OpenAiClient.completeStreaming`): cloud answers stream live into a chat bubble; tool-call turns retract the bubble; final answers persist from the stream. Plus: a run where every turn blocks now closes with an honest message instead of silence (observed via the improvised `calculate` tool the gate denied).
+- **web_search backends**: DDG instant-answer JSON → Wikipedia opensearch+summary → HTML scrape last resort. Fixed the boilerplate-only results from this network environment. PROVEN: "capital of Japan" → "The capital of Japan is Tokyo."
+- **Task memory** (`data/TaskMemory.kt`, DB v2): successful tool sequences per normalized request + per-tool reliability counters; hints injected as a system message on repeat requests. PROVEN: run 2 logged "MEMORY HINT injected … previously succeeded with: web_search". This is the P6 idea from Build 29 — it never triggered there; it triggers now.
+- **Few-shot local prompt**: measured 1B failure mode was zero-shot picking the wrong tool; with examples it maps correctly, including full JSON (`flashlight_toggle {"on":true}` first-try on t07).
+- **Classifier hardening**: compounds (" and / then") and URL-like targets route cloud — suite t03/t05/t08 misses before this fix, passes after.
+
+#### Final regression — 8/8 PASS on the advanced build
+
+t01 battery (on-device) · t02 open chrome · t03 open wikipedia.org (VERIFIED browser) · t04 search (real content) · t05 clipboard write→read round trip · t06 note on disk · t07 flashlight (on-device, first-try JSON) · t08 open chrome + google.com (VERIFIED twice, screen read "ALL").
+
+#### Known gaps after this session
+
+- The gate pauses for confirmation cards mid-suite runs when prior-task content contaminates a later request (by design — the operator resolves). 
+- The 1B model echoes prompt examples as chatter before its real answer; the parser holds, but it's ugly in logs.
+- Navigator step efficiency is still model-tuned, not fixed.
+- Flashlight physical photons remain API-level proof only (no torch-state dump on this Samsung).
+
 ### Session 15 — M6 shell parity + capability advances (2026-08-27, branch `native`)
 
 Owner directive mid-session: "make this the leading and most capable AI agent." M6 ordering and genome exclusion confirmed by owner.
