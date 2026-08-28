@@ -23,3 +23,16 @@ data class MessageEntity(
     val text: String,
     val timestamp: Long,
 )
+
+/**
+ * A named, replayable tool sequence — the user's own saved routine.
+ * `stepsJson` is a JSON array of {"tool":..., "params":{...}} objects, in order.
+ */
+@Entity(tableName = "recipes")
+data class RecipeEntity(
+    @PrimaryKey val name: String,
+    val stepsJson: String,
+    val createdAt: Long,
+    val lastRun: Long,
+    val runCount: Int,
+)

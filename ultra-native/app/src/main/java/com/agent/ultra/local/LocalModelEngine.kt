@@ -124,6 +124,16 @@ class LocalModelEngine(private val context: Context) {
     } catch (_: Exception) { -1 }
 
     companion object {
+        /** One engine per process. The weights are ~800MB mmap'd against a
+         * single native context — a second instance would load them twice. */
+        @Volatile private var sharedInstance: LocalModelEngine? = null
+
+        fun shared(context: Context): LocalModelEngine =
+            sharedInstance ?: synchronized(this) {
+                sharedInstance ?: LocalModelEngine(context.applicationContext)
+                    .also { sharedInstance = it }
+            }
+
         // Measured on the A15 5G (llama-bench, Gemma 3 1B Q4_K_M):
         // 4 threads = 10.1 tok/s generation, 16.6 tok/s prompt eval.
         const val THREADS = 4

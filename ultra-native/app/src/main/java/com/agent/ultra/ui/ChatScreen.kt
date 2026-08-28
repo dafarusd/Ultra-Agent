@@ -25,6 +25,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,17 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     // Rebuilt when the provider config changes (settings save bumps the key).
     val brain = remember(configVersion) { Brain(context.applicationContext, localEngine) }
+
+    // Speak-back: off by default, switched on in Settings. The engine is built
+    // once and torn down with the screen.
+    val speaker = remember { Speaker(context.applicationContext) }
+    DisposableEffect(Unit) { onDispose { speaker.shutdown() } }
+    LaunchedEffect(brain) {
+        brain.onAnswer = { text ->
+            if (UltraPrefs.speakAnswers(context)) speaker.speak(text)
+        }
+    }
+
     var input by remember { mutableStateOf("") }
     var thinking by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -140,10 +152,21 @@ fun ChatScreen(
                 text = when {
                     thinking -> "agent: thinking…"
                     a11yRunning -> "agent: ready"
-                    else -> "agent: a11y off"
+                    else -> "agent: a11y off ›"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                color = if (a11yRunning || thinking)
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                else MaterialTheme.colorScheme.error,
+                modifier = if (a11yRunning || thinking) Modifier else Modifier.clickable {
+                    // Off means every screen-touching tool fails. One tap to the fix.
+                    try {
+                        context.startActivity(
+                            android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    } catch (_: Exception) {}
+                },
             )
             TextButton(onClick = onOpenSettings) {
                 Text("⚙", style = MaterialTheme.typography.titleLarge)
@@ -304,18 +327,11 @@ fun ChatScreen(
                                 val prompt = text.removePrefix("/local ").trim()
                                 val msg = ChatMessage(false, "")
                                 ChatStore.addToState(msg)
-                                val idx = ChatStore.messages.size - 1
                                 val r = localEngine.generate(prompt, 300) { piece ->
-                                    ChatStore.messages[idx] =
-                                        ChatStore.messages[idx].copy(
-                                            text = ChatStore.messages[idx].text + piece
-                                        )
+                                    ChatStore.appendTo(msg.id, piece)
                                 }
-                                r.onFailure {
-                                    ChatStore.messages[idx] =
-                                        ChatStore.messages[idx].copy(text = "Error: ${it.message}")
-                                }
-                                ChatStore.persist(ChatStore.messages[idx])
+                                r.onFailure { ChatStore.setText(msg.id, "Error: ${it.message}") }
+                                ChatStore.messageById(msg.id)?.let { ChatStore.persist(it) }
                             } else {
                                 brain.run(text)
                             }

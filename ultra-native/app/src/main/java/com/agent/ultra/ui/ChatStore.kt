@@ -1,6 +1,7 @@
 package com.agent.ultra.ui
 
 import android.content.Context
+import android.os.Looper
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import com.agent.ultra.data.ConversationEntity
@@ -31,6 +32,19 @@ object ChatStore {
 
     private var dao: com.agent.ultra.data.ConversationDao? = null
     private val scope = CoroutineScope(Dispatchers.IO)
+    private val ui = CoroutineScope(Dispatchers.Main.immediate)
+
+    /**
+     * Compose snapshot state is not thread-safe. Streaming answers arrive on
+     * OkHttp's IO threads and the on-device model emits from its own worker,
+     * so every mutation of [messages] funnels through here. Writing it from a
+     * background thread crashes the process later, in the global snapshot
+     * observer, far from the line that did it.
+     */
+    private fun onUi(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block()
+        else ui.launch { block() }
+    }
 
     suspend fun init(context: Context) {
         val db = UltraDatabase.get(context)
@@ -74,14 +88,37 @@ object ChatStore {
 
     /** Append to the visible conversation and persist. Title from first user message. */
     fun add(msg: ChatMessage) {
-        messages.add(msg)
+        onUi { messages.add(msg) }
         persist(msg)
     }
 
     /** State-only append for streaming bubbles; call persist() with the final content. */
     fun addToState(msg: ChatMessage) {
-        messages.add(msg)
+        onUi { messages.add(msg) }
     }
+
+    /** Append a streamed piece to a bubble, addressed by id rather than index —
+     * indices shift when anything else is added or removed mid-stream. */
+    fun appendTo(id: String, piece: String) = onUi {
+        val i = messages.indexOfFirst { it.id == id }
+        if (i >= 0) messages[i] = messages[i].copy(text = messages[i].text + piece)
+    }
+
+    /** Replace a bubble's whole text. */
+    fun setText(id: String, text: String) = onUi {
+        val i = messages.indexOfFirst { it.id == id }
+        if (i >= 0) messages[i] = messages[i].copy(text = text)
+    }
+
+    fun removeById(id: String) = onUi {
+        val i = messages.indexOfFirst { it.id == id }
+        if (i >= 0) messages.removeAt(i)
+    }
+
+    /** Current text of a bubble, or empty if it is gone. */
+    fun textOf(id: String): String = messages.firstOrNull { it.id == id }?.text ?: ""
+
+    fun messageById(id: String): ChatMessage? = messages.firstOrNull { it.id == id }
 
     /** Insert-or-replace a message row (used for final streamed content). */
     fun persist(msg: ChatMessage) {

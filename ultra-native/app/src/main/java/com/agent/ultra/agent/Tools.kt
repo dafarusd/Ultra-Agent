@@ -25,6 +25,11 @@ class Tools(
 
     var navigator: ReActNavigator? = null
 
+    /** Recipe store and the replay entry point. The runner lives in Brain —
+     * replay needs the policy gate and the episode, which Tools does not own. */
+    var recipes: Recipes? = null
+    var recipeRunner: (suspend (String) -> String)? = null
+
     suspend fun execute(tool: String, params: JSONObject): String {
         return try {
             when (tool) {
@@ -134,6 +139,25 @@ class Tools(
                     val text = params.optString("text")
                     if (text.isBlank()) "Error: missing text"
                     else controller.createNote(text)
+                }
+
+                // ── Recipes — named, replayable routines ─────────────
+                "recipe_save" -> {
+                    val r = recipes ?: return "Error: recipes unavailable"
+                    val name = params.optString("name")
+                    if (name.isBlank()) "Error: missing name"
+                    else r.save(name, Brain.lastRunSteps)
+                }
+                "recipe_run" -> {
+                    val run = recipeRunner ?: return "Error: recipes unavailable"
+                    val name = params.optString("name")
+                    if (name.isBlank()) "Error: missing name" else run(name)
+                }
+                "recipe_list" -> recipes?.list() ?: "Error: recipes unavailable"
+                "recipe_delete" -> {
+                    val r = recipes ?: return "Error: recipes unavailable"
+                    val name = params.optString("name")
+                    if (name.isBlank()) "Error: missing name" else r.delete(name)
                 }
 
                 else -> "Error: unknown tool '$tool'"

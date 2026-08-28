@@ -43,6 +43,7 @@ class OpenAiClient(private val config: ProviderConfig) {
                 .put("max_tokens", maxTokens)
                 .put("temperature", temperature)
                 .put("stream", false)
+                .also { applyVeniceParameters(it) }
 
             val req = Request.Builder()
                 .url(config.baseUrl.trimEnd('/') + "/chat/completions")
@@ -92,6 +93,7 @@ class OpenAiClient(private val config: ProviderConfig) {
                 .put("max_tokens", maxTokens)
                 .put("temperature", temperature)
                 .put("stream", true)
+                .also { applyVeniceParameters(it) }
 
             val req = Request.Builder()
                 .url(config.baseUrl.trimEnd('/') + "/chat/completions")
@@ -131,5 +133,22 @@ class OpenAiClient(private val config: ProviderConfig) {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * Venice prepends its own ~1000-token system prompt unless told not to.
+     * Measured on llama-3.3-70b: with it, prompt_tokens goes 26 -> 1081 and
+     * the model's chat template breaks outright (replies come back as
+     * "assistant<|end_header_id|>assistant..."), or it answers questions about
+     * itself instead of the user's. Ultra ships its own system prompt, so
+     * Venice's is turned off. Only sent to Venice hosts — other
+     * OpenAI-compatible servers reject unknown top-level fields.
+     */
+    private fun applyVeniceParameters(body: JSONObject) {
+        if (!config.baseUrl.contains("venice.ai", ignoreCase = true)) return
+        body.put(
+            "venice_parameters",
+            JSONObject().put("include_venice_system_prompt", false)
+        )
     }
 }

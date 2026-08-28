@@ -15,6 +15,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -173,6 +174,49 @@ fun SettingsScreen(
             }
         }
 
+        // ── Voice ─────────────────────────────────────────────────────
+        SectionTitle("VOICE")
+        var speak by remember { mutableStateOf(UltraPrefs.speakAnswers(context)) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Speak answers aloud", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Reads replies out with the phone's own voice. Hands-free sessions always speak.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            Switch(checked = speak, onCheckedChange = {
+                speak = it
+                UltraPrefs.setSpeakAnswers(context, it)
+            })
+        }
+        Text(
+            "Hands-free: set Ultra as your digital assistant, then hold the power button " +
+                "(or use your phone's assist gesture) to talk without opening the app.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        OutlinedButton(onClick = {
+            val tries = listOf(
+                android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS,
+                android.provider.Settings.ACTION_APPLICATION_SETTINGS,
+            )
+            for (action in tries) {
+                try {
+                    context.startActivity(
+                        android.content.Intent(action)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                    break
+                } catch (_: Exception) { /* try the next one */ }
+            }
+        }) { Text("Choose assistant app") }
+
         // ── About ─────────────────────────────────────────────────────
         SectionTitle("ABOUT")
         val version = remember {
@@ -182,7 +226,7 @@ fun SettingsScreen(
         }
         Text(
             "Agent Ultra $version\n" +
-                "Policy gate: active (gatellml manifest, 24 tools declared)\n" +
+                "Policy gate: active (gatellml manifest, 30 tools declared)\n" +
                 "Accessibility: " + if (com.agent.ultra.AgentAccessibilityService.isRunning()) "connected" else "not connected",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),

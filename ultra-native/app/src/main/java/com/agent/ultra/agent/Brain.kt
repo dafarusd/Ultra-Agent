@@ -29,12 +29,19 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     private val client: OpenAiClient?
     private val gate: Gate
     private val taskMemory = com.agent.ultra.data.UltraDatabase.get(context).taskMemory()
+    private val recipes = Recipes(com.agent.ultra.data.UltraDatabase.get(context).recipes())
+
+    /** Called with the final user-facing answer of a run. The voice session
+     * speaks it; the chat screen speaks it when speak-back is enabled. */
+    var onAnswer: ((String) -> Unit)? = null
 
     init {
         val cfg = ProviderConfig.load(context)
         client = if (cfg.isUsable) OpenAiClient(cfg) else null
         tools = Tools(context, controller)
         if (client != null) tools.navigator = ReActNavigator(controller, client)
+        tools.recipes = recipes
+        tools.recipeRunner = { name -> runRecipe(name) }
         gate = Gate(loadManifest(context))
     }
 
@@ -90,11 +97,20 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     }
 
     suspend fun run(userInput: String) {
+        // A recipe is a name the user chose. Matching it is a lookup, not a
+        // judgment call — measured: llama-3.3-70b read "run my morning
+        // briefing" as a question about which model it is. The engine owns
+        // structure; the model never sees this one.
+        if (tryRecipeShortcut(userInput)) {
+            android.util.Log.i("UltraBrain", "RUN COMPLETE (recipe shortcut)")
+            return
+        }
+
         val ai = client
         if (ai == null) {
             // Offline/unconfigured path: the on-device model is the brain.
             if (!local.ensureLoaded()) {
-                emit("No AI provider configured and no on-device model present.")
+                answer("No AI provider configured and no on-device model present.")
                 return
             }
             emitLocal(userInput)
@@ -137,6 +153,65 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         android.util.Log.i("UltraBrain", "RUN COMPLETE")
     }
 
+    /** Run a saved recipe directly when the request names one. Requires either
+     * an explicit run verb ("run my morning briefing") or the bare recipe name,
+     * so ordinary requests are never hijacked by a similarly-named routine. */
+    private suspend fun tryRecipeShortcut(userInput: String): Boolean {
+        return try {
+            val row = recipes.resolve(userInput) ?: return false
+            val hasRunVerb = Regex("^\\s*(run|start|do|execute|play)\\b")
+                .containsMatchIn(userInput.lowercase())
+            val isBareName = Recipes.normalize(userInput) == row.name
+            if (!hasRunVerb && !isBareName) return false
+            answer(runRecipe(row.name))
+            true
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * Replay a saved recipe. The stored arguments were user-attested when the
+     * recipe was created, so they are minted as confirmed targets for this
+     * episode — otherwise every traceability contract would block, since
+     * "run morning briefing" contains none of the recipe's actual targets.
+     * Taint, spoof, and undeclared-tool checks are untouched and still apply.
+     */
+    private suspend fun runRecipe(name: String): String {
+        val row = recipes.resolve(name)
+            ?: return "Error: no recipe named \"$name\". Say \"list my recipes\" to see what is saved."
+        val steps = recipes.stepsOf(row.name).orEmpty()
+        if (steps.isEmpty()) return "Error: recipe \"${row.name}\" has no steps"
+
+        val episode = Gate.Episode("run recipe ${row.name}")
+        for (step in steps) {
+            for (key in step.params.keys()) {
+                step.params.opt(key)?.toString()?.let { episode.confirm(it) }
+            }
+        }
+
+        android.util.Log.i("UltraBrain", "RECIPE RUN ${row.name} (${steps.size} steps)")
+        val lines = mutableListOf<String>()
+        var failures = 0
+        for ((i, step) in steps.withIndex()) {
+            val verdict = gate.enforceCall(episode, step.tool, step.params)
+            if (!verdict.allowed) {
+                val hint = verdict.violations.firstOrNull()?.hint ?: "blocked"
+                android.util.Log.i("UltraGate", "RECIPE BLOCK ${step.tool}: $hint")
+                lines += "${i + 1}. ${step.tool} — blocked by policy gate ($hint)"
+                failures++
+                continue
+            }
+            val result = tools.execute(step.tool, step.params)
+            episode.observeSecrets(result)
+            if (result.startsWith("Error:")) failures++
+            android.util.Log.i("UltraBrain", "RECIPE STEP ${step.tool}: ${result.take(80)}")
+            lines += "${i + 1}. ${result.take(200)}"
+        }
+        recipes.markRun(row.name)
+        val header = if (failures == 0) "Ran \"${row.name}\" (${steps.size} steps):"
+            else "Ran \"${row.name}\" with $failures problem(s):"
+        return header + "\n" + lines.joinToString("\n")
+    }
+
     private fun requestKey(input: String): String =
         input.lowercase().replace(Regex("[^a-z0-9 ]"), "").replace(Regex("\\s+"), " ").trim()
 
@@ -157,9 +232,14 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         } catch (_: Exception) { null }
     }
 
-    private suspend fun recordMemory(userInput: String, sequence: List<Pair<String, Boolean>>) {
+    private suspend fun recordMemory(userInput: String, sequence: List<Triple<String, JSONObject, Boolean>>) {
         try {
-            for ((tool, ok) in sequence) {
+            // Remember this run's successful calls so "save that as <name>"
+            // has something to save. Recipe bookkeeping never becomes a step.
+            val steps = sequence.filter { it.third && it.first !in RECIPE_TOOLS }
+                .map { Recipes.Step(it.first, it.second) }
+            if (steps.isNotEmpty()) lastRunSteps = steps
+            for ((tool, _, ok) in sequence) {
                 val cur = taskMemory.reliabilityFor(tool)
                 val next = com.agent.ultra.data.ToolReliabilityEntity(
                     tool,
@@ -169,7 +249,7 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
                 )
                 taskMemory.upsertReliability(next)
             }
-            val successes = sequence.filter { it.second }.map { it.first }
+            val successes = sequence.filter { it.third }.map { it.first }
             if (successes.isNotEmpty()) {
                 val key = requestKey(userInput)
                 val cur = taskMemory.shortcutFor(key)
@@ -187,19 +267,27 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         ChatStore.add(ChatMessage(fromUser = false, text = text))
     }
 
+    /** A run's final, user-facing answer: shown, persisted, and announced to
+     * whoever is listening (the voice session, or chat speak-back). */
+    private fun answer(text: String) {
+        emit(text)
+        onAnswer?.invoke(text)
+    }
+
     /** Direct local answer for the offline path — no tool loop at 1B scale. */
     private suspend fun emitLocal(userInput: String) {
         val msg = ChatMessage(false, "")
         ChatStore.addToState(msg)
-        val idx = ChatStore.messages.size - 1
         val prompt = "You are Ultra, a concise assistant on an offline Android phone. " +
             "Answer briefly and honestly.\n\nUser: $userInput\nUltra:"
         local.generate(prompt, 400) { piece ->
-            ChatStore.messages[idx] = ChatStore.messages[idx].copy(text = ChatStore.messages[idx].text + piece)
+            ChatStore.appendTo(msg.id, piece)
         }.onFailure {
-            ChatStore.messages[idx] = ChatStore.messages[idx].copy(text = "Error: on-device model failed — ${it.message}")
+            ChatStore.setText(msg.id, "Error: on-device model failed — ${it.message}")
         }
-        ChatStore.persist(ChatStore.messages[idx])
+        val finalMsg = ChatStore.messageById(msg.id) ?: msg
+        ChatStore.persist(finalMsg)
+        onAnswer?.invoke(finalMsg.text)
     }
 
     /** Conservative classifier: only commands that map cleanly to the local
@@ -220,27 +308,10 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     /** The on-device tool loop: compact catalog, max 2 turns, gate enforced. */
     private suspend fun runLocalLoop(userInput: String): Boolean {
         val episode = Gate.Episode(userInput)
-        var prompt = """You are Ultra, an on-device Android agent. Reply with EXACTLY one JSON tool call and nothing else.
-
-TOOLS:
-flashlight_toggle {"on":true|false}
-wifi_toggle {"on":true|false}
-bluetooth_toggle {"on":true|false}
-do_not_disturb {"on":true|false}
-volume_set {"percent":0-100}
-alarm_set {"hour":0-23,"minute":0-59,"label":"..."}
-note_create {"text":"..."}
-app_launch {"target":"app name"}
-battery_status {}
-clipboard_read {}
-clipboard_write {"text":"..."}
-
-User: $userInput
-JSON:"""
         // Few-shot examples — 1B models map intents reliably with them, not
         // without (measured: zero-shot picked flashlight_toggle for 'open
         // chrome'). Trimmed catalog for the local route.
-        prompt = """You are Ultra, an on-device Android agent. Reply with EXACTLY one JSON tool call and nothing else.
+        var prompt = """You are Ultra, an on-device Android agent. Reply with EXACTLY one JSON tool call and nothing else.
 
 TOOLS:
 flashlight_toggle {"on":true|false}
@@ -274,7 +345,11 @@ JSON: {"tool":"wifi_toggle","params":{"on":false}}
 User: $userInput
 JSON:"""
         repeat(2) { attempt ->
-            val out = local.generate(prompt, 200).getOrElse { return false }
+            val raw = local.generate(prompt, 200).getOrElse { return false }
+            // The 1B model keeps writing after its answer — it replays the
+            // few-shot examples as if the conversation continued. Cut at the
+            // first echoed turn so the logs and the parser see one answer.
+            val out = raw.split(Regex("""\n\s*(User|JSON)\s*:"""), limit = 2).first().trim()
             android.util.Log.i("UltraBrain", "LOCAL turn $attempt: ${out.take(120)}")
             // The 1B model reliably emits the tool NAME, not the JSON wrapper
             // (measured on-device). Parse both: JSON first, bare name second —
@@ -294,8 +369,12 @@ JSON:"""
             episode.observeSecrets(result)
             val verification = verifyAction(call.first, call.second) ?: ""
             val failed = result.startsWith("Error:")
-            emit((if (failed) "Tried on-device: $result" else "$result (on-device)") + verification)
+            answer((if (failed) "Tried on-device: $result" else "$result (on-device)") + verification)
             android.util.Log.i("UltraBrain", "RUN COMPLETE (local, tool=${call.first}, ok=${!failed})")
+            // On-device runs feed task memory and the recipe buffer too —
+            // otherwise "save that as X" after a local command has nothing
+            // to save.
+            recordMemory(userInput, listOf(Triple(call.first, call.second, !failed)))
             return true
         }
         return false
@@ -316,8 +395,9 @@ JSON:"""
         var lastParams = ""
         // One security episode per user request; secrets accumulate across tools.
         val episode = episodeOverride ?: Gate.Episode(userInput)
-        // Task memory: track this run's tool outcomes.
-        val toolSequence = mutableListOf<Pair<String, Boolean>>()
+        // Task memory: track this run's tool outcomes (params included so a
+        // successful run can be promoted into a named recipe).
+        val toolSequence = mutableListOf<Triple<String, JSONObject, Boolean>>()
 
         for (turn in startTurn until maxTurns) {
             val maxTokens = if (turn == 0) 2000 else if (turn >= maxTurns - 2) 2500 else 1500
@@ -325,14 +405,10 @@ JSON:"""
             // turn ends up being a tool call (raw JSON isn't user-facing).
             val streamMsg = ChatMessage(false, "")
             ChatStore.addToState(streamMsg)
-            var streamIdx: Int = ChatStore.messages.size - 1
             val reply = ai.completeStreaming(messages, maxTokens, 0.2) { piece ->
-                if (streamIdx in ChatStore.messages.indices) {
-                    ChatStore.messages[streamIdx] = ChatStore.messages[streamIdx]
-                        .copy(text = ChatStore.messages[streamIdx].text + piece)
-                }
+                ChatStore.appendTo(streamMsg.id, piece)
             }.getOrElse {
-                if (streamIdx in ChatStore.messages.indices) ChatStore.messages.removeAt(streamIdx)
+                ChatStore.removeById(streamMsg.id)
                 // Cloud failed (offline, quota, outage) — the on-device model
                 // answers what it can rather than dying.
                 if (local.ensureLoaded()) {
@@ -345,10 +421,9 @@ JSON:"""
             }
             val raw = reply.trim()
 
-            var toolCall = parseToolCall(raw)
-            if (toolCall != null && streamIdx in ChatStore.messages.indices) {
-                ChatStore.messages.removeAt(streamIdx)
-            }
+            val toolCall = parseToolCall(raw)
+            // Raw tool JSON is not user-facing — retract the bubble it streamed into.
+            if (toolCall != null) ChatStore.removeById(streamMsg.id)
 
             if (toolCall == null) {
                 // Push-once: user asked for an action, brain only described it
@@ -360,7 +435,7 @@ JSON:"""
                     continue
                 }
                 finalText = raw
-                android.util.Log.i("UltraBrain", "FINAL TEXT (${raw.length} chars), streamBubble idx=$streamIdx, lastMsg='${ChatStore.messages.lastOrNull()?.text?.take(40)}'")
+                android.util.Log.i("UltraBrain", "FINAL TEXT (${raw.length} chars)")
                 break
             }
 
@@ -414,7 +489,7 @@ JSON:"""
             val resultText = tools.execute(toolCall.first, toolCall.second)
             episode.observeSecrets(resultText)
             val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
-            toolSequence += toolCall.first to !failed
+            toolSequence += Triple(toolCall.first, toolCall.second, !failed)
             val verification = if (!failed) verifyAction(toolCall.first, toolCall.second) else null
             android.util.Log.i("UltraBrain", "TOOL RESULT (${if (failed) "fail" else "ok"}): ${resultText.take(120)}${verification ?: ""}")
 
@@ -438,16 +513,18 @@ JSON:"""
             // The final answer already streamed into a visible bubble — persist
             // it rather than double-emitting. Bubbles removed for tool turns
             // never reach here.
-            val last = ChatStore.messages.lastOrNull()
-            android.util.Log.i("UltraBrain", "EMIT TAIL: finalText=${finalText.length}ch lastMsg='${last?.text?.take(40)}' match=${last?.text == finalText}")
-            if (last != null && !last.fromUser && last.text == finalText) {
-                ChatStore.persist(last)
+            val streamed = ChatStore.messages.lastOrNull()
+            val alreadyOnScreen = streamed != null && !streamed.fromUser && streamed.text == finalText
+            android.util.Log.i("UltraBrain", "EMIT TAIL: ${finalText.length}ch alreadyOnScreen=$alreadyOnScreen")
+            if (alreadyOnScreen) {
+                ChatStore.persist(streamed!!)
+                onAnswer?.invoke(finalText)
             } else {
-                emit(finalText)
+                answer(finalText)
             }
         } else if (lastToolFailed) {
             // Every turn ended in a block or failure — never end silently.
-            emit("I couldn't complete that — the policy gate stopped the action and I had no safe alternative. Try rephrasing, or confirm the target if I ask.")
+            answer("I couldn't complete that — the policy gate stopped the action and I had no safe alternative. Try rephrasing, or confirm the target if I ask.")
         }
         recordMemory(userInput, toolSequence)
     }
@@ -606,10 +683,18 @@ RULES:
 5. Read screen content (read_text_on_screen) to gather data, then use it in the next tool call.
 6. When you have enough information to answer, STOP calling tools and give a clear, complete answer.
 7. If you hit a login screen, captcha, or permission dialog: STOP and ask the user to handle it.
-8. NEVER send messages or make calls unless the user EXPLICITLY asks."""
+8. NEVER send messages or make calls unless the user EXPLICITLY asks.
+9. RECIPES: "save that as X" / "remember that as X" → recipe_save {name:X}. "what are my routines" → recipe_list. "forget X" → recipe_delete {name:X}. Never answer a recipe request with prose — call the tool."""
     }
 
     companion object {
+        /** Successful calls from the most recent completed run, process-wide.
+         * "save that as morning briefing" is its own request with its own empty
+         * sequence, so the steps to save must come from the run before it. */
+        @Volatile var lastRunSteps: List<Recipes.Step> = emptyList()
+
+        val RECIPE_TOOLS = setOf("recipe_save", "recipe_run", "recipe_list", "recipe_delete")
+
         private const val TOOL_CATALOG = """
 DEVICE CONTROL (instant, ~99% reliable):
   wifi_toggle, bluetooth_toggle, do_not_disturb, flashlight_toggle, volume_set
@@ -634,6 +719,12 @@ FILES & CLIPBOARD & CREATION:
 
 SCREEN:
   read_text_on_screen, describe_screen, screenshot, notification_read
+
+RECIPES (the user's saved routines — replay a whole sequence by name):
+  recipe_run — run a saved routine. params: {name}
+  recipe_save — save the PREVIOUS successful run under a name. params: {name}
+  recipe_list — list saved routines
+  recipe_delete — delete one. params: {name}
 """
     }
 }

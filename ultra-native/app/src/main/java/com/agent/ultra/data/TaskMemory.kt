@@ -43,3 +43,18 @@ interface TaskMemoryDao {
     @Query("SELECT * FROM tool_reliability WHERE failures > successes")
     suspend fun unreliableTools(): List<ToolReliabilityEntity>
 }
+
+@Dao
+interface RecipeDao {
+    @Query("SELECT * FROM recipes ORDER BY lastRun DESC, createdAt DESC")
+    suspend fun list(): List<RecipeEntity>
+
+    @Query("SELECT * FROM recipes WHERE name = :name")
+    suspend fun byName(name: String): RecipeEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(r: RecipeEntity)
+
+    @Query("DELETE FROM recipes WHERE name = :name")
+    suspend fun delete(name: String)
+}

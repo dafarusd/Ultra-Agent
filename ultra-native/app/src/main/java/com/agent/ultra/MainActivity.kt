@@ -22,7 +22,8 @@ class MainActivity : ComponentActivity() {
             AgentUltraTheme {
                 var screen by remember { mutableStateOf("chat") }
                 // Shared engine — one JNI handle, never two 800MB loads.
-                val engine = remember { LocalModelEngine(applicationContext) }
+                // Process-wide, so the voice session reuses this same context.
+                val engine = remember { LocalModelEngine.shared(applicationContext) }
                 // Bump on provider save so the brain rebuilds with the new config.
                 var configVersion by remember { mutableIntStateOf(0) }
                 when (screen) {
