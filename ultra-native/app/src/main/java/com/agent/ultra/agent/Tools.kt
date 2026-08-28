@@ -161,8 +161,74 @@ class Tools(
         }
     }
 
-    /** DuckDuckGo HTML scrape — ported from the proven TaskExecutor implementation. */
+    /** Web search: DDG instant-answer JSON first, Wikipedia second, HTML
+     * scrape last (the scrape returned page boilerplate in this network
+     * environment — proven in the M5 suite). */
     private suspend fun webSearch(query: String): String = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext "Error: missing query"
+        instantAnswer(query)?.let { return@withContext it }
+        wikipedia(query)?.let { return@withContext it }
+        scrapeDdg(query)
+    }
+
+    private fun instantAnswer(query: String): String? {
+        return try {
+        val url = "https://api.duckduckgo.com/?q=" + URLEncoder.encode(query, "UTF-8") +
+            "&format=json&no_html=1&skip_disambig=1"
+        val req = Request.Builder().url(url)
+            .header("User-Agent", "AgentUltra/2.0").build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return null
+            val j = JSONObject(resp.body?.string() ?: return null)
+            val out = mutableListOf<String>()
+            j.optString("Answer").takeIf { it.isNotBlank() }?.let { out += "Answer: $it" }
+            j.optString("AbstractText").takeIf { it.isNotBlank() }?.let { abs ->
+                out += abs
+                j.optString("AbstractURL").takeIf { u -> u.isNotBlank() }?.let { out += "Source: $it" }
+            }
+            val topics = j.optJSONArray("RelatedTopics")
+            if (topics != null) {
+                var n = 0
+                for (i in 0 until topics.length()) {
+                    val t = topics.optJSONObject(i) ?: continue
+                    val text = t.optString("Text")
+                    if (text.isNotBlank()) { out += "• $text"; if (++n >= 4) break }
+                }
+            }
+            if (out.isEmpty()) null
+            else "Search results for \"$query\":\n" + out.joinToString("\n")
+        }
+        } catch (_: Exception) { null }
+    }
+
+    private fun wikipedia(query: String): String? {
+        return try {
+        val searchUrl = "https://en.wikipedia.org/w/api.php?action=opensearch&limit=3&format=json&search=" +
+            URLEncoder.encode(query, "UTF-8")
+        val req = Request.Builder().url(searchUrl)
+            .header("User-Agent", "AgentUltra/2.0").build()
+        val title = http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return null
+            val arr = org.json.JSONArray(resp.body?.string() ?: return null)
+            arr.optJSONArray(1)?.optString(0)
+        }
+        if (title.isNullOrBlank()) return null
+        val sumUrl = "https://en.wikipedia.org/api/rest_v1/page/summary/" +
+            URLEncoder.encode(title, "UTF-8")
+        val req2 = Request.Builder().url(sumUrl)
+            .header("User-Agent", "AgentUltra/2.0").build()
+        http.newCall(req2).execute().use { resp2 ->
+            if (!resp2.isSuccessful) return null
+            val j = JSONObject(resp2.body?.string() ?: return null)
+            val extract = j.optString("extract")
+            if (extract.isBlank()) null
+            else "Search results for \"$query\":\n$extract\nSource: en.wikipedia.org/wiki/${title.replace(" ", "_")}"
+        }
+        } catch (_: Exception) { null }
+    }
+
+    /** DuckDuckGo HTML scrape — last resort, ported from the proven implementation. */
+    private suspend fun scrapeDdg(query: String): String = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext "Error: missing query"
         try {
             val url = "https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query, "UTF-8")
