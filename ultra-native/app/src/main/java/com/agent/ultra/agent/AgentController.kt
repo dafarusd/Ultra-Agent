@@ -338,6 +338,25 @@ class AgentController(private val context: Context) {
         "Error: ${e.message}"
     }
 
+    suspend fun takeScreenshot(): Boolean = withContext(Dispatchers.IO) {
+        serviceOrWait()?.takeScreenshot() ?: false
+    }
+
+    /** Recent notifications captured by the listener service. */
+    fun readNotifications(limit: Int): String = try {
+        val f = java.io.File(context.filesDir, "notifications.log")
+        if (!f.exists()) "No notifications captured yet (or the listener isn't enabled)"
+        else {
+            val lines = f.readLines().filter { it.isNotBlank() }
+            if (lines.isEmpty()) "No notifications captured yet"
+            else lines.takeLast(limit).joinToString("\n") {
+                it.substringAfter(" | ") // drop the epoch prefix
+            }
+        }
+    } catch (e: Exception) {
+        "Error: ${e.message}"
+    }
+
     // ── Device info ─────────────────────────────────────────────────────
 
     fun batteryStatus(): String {

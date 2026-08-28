@@ -48,6 +48,9 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
 
     val configured: Boolean get() = client != null
 
+    /** What the model chip shows: the cloud model, or the on-device one. */
+    val modelLabel: String get() = client?.modelName ?: "Gemma 3 1B (on-device)"
+
     /** Non-null while a confirmable policy-gate block waits on the operator.
      * The chat UI renders a confirm/cancel card from this. */
     var pendingConfirm by mutableStateOf<PendingConfirm?>(null)
@@ -502,7 +505,7 @@ FILES & CLIPBOARD & CREATION:
   clipboard_write {text}, clipboard_read, note_create {text}, alarm_set {hour, minute?, label?}
 
 SCREEN:
-  read_text_on_screen, describe_screen
+  read_text_on_screen, describe_screen, screenshot, notification_read
 """
     }
 }

@@ -17,6 +17,8 @@ import java.util.concurrent.TimeUnit
  */
 class OpenAiClient(private val config: ProviderConfig) {
 
+    val modelName: String get() = config.model
+
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)

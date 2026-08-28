@@ -39,7 +39,11 @@ class Tools(
                     if (flat == "[]" || flat.isBlank()) "Error: screen empty or accessibility service not running"
                     else "Current app: ${controller.activePackage()}\n" + summarizeFlat(flat)
                 }
-                "screenshot" -> "Error: screenshot lands in a later milestone — use read_text_on_screen"
+                "screenshot" -> {
+                    if (controller.takeScreenshot()) "Screenshot taken — saved to the device gallery"
+                    else "Error: screenshot failed (accessibility service not running)"
+                }
+                "notification_read" -> controller.readNotifications(params.optInt("limit", 15))
 
                 // ── Apps & navigation ────────────────────────────────
                 "app_launch" -> {

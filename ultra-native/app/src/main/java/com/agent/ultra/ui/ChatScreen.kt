@@ -150,6 +150,45 @@ fun ChatScreen(
             }
         }
 
+        // Model chip + quick actions (drive through the agent's own local-first
+        // router — these exercise the same path as typed commands)
+        var torchOn by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Text(
+                    brain.modelLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    maxLines = 1,
+                )
+            }
+            TextButton(onClick = {
+                torchOn = !torchOn
+                val cmd = if (torchOn) "turn on the flashlight" else "turn off the flashlight"
+                ChatStore.add(ChatMessage(true, cmd))
+                scope.launch { brain.run(cmd) }
+            }) { Text(if (torchOn) "🔦 on" else "🔦") }
+            TextButton(onClick = {
+                val cmd = "take a screenshot"
+                ChatStore.add(ChatMessage(true, cmd))
+                scope.launch { brain.run(cmd) }
+            }) { Text("📸") }
+            TextButton(onClick = {
+                val cmd = "what is my location"
+                ChatStore.add(ChatMessage(true, cmd))
+                scope.launch { brain.run(cmd) }
+            }) { Text("📍") }
+        }
+
         LazyColumn(
             state = listState,
             modifier = Modifier

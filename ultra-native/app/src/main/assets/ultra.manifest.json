@@ -40,6 +40,7 @@
 
     {"name": "clipboard_write", "effects": ["mutate"],
       "requires": [{"kind": "not_tainted", "arg": "text"}]},
-    {"name": "clipboard_read", "effects": ["read"]}
+    {"name": "clipboard_read", "effects": ["read"]},
+    {"name": "notification_read", "effects": ["read"]}
   ]
 }
