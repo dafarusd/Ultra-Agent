@@ -70,6 +70,11 @@ fun ChatScreen(
 
     LaunchedEffect(Unit) { ChatStore.init(context.applicationContext) }
 
+    // Back closes the drawer first rather than dropping straight out of the app.
+    androidx.activity.compose.BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             a11yRunning = AgentAccessibilityService.isRunning()

@@ -17,6 +17,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,6 +44,10 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // Without this the system back button leaves the app entirely instead of
+    // returning to the conversation.
+    BackHandler { onBack() }
 
     var cfg by remember { mutableStateOf(ProviderConfig.load(context)) }
     var baseUrl by remember { mutableStateOf(cfg.baseUrl) }
