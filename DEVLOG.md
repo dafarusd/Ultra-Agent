@@ -20,55 +20,77 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-04-09 (Session 12 close — Build 29 deployed, brain upgrade P1-P8 + IME fix)
+**Last updated:** 2026-08-28 (Session 15b close — native Kotlin build, branch `native` at `2c1e5d4`)
 
-**App status:** Build 29 installed on device. Brain prompt restructured (P1). Context window expanded to 12KB (P2). Task planning added (P3). Structured feedback (P4). Dynamic maxTokens (P5). Task memory (P6). ReActLoop improved (P7). WRITE_SECURE_SETTINGS bridge added (P8). IME_ENTER triple fallback added. Model: llama-3.3-70b on Venice.ai. TypeScript 0 errors.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs an OpenAI-compatible provider; an on-device Gemma 3 1B model handles the offline and fast paths. 26 tools, all declared in the policy gate manifest. Final device regression: **8/8 PASS**.
 
-**Current priority:** Execution layer reliability — bluetooth/DND toggles still fail via QS automation, IME_ENTER fix untested on Build 29, conversation context bleeds between tasks. Brain intelligence is improved but execution prevents end-to-end proof.
+**The Expo / React Native app at the repo root is superseded.** `src/`, `app/`, `components/`, `server/`, `android/`, `ios/`, `app.json`, and `eas.json` belong to the old build. Nothing on the active path reads them — do not fix bugs there. The "Local Build Reference" section at the bottom of this file documents the **old** EAS/Expo build and applies only to that dead tree. The `BRAIN_*`, `REPLIT_*`, and `*_PROOF.md` files in the repo root are from the same era.
 
 **LAW:** The brain is the product. Tools are infrastructure. Everything exists so the agent can DO whatever the user asks. If the brain can't reason, nothing else matters. Never sacrifice brain intelligence for tool plumbing.
 
-**What's PROVEN on Build 29 (from logcat):**
-- P3 task planning generates and follows multi-step plans (4-5 steps, followed in order)
-- P5 dynamic maxTokens working (2000/1500/2500 for first/mid/final turns)
-- P2 expanded context tracks 27+ message chains without losing original goal
-- Brain chains tools across multi-step tasks (web_search → device_location → react_navigate → app_launch)
-- Brain recovery: sms_send fail → contacts_read → retry (adapts to errors)
-- Tool selection correct for flashlight, web_search, react_navigate, device_location, camera, sms_send, contacts_read
-- Amazon app launched and navigated autonomously via HeadlessJS (exact match score=100)
-- System prompt reduced from ~4.5KB to ~3.7KB, freeing context for actual reasoning
+### Architecture (native)
 
-**What's PARTIALLY PROVEN:**
-- P6 task memory — code deployed, recording happening, but shortcut reuse not yet triggered
-- P7 visible-only filtering — code deployed, but no react_navigate test with off-screen elements
-- P8 WRITE_SECURE_SETTINGS — permission granted, Java bridge added, but bluetooth/DND not tested via direct API (QS fallback still failing on Samsung split tiles)
-- IME_ENTER triple fallback — code deployed (focused editable → any editable → keyboard gesture tap + 200ms delay + retry), but no Chrome search test on Build 29
+| File | Role |
+|---|---|
+| `agent/Brain.kt` | 12-turn cloud tool loop, local-first router, task-memory hints, streaming |
+| `agent/Tools.kt` | 26-tool dispatcher; failures start with `Error:` |
+| `agent/AgentController.kt` | In-process device layer — a11y, launch, toggles, SMS, clipboard, location |
+| `agent/ReActNavigator.kt` | perceive → think → act → verify UI navigation, 15-iteration budget |
+| `gate/` | Kotlin port of the gatellml policy gate — origins, contracts, manifest, runtime |
+| `local/` | llama.cpp JNI shim + Gemma 3 1B engine, model download and load |
+| `provider/` | OpenAI-compatible client (streaming + non-streaming), provider config |
+| `data/` | Room — conversations, messages, task memory (DB v2) |
+| `ui/` | Chat, drawer, settings, voice input, quick actions |
+| `AgentAccessibilityService.java` | The a11y service (still Java — ported verbatim, not rewritten) |
 
-**What's NOT WORKING:**
-- Bluetooth/DND toggles via QS automation — Samsung split tile tap still unreliable
-- WRITE_SECURE_SETTINGS not in manifest on Build 28 (fixed in Build 29's app.json but pm grant result unverified on Build 29)
-- SMS to=undefined — params restored in TOOLS (Build 28+) but not retested
-- Brain over-searches — "MAX 2 web_searches" rule added but not verified
-- Conversation context bleeds between tasks (no new-chat reset between tests)
+### What is PROVEN on device
 
-**Build/Install commands:**
-- Copy: `wsl -e bash -c 'cp /home/<user>/agent-ultra/build-*.apk /mnt/c/Users/<user>/Downloads/Audit-Discuss-Build/Audit-Discuss-Build/build-latest.apk'` (use latest timestamp)
-- Install: `adb -s <device-ip>:5555 install -r build-latest.apk`
-- Backup: `robocopy "C:\Users\<user>\Downloads\Audit-Discuss-Build\Audit-Discuss-Build" "D:\AgentUltra-Backup" /MIR /XD node_modules .git android ios .expo`
+- Full loop: model → tool → device → answer. Battery, flashlight, clipboard round trip, notes on disk, app launch, URL open, web search with real content.
+- Policy gate blocks untraced actions live, and the confirm channel resolves them on an operator tap (gatellml SPEC §2 R4). Unit tests 14/14.
+- On-device model answers with the network fully dead — airplane mode, Wi-Fi off, no SIM.
+- Local-first router runs simple device commands with zero cloud calls.
+- Task memory injects a hint on a repeat request and the model follows it.
+- Deterministic post-action verification via a live window scan.
+- Conversations survive force-stop.
+- Streaming answers render live; tool-call turns retract the bubble.
 
-**Wireless ADB:** WORKING at `<device-ip>:5555`. Set up via `adb tcpip 5555` then `adb connect <device-ip>:5555`. Reconnect after WiFi drops with `adb connect <device-ip>:5555`. Do NOT test wifi_toggle or airplane_mode over wireless ADB (kills connection).
+### What is PARTIALLY PROVEN
 
-**Known blockers:**
-- **Bluetooth/DND toggles unreliable** — QS automation taps Samsung split tiles but doesn't actually toggle. WRITE_SECURE_SETTINGS direct API is the fix but needs manifest permission verification on Build 29.
-- **IME_ENTER** — Triple fallback added (focused editable → any editable → keyboard gesture tap) but untested on Build 29. Previous builds showed intermittent success.
-- **SMS to=undefined** — Brain calls sms_send but LLM doesn't populate `to` param. Params restored in TOOLS string (Build 28+) but untested.
-- **Brain over-searches** — Runs 4-7 web_searches instead of using results. "MAX 2" rule added but untested.
-- **Conversation bleed** — Context from previous tasks contaminates next task. No new-chat reset between requests.
-- **Self-interaction detection too aggressive** — blocks gallery/photos navigation.
-- Accessibility service must be manually re-enabled after every APK reinstall.
-- BiometricGate requires fingerprint after force-stop — cannot automate past it.
-- Build time ~35 minutes with WSL Linux SDK.
-- **Google Play accessibility policy** — Apps using AccessibilityService face extra scrutiny. Android 17 preview introduces Advanced Protection Mode that may block non-tool accessibility apps entirely. Long-term viability uncertain.
+- **Voice input** — the recognizer session starts (confirmed in logcat), but transcription has never been tested. It cannot be driven over adb.
+- **Flashlight** — the CameraManager API reports success. This Samsung has no torch-state dump, so there is no proof the light physically came on.
+
+### What is NOT working
+
+- Navigator step efficiency is model-tuned, not fixed. It takes more steps than it needs to.
+- The 1B model echoes the prompt's few-shot examples as chatter before its real answer. The parser holds; the logs are ugly.
+- Cross-task contamination still triggers gate confirmation cards mid-suite. This is by design — the operator resolves it — but it interrupts unattended runs.
+- Dead code: `Brain.kt` builds a local-route prompt at line 222 that line 243 immediately overwrites.
+
+### Build, install, and test
+
+```
+cd ~/projects/Audit-Discuss-Build/ultra-native
+./gradlew assembleDebug
+tools/install.sh
+```
+
+The install script handles the Play Protect "Don't send" dialog, re-enables the accessibility service, and launches the app. It prints the installed `versionName` and confirms the service bound — read both before testing, because a silent no-op install has cost a test run before.
+
+- Proof suite: `tools/suite.sh` — sends each task, waits for the brain's `RUN COMPLETE` marker, saves logcat and a screenshot per task.
+- Tap by visible text: `tools/uitap.sh "Send"`.
+- Logs: `adb logcat -s UltraBrain:* UltraGate:* UltraLlm:* AgentA11y:*`.
+- Compose screens dump cleanly with `uiautomator`; the old RN screens did not.
+- `adb shell input text` needs `%s` for spaces.
+
+**Wireless ADB:** `<device-ip>`. `adb tcpip 5555` does not survive a phone reboot — re-pair through Android's Wireless debugging screen when `adb connect` is refused, then target with `-s <ip>:<port>` to dodge the mDNS ghost entry. Do not test `wifi_toggle` or `airplane_mode` over wireless ADB; it kills the connection.
+
+**Backup:** USB drive `agent-ultra` at `<backup-mount>`, bare repo `agent-ultra.git`, remote name `usb`. Both `main` and `native` are pushed and tracked. Plugging the drive in runs `<backup-script>` automatically; check `<backup-mount>/backup.log` for `exit: 0`.
+
+### Known blockers and risks
+
+- **Google Play accessibility policy.** Apps using AccessibilityService face extra scrutiny, and Android 17's Advanced Protection Mode may block non-tool accessibility apps entirely. Long-term distribution is uncertain. This has been open since Build 29 and is unresolved.
+- **Accessibility service** must be re-enabled after every install. `tools/install.sh` does it.
+- **Play Protect dialog** appears with variable delay and the script sometimes misses it. Verify the version actually changed before trusting a test.
 
 ---
 
@@ -76,29 +98,22 @@ Read this file at the start of every session to understand previous work.
 
 Decisions that affect ongoing work. Update as decisions are made or reversed.
 
-- **BrainExecutor is sole active path.** AgentCore.execute() creates a new BrainExecutor per call and delegates. detectMode(), buildDynamicPrompt(), buildContext(), parseActionPlan() exist in AgentCore but are dead code on the active execution path.
-- **Two-Claude workflow.** Chat Claude (claude.ai) = strategy, planning, architecture. Claude Code (this instance) = execution, validation, commits. Solution files from Chat Claude are validated against real codebase before applying.
-- **react_navigate planning step applied.** ReActLoop now has planSteps() method, app context injection, plan-aware LLM prompt, and step advancement tracking. Committed f42909a.
-- **react_navigate delegates to HeadlessJS.** TaskExecutor no longer runs ReActLoop inline (JS freezes when backgrounded). Instead it calls native startReActTask which does moveTaskToBack + starts HeadlessJS service. The ReActLoop runs in HeadlessReActHandler.ts via AppRegistry.registerHeadlessTask.
-- **HeadlessJS is the background execution mechanism.** When `react_navigate` launches a target app, TaskExecutor calls `AgentNative.startReActTask()` — a single native Java call that (1) calls `moveTaskToBack(true)` to background Agent Ultra, then (2) starts `AgentHeadlessTaskService` which runs the JS-registered headless task. The headless task picks up the ReActLoop in a JS context that survives Activity backgrounding. Timeout is 300 seconds (5 minutes).
-- **WSL is the build environment.** EAS local builds (`eas build --local`) require Linux. All builds run in WSL Ubuntu. rsync copies source from `C:\au` (Windows) to `~/agent-ultra/` (WSL) before each build. JDK path in WSL is `/usr/lib/jvm/java-17-openjdk-amd64` (not Temurin).
-- **No metro.config.js by design.** EAS local builds handle metro bundling correctly without one. The Session 6 local Gradle `useState` crash was caused by missing metro config — EAS local builds solve this.
-- **No startForeground() in HeadlessJS service.** Android 14+ (targetSDK 35) requires foregroundServiceType for startForeground(). HeadlessJsTaskService base class handles lifecycle without it. The notification/channel/startForeground code was removed after it caused MissingForegroundServiceTypeException crashes.
-- **react_navigate blocks the tool loop.** TaskExecutor awaits a Promise that resolves when HeadlessJS emits `headlessReActComplete`. BrainExecutor cannot issue the next tool until react_navigate finishes. 300s timeout matches HeadlessJS config.
-- **Fuzzy match threshold is 55 in react_navigate.** Matches below 55 (non-exact, non-directory) are rejected. The app_launch case has its own confidence handling with user confirmation for ambiguous matches.
-- **type() auto-submits via IME_ENTER with triple fallback.** After performText succeeds, 200ms pause, then: (1) ACTION_IME_ENTER on focused editable, (2) ACTION_IME_ENTER on any editable + ACTION_CLICK, (3) gesture tap on keyboard Enter/Search/Go button. Retries once after 500ms if first attempt fails.
-- **Planning call skipped in HeadlessJS ReActLoop.** `skipPlanning: true` eliminates the 30-40s planning LLM call before the first iteration. The per-iteration prompt already includes the goal and screen state — planning was redundant latency.
-- **GATE blocks com.agent.ultra at Java level.** `checkPackageAllowed()` returns false for Agent Ultra's own package. This prevents any tap/text/scroll/swipe on the agent's own UI at the native accessibility layer, regardless of JS-side checks.
-- **goalAchieved requires package verification.** All three paths to goalAchieved=true (deterministic done, LLM done, post-loop checkCompletion) verify `currentPkg === expectedPkg`. If on wrong app or on com.agent.ultra, goalAchieved is forced to false.
-- **Toggle tools try direct API first, QS fallback.** Toggle handlers (wifi, bluetooth, airplane) call `setSecureSetting()` via WRITE_SECURE_SETTINGS permission. If that fails (permission not granted), falls back to QS tile automation. DND still uses QS only. Grant with: `adb shell pm grant com.agent.ultra android.permission.WRITE_SECURE_SETTINGS`.
-- **Brain system prompt restructured (Session 12).** Tools in 8 categories, dynamic state at top, 8 numbered rules, ~3.7KB total. Params included for tools that need specific names (sms_send, react_navigate, web_search). Tool reliability ranking: direct > app_launch > react_navigate.
-- **BrainExecutor has task planning.** Multi-step requests get a planning LLM call before the tool loop. Plan stored as string[], step pointer injected into feedback, advances on success. Single-step tasks skip planning.
-- **BrainExecutor context window is 12KB.** Sliding window keeps last 10 messages, always preserves first user message, 3KB limit for tool results, 2KB for others. Same-role messages separated with `---` not merged.
-- **Task memory persisted in AsyncStorage.** Per-tool success/failure tracking + successful multi-step tool sequences (shortcuts). Reliability warnings and known approaches injected into system prompt.
-- **toggleQuickSetting logging uses Log.i(TAG).** All QS_TOGGLE and QS_TAP logs go through `Log.i(TAG, ...)` with the `AgentA11y` tag, visible in `adb logcat -s AgentA11y:*`. Previous `emitA11yLog` calls only went to JS event queue (invisible in logcat).
-- **47 tools exposed to LLM.** Full inventory wired — every user-facing TaskExecutor handler has a TOOLS entry. 15+ internal/dangerous/dormant handlers intentionally excluded (file_delete, self_modify, app_build, etc.). See Session 9 continued (2) entry for complete inventory table.
-- **SettingsDirectory reachable via app_launch.** "Open wifi settings" → app_launch {target:"wifi settings"} → resolveSettingsIntent → WIFI_SETTINGS intent. No dedicated settings_open tool needed.
-- **API latency instrumentation in place.** [REACT_TIMING], [AISVC_TIMING], [ADAPTER_TIMING] logs at every async boundary in the ReActLoop→ModelRouter→AiService→adapter path. Grep: `adb logcat | grep -E 'REACT_TIMING|AISVC_TIMING|ADAPTER_TIMING'`.
+- **`ultra-native/` is the app.** The React Native tree is dead. No work goes into it.
+- **Gradle is the build.** `./gradlew assembleDebug` on the Framework laptop, about a minute. EAS is gone, and with it the stale-native-code problem that blocked Sessions 5 through 12.
+- **`Brain.kt` is the sole execution path**, ported from the proven `BrainExecutor.ts`: same prompt shape, first-balanced-JSON tool parsing, dynamic token budget (2000 / 1500 / 2500), push-once follow-through, same-tool-twice stuck stop, structured `[RESULT]` feedback.
+- **No RN bridge and no HeadlessJS.** `AgentController` calls the accessibility service in-process. The Activity-backgrounding problem that forced HeadlessJS does not exist in the native build; `AgentBackgroundService` is a sticky foreground service started at app create to survive Samsung's background kill on this 3.5 GB device.
+- **The gate is the enforcement layer.** `Gate.enforceCall` runs before every tool, deterministically, with no model judgment. The old "About to:" confirmation is UX only.
+- **The gate manifest is deny-by-default.** A tool not declared in `assets/ultra.manifest.json` cannot run. Completeness is mandatory — an incomplete manifest makes the gate vacuous.
+- **Blocks continue the episode.** A blocked call returns the gate's block message as the tool result and the loop keeps going. Traceability-class blocks are confirmable: the run pauses, the operator taps Confirm, and the target is minted user-attested for that episode. Taint, spoof, and undeclared blocks are never confirmable.
+- **Cloud drives the tool loop; the on-device model is the offline brain and the fast path.** Measured, not assumed: Gemma 3 1B Q4_K_M runs at 10.1 tok/s on this phone — enough for single decisions, not for a reliable multi-step loop.
+- **Local-first routing with a conservative classifier.** Simple device commands run on-device. Compound requests (`and`, `then`) and URL-like targets go straight to cloud — those were measured failures. A local miss escalates to cloud automatically.
+- **The engine owns params, the model owns intent.** The 1B model emits tool names, not JSON, so `parseBareToolCall` shapes the parameters deterministically from the request. Few-shot examples in the local prompt are load-bearing; zero-shot picked the wrong tool.
+- **History window is rebuilt fresh per request** — last 8 visible chat messages, 4 KB cap. Tool traces never enter it. This is the fix for Build 29's conversation bleed.
+- **Live window scan is ground truth.** The event-sourced package tracker goes stale on service rebind. `getForegroundPackage()` rescans windows, and `app_launch` / `open_url` verify against it.
+- **Duplicate calls are deduped.** The same tool with identical params right after a success gets "already done" feedback instead of re-firing.
+- **Task memory is Room-backed (DB v2).** Successful tool sequences per normalized request, plus per-tool reliability counters. Hints are injected as a system message on a repeat request.
+- **The provider is configured in Settings**, not by pushing a file. The `ultra_provider.json` adb backdoor is gone. Saving bumps a `configVersion` key that rebuilds the Brain.
+- **Two-Claude workflow.** Chat Claude (claude.ai) = strategy, planning, architecture. Claude Code = execution, validation, commits. Solution files from Chat Claude are validated against the real codebase before applying.
 
 ---
 
