@@ -120,7 +120,10 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         // Local-first routing: simple device commands run on the on-device
         // model — faster, free, private, works offline. Complex or ambiguous
         // requests go straight to the cloud loop. A local miss escalates.
-        if (isSimpleLocalIntent(userInput) && local.ensureLoaded()) {
+        // A big on-device model is the offline brain, not the fast path: it
+        // answers "what is my battery level" in tens of seconds where the cloud
+        // takes about one. Local-first only applies when it is actually first.
+        if (isSimpleLocalIntent(userInput) && local.suitableForFastPath && local.ensureLoaded()) {
             val handled = runLocalLoop(userInput)
             if (handled) return
             emit("(on-device model couldn't map that — trying the cloud)")

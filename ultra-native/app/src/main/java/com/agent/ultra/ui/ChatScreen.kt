@@ -63,7 +63,7 @@ fun ChatScreen(
     }
 
     var input by remember { mutableStateOf("") }
-    var thinking by remember { mutableStateOf(false) }
+    val thinking by ChatStore.thinking
     val listState = rememberLazyListState()
     var a11yRunning by remember { mutableStateOf(AgentAccessibilityService.isRunning()) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -203,17 +203,17 @@ fun ChatScreen(
                 torchOn = !torchOn
                 val cmd = if (torchOn) "turn on the flashlight" else "turn off the flashlight"
                 ChatStore.add(ChatMessage(true, cmd))
-                scope.launch { brain.run(cmd) }
+                ChatStore.agentScope.launch { brain.run(cmd) }
             }) { Text(if (torchOn) "🔦 on" else "🔦") }
             TextButton(onClick = {
                 val cmd = "take a screenshot"
                 ChatStore.add(ChatMessage(true, cmd))
-                scope.launch { brain.run(cmd) }
+                ChatStore.agentScope.launch { brain.run(cmd) }
             }) { Text("📸") }
             TextButton(onClick = {
                 val cmd = "what is my location"
                 ChatStore.add(ChatMessage(true, cmd))
-                scope.launch { brain.run(cmd) }
+                ChatStore.agentScope.launch { brain.run(cmd) }
             }) { Text("📍") }
             // Hands-free session. Reachable here too, so it works before the
             // user has made Ultra their assistant app.
@@ -381,8 +381,8 @@ fun ChatScreen(
                     if (text.isEmpty()) return@Button
                     ChatStore.add(ChatMessage(fromUser = true, text = text))
                     input = ""
-                    thinking = true
-                    scope.launch {
+                    ChatStore.thinking.value = true
+                    ChatStore.agentScope.launch {
                         try {
                             if (text.startsWith("/local ")) {
                                 // Dev path: raw on-device generation
@@ -397,10 +397,12 @@ fun ChatScreen(
                             } else {
                                 brain.run(text)
                             }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
                         } catch (e: Exception) {
                             ChatStore.add(ChatMessage(false, "Error: brain fault — ${e.message}"))
                         } finally {
-                            thinking = false
+                            ChatStore.thinking.value = false
                         }
                     }
                 },

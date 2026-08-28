@@ -34,6 +34,19 @@ class LocalModelEngine(private val context: Context) {
     private val modelFile: File get() = File(context.filesDir, "models/" + modelFileName)
 
     val modelPresent: Boolean get() = modelFile.exists() && modelFile.length() > 100_000_000
+
+    /**
+     * Is this model quick enough to be worth using as the fast path?
+     *
+     * The on-device model has two jobs: answer offline, and answer simple
+     * device commands faster than a round trip to the cloud. A 7B model does
+     * the first job far better and the second job far worse — measured, a
+     * flagship takes tens of seconds on a request the cloud answers in about a
+     * second. Above this size the local route is reserved for being offline
+     * and for an explicit /local.
+     */
+    val suitableForFastPath: Boolean
+        get() = modelFileSizeBytes in 1..FAST_PATH_MAX_BYTES
     val loaded: Boolean get() = handle != 0L
     val modelFileSizeBytes: Long get() = if (modelFile.exists()) modelFile.length() else 0L
     val modelFilePath: String get() = modelFile.absolutePath
@@ -199,6 +212,7 @@ class LocalModelEngine(private val context: Context) {
         const val THREADS = 4
         const val CTX_SIZE = 4096
         const val MIN_AVAIL_BYTES = 500L * 1024 * 1024
+        const val FAST_PATH_MAX_BYTES = 2_500L * 1024 * 1024
         private const val K_URL = "model_url"
         private const val K_FILE = "model_file"
         private const val K_LABEL = "model_label"
@@ -214,7 +228,7 @@ class LocalModelEngine(private val context: Context) {
                 "Gemma 3 1B (Q4_K_M) — default",
                 "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_K_M.gguf",
                 "gemma3-1b-q4km.gguf", 768,
-                "Measured 10.1 tok/s on this phone. The one the tool loop was tuned against.",
+                "Smallest and fastest. Measured 10.1 tok/s on a mid-range phone; quicker on a flagship. The one the tool loop was tuned against.",
             ),
             ModelChoice(
                 "Llama 3.2 1B (Q4_K_M)",

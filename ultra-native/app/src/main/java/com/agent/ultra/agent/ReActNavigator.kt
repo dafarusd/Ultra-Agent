@@ -15,9 +15,25 @@ class ReActNavigator(
 ) {
     companion object {
         private const val MAX_ITER = 15
+        private val DOMAIN =
+            Regex("[a-z0-9-]+\\.(com|org|net|io|gov|edu)", RegexOption.IGNORE_CASE)
     }
 
     data class NavResult(val success: Boolean, val summary: String, val steps: Int)
+
+    /**
+     * Has the goal visibly happened, without asking the model?
+     *
+     * The measured failure was "go to google.com in Chrome": the page loaded on
+     * step one and the navigator then spent its whole budget deciding whether
+     * it was finished. When the goal names a destination and the screen is
+     * showing it, that is the answer - no model turn required.
+     */
+    private fun goalSatisfied(goal: String, observation: String): Boolean {
+        val target = DOMAIN.find(goal)?.value ?: return false
+        val bare = target.removePrefix("www.")
+        return observation.contains(bare, ignoreCase = true)
+    }
 
     suspend fun run(goal: String, appHint: String): String {
         val result = execute(goal, appHint)
@@ -35,12 +51,18 @@ class ReActNavigator(
         delay(2500)
 
         var observation = observe()
+        // Launching the app may already have satisfied the goal.
+        if (goalSatisfied(goal, observation)) {
+            return NavResult(true, "already showing the goal", 0)
+        }
         var lastTreePrefix = ""
         var stuckCount = 0
+        var lastAction = ""
+        var repeatedNoOp = 0
         val history = mutableListOf<String>()
 
         for (iter in 1..MAX_ITER) {
-            val prompt = buildPrompt(goal, observation, history)
+            val prompt = buildPrompt(goal, observation, history, repeatedNoOp)
             val reply = client.complete(
                 listOf(OpenAiClient.ChatMessage("user", prompt)),
                 maxTokens = 600,
@@ -63,7 +85,21 @@ class ReActNavigator(
             delay(900)
             observation = observe()
             val changed = observation != before
-            history += "step $iter: $action → ${if (changed) "screen changed" else if (ok) "no visual change" else "FAILED"}"
+
+            if (goalSatisfied(goal, observation)) {
+                return NavResult(true, "goal visible on screen after $iter steps", iter)
+            }
+
+            // An action that changes nothing, twice, is the model looping. Say
+            // so in words it can act on, rather than letting it rediscover the
+            // same dead end for the rest of the budget.
+            if (!changed && action == lastAction) repeatedNoOp++ else repeatedNoOp = 0
+            lastAction = action
+
+            val outcome = if (changed) "screen changed"
+                else if (ok) "NO CHANGE - do not repeat this"
+                else "FAILED - do not repeat this"
+            history += "step $iter: $action → $outcome"
 
             // Stuck detector: same tree twice → scroll down once
             val prefix = observation.take(80)
@@ -124,7 +160,15 @@ class ReActNavigator(
         }
     }
 
-    private fun buildPrompt(goal: String, observation: String, history: List<String>): String {
+    private fun buildPrompt(
+        goal: String,
+        observation: String,
+        history: List<String>,
+        repeatedNoOp: Int = 0,
+    ): String {
+        val stuck = if (repeatedNoOp >= 2)
+            "4. You are repeating yourself. Try back(), or type the destination directly."
+        else ""
         val hist = if (history.isEmpty()) "" else "\nHISTORY:\n" + history.takeLast(6).joinToString("\n")
         return """You are driving an Android phone's UI to accomplish: "$goal"
 

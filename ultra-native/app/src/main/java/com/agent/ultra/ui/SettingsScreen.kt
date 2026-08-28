@@ -549,7 +549,7 @@ fun SettingsScreen(
         }
         Text(
             "Agent Ultra $version\n" +
-                "Policy gate: active (gatellml manifest, 30 tools declared)\n" +
+                "Policy gate: active (gatellml manifest, 31 tools declared)\n" +
                 "Accessibility: " + if (com.agent.ultra.AgentAccessibilityService.isRunning()) "connected" else "not connected",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),

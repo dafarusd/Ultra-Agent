@@ -35,6 +35,19 @@ object ChatStore {
     private val ui = CoroutineScope(Dispatchers.Main.immediate)
 
     /**
+     * Agent work outlives the screen it was started from.
+     *
+     * Runs used to be launched from the chat screen's own composition scope,
+     * so opening Settings mid-task cancelled the task and the user got
+     * "brain fault - The coroutine scope left the composition". A run belongs
+     * to the app, not to whichever screen happens to be showing.
+     */
+    val agentScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** True while a run is in flight — process-wide, for the same reason. */
+    val thinking = mutableStateOf(false)
+
+    /**
      * Compose snapshot state is not thread-safe. Streaming answers arrive on
      * OkHttp's IO threads and the on-device model emits from its own worker,
      * so every mutation of [messages] funnels through here. Writing it from a
