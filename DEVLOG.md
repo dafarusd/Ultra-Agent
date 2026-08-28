@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16 close — the ear, recipes, Venice provider)
+**Last updated:** 2026-08-28 (Session 16b — model chooser; speak-back ear-verified)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
@@ -56,13 +56,15 @@ Read this file at the start of every session to understand previous work.
 - Deterministic post-action verification via a live window scan.
 - Conversations survive force-stop.
 - Streaming answers render live; tool-call turns retract the bubble.
-- Hands-free: spoken words → on-device transcription → tool call → spoken answer, proven acoustically with no human in the loop.
+- Hands-free: spoken words → on-device transcription → tool call → spoken answer. Proven acoustically with no human in the loop, and **ear-verified by the owner on 2026-08-28** ("i heard it, it works").
+- Ultra is selectable as the device's Digital assistant app (Settings → Apps → Default apps → Digital assistant app → **Other apps** → Agent Ultra). Press-and-hold Side button opens a listening session, including from a dark screen.
+- The answer is still spoken with the app in the background: backgrounded to the launcher after transcription, the tool still ran and `SPEAK START` still fired.
+- The on-device model is switchable in Settings — five verified presets plus a custom GGUF URL.
 - Recipes: a two-tool run saved by name and replayed from a fresh conversation, gate-approved.
 
 ### What is PARTIALLY PROVEN
 
-- **Voice output** — `SPEAK START` / `SPEAK DONE` prove the engine spoke. Nobody has heard the phone. **Engine-verified, NOT ear-verified.**
-- **Voice input with a real human voice** — proven only against a synthetic voice played through a laptop speaker, where transcription is phrase-dependent ("what is the battery level" works, "what is the capital of Japan" returns NO_MATCH). One sentence from a person would settle it.
+- **Voice input with a real human voice** — proven only against a synthetic voice played through a laptop speaker, where transcription is phrase-dependent ("what is the battery level" works, "what is the capital of Japan" returns NO_MATCH). The owner's own voice has not been measured across a range of phrasings.
 - **Flashlight** — the CameraManager API reports success. This Samsung has no torch-state dump, so there is no proof the light physically came on.
 
 ### What is NOT working
@@ -127,6 +129,43 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16b — model chooser, and answers to three owner questions (2026-08-28, branch `native`)
+
+#### Speak-back is ear-verified
+
+Owner: "i heard it, it works." The hands-free chain is now proven end to end by a human, not only by `SPEAK START` in logcat. That was the last open item on M7.1.
+
+#### Assistant role — confirmed selectable, and proven
+
+Ultra does not implement a `VoiceInteractionService`, so it registers as a legacy assist app. It **is** listed in Samsung's Digital assistant picker, but under a collapsed **"Other apps"** heading — not in the top-level list, which is why it looks absent. Selected it and proved the path:
+
+- `secure assistant` → `com.agent.ultra/.VoiceActivity`
+- `KEYCODE_ASSIST` from the home screen → VoiceActivity focused, `UltraVoice: LISTENING`
+- `KEYCODE_ASSIST` from a dozing screen → phone woke, VoiceActivity focused, listening. `setShowWhenLocked` + `setTurnScreenOn` doing their job.
+- Backgrounded mid-task (Home pressed right after `HEARD`): launcher took focus, the tool still ran and the answer was still spoken.
+
+Not verified: behaviour over a **secure** lock screen. This phone has no PIN set (`lockscreen.password_type` is null), so the keyguard never challenged. `setShowWhenLocked` is the right API for it, but that is a claim, not a measurement.
+
+#### On-device model is now switchable (was hardcoded)
+
+Before this, `MODEL_URL` and the filename were constants — the only way to change the model was `adb push`. Now:
+
+- `LocalModelEngine` keeps the URL, filename, and label in SharedPreferences. `selectModel()` unloads the current weights first: the native context holds an mmap of the old file and two sets do not fit on a 3.5GB phone.
+- Each model lands under its own filename, so switching does not clobber a model already downloaded and switching back costs nothing.
+- Five presets, **every URL checked to resolve with its real content-length**, not the model card's claim: Gemma 3 1B Q4_K_M (768 MB, the tuned default), Llama 3.2 1B Q4_K_M (770 MB), Gemma 3 1B Q8_0 (1019 MB), Qwen2.5 1.5B Q4_K_M (940 MB), Qwen2.5 3B Q4_K_M (1840 MB, flagged as likely not to fit).
+- A custom GGUF URL field for anything else, with the honest caveat about size and format.
+
+#### "Present but not loaded" was two things
+
+One was correct behaviour reported badly, one was a bug.
+
+- Correct: weights sit on disk and map into memory lazily on first use (~3s), then stay until the process ends. The text now reads "Downloaded (768 MB) — loads on first use" and explains itself, rather than the alarming "not loaded".
+- Bug: the status was computed once in a `remember` and never refreshed, so it said "not loaded" even after the model had loaded. It now polls while the screen is open. Verified: ran a local command, returned to Settings, and it read "In memory and ready (768 MB)".
+
+#### Why the header said "a11y off"
+
+The chip was telling the truth — `enabled_accessibility_services` was `null` and `accessibility_enabled` was `0`. **Android disables an accessibility service whenever its app is force-stopped**, and this session's voice testing force-stopped the app repeatedly without re-enabling it. Nothing to fix in the indicator; the chip is now red and tappable, going straight to the settings screen that fixes it. The standing operational hazard is unchanged and worth remembering: any force-stop — the owner's, or Samsung's battery management — silently disables the agent's eyes and hands.
 
 ### Session 16 — M7.1 the ear, M7.2 recipes, Venice provider (2026-08-28, branch `native`)
 

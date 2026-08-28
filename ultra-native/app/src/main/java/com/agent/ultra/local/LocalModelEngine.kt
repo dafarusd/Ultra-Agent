@@ -12,14 +12,56 @@ import java.io.File
  */
 class LocalModelEngine(private val context: Context) {
 
-    private val modelFile = File(context.filesDir, "models/gemma3-1b-q4km.gguf")
+    private val prefs = context.getSharedPreferences("ultra_local_model", Context.MODE_PRIVATE)
     private var handle: Long = 0
     private val lock = Any()
+
+    /** Where the weights come from. Any GGUF the llama.cpp build understands. */
+    var modelUrl: String
+        get() = prefs.getString(K_URL, DEFAULT.url) ?: DEFAULT.url
+        private set(v) { prefs.edit().putString(K_URL, v).apply() }
+
+    /** Filename on disk. Distinct per model, so switching does not clobber
+     * a model you already downloaded — swapping back is free. */
+    var modelFileName: String
+        get() = prefs.getString(K_FILE, DEFAULT.fileName) ?: DEFAULT.fileName
+        private set(v) { prefs.edit().putString(K_FILE, v).apply() }
+
+    val modelLabel: String
+        get() = prefs.getString(K_LABEL, DEFAULT.label) ?: DEFAULT.label
+
+    private val modelFile: File get() = File(context.filesDir, "models/" + modelFileName)
 
     val modelPresent: Boolean get() = modelFile.exists() && modelFile.length() > 100_000_000
     val loaded: Boolean get() = handle != 0L
     val modelFileSizeBytes: Long get() = if (modelFile.exists()) modelFile.length() else 0L
     val modelFilePath: String get() = modelFile.absolutePath
+
+    /**
+     * Point the engine at a different model. Unloads the current weights first
+     * — the native context holds an mmap of the old file, and on a 3.5GB phone
+     * two sets of weights do not fit. Does not download; call downloadModel()
+     * afterwards if the new file is not already on disk.
+     */
+    fun selectModel(choice: ModelChoice) {
+        unload()
+        modelUrl = choice.url
+        modelFileName = choice.fileName
+        prefs.edit().putString(K_LABEL, choice.label).apply()
+        android.util.Log.i("UltraLlm", "selected model: ${choice.label} (${choice.fileName})")
+    }
+
+    /** Delete the weights for the current selection. */
+    fun deleteModelFile(): Boolean {
+        unload()
+        return modelFile.exists() && modelFile.delete()
+    }
+
+    /** Models on disk, so the user can see what a switch would cost to undo. */
+    fun downloadedFileNames(): Set<String> =
+        File(context.filesDir, "models").listFiles()
+            ?.filter { it.isFile && it.length() > 100_000_000 }
+            ?.map { it.name }?.toSet() ?: emptySet()
 
     /**
      * Download the model into app-private storage, reporting progress 0..1.
@@ -33,7 +75,7 @@ class LocalModelEngine(private val context: Context) {
                 .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
                 .followRedirects(true)
                 .build()
-            val req = okhttp3.Request.Builder().url(MODEL_URL).build()
+            val req = okhttp3.Request.Builder().url(modelUrl).build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@withContext Result.failure(Exception("HTTP ${resp.code}"))
                 val total = resp.body?.contentLength() ?: -1
@@ -139,7 +181,58 @@ class LocalModelEngine(private val context: Context) {
         const val THREADS = 4
         const val CTX_SIZE = 4096
         const val MIN_AVAIL_BYTES = 500L * 1024 * 1024
-        const val MODEL_URL =
-            "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_K_M.gguf"
+        private const val K_URL = "model_url"
+        private const val K_FILE = "model_file"
+        private const val K_LABEL = "model_label"
+
+        /**
+         * Presets. Every URL here was checked to resolve, and the sizes are the
+         * real content-length, not the model card's claim. Anything larger than
+         * about 2GB is not worth trying on a 3.5GB phone — the weights are
+         * mmap'd, but the KV cache and the rest of the app still need room.
+         */
+        val PRESETS = listOf(
+            ModelChoice(
+                "Gemma 3 1B (Q4_K_M) — default",
+                "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_K_M.gguf",
+                "gemma3-1b-q4km.gguf", 768,
+                "Measured 10.1 tok/s on this phone. The one the tool loop was tuned against.",
+            ),
+            ModelChoice(
+                "Llama 3.2 1B (Q4_K_M)",
+                "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+                "llama32-1b-q4km.gguf", 770,
+                "Same size class as the default. Different instruction style — worth a try if Gemma misreads you.",
+            ),
+            ModelChoice(
+                "Gemma 3 1B (Q8_0) — higher quality",
+                "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q8_0.gguf",
+                "gemma3-1b-q8.gguf", 1019,
+                "Same model, less quantisation damage. Bigger and slower.",
+            ),
+            ModelChoice(
+                "Qwen2.5 1.5B (Q4_K_M)",
+                "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+                "qwen25-15b-q4km.gguf", 940,
+                "Larger, generally stronger at structured output. Slower than the 1B models.",
+            ),
+            ModelChoice(
+                "Qwen2.5 3B (Q4_K_M) — may not fit",
+                "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+                "qwen25-3b-q4km.gguf", 1840,
+                "The ceiling on this device. Expect slow generation and refused loads under memory pressure.",
+            ),
+        )
+
+        val DEFAULT = PRESETS[0]
     }
 }
+
+/** A downloadable on-device model. */
+data class ModelChoice(
+    val label: String,
+    val url: String,
+    val fileName: String,
+    val approxMb: Int,
+    val note: String,
+)
