@@ -182,8 +182,12 @@ fun SettingsScreen(
                 Button(onClick = {
                     downloading = true; downloadError = null; progress = 0f
                     scope.launch {
-                        localEngine.downloadModel { progress = it }
-                            .onFailure { downloadError = it.message }
+                        localEngine.downloadModel { p ->
+                            // Hop to the main thread: Compose snapshot state is
+                            // not thread-safe and this fires from OkHttp's IO
+                            // thread throughout the download.
+                            scope.launch(kotlinx.coroutines.Dispatchers.Main) { progress = p }
+                        }.onFailure { downloadError = it.message }
                         downloading = false
                     }
                 }) { Text("Download") }
@@ -200,15 +204,28 @@ fun SettingsScreen(
             Text(if (showModels) "Hide models" else "Change model")
         }
         if (showModels) {
+            val totalRam = remember { LocalModelEngine.totalRamBytes(context) }
             Text(
-                "Downloading a model does not delete the one you have — switching back " +
-                    "is instant. Only one is ever in memory.",
+                "This phone has ${totalRam / (1024 * 1024)} MB of memory. Each model below is " +
+                    "marked for how it sits here. Downloading one does not delete the one you " +
+                    "have — switching back is instant, and only one is ever in memory.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             )
             for (m in LocalModelEngine.PRESETS) {
                 val here = m.fileName in onDisk
                 val current = m.fileName == localEngine.modelFileName
+                val fit = LocalModelEngine.fitFor(m, totalRam)
+                val fitLabel = when (fit) {
+                    com.agent.ultra.local.Fit.COMFORTABLE -> "fits comfortably"
+                    com.agent.ultra.local.Fit.TIGHT -> "tight — will run, may slow under load"
+                    com.agent.ultra.local.Fit.TOO_BIG -> "too big for this phone"
+                }
+                val fitColor = when (fit) {
+                    com.agent.ultra.local.Fit.COMFORTABLE -> MaterialTheme.colorScheme.primary
+                    com.agent.ultra.local.Fit.TIGHT -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                    com.agent.ultra.local.Fit.TOO_BIG -> MaterialTheme.colorScheme.error
+                }
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                     Text(
                         m.label + if (current) "  ← in use" else "",
@@ -217,19 +234,27 @@ fun SettingsScreen(
                         else MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        "${m.approxMb} MB · ${if (here) "on this phone" else "not downloaded"}\n${m.note}",
+                        "${m.approxMb} MB  ·  $fitLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = fitColor,
+                    )
+                    Text(
+                        "${if (here) "on this phone" else "not downloaded"}\n${m.note}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!current) {
-                            OutlinedButton(enabled = !downloading, onClick = {
+                            OutlinedButton(
+                                enabled = !downloading && fit != com.agent.ultra.local.Fit.TOO_BIG,
+                                onClick = {
                                 localEngine.selectModel(m)
                                 if (!localEngine.modelPresent) {
                                     downloading = true; downloadError = null; progress = 0f
                                     scope.launch {
-                                        localEngine.downloadModel { progress = it }
-                                            .onFailure { downloadError = it.message }
+                                        localEngine.downloadModel { p ->
+                                            scope.launch(kotlinx.coroutines.Dispatchers.Main) { progress = p }
+                                        }.onFailure { downloadError = it.message }
                                         downloading = false
                                     }
                                 }
@@ -269,8 +294,9 @@ fun SettingsScreen(
                     )
                     downloading = true; downloadError = null; progress = 0f
                     scope.launch {
-                        localEngine.downloadModel { progress = it }
-                            .onFailure { downloadError = it.message }
+                        localEngine.downloadModel { p ->
+                            scope.launch(kotlinx.coroutines.Dispatchers.Main) { progress = p }
+                        }.onFailure { downloadError = it.message }
                         downloading = false
                         customUrl = ""
                     }

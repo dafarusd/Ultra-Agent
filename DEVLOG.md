@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16g — allowlist default; installed on the owner's S24 Ultra)
+**Last updated:** 2026-08-28 (Session 16h — release build on the S24 Ultra; per-device model choice)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
@@ -141,6 +141,44 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16h — release build, and models chosen per device (2026-08-28, branch `native`)
+
+Owner: "download the on-device model for this phone. i want a list of optional models that will fit the device its installed on… i wont ship with any installed."
+
+#### Shipping shape, confirmed
+
+Nothing is bundled. The APK is **15.0 MB** because it ships with no weights at all; the app shows which models fit *the phone it is installed on* and downloads on demand. That was already the design — this session made the fit judgement real rather than a note in a description.
+
+`fitFor(model, totalRam)` bands a model by its download size as a fraction of the device's total memory: ≤25% **fits comfortably**, ≤45% **tight — will run, may slow under load**, above that **too big for this phone**, and the download button is disabled. llama.cpp memory-maps the weights so a model does not have to fit in free memory to load, but it does have to stay resident to run at a usable speed, and it shares the phone with everything else.
+
+Every size below is the real content-length from the server, not a model card's claim. On the owner's S24 Ultra (11,084 MB):
+
+| Model | Size | Verdict on this phone |
+|---|---|---|
+| Gemma 3 1B Q4_K_M | 768 MB | fits comfortably |
+| Llama 3.2 1B Q4_K_M | 770 MB | fits comfortably |
+| Qwen2.5 1.5B Q4_K_M | 940 MB | fits comfortably |
+| Gemma 3 1B Q8_0 | 1019 MB | fits comfortably |
+| Qwen2.5 3B Q4_K_M | 1840 MB | fits comfortably |
+| Phi-3.5 mini 3.8B Q4_K_M | 2282 MB | fits comfortably |
+| **Qwen2.5 7B Q4_K_M** | 4466 MB | tight — installed here |
+| Llama 3.1 8B Q4_K_M | 4692 MB | tight |
+| Gemma 2 9B Q4_K_M | 5494 MB | too big |
+| Qwen2.5 14B Q4_K_M | 8571 MB | too big |
+
+On the 3.5 GB A15 the same table reads very differently — everything from 3B up is tight or refused. That is the point of computing it per device.
+
+#### Release build on the owner's phone
+
+`release` was already wired to the same keystore as `debug`, so the release APK **installs over the top with app data intact** — allowed apps, provider key, conversations and recipes all survived, verified by re-running the YouTube refusal on the release build. The one real consequence: `debuggable` is gone, so `run-as` no longer works and configuration is UI-only from here.
+
+Qwen2.5 7B downloaded (4466 MB), loaded in **4.46 s**, and answered `/local what is the capital of France` correctly, entirely on-device. Generation speed was not measured.
+
+#### Two bugs the download exposed
+
+1. **Progress never appeared.** `onProgress` wrote Compose state directly from OkHttp's IO thread — the same class of bug that was crashing the chat screen two sessions ago. Progress now hops to the main thread and reports at most once a second instead of every 256 KB, which on a 4.5 GB file was roughly 17,000 UI writes.
+2. **Two downloads could run at once**, both writing the same `model.part` — a corrupt file that still ends up the right size. Caught while it was actually happening, after a chooser tap and a Download tap both fired. `downloadModel` is now single-flight and refuses the second caller.
 
 ### Session 16g — allowlist by default, and installing on the owner's own phone (2026-08-28, branch `native`)
 

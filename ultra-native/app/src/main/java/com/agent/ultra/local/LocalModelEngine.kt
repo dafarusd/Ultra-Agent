@@ -13,6 +13,7 @@ import java.io.File
 class LocalModelEngine(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("ultra_local_model", Context.MODE_PRIVATE)
+    private val downloadInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
     private var handle: Long = 0
     private val lock = Any()
 
@@ -69,6 +70,13 @@ class LocalModelEngine(private val context: Context) {
      * file is deleted on failure — no half-models).
      */
     suspend fun downloadModel(onProgress: (Float) -> Unit): Result<Long> = withContext(Dispatchers.IO) {
+        // One download at a time. Two of them write the same model.part and
+        // the result is a corrupt file that still looks the right size.
+        if (!downloadInFlight.compareAndSet(false, true)) {
+            android.util.Log.w("UltraLlm", "download already running — ignoring second request")
+            return@withContext Result.failure(IllegalStateException("a download is already running"))
+        }
+        android.util.Log.i("UltraLlm", "download start: $modelUrl -> ${modelFile.name}")
         try {
             val client = okhttp3.OkHttpClient.Builder()
                 .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
@@ -77,11 +85,13 @@ class LocalModelEngine(private val context: Context) {
                 .build()
             val req = okhttp3.Request.Builder().url(modelUrl).build()
             client.newCall(req).execute().use { resp ->
+                android.util.Log.i("UltraLlm", "download HTTP ${resp.code}, length=${resp.body?.contentLength()}")
                 if (!resp.isSuccessful) return@withContext Result.failure(Exception("HTTP ${resp.code}"))
                 val total = resp.body?.contentLength() ?: -1
                 val tmp = File(modelFile.parentFile, "model.part")
                 modelFile.parentFile?.mkdirs()
                 var written = 0L
+                var lastReport = 0L
                 resp.body!!.byteStream().use { input ->
                     tmp.outputStream().use { out ->
                         val buf = ByteArray(256 * 1024)
@@ -90,7 +100,11 @@ class LocalModelEngine(private val context: Context) {
                             if (n < 0) break
                             out.write(buf, 0, n)
                             written += n
-                            if (total > 0) onProgress(written.toFloat() / total)
+                            val now = System.currentTimeMillis()
+                            if (total > 0 && now - lastReport > 1000) {
+                                lastReport = now
+                                onProgress(written.toFloat() / total)
+                            }
                         }
                     }
                 }
@@ -99,10 +113,14 @@ class LocalModelEngine(private val context: Context) {
                     return@withContext Result.failure(Exception("short read: $written/$total"))
                 }
                 tmp.renameTo(modelFile)
+                android.util.Log.i("UltraLlm", "download complete: ${written / 1_048_576} MB")
                 Result.success(written)
             }
         } catch (e: Exception) {
+            android.util.Log.w("UltraLlm", "download failed", e)
             Result.failure(e)
+        } finally {
+            downloadInFlight.set(false)
         }
     }
 
@@ -217,12 +235,67 @@ class LocalModelEngine(private val context: Context) {
                 "Larger, generally stronger at structured output. Slower than the 1B models.",
             ),
             ModelChoice(
-                "Qwen2.5 3B (Q4_K_M) — may not fit",
+                "Qwen2.5 3B (Q4_K_M)",
                 "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
                 "qwen25-3b-q4km.gguf", 1840,
-                "The ceiling on this device. Expect slow generation and refused loads under memory pressure.",
+                "Noticeably better reasoning than the 1B models. A good middle ground.",
+            ),
+            ModelChoice(
+                "Phi-3.5 mini (3.8B, Q4_K_M)",
+                "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf",
+                "phi35-mini-q4km.gguf", 2282,
+                "Strong for its size on instruction following and structured output.",
+            ),
+            ModelChoice(
+                "Qwen2.5 7B (Q4_K_M)",
+                "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "qwen25-7b-q4km.gguf", 4466,
+                "Flagship territory. The first size that can drive a tool loop on its own rather than just answering.",
+            ),
+            ModelChoice(
+                "Llama 3.1 8B (Q4_K_M)",
+                "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+                "llama31-8b-q4km.gguf", 4692,
+                "Same family as the cloud model this app was tuned against.",
+            ),
+            ModelChoice(
+                "Gemma 2 9B (Q4_K_M)",
+                "https://huggingface.co/bartowski/gemma-2-9b-it-GGUF/resolve/main/gemma-2-9b-it-Q4_K_M.gguf",
+                "gemma2-9b-q4km.gguf", 5494,
+                "Large. Only worth trying on a phone with plenty of memory to spare.",
+            ),
+            ModelChoice(
+                "Qwen2.5 14B (Q4_K_M)",
+                "https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+                "qwen25-14b-q4km.gguf", 8571,
+                "Beyond what a phone runs well. Listed so the ceiling is visible, not because it is advised.",
             ),
         )
+
+        /**
+         * How a model sits on THIS phone. Sizes are the real download size,
+         * checked against the server rather than taken from a model card.
+         *
+         * llama.cpp memory-maps the weights, so a model does not have to fit
+         * in free memory to load — but it does have to stay resident to run at
+         * a usable speed, and it shares the phone with everything else. The
+         * bands below are fractions of total RAM: generous enough to use a
+         * flagship properly, honest about where it starts to hurt.
+         */
+        fun fitFor(model: ModelChoice, totalRamBytes: Long): Fit {
+            if (totalRamBytes <= 0 || model.approxMb <= 0) return Fit.COMFORTABLE
+            val fraction = (model.approxMb * 1_048_576.0) / totalRamBytes
+            return when {
+                fraction <= 0.25 -> Fit.COMFORTABLE
+                fraction <= 0.45 -> Fit.TIGHT
+                else -> Fit.TOO_BIG
+            }
+        }
+
+        fun totalRamBytes(context: Context): Long = try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.totalMem
+        } catch (_: Exception) { 0L }
 
         val DEFAULT = PRESETS[0]
     }
@@ -236,3 +309,6 @@ data class ModelChoice(
     val approxMb: Int,
     val note: String,
 )
+
+/** How a model sits on a given phone. */
+enum class Fit { COMFORTABLE, TIGHT, TOO_BIG }
