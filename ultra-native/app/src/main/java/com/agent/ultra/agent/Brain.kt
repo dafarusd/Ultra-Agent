@@ -19,13 +19,12 @@ import java.util.Locale
  * detector, structured result feedback. Conversation-bleed fix in the port:
  * each request starts from a fresh message list with a capped history window.
  */
-class Brain(context: Context) {
+class Brain(context: Context, private val local: com.agent.ultra.local.LocalModelEngine) {
 
     private val controller = AgentController(context)
     private val tools: Tools
     private val client: OpenAiClient?
     private val gate: Gate
-    private val local = com.agent.ultra.local.LocalModelEngine(context)
 
     init {
         val cfg = ProviderConfig.load(context)

@@ -42,11 +42,15 @@ object ChatStore {
 }
 
 @Composable
-fun ChatScreen() {
+fun ChatScreen(
+    localEngine: LocalModelEngine,
+    configVersion: Int,
+    onOpenSettings: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val brain = remember { Brain(context.applicationContext) }
-    val localEngine = remember { LocalModelEngine(context.applicationContext) }
+    // Rebuilt when the provider config changes (settings save bumps the key).
+    val brain = remember(configVersion) { Brain(context.applicationContext, localEngine) }
     var input by remember { mutableStateOf("") }
     var thinking by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -90,6 +94,9 @@ fun ChatScreen() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             )
+            androidx.compose.material3.TextButton(onClick = onOpenSettings) {
+                Text("⚙", style = MaterialTheme.typography.titleLarge)
+            }
         }
 
         LazyColumn(
