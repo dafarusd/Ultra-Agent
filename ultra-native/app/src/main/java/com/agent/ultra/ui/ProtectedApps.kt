@@ -22,6 +22,24 @@ object ProtectedApps {
      * user can see and change, never a silent decision.
      */
     private val SENSITIVE_HINTS = listOf(
+        // Learned by reading a real phone's 204 apps rather than guessing:
+        // the first list caught 20 and missed at least 40 that mattered.
+        "discover", "experian", "equifax", "transunion", "creditkarma",
+        "affirm", "klarna", "afterpay", "lendmark", "sofi", "chime",
+        "stripe", "square", "quickbooks", "paychex", "adp", "gusto",
+        "fidelity", "schwab", "vanguard", "etrade", "robinhood", "tradingview",
+        "uniswap", "opensea", "monero", "changenow", "changelly", "dexscreener",
+        "coinmarketcap", "trustapp", "rabby", "coinomi", "ledger", "trezor",
+        "lottery", "auction", "ezpass", "turnpike", "lifelock", "grants",
+        "docusign", "adobe.reader", "keychain", "openkeychain", "ssh",
+        "termius", "auditor", "termux", "vnc", "teamviewer", "anydesk",
+        "tor", "vpn", "cyberghost", "tailscale", "protonmail", "proton",
+        "mychart", "anthem", "epic", "cvs", "walgreens", "goodrx", "teladoc",
+        "signal", "securesms", "telegram", "whatsapp", "orca", "messenger",
+        "outlook", "gmail", "slack", "discord", "snapchat",
+        "familylink", "classdojo", "remind101", "apptegy", "kidshome",
+        "playconsole", "adsmanager", "pages.app", "shopify", "seller",
+        "banking", "fiid", "creditunion", "fcu",
         "bank", "chase", "wellsfargo", "citi", "capitalone", "usaa", "hsbc",
         "barclays", "lloyds", "santander", "revolut", "monzo", "n26",
         "paypal", "venmo", "cashapp", "zelle", "wise",
@@ -32,6 +50,33 @@ object ProtectedApps {
         "健康", "health", "myfitnesspal",
         "irs", "turbotax", "hrblock",
     )
+
+    /** True when the agent may only enter apps the user has chosen. */
+    fun allowlistMode(context: Context): Boolean =
+        context.getSharedPreferences(AgentAccessibilityService.BLOCK_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(AgentAccessibilityService.MODE_KEY, false)
+
+    fun setAllowlistMode(context: Context, on: Boolean) {
+        context.getSharedPreferences(AgentAccessibilityService.BLOCK_PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(AgentAccessibilityService.MODE_KEY, on).apply()
+        AgentAccessibilityService.loadBlockedPackages(context)
+    }
+
+    fun allowed(context: Context): Set<String> =
+        context.getSharedPreferences(AgentAccessibilityService.BLOCK_PREFS, Context.MODE_PRIVATE)
+            .getStringSet(AgentAccessibilityService.ALLOW_KEY, emptySet()) ?: emptySet()
+
+    fun setAllowed(context: Context, packages: Set<String>) {
+        context.getSharedPreferences(AgentAccessibilityService.BLOCK_PREFS, Context.MODE_PRIVATE)
+            .edit().putStringSet(AgentAccessibilityService.ALLOW_KEY, HashSet(packages)).apply()
+        AgentAccessibilityService.loadBlockedPackages(context)
+    }
+
+    fun toggleAllowed(context: Context, pkg: String, on: Boolean) {
+        val next = allowed(context).toMutableSet()
+        if (on) next += pkg else next -= pkg
+        setAllowed(context, next)
+    }
 
     fun blocked(context: Context): Set<String> =
         context.getSharedPreferences(AgentAccessibilityService.BLOCK_PREFS, Context.MODE_PRIVATE)
@@ -53,12 +98,19 @@ object ProtectedApps {
         setBlocked(context, next)
     }
 
-    data class Entry(val pkg: String, val label: String, val protected: Boolean, val suggested: Boolean)
+    data class Entry(
+        val pkg: String,
+        val label: String,
+        val protected: Boolean,
+        val suggested: Boolean,
+        val allowed: Boolean,
+    )
 
     /** Launchable third-party apps, protected ones first. */
     fun installed(context: Context): List<Entry> {
         val pm = context.packageManager
         val blocked = blocked(context)
+        val allowedSet = allowed(context)
         return pm.getInstalledApplications(0)
             .asSequence()
             .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
@@ -70,9 +122,11 @@ object ProtectedApps {
                         .getOrDefault(info.packageName),
                     protected = info.packageName in blocked,
                     suggested = looksSensitive(info.packageName),
+                    allowed = info.packageName in allowedSet,
                 )
             }
-            .sortedWith(compareByDescending<Entry> { it.protected }
+            .sortedWith(compareByDescending<Entry> { it.allowed }
+                .thenByDescending { it.protected }
                 .thenByDescending { it.suggested }
                 .thenBy { it.label.lowercase() })
             .toList()
@@ -99,7 +153,11 @@ object ProtectedApps {
             .map { it.packageName }
             .filter { looksSensitive(it) }
             .toSet()
-        prefs.edit().putBoolean("seeded", true).apply()
+        // Safe by default on a fresh install: the agent can reach nothing
+        // until the user picks. Seeding the protected list still runs, so the
+        // guesses are there if they switch to a block list later.
+        prefs.edit().putBoolean("seeded", true)
+            .putBoolean(AgentAccessibilityService.MODE_KEY, true).apply()
         if (guesses.isNotEmpty()) setBlocked(context, blocked(context) + guesses)
         AgentAccessibilityService.loadBlockedPackages(context)
         return guesses.isNotEmpty()

@@ -66,7 +66,18 @@ dismiss_dialogs
 wait $INSTALL_PID
 INSTALL_RC=$?
 
-adb shell settings put secure enabled_accessibility_services $SVC
+# Append, never replace. This setting is a colon-separated list and the phone
+# may already be running someone else's accessibility service — overwriting it
+# silently switches off a tool the owner relies on.
+CUR=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r')
+case ":$CUR:" in
+  *":$SVC:"*) echo "[install] a11y already listed" ;;
+  *)
+    if [ -z "$CUR" ] || [ "$CUR" = "null" ]; then NEW="$SVC"; else NEW="$CUR:$SVC"; fi
+    adb shell settings put secure enabled_accessibility_services "$NEW"
+    echo "[install] a11y appended (was: ${CUR:-none})"
+    ;;
+esac
 adb shell settings put secure accessibility_enabled 1
 adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1
 sleep 3

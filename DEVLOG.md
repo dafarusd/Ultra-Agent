@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16f — per-action gate)
+**Last updated:** 2026-08-28 (Session 16g — allowlist default; installed on the owner's S24 Ultra)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
@@ -100,7 +100,8 @@ The install script handles the Play Protect "Don't send" dialog, re-enables the 
 ### Privacy and safety, stated plainly
 
 - **Whatever the agent reads goes to the cloud model.** Screen contents, SMS, contacts, notifications and location all travel to Venice as tool results so the model can decide the next step. The gate's taint rule stops secrets leaving via *egress tools*; it does not and cannot stop the brain call itself.
-- **Protected apps** (Settings → PROTECTED APPS) are refused at the native layer for both reading and acting. Seeded on first run from package-name hints; the user owns the list.
+- **The agent may only enter apps the owner has ticked** (Settings → WHERE THE AGENT MAY GO). Allowlist mode is the default from first launch and fails closed. A block-list mode exists, seeded from package-name hints, for anyone who wants the looser posture.
+- **Messages, contacts and location are off by default** (Settings → PERSONAL DATA). They read Android's providers directly, so the app list does not cover them.
 - **`react_navigate` taps that commit something now stop and ask** — pay, buy, order, confirm, submit, send, transfer, delete, subscribe, book and similar, on both indexed and coordinate taps. Ordinary taps run untouched by design. Typing is not gated; the button after it is.
 - **Notification logging is off by default** and skips protected apps.
 - Any force-stop silently disables the accessibility service — the agent's eyes and hands — and the header chip is the only signal.
@@ -140,6 +141,38 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16g — allowlist by default, and installing on the owner's own phone (2026-08-28, branch `native`)
+
+Owner: "phone is connected. this is my phone, be careful" — a Galaxy S24 Ultra (SM-S928B), Android 16, 11.3 GB RAM, 204 third-party apps — followed by "this phone may receive a call, text, email… dont mess with them".
+
+#### The blocklist was the wrong shape, and the owner's phone proved it
+
+The seeding rule built on the test device caught 20 apps here. Reading all 204 by hand found **at least 40 more that mattered** and would have been silently reachable: [personal app list removed].
+
+**A block list has to name every risk in advance. On a real phone that is a bet you lose once.** So the default is inverted: `allowlist_mode` is now on from first launch, and the agent may read or act only in apps the owner has ticked. `agentMayUse(pkg)` is the single question every read and every action asks, and it **fails closed** — an unreadable package name is a no.
+
+The hint list was rewritten from what the real phone actually contains rather than from imagination; seeding now catches **71 apps** here, and it no longer has to be complete, because it is only a convenience for the block-list mode.
+
+#### The hole the allowlist does not cover
+
+`sms_read`, `sms_send`, `contacts_read` and `device_location` reach Android's own content providers. **They never go near a screen, so the accessibility policy does not gate them at all.** On a phone taking real calls and texts that is the sharpest edge in the app.
+
+New `PERSONAL DATA` switch, off by default, checked ahead of dispatch. With it off the agent is told plainly that messages, contacts and location are unavailable and to carry on with the rest of the task.
+
+#### A bug that would have broken the owner's phone
+
+`enabled_accessibility_services` is a colon-separated list, and this phone already runs CCleaner's accessibility service. `install.sh` did `settings put secure enabled_accessibility_services $SVC` — **overwriting it**, silently switching off a tool the owner relies on. It now appends, checks for its own entry first, and reports what was there before.
+
+#### State after install — deliberately inert
+
+- Installed, `2.0.0-native`. Launched once so the policy is written.
+- `allowlist_mode = true`, **allowed set empty** — the agent can reach nothing.
+- Ultra's accessibility service **not enabled**; CCleaner's untouched.
+- No dangerous runtime permissions granted: no SMS, contacts, microphone, location, camera, phone or storage. Only install-time normals (network, wifi, bluetooth, foreground service).
+- Notification listener not enabled; notification capture off by default.
+
+Nothing runs until the owner chooses which apps the agent may enter.
 
 ### Session 16f — the per-action gate (2026-08-28, branch `native`)
 

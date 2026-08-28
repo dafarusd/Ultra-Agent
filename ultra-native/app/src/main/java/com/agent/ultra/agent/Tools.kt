@@ -31,6 +31,16 @@ class Tools(
     var recipeRunner: (suspend (String) -> String)? = null
 
     suspend fun execute(tool: String, params: JSONObject): String {
+        // Messages, contacts and location reach Android's own providers, so
+        // the app-access list does not cover them — that list gates what the
+        // accessibility service sees on screen, and reading the SMS database
+        // never goes near a screen. On a phone taking real calls and texts,
+        // the default has to be no.
+        if (tool in PERSONAL_TOOLS && !com.agent.ultra.ui.UltraPrefs.allowPersonalData(context)) {
+            return "Error: messages, contacts and location are switched off for this agent. " +
+                "The user can turn them on in Settings under PERSONAL DATA. " +
+                "Do not retry — tell them, and carry on with the rest of the task."
+        }
         return try {
             when (tool) {
                 // ── Perception ───────────────────────────────────────
@@ -417,6 +427,9 @@ class Tools(
     companion object {
         /** Tools that mutate the outside world — confirmation gate targets. */
         val DESTRUCTIVE = setOf("sms_send", "file_delete")
+
+        /** Reach personal data directly, bypassing the app-access list. */
+        val PERSONAL_TOOLS = setOf("sms_send", "sms_read", "contacts_read", "device_location")
 
         /** Perception budgets. Characters, not node counts — a node count
          * punishes a page for having short labels. */

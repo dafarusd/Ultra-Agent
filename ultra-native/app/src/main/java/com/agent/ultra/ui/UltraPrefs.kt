@@ -14,6 +14,25 @@ object UltraPrefs {
             .getBoolean(K_SPEAK, false)
 
     private const val K_NOTIF = "capture_notifications"
+    private const val K_PERSONAL = "allow_personal_data"
+
+    /**
+     * Whether the agent may touch messages, contacts and location.
+     *
+     * Off by default. These tools reach Android's own providers directly, so
+     * the app-access list does not cover them — that list gates what the
+     * accessibility service can see on screen, and reading the SMS database
+     * never goes near a screen. On a phone that takes real calls and texts,
+     * the default has to be no.
+     */
+    fun allowPersonalData(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(K_PERSONAL, false)
+
+    fun setAllowPersonalData(context: Context, on: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(K_PERSONAL, on).apply()
+    }
 
     /** Whether the notification listener keeps a rolling log on disk. Off by
      * default: it runs whether or not a task is active, so it is collection

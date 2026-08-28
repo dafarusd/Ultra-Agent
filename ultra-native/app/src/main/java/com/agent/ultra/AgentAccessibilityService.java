@@ -44,18 +44,40 @@ public class AgentAccessibilityService extends AccessibilityService {
     public static boolean isPackageAllowed(String pkg) { return allowedPackages.contains(pkg); }
     public static final String BLOCK_PREFS = "ultra_protected_apps";
     public static final String BLOCK_KEY = "blocked";
+    public static final String ALLOW_KEY = "allowed";
+    public static final String MODE_KEY = "allowlist_mode";
+
+    /** When true, the agent may only work in apps the user has chosen.
+     * A blocklist has to name every risk in advance; on a real phone with two
+     * hundred apps that is a bet you lose once. This inverts it. */
+    private static volatile boolean allowlistMode = false;
+    private static final Set<String> allowedApps = new java.util.concurrent.ConcurrentSkipListSet<>();
+
+    public static boolean isAllowlistMode() { return allowlistMode; }
+
+    /** The single question every read and every action must ask. */
+    public static boolean agentMayUse(String pkg) {
+        if (pkg == null) return false;
+        if (allowlistMode) return allowedApps.contains(pkg);
+        return !blockedPackages.contains(pkg);
+    }
 
     /** Load the user's protected-app list. Called at service connect, and
      * again whenever Settings changes it. Without this the blocklist existed
      * in code but was never populated — a safety net with no rope in it. */
     public static void loadBlockedPackages(android.content.Context ctx) {
         try {
-            java.util.Set<String> saved = ctx
-                .getSharedPreferences(BLOCK_PREFS, android.content.Context.MODE_PRIVATE)
-                .getStringSet(BLOCK_KEY, new java.util.HashSet<>());
+            android.content.SharedPreferences prefs = ctx
+                .getSharedPreferences(BLOCK_PREFS, android.content.Context.MODE_PRIVATE);
+            java.util.Set<String> saved = prefs.getStringSet(BLOCK_KEY, new java.util.HashSet<>());
             blockedPackages.clear();
             if (saved != null) blockedPackages.addAll(saved);
-            Log.i(TAG, "protected apps loaded: " + blockedPackages.size());
+            java.util.Set<String> allow = prefs.getStringSet(ALLOW_KEY, new java.util.HashSet<>());
+            allowedApps.clear();
+            if (allow != null) allowedApps.addAll(allow);
+            allowlistMode = prefs.getBoolean(MODE_KEY, false);
+            Log.i(TAG, "app policy: mode=" + (allowlistMode ? "allowlist" : "blocklist")
+                + " allowed=" + allowedApps.size() + " protected=" + blockedPackages.size());
         } catch (Exception e) {
             Log.w(TAG, "could not load protected apps", e);
         }
@@ -515,9 +537,9 @@ public class AgentAccessibilityService extends AccessibilityService {
     private boolean isProtected(AccessibilityNodeInfo root) {
         try {
             CharSequence pkg = root.getPackageName();
-            return pkg != null && isPackageBlocked(pkg.toString());
+            return pkg == null || !agentMayUse(pkg.toString());
         } catch (Exception e) {
-            return false;
+            return true;  // fail closed
         }
     }
 
@@ -624,9 +646,10 @@ public class AgentAccessibilityService extends AccessibilityService {
             Log.i(TAG, "GATE: BLOCKED_SELF pkg=" + currentPackage);
             return false;
         }
-        if (isPackageBlocked(currentPackage)) {
+        if (!agentMayUse(currentPackage)) {
             emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_USER\",\"pkg\":\"" + currentPackage + "\"}");
-            Log.i(TAG, "GATE: BLOCKED_USER pkg=" + currentPackage);
+            Log.i(TAG, "GATE: BLOCKED pkg=" + currentPackage
+                + " (" + (allowlistMode ? "not on the allowed list" : "protected") + ")");
             return false;
         }
         if (!isPackageAllowed(currentPackage)) {

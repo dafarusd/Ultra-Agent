@@ -324,31 +324,54 @@ fun SettingsScreen(
             }
         }
 
-        // ── Protected apps ────────────────────────────────────────────
-        SectionTitle("PROTECTED APPS")
+        // ── App access ────────────────────────────────────────────────
+        SectionTitle("WHERE THE AGENT MAY GO")
+        var allowMode by remember { mutableStateOf(ProtectedApps.allowlistMode(context)) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Only apps I choose", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Recommended. The agent can read and act only in apps you tick below; " +
+                        "everything else is invisible to it. The alternative is a block list, " +
+                        "which means naming every risky app in advance — on a phone with " +
+                        "hundreds of apps that is a bet you lose once.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            Switch(checked = allowMode, onCheckedChange = {
+                allowMode = it
+                ProtectedApps.setAllowlistMode(context, it)
+            })
+        }
         Text(
-            "The agent will not read or touch these. Blocking matters both ways: " +
-                "anything it reads on screen is sent to the cloud model to decide what " +
-                "to do next, so \"don't look\" is as important as \"don't act\".",
+            "Blocking matters both ways: whatever the agent reads on screen is sent to the " +
+                "cloud model to decide what to do next, so \"don't look\" is as important " +
+                "as \"don't act\".",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.padding(top = 6.dp),
         )
+
         var appQuery by remember { mutableStateOf("") }
         var showApps by remember { mutableStateOf(false) }
         var appList by remember { mutableStateOf<List<ProtectedApps.Entry>>(emptyList()) }
-        LaunchedEffect(showApps) {
-            if (showApps && appList.isEmpty()) {
+        LaunchedEffect(showApps, allowMode) {
+            if (showApps) {
                 appList = withContext(kotlinx.coroutines.Dispatchers.IO) { ProtectedApps.installed(context) }
             }
         }
-        val protectedNow = remember(appList) { appList.count { it.protected } }
         Text(
-            if (appList.isEmpty()) "Tap below to review which apps are protected."
-            else "$protectedNow protected of ${appList.size} installed apps.",
+            if (!showApps) "Tap below to choose."
+            else if (allowMode) "${appList.count { it.allowed }} apps allowed of ${appList.size} installed."
+            else "${appList.count { it.protected }} apps protected of ${appList.size} installed.",
             style = MaterialTheme.typography.bodyMedium,
         )
         TextButton(onClick = { showApps = !showApps }) {
-            Text(if (showApps) "Hide app list" else "Choose protected apps")
+            Text(if (showApps) "Hide app list" else if (allowMode) "Choose allowed apps" else "Choose protected apps")
         }
         if (showApps) {
             OutlinedTextField(
@@ -362,6 +385,7 @@ fun SettingsScreen(
                 appQuery.isBlank() || it.label.contains(appQuery, true) || it.pkg.contains(appQuery, true)
             }.take(60)
             for (app in shown) {
+                val on = if (allowMode) app.allowed else app.protected
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -369,14 +393,20 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(app.label, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            app.pkg + if (app.suggested) "  · looks sensitive" else "",
+                            app.pkg + if (app.suggested) "  ·  looks sensitive" else "",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            color = if (app.suggested) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         )
                     }
-                    Switch(checked = app.protected, onCheckedChange = { on ->
-                        ProtectedApps.toggle(context, app.pkg, on)
-                        appList = appList.map { if (it.pkg == app.pkg) it.copy(protected = on) else it }
+                    Switch(checked = on, onCheckedChange = { checked ->
+                        if (allowMode) {
+                            ProtectedApps.toggleAllowed(context, app.pkg, checked)
+                            appList = appList.map { if (it.pkg == app.pkg) it.copy(allowed = checked) else it }
+                        } else {
+                            ProtectedApps.toggle(context, app.pkg, checked)
+                            appList = appList.map { if (it.pkg == app.pkg) it.copy(protected = checked) else it }
+                        }
                     })
                 }
             }
@@ -387,6 +417,29 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 )
             }
+        }
+
+        SectionTitle("PERSONAL DATA")
+        var personal by remember { mutableStateOf(UltraPrefs.allowPersonalData(context)) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Messages, contacts and location", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Off by default. These read Android's own databases rather than the " +
+                        "screen, so the app list above does not cover them. With this off, " +
+                        "the agent cannot read your texts, look up a contact, send an SMS, " +
+                        "or fetch your location — it is told so and carries on.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            Switch(checked = personal, onCheckedChange = {
+                personal = it
+                UltraPrefs.setAllowPersonalData(context, it)
+            })
         }
 
         var capture by remember { mutableStateOf(UltraPrefs.captureNotifications(context)) }
