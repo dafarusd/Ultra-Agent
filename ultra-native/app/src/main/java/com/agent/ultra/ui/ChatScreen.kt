@@ -274,6 +274,21 @@ fun ChatScreen(
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
             )
+            // Voice input — on-device speech recognition fills the box
+            var listening by remember { mutableStateOf(false) }
+            val speechHelper = remember {
+                VoiceInput(context) { spoken -> input = (input + " " + spoken).trim() }
+            }
+            TextButton(onClick = {
+                if (listening) {
+                    speechHelper.stop()
+                    listening = false
+                } else {
+                    listening = speechHelper.start()
+                }
+            }) {
+                Text(if (listening) "🎙…" else "🎙")
+            }
             Button(
                 enabled = !thinking,
                 onClick = {
