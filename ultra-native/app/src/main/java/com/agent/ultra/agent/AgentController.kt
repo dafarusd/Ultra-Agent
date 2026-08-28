@@ -90,6 +90,12 @@ class AgentController(private val context: Context) {
         service?.performScroll(direction) ?: false
     }
 
+    /** Scroll the largest scrollable container in the target app's window —
+     * for reading a whole page rather than nudging whatever is nearest. */
+    suspend fun scrollDeep(direction: String): Boolean = withContext(Dispatchers.IO) {
+        serviceOrWait()?.performScrollDeep(direction) ?: false
+    }
+
     suspend fun imeEnter(): Boolean = withContext(Dispatchers.IO) {
         service?.performImeAction() ?: false
     }

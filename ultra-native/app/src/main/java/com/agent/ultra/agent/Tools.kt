@@ -39,6 +39,12 @@ class Tools(
                     if (flat == "[]" || flat.isBlank()) "Error: screen empty or accessibility service not running"
                     else summarizeFlat(flat)
                 }
+                "read_screen_deep" -> {
+                    // Measured on an Amazon results page: still gaining new
+                    // content at scroll 10, so the default is not timid.
+                    val maxScrolls = params.optInt("maxScrolls", 12).coerceIn(1, 30)
+                    deepRead(maxScrolls)
+                }
                 "describe_screen" -> {
                     val flat = controller.screenFlat()
                     if (flat == "[]" || flat.isBlank()) "Error: screen empty or accessibility service not running"
@@ -167,22 +173,97 @@ class Tools(
         }
     }
 
-    /** Flatten the a11y node list into the readable text the brain consumes. */
-    private fun summarizeFlat(flat: String): String {
+    /**
+     * Flatten the a11y node list into the readable text the brain consumes.
+     *
+     * There used to be a hard 40-label cap here. On any dense page — a search
+     * result list, a feed, an article — 40 labels is the header and the
+     * sign-in prompt, and the agent would confidently report that the content
+     * "is not available". The limit is now a character budget, so a sparse
+     * screen costs nothing and a rich one is actually readable.
+     */
+    private fun summarizeFlat(flat: String, budget: Int = VIEWPORT_BUDGET): String {
         return try {
-            val arr = org.json.JSONArray(flat)
-            val lines = mutableListOf<String>()
-            for (i in 0 until arr.length()) {
-                val n = arr.getJSONObject(i)
-                val label = n.optString("t").ifBlank { n.optString("d") }.trim()
-                if (label.isNotBlank()) lines.add(label.take(80))
-                if (lines.size >= 40) break
+            val labels = labelsOf(flat)
+            if (labels.isEmpty()) return "Screen has no readable text"
+            val out = StringBuilder()
+            var used = 0
+            var shown = 0
+            for (l in labels) {
+                if (used + l.length + 1 > budget) break
+                out.append(l).append('\n')
+                used += l.length + 1
+                shown++
             }
-            if (lines.isEmpty()) "Screen has no readable text"
-            else lines.joinToString("\n")
+            if (shown < labels.size) {
+                out.append("… ${labels.size - shown} more items on this screen; ")
+                    .append("use read_screen_deep to read the whole page.")
+            }
+            out.toString().trimEnd()
         } catch (e: Exception) {
             "Error: could not parse screen: ${e.message}"
         }
+    }
+
+    /** Distinct, ordered, non-empty labels from a flat node dump. */
+    private fun labelsOf(flat: String): List<String> = try {
+        val arr = org.json.JSONArray(flat)
+        val seen = LinkedHashSet<String>()
+        for (i in 0 until arr.length()) {
+            val n = arr.optJSONObject(i) ?: continue
+            val label = n.optString("t").ifBlank { n.optString("d") }.trim()
+            if (label.isNotBlank()) seen.add(label.take(LABEL_CHARS))
+        }
+        seen.toList()
+    } catch (_: Exception) { emptyList() }
+
+    /**
+     * Read a whole scrollable page, not just the viewport.
+     *
+     * Scrolls the largest container forward, re-reads, and accumulates labels
+     * in order, stopping as soon as a scroll produces nothing new. Order is
+     * preserved and duplicates dropped, so overlapping reads across scrolls
+     * come out as one clean document.
+     */
+    private suspend fun deepRead(maxScrolls: Int): String {
+        val seen = LinkedHashSet<String>()
+        val first = controller.screenFlat()
+        if (first == "[]" || first.isBlank()) {
+            return "Error: screen empty or accessibility service not running"
+        }
+        seen += labelsOf(first)
+        var scrolls = 0
+        var stoppedBecause = "reached the end of the page"
+        while (scrolls < maxScrolls) {
+            if (!controller.scrollDeep("down")) {
+                stoppedBecause = if (scrolls == 0) "this screen does not scroll" else "reached the end of the page"
+                break
+            }
+            scrolls++
+            kotlinx.coroutines.delay(SCROLL_SETTLE_MS)
+            val before = seen.size
+            seen += labelsOf(controller.screenFlat())
+            val gained = seen.size - before
+            android.util.Log.i("UltraPerceive", "deep scroll $scrolls: +$gained new (total ${seen.size})")
+            if (gained == 0) break
+            if (seen.size >= MAX_DEEP_LABELS) { stoppedBecause = "hit the ${MAX_DEEP_LABELS}-item limit"; break }
+        }
+        if (scrolls >= maxScrolls) stoppedBecause = "hit the $maxScrolls-scroll limit"
+
+        val all = seen.toList()
+        val out = StringBuilder()
+        var used = 0
+        var shown = 0
+        for (l in all) {
+            if (used + l.length + 1 > DEEP_BUDGET) break
+            out.append(l).append('\n')
+            used += l.length + 1
+            shown++
+        }
+        val header = "Read ${all.size} items across ${scrolls + 1} screen(s) — $stoppedBecause.\n"
+        val footer = if (shown < all.size) "\n… ${all.size - shown} more items not shown (output limit)." else ""
+        android.util.Log.i("UltraPerceive", "deep read: ${all.size} labels, $scrolls scrolls, $used chars")
+        return header + out.toString().trimEnd() + footer
     }
 
     /** Web search: DDG instant-answer JSON first, Wikipedia second, HTML
@@ -305,5 +386,13 @@ class Tools(
     companion object {
         /** Tools that mutate the outside world — confirmation gate targets. */
         val DESTRUCTIVE = setOf("sms_send", "file_delete")
+
+        /** Perception budgets. Characters, not node counts — a node count
+         * punishes a page for having short labels. */
+        const val LABEL_CHARS = 120
+        const val VIEWPORT_BUDGET = 4000
+        const val DEEP_BUDGET = 12000
+        const val MAX_DEEP_LABELS = 600
+        const val SCROLL_SETTLE_MS = 650L
     }
 }

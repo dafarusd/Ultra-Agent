@@ -8,13 +8,19 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 
-/** What tool sequence succeeded for a normalized request. */
+/**
+ * What actually worked for a request, recorded only when the whole task
+ * succeeded — not when the individual tool calls happened to return without
+ * an error. `stepsJson` holds the full calls with their arguments, so a hint
+ * can name the approach rather than just the tool.
+ */
 @Entity(tableName = "task_shortcuts")
 data class TaskShortcutEntity(
     @PrimaryKey val requestKey: String,
     val toolsCsv: String,
     val successCount: Int,
     val lastUsed: Long,
+    val stepsJson: String = "",
 )
 
 /** Per-tool reliability counters. */
@@ -30,6 +36,14 @@ data class ToolReliabilityEntity(
 interface TaskMemoryDao {
     @Query("SELECT * FROM task_shortcuts WHERE requestKey = :key")
     suspend fun shortcutFor(key: String): TaskShortcutEntity?
+
+    /** The whole table — small by nature, and fuzzy matching happens in Kotlin
+     * where a token-set score is expressible. */
+    @Query("SELECT * FROM task_shortcuts ORDER BY successCount DESC, lastUsed DESC LIMIT 200")
+    suspend fun allShortcuts(): List<TaskShortcutEntity>
+
+    @Query("DELETE FROM task_shortcuts WHERE requestKey = :key")
+    suspend fun deleteShortcut(key: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertShortcut(s: TaskShortcutEntity)

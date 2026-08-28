@@ -438,7 +438,8 @@ public class AgentAccessibilityService extends AccessibilityService {
                 }
             } catch (Exception ignored) {}
         }
-        for (int i = 0; i < Math.min(node.getChildCount(), 60); i++) {
+        // Deep perception: result lists and feeds routinely exceed 60 children.
+        for (int i = 0; i < Math.min(node.getChildCount(), 200); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
                 flattenNode(child, flat);
@@ -623,6 +624,81 @@ public class AgentAccessibilityService extends AccessibilityService {
         root.recycle();
         Log.i(TAG, "SCROLL: result=" + result);
         return result;
+    }
+
+    /**
+     * Scroll for deep reading. Two differences from performScroll:
+     * it picks the target app's window the same way getScreenContentFlat does
+     * (getRootInActiveWindow can be the keyboard or an overlay), and it scrolls
+     * the LARGEST scrollable container rather than the first one found — the
+     * first is usually a narrow carousel, not the list you want to read.
+     */
+    public boolean performScrollDeep(String direction) {
+        if (!checkPackageAllowed()) return false;
+        AccessibilityNodeInfo root = null;
+        try {
+            java.util.List<AccessibilityWindowInfo> windows = getWindows();
+            for (AccessibilityWindowInfo w : windows) {
+                if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    AccessibilityNodeInfo wRoot = w.getRoot();
+                    if (wRoot != null) {
+                        CharSequence pkg = wRoot.getPackageName();
+                        if (pkg == null || !"com.agent.ultra".contentEquals(pkg)) { root = wRoot; break; }
+                        wRoot.recycle();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "SCROLL_DEEP: window scan failed: " + e.getMessage());
+        }
+        if (root == null) root = getRootInActiveWindow();
+        if (root == null) { Log.i(TAG, "SCROLL_DEEP: no root"); return false; }
+
+        AccessibilityNodeInfo best = findLargestScrollable(root, null);
+        boolean result = false;
+        if (best != null) {
+            int action = ("up".equals(direction) || "backward".equals(direction))
+                ? AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                : AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
+            result = best.performAction(action);
+            Rect b = new Rect();
+            best.getBoundsInScreen(b);
+            Log.i(TAG, "SCROLL_DEEP: " + direction + " on " + best.getClassName()
+                + " area=" + (b.width() * b.height()) + " result=" + result);
+            best.recycle();
+        } else {
+            Log.i(TAG, "SCROLL_DEEP: nothing scrollable");
+        }
+        root.recycle();
+        return result;
+    }
+
+    /** Depth-first search for the scrollable node covering the most screen area. */
+    private AccessibilityNodeInfo findLargestScrollable(AccessibilityNodeInfo node, AccessibilityNodeInfo best) {
+        if (node == null) return best;
+        if (node.isScrollable()) {
+            Rect nb = new Rect();
+            node.getBoundsInScreen(nb);
+            long area = (long) nb.width() * nb.height();
+            long bestArea = 0;
+            if (best != null) {
+                Rect bb = new Rect();
+                best.getBoundsInScreen(bb);
+                bestArea = (long) bb.width() * bb.height();
+            }
+            if (area > bestArea) {
+                if (best != null) best.recycle();
+                best = AccessibilityNodeInfo.obtain(node);
+            }
+        }
+        for (int i = 0; i < Math.min(node.getChildCount(), 200); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                best = findLargestScrollable(child, best);
+                child.recycle();
+            }
+        }
+        return best;
     }
 
     public boolean performImeAction() {

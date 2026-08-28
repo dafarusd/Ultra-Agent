@@ -215,51 +215,112 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     private fun requestKey(input: String): String =
         input.lowercase().replace(Regex("[^a-z0-9 ]"), "").replace(Regex("\\s+"), " ").trim()
 
+    /** Content words only — the words that carry what the request is about. */
+    private fun contentTokens(input: String): Set<String> =
+        requestKey(input).split(" ")
+            .filter { it.length > 2 && it !in STOPWORDS }
+            .toSet()
+
+    /**
+     * Find what worked for a request like this one.
+     *
+     * Exact-string keys were nearly useless: "whats my location" and "what is
+     * my location" were separate rows with separate memories. Matching is now
+     * a token-set overlap over content words, so the same question phrased two
+     * ways hits the same memory.
+     */
+    private suspend fun bestShortcut(userInput: String): Pair<com.agent.ultra.data.TaskShortcutEntity, Double>? {
+        val mine = contentTokens(userInput)
+        if (mine.isEmpty()) return null
+        var best: com.agent.ultra.data.TaskShortcutEntity? = null
+        var bestScore = 0.0
+        for (row in taskMemory.allShortcuts()) {
+            val theirs = contentTokens(row.requestKey)
+            if (theirs.isEmpty()) continue
+            // Containment, not Jaccard. The same job asked at different
+            // lengths ("battery level" vs "how is the battery doing") scores
+            // badly under Jaccard purely for being wordier. What matters is
+            // whether the smaller request's subject is present in the larger.
+            val overlap = mine.intersect(theirs).size.toDouble()
+            val score = overlap / minOf(mine.size, theirs.size)
+            if (score > bestScore) { bestScore = score; best = row }
+        }
+        return if (best != null && bestScore >= MATCH_THRESHOLD) best!! to bestScore else null
+    }
+
     private suspend fun memoryHint(userInput: String): String? {
         return try {
             val parts = mutableListOf<String>()
-            val shortcut = taskMemory.shortcutFor(requestKey(userInput))
-            if (shortcut != null && shortcut.successCount > 0) {
-                parts += "MEMORY: this request previously succeeded with: ${shortcut.toolsCsv}. Prefer that sequence."
-            }
-            val unreliable = taskMemory.unreliableTools()
-            if (unreliable.isNotEmpty()) {
-                parts += "UNRELIABLE TOOLS (failing recently): " +
-                    unreliable.take(3).joinToString { "${it.tool} (${it.failures} failures)" } +
-                    ". Prefer alternatives when possible."
+            val match = bestShortcut(userInput)
+            if (match != null && match.first.successCount > 0) {
+                val row = match.first
+                val how = row.stepsJson.ifBlank { row.toolsCsv }
+                parts += "MEMORY: a request like this succeeded before " +
+                    "(\"${row.requestKey}\") using: $how. Prefer that approach."
+
+                // Only warn about a tool with a bad record when it is relevant
+                // here — the tool that worked last time is not it. A blanket
+                // warning on every request is noise the model has to ignore.
+                val used = row.toolsCsv.split("→").map { it.trim() }.toSet()
+                val risky = taskMemory.unreliableTools()
+                    .filter { it.failures >= MIN_FAILURES_TO_WARN && it.tool !in used }
+                if (risky.isNotEmpty()) {
+                    parts += "AVOID: " + risky.take(2).joinToString { "${it.tool} (${it.failures} recent failures)" }
+                }
             }
             if (parts.isEmpty()) null else parts.joinToString("\n")
         } catch (_: Exception) { null }
     }
 
-    private suspend fun recordMemory(userInput: String, sequence: List<Triple<String, JSONObject, Boolean>>) {
+    /**
+     * Record what worked — but only when the TASK worked.
+     *
+     * Success used to be counted per tool call, so a run that ended with "I
+     * couldn't find the price" still stored its tool sequence as the way to do
+     * that job, and the wrong lesson got replayed. Per-tool reliability is
+     * still recorded either way; that genuinely is a per-call fact.
+     */
+    private suspend fun recordMemory(
+        userInput: String,
+        sequence: List<Triple<String, JSONObject, Boolean>>,
+        taskSucceeded: Boolean,
+    ) {
         try {
-            // Remember this run's successful calls so "save that as <name>"
-            // has something to save. Recipe bookkeeping never becomes a step.
             val steps = sequence.filter { it.third && it.first !in RECIPE_TOOLS }
                 .map { Recipes.Step(it.first, it.second) }
             if (steps.isNotEmpty()) lastRunSteps = steps
+
             for ((tool, _, ok) in sequence) {
                 val cur = taskMemory.reliabilityFor(tool)
-                val next = com.agent.ultra.data.ToolReliabilityEntity(
-                    tool,
-                    (cur?.successes ?: 0) + (if (ok) 1 else 0),
-                    (cur?.failures ?: 0) + (if (ok) 0 else 1),
-                    if (ok) "" else "recent failure",
-                )
-                taskMemory.upsertReliability(next)
-            }
-            val successes = sequence.filter { it.third }.map { it.first }
-            if (successes.isNotEmpty()) {
-                val key = requestKey(userInput)
-                val cur = taskMemory.shortcutFor(key)
-                taskMemory.upsertShortcut(
-                    com.agent.ultra.data.TaskShortcutEntity(
-                        key, successes.joinToString(" → "),
-                        (cur?.successCount ?: 0) + 1, System.currentTimeMillis(),
+                taskMemory.upsertReliability(
+                    com.agent.ultra.data.ToolReliabilityEntity(
+                        tool,
+                        (cur?.successes ?: 0) + (if (ok) 1 else 0),
+                        (cur?.failures ?: 0) + (if (ok) 0 else 1),
+                        if (ok) "" else "recent failure",
                     )
                 )
             }
+
+            if (!taskSucceeded || steps.isEmpty()) {
+                android.util.Log.i("UltraBrain", "MEMORY: not recorded (task succeeded=$taskSucceeded)")
+                return
+            }
+            val key = requestKey(userInput)
+            val cur = taskMemory.shortcutFor(key)
+            val stepsJson = org.json.JSONArray().also { arr ->
+                steps.forEach { arr.put(JSONObject().put("tool", it.tool).put("params", it.params)) }
+            }.toString()
+            taskMemory.upsertShortcut(
+                com.agent.ultra.data.TaskShortcutEntity(
+                    key,
+                    steps.joinToString(" → ") { it.tool },
+                    (cur?.successCount ?: 0) + 1,
+                    System.currentTimeMillis(),
+                    stepsJson,
+                )
+            )
+            android.util.Log.i("UltraBrain", "MEMORY: recorded \"$key\" -> ${steps.joinToString(" → ") { it.tool }}")
         } catch (_: Exception) {}
     }
 
@@ -308,6 +369,15 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     /** The on-device tool loop: compact catalog, max 2 turns, gate enforced. */
     private suspend fun runLocalLoop(userInput: String): Boolean {
         val episode = Gate.Episode(userInput)
+        // What worked before, for the 1B model too. One line, and only when a
+        // single tool is involved — this model follows a short concrete hint
+        // and drowns in a long one.
+        val recalled = try {
+            bestShortcut(userInput)?.first?.takeIf { !it.toolsCsv.contains("→") }?.toolsCsv
+        } catch (_: Exception) { null }
+        if (recalled != null) {
+            android.util.Log.i("UltraBrain", "MEMORY HINT (local): $recalled")
+        }
         // Few-shot examples — 1B models map intents reliably with them, not
         // without (measured: zero-shot picked flashlight_toggle for 'open
         // chrome'). Trimmed catalog for the local route.
@@ -344,6 +414,12 @@ JSON: {"tool":"wifi_toggle","params":{"on":false}}
 
 User: $userInput
 JSON:"""
+        if (recalled != null) {
+            prompt = prompt.replace(
+                "User: $userInput",
+                "A request like this previously worked with: $recalled\n\nUser: $userInput",
+            )
+        }
         repeat(2) { attempt ->
             val raw = local.generate(prompt, 200).getOrElse { return false }
             // The 1B model keeps writing after its answer — it replays the
@@ -374,7 +450,7 @@ JSON:"""
             // On-device runs feed task memory and the recipe buffer too —
             // otherwise "save that as X" after a local command has nothing
             // to save.
-            recordMemory(userInput, listOf(Triple(call.first, call.second, !failed)))
+            recordMemory(userInput, listOf(Triple(call.first, call.second, !failed)), !failed)
             return true
         }
         return false
@@ -398,6 +474,12 @@ JSON:"""
         // Task memory: track this run's tool outcomes (params included so a
         // successful run can be promoted into a named recipe).
         val toolSequence = mutableListOf<Triple<String, JSONObject, Boolean>>()
+        // Task-level success: the model finished with its own answer and
+        // nothing failed on the way. Running out of turns, giving up after a
+        // repeated failure, or ending on a block are all NOT successes, even
+        // though the individual calls before them may have returned fine.
+        var naturalFinish = false
+        var anyToolFailed = false
 
         for (turn in startTurn until maxTurns) {
             val maxTokens = if (turn == 0) 2000 else if (turn >= maxTurns - 2) 2500 else 1500
@@ -435,6 +517,7 @@ JSON:"""
                     continue
                 }
                 finalText = raw
+                naturalFinish = true
                 android.util.Log.i("UltraBrain", "FINAL TEXT (${raw.length} chars)")
                 break
             }
@@ -490,6 +573,7 @@ JSON:"""
             episode.observeSecrets(resultText)
             val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
             toolSequence += Triple(toolCall.first, toolCall.second, !failed)
+            if (failed) anyToolFailed = true
             val verification = if (!failed) verifyAction(toolCall.first, toolCall.second) else null
             android.util.Log.i("UltraBrain", "TOOL RESULT (${if (failed) "fail" else "ok"}): ${resultText.take(120)}${verification ?: ""}")
 
@@ -526,7 +610,7 @@ JSON:"""
             // Every turn ended in a block or failure — never end silently.
             answer("I couldn't complete that — the policy gate stopped the action and I had no safe alternative. Try rephrasing, or confirm the target if I ask.")
         }
-        recordMemory(userInput, toolSequence)
+        recordMemory(userInput, toolSequence, naturalFinish && !anyToolFailed)
     }
 
     // ── Parsing & prompt (ported shapes) ───────────────────────────────
@@ -680,7 +764,7 @@ RULES:
 2. ALWAYS prefer direct tools over UI automation: toggles > app_launch > react_navigate. Only use react_navigate when you need to interact INSIDE an app.
 3. When web_search returns text results, READ THEM and answer directly. Do NOT open a browser to see results you already have. MAX 2 web_searches per task.
 4. After every tool call, VERIFY the result. If it failed, try a different approach. If the same tool fails twice, stop and tell the user.
-5. Read screen content (read_text_on_screen) to gather data, then use it in the next tool call.
+5. Read screen content to gather data, then use it in the next tool call. If what you need could be further down the page — results, prices, list items, article text — use read_screen_deep, not read_text_on_screen. Never report that content is unavailable until you have tried read_screen_deep.
 6. When you have enough information to answer, STOP calling tools and give a clear, complete answer.
 7. If you hit a login screen, captcha, or permission dialog: STOP and ask the user to handle it.
 8. NEVER send messages or make calls unless the user EXPLICITLY asks.
@@ -694,6 +778,28 @@ RULES:
         @Volatile var lastRunSteps: List<Recipes.Step> = emptyList()
 
         val RECIPE_TOOLS = setOf("recipe_save", "recipe_run", "recipe_list", "recipe_delete")
+
+        /** How much two requests must overlap to count as the same job. */
+        const val MATCH_THRESHOLD = 0.5
+
+        /** A tool needs a real track record of failing before it gets named. */
+        const val MIN_FAILURES_TO_WARN = 3
+
+        /** Words that say nothing about what a request is for. */
+        val STOPWORDS = setOf(
+            // filler and grammar
+            "the", "and", "for", "you", "your", "can", "will", "with", "that",
+            "this", "then", "please", "what", "whats", "how", "hows", "why",
+            "does", "did", "was", "are", "some", "get", "got", "let", "its",
+            "have", "has", "just", "now", "one", "all", "any", "out", "about",
+            "from", "into", "when", "where", "which", "there", "here", "again",
+            "could", "would", "should", "much", "many", "doing", "going",
+            // generic request verbs — they say nothing about the subject.
+            // "open chrome" and "open amazon" are different jobs; without
+            // dropping "open" they look half the same.
+            "open", "launch", "start", "tell", "show", "give", "find", "check",
+            "look", "make", "want", "need", "know", "like", "read", "say",
+        )
 
         private const val TOOL_CATALOG = """
 DEVICE CONTROL (instant, ~99% reliable):
@@ -718,7 +824,11 @@ FILES & CLIPBOARD & CREATION:
   clipboard_write {text}, clipboard_read, note_create {text}, alarm_set {hour, minute?, label?}
 
 SCREEN:
-  read_text_on_screen, describe_screen, screenshot, notification_read
+  read_text_on_screen — what is visible right now. Fast.
+  read_screen_deep — scrolls the page and reads ALL of it. params: {maxScrolls?}
+    Use this whenever the answer is in a LIST, FEED, ARTICLE, SEARCH RESULTS,
+    PRICES, or anything below the fold. read_text_on_screen sees the header only.
+  describe_screen, screenshot, notification_read
 
 RECIPES (the user's saved routines — replay a whole sequence by name):
   recipe_run — run a saved routine. params: {name}

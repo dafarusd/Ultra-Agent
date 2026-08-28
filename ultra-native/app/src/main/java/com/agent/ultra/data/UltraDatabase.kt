@@ -11,7 +11,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [ConversationEntity::class, MessageEntity::class,
         TaskShortcutEntity::class, ToolReliabilityEntity::class,
         RecipeEntity::class],
-    version = 3,
+    version = 4,
 )
 abstract class UltraDatabase : RoomDatabase() {
     abstract fun conversations(): ConversationDao
@@ -38,10 +38,17 @@ abstract class UltraDatabase : RoomDatabase() {
             }
         }
 
+        /** v3 → v4 records the full calls, not just the tool names. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `task_shortcuts` ADD COLUMN `stepsJson` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun get(context: Context): UltraDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, UltraDatabase::class.java, "ultra.db"
-            ).addMigrations(MIGRATION_2_3)
+            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4)
             .fallbackToDestructiveMigration()  // last resort for older dev schemas
             .build().also { instance = it }
         }

@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16b — model chooser; speak-back ear-verified)
+**Last updated:** 2026-08-28 (Session 16c — deep perception; task memory rewritten)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
@@ -33,7 +33,7 @@ Read this file at the start of every session to understand previous work.
 | File | Role |
 |---|---|
 | `agent/Brain.kt` | 12-turn cloud tool loop, local-first router, task-memory hints, streaming |
-| `agent/Tools.kt` | 30-tool dispatcher; failures start with `Error:` |
+| `agent/Tools.kt` | 31-tool dispatcher; failures start with `Error:` |
 | `agent/Recipes.kt` | named, replayable tool sequences; user-attested on replay |
 | `VoiceActivity.kt` | hands-free assist session — listen, run, speak back |
 | `ui/Speaker.kt` | on-device text-to-speech with logged start/done |
@@ -61,6 +61,8 @@ Read this file at the start of every session to understand previous work.
 - The answer is still spoken with the app in the background: backgrounded to the launcher after transcription, the tool still ran and `SPEAK START` still fired.
 - The on-device model is switchable in Settings — five verified presets plus a custom GGUF URL.
 - Recipes: a two-tool run saved by name and replayed from a fresh conversation, gate-approved.
+- Deep perception: 126 items read across 11 screens of an Amazon results page, yielding real product names and prices. The same request returned "not available" before.
+- Task memory recalls across rewordings, stores the arguments, and refuses to record a task that failed.
 
 ### What is PARTIALLY PROVEN
 
@@ -129,6 +131,70 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16c — deep perception, and memory that learns the right lesson (2026-08-28, branch `native`)
+
+Owner directives: "fix the perception depth, remove the 40 node cap and add scrolling. i need deep perception." and "when it performs a task correctly it needs to remember."
+
+#### Deep perception (PROVEN — the task that failed yesterday now works)
+
+The measured failure: asked for Amazon prices, the agent reached the right page and then reported *"the price of the first result is not available."* Cause was one line in `Tools.summarizeFlat` — `if (lines.size >= 40) break`. Forty labels off the top of a commerce page is the app-install banner and the sign-in prompt. It had the page and could not see it.
+
+What changed:
+
+- **The 40-label cap is gone.** Perception is bounded by a character budget now (4000 for a viewport read, 12000 for a deep read), because a node count punishes a page for having short labels. Labels keep 120 chars instead of 80. When the budget truncates, the output says so and names the tool that reads further.
+- **New tool `read_screen_deep {maxScrolls?}`** — scrolls the page and accumulates labels in order, dropping duplicates across overlapping reads, stopping as soon as a scroll yields nothing new. Default 12 scrolls, ceiling 30. Declared in the gate manifest as a read.
+- **`performScrollDeep` in the accessibility service.** The existing `performScroll` had two faults for this job: it used `getRootInActiveWindow()`, which is the keyboard or an overlay as often as the app, and it scrolled the *first* scrollable it found — usually a narrow carousel, not the list you want. The new one scans windows the way `getScreenContentFlat` does and scrolls the **largest** scrollable by screen area.
+- **Native child cap raised 60 → 200.** Result lists and feeds routinely exceed 60 children, so the tree walk was truncating before the label budget ever applied.
+
+Same request, same page, after the change:
+
+```
+UltraPerceive: deep scroll 1: +14 new (total 60)
+...
+UltraPerceive: deep read: 126 labels, 10 scrolls, 4463 chars
+```
+
+> The prices of the first few results for wireless earbuds on Amazon are:
+> - $25.99 for TAGRY Bluetooth Headphones True Wireless Earbuds
+> - $18.99 for Top Reviewed for Battery life earbuds (exclusive Prime price)
+> - $26.55 for TOZO NC9 Hybrid Active Noise Cancelling Wireless Earbuds
+
+126 items across 11 screens, against 40 labels of page header before. It was still gaining content at scroll 10, which is why the default is 12 rather than 8.
+
+#### Task memory rewritten — it was learning the wrong things
+
+Inspecting the table showed three separate defects, all visible in the data:
+
+1. **Exact-string keys split the same job.** `whats my location` and `what is my location` were two rows with two memories. So were `what is the battery level` and `what is my battery level`. In real use — especially spoken — a memory keyed on exact wording almost never hits.
+2. **It recorded failures as successes.** Success was counted per tool call. The Amazon run that ended *"the price is not available"* was stored as the way to do that job, because `web_search → web_search → open_url → read_text_on_screen` each returned without an error. The wrong lesson, ready to be replayed.
+3. **The reliability warning was pure noise.** `react_navigate 0/4` was injected into every single request this session, relevant or not, including "what is my battery level".
+
+What it does now:
+
+- **Matching is a token-set score over content words**, using containment rather than Jaccard — the same job asked at different lengths scored badly under Jaccard purely for being wordier. Generic request verbs (`open`, `launch`, `tell`, `show`, `find`, `check`…) are stopwords, because "open chrome" and "open amazon" are different jobs and shouldn't look half the same. Threshold 0.5.
+- **A task is recorded only when the task succeeded**: the model finished with its own answer and nothing failed on the way. Running out of turns, giving up after a repeated failure, and ending on a gate block are all not successes. Per-tool reliability is still counted per call — that genuinely is a per-call fact.
+- **Full calls with arguments are stored** (`stepsJson`, DB v4 with a real 3→4 migration), so a hint can name the approach rather than just the tool.
+- **The AVOID warning is scoped**: a tool is only named when it has 3+ failures *and* was not part of the approach that worked for this kind of request.
+- **The on-device route consults memory too.** It previously ignored it entirely — only the cloud loop got hints. A single-tool recall is injected as one short line, which is what a 1B model can follow.
+
+Proven on device:
+
+- Taught `what is my battery level` → recorded. Asked `hows the battery doing` in a fresh chat → `MEMORY HINT (local): battery_status`, correct tool, no cloud call. Under the old rule this created a second, unrelated row.
+- Taught `turn on the flashlight`, then asked `open chrome` → no false recall.
+- `open the Spotify app and play my liked songs` (not installed, two tool failures) → **no memory recorded**.
+
+Shortcuts written under the old rule were cleared, since every one of them was recorded by the broken success test. Conversations, recipes, and reliability counters were kept.
+
+#### Regression
+
+Gate unit tests 14/14. Device suite 9/9 — and `read_screen_deep` was chosen unprompted on the Wikipedia task, which is the prompt guidance landing.
+
+#### Open
+
+- `read_screen_deep` reads labels, not structure. It got prices because the prices are labels on that page. It has no notion of "this price belongs to that product" — a real extraction pass is still missing.
+- Deep reads leave the page scrolled where they finished; nothing scrolls back.
+- Navigator step efficiency, still untouched.
 
 ### Session 16b — model chooser, and answers to three owner questions (2026-08-28, branch `native`)
 
