@@ -36,8 +36,12 @@ class Tools(
                 // ── Perception ───────────────────────────────────────
                 "read_text_on_screen" -> {
                     val flat = controller.screenFlat()
-                    if (flat == "[]" || flat.isBlank()) "Error: screen empty or accessibility service not running"
-                    else summarizeFlat(flat)
+                    when {
+                        flat == PROTECTED -> PROTECTED_MSG
+                        flat == "[]" || flat.isBlank() ->
+                            "Error: screen empty or accessibility service not running"
+                        else -> summarizeFlat(flat)
+                    }
                 }
                 "read_screen_deep" -> {
                     // Measured on an Amazon results page: still gaining new
@@ -47,8 +51,12 @@ class Tools(
                 }
                 "describe_screen" -> {
                     val flat = controller.screenFlat()
-                    if (flat == "[]" || flat.isBlank()) "Error: screen empty or accessibility service not running"
-                    else "Current app: ${controller.activePackage()}\n" + summarizeFlat(flat)
+                    when {
+                        flat == PROTECTED -> PROTECTED_MSG
+                        flat == "[]" || flat.isBlank() ->
+                            "Error: screen empty or accessibility service not running"
+                        else -> "Current app: ${controller.activePackage()}\n" + summarizeFlat(flat)
+                    }
                 }
                 "screenshot" -> {
                     if (controller.takeScreenshot()) "Screenshot taken — saved to the device gallery"
@@ -229,6 +237,7 @@ class Tools(
         val seen = LinkedHashSet<String>()                       // flat fallback
         val items = LinkedHashMap<String, ScreenStructure.Item>() // structured rows
         val first = controller.screenFlat()
+        if (first == PROTECTED) return PROTECTED_MSG
         if (first == "[]" || first.isBlank()) {
             return "Error: screen empty or accessibility service not running"
         }
@@ -416,5 +425,11 @@ class Tools(
         const val DEEP_BUDGET = 12000
         const val MAX_DEEP_LABELS = 600
         const val SCROLL_SETTLE_MS = 650L
+
+        const val PROTECTED = com.agent.ultra.AgentAccessibilityService.PROTECTED
+        const val PROTECTED_MSG =
+            "Error: this app is on the user's protected list - its screen cannot be read. " +
+                "Do not try again with another screen-reading tool. Tell the user which app " +
+                "it is, and that they can change it in Settings if they want to."
     }
 }

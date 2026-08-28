@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import com.agent.ultra.local.LocalModelEngine
 import com.agent.ultra.provider.ProviderConfig
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsScreen(
@@ -322,6 +323,100 @@ fun SettingsScreen(
                 }
             }
         }
+
+        // ── Protected apps ────────────────────────────────────────────
+        SectionTitle("PROTECTED APPS")
+        Text(
+            "The agent will not read or touch these. Blocking matters both ways: " +
+                "anything it reads on screen is sent to the cloud model to decide what " +
+                "to do next, so \"don't look\" is as important as \"don't act\".",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
+        var appQuery by remember { mutableStateOf("") }
+        var showApps by remember { mutableStateOf(false) }
+        var appList by remember { mutableStateOf<List<ProtectedApps.Entry>>(emptyList()) }
+        LaunchedEffect(showApps) {
+            if (showApps && appList.isEmpty()) {
+                appList = withContext(kotlinx.coroutines.Dispatchers.IO) { ProtectedApps.installed(context) }
+            }
+        }
+        val protectedNow = remember(appList) { appList.count { it.protected } }
+        Text(
+            if (appList.isEmpty()) "Tap below to review which apps are protected."
+            else "$protectedNow protected of ${appList.size} installed apps.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        TextButton(onClick = { showApps = !showApps }) {
+            Text(if (showApps) "Hide app list" else "Choose protected apps")
+        }
+        if (showApps) {
+            OutlinedTextField(
+                value = appQuery,
+                onValueChange = { appQuery = it },
+                label = { Text("Search apps") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            val shown = appList.filter {
+                appQuery.isBlank() || it.label.contains(appQuery, true) || it.pkg.contains(appQuery, true)
+            }.take(60)
+            for (app in shown) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(app.label, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            app.pkg + if (app.suggested) "  · looks sensitive" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        )
+                    }
+                    Switch(checked = app.protected, onCheckedChange = { on ->
+                        ProtectedApps.toggle(context, app.pkg, on)
+                        appList = appList.map { if (it.pkg == app.pkg) it.copy(protected = on) else it }
+                    })
+                }
+            }
+            if (shown.size < appList.size) {
+                Text(
+                    "Showing ${shown.size} of ${appList.size}. Search to narrow.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                )
+            }
+        }
+
+        var capture by remember { mutableStateOf(UltraPrefs.captureNotifications(context)) }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Keep a notification log", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Off by default. When on, notification titles and previews are written " +
+                        "to a file on this phone whether or not you asked for anything — " +
+                        "including message previews and one-time codes. Protected apps are " +
+                        "never logged.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            Switch(checked = capture, onCheckedChange = {
+                capture = it
+                UltraPrefs.setCaptureNotifications(context, it)
+            })
+        }
+        OutlinedButton(onClick = {
+            scope.launch {
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    java.io.File(context.filesDir, "notifications.log").delete()
+                }
+            }
+        }) { Text("Delete notification log") }
 
         // ── Voice ─────────────────────────────────────────────────────
         SectionTitle("VOICE")

@@ -42,6 +42,25 @@ public class AgentAccessibilityService extends AccessibilityService {
     public static void allowPackage(String pkg) { allowedPackages.add(pkg); }
     public static void revokePackage(String pkg) { allowedPackages.remove(pkg); }
     public static boolean isPackageAllowed(String pkg) { return allowedPackages.contains(pkg); }
+    public static final String BLOCK_PREFS = "ultra_protected_apps";
+    public static final String BLOCK_KEY = "blocked";
+
+    /** Load the user's protected-app list. Called at service connect, and
+     * again whenever Settings changes it. Without this the blocklist existed
+     * in code but was never populated — a safety net with no rope in it. */
+    public static void loadBlockedPackages(android.content.Context ctx) {
+        try {
+            java.util.Set<String> saved = ctx
+                .getSharedPreferences(BLOCK_PREFS, android.content.Context.MODE_PRIVATE)
+                .getStringSet(BLOCK_KEY, new java.util.HashSet<>());
+            blockedPackages.clear();
+            if (saved != null) blockedPackages.addAll(saved);
+            Log.i(TAG, "protected apps loaded: " + blockedPackages.size());
+        } catch (Exception e) {
+            Log.w(TAG, "could not load protected apps", e);
+        }
+    }
+
     public static void blockPackage(String pkg) { blockedPackages.add(pkg); allowedPackages.remove(pkg); }
     public static void unblockPackage(String pkg) { blockedPackages.remove(pkg); }
     public static boolean isPackageBlocked(String pkg) { return blockedPackages.contains(pkg); }
@@ -74,6 +93,7 @@ public class AgentAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         super.onServiceConnected();
         synchronized (instanceLock) { instance = this; }
+        loadBlockedPackages(this);
         AccessibilityServiceInfo info = getServiceInfo();
         if (info == null) info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
@@ -384,6 +404,13 @@ public class AgentAccessibilityService extends AccessibilityService {
                         }
                     }
                 }
+                if (root != null && isProtected(root)) {
+                    Log.i(TAG, "SCREEN_FLAT: BLOCKED — protected app in front");
+                    result.set(PROTECTED);
+                    root.recycle();
+                    root = null;
+                    return;
+                }
                 if (root != null) {
                     CharSequence rootPkg = root.getPackageName();
                     Log.i(TAG, "SCREEN_FLAT: root_pkg=" + (rootPkg != null ? rootPkg.toString() : "null"));
@@ -456,6 +483,13 @@ public class AgentAccessibilityService extends AccessibilityService {
                         if (fbPkg != null && "com.agent.ultra".contentEquals(fbPkg)) { root.recycle(); root = null; }
                     }
                 }
+                if (root != null && isProtected(root)) {
+                    Log.i(TAG, "SCREEN_TREE: BLOCKED — protected app in front");
+                    result.set(PROTECTED);
+                    root.recycle();
+                    root = null;
+                    return;
+                }
                 if (root != null) {
                     JSONArray tree = new JSONArray();
                     treeNode(root, tree, -1, 0);
@@ -471,6 +505,20 @@ public class AgentAccessibilityService extends AccessibilityService {
         });
         try { latch.await(6, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
         return result.get();
+    }
+
+    /** Returned instead of nodes when the foreground app is protected, so the
+     * caller can say why rather than reporting an empty screen. */
+    public static final String PROTECTED = "PROTECTED";
+
+    /** True when the window belongs to an app the user marked protected. */
+    private boolean isProtected(AccessibilityNodeInfo root) {
+        try {
+            CharSequence pkg = root.getPackageName();
+            return pkg != null && isPackageBlocked(pkg.toString());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static final int TREE_NODE_LIMIT = 3000;

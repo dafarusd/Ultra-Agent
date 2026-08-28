@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16d — structured extraction)
+**Last updated:** 2026-08-28 (Session 16e — protected apps)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
 
@@ -97,6 +97,14 @@ The install script handles the Play Protect "Don't send" dialog, re-enables the 
 
 **Backup:** USB drive `agent-ultra` at `<backup-mount>`, bare repo `agent-ultra.git`, remote name `usb`. Both `main` and `native` are pushed and tracked. Plugging the drive in runs `<backup-script>` automatically; check `<backup-mount>/backup.log` for `exit: 0`.
 
+### Privacy and safety, stated plainly
+
+- **Whatever the agent reads goes to the cloud model.** Screen contents, SMS, contacts, notifications and location all travel to Venice as tool results so the model can decide the next step. The gate's taint rule stops secrets leaving via *egress tools*; it does not and cannot stop the brain call itself.
+- **Protected apps** (Settings → PROTECTED APPS) are refused at the native layer for both reading and acting. Seeded on first run from package-name hints; the user owns the list.
+- **`react_navigate` taps are not individually gated.** Approving a goal approves every action inside it. Protecting an app is the only hard boundary today.
+- **Notification logging is off by default** and skips protected apps.
+- Any force-stop silently disables the accessibility service — the agent's eyes and hands — and the header chip is the only signal.
+
 ### Known blockers and risks
 
 - **Google Play accessibility policy.** Apps using AccessibilityService face extra scrutiny, and Android 17's Advanced Protection Mode may block non-tool accessibility apps entirely. Long-term distribution is uncertain. This has been open since Build 29 and is unresolved.
@@ -132,6 +140,37 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16e — protected apps: the safety net that had no rope in it (2026-08-28, branch `native`)
+
+Owner question: "is it safe to test on my real phone as it has apps connected to real accounts?"
+
+Answering it properly meant reading the enforcement rather than trusting the design. Four findings, three of them gaps.
+
+#### What the audit found
+
+1. **The blocklist existed and was never populated.** `AgentAccessibilityService` had `blockPackage`, `isPackageBlocked`, `getBlockedPackages` and a `blockedPackages` set. Nothing anywhere called `blockPackage`. It was an in-memory static that was empty for the life of the process — a safety net with no rope in it.
+2. **Blocking only covered acting, not looking.** `isPackageBlocked` was consulted in exactly one place: `checkPackageAllowed`, which gates taps, typing, scrolling. `getScreenContentFlat` and `getScreenTree` never checked it. Worse the wrong way round, because **whatever the agent reads is sent to the cloud model as a tool result** — so "don't act in my bank" would still have shipped the bank's screen to Venice.
+3. **The notification listener was standing collection.** `UltraNotificationService` appended every notification's title and 120 characters of body to `files/notifications.log` continuously, whether or not a task was running — message previews and one-time codes included. 88 lines were already on the device. App-private, but collected by default and never asked for.
+4. **The navigator does not gate individual actions.** The gate checks that `react_navigate`'s *goal* traces to the request. Once inside, `ReActNavigator` calls `controller.tap/typeInto/scroll` directly — no `enforceCall` anywhere in that file. Approving "book me a table" approves every tap that follows it. This one is **not fixed** and is the largest remaining risk.
+
+#### What was built
+
+- **A real protected-apps list.** Persisted in SharedPreferences, loaded at `onServiceConnected` and again whenever Settings changes it.
+- **Enforced on reads as well as actions.** `getScreenContentFlat` and `getScreenTree` return the sentinel `PROTECTED` when a protected app is in front, and the read tools turn that into a message naming the reason. Previously a blocked read would have surfaced as "screen empty or accessibility service not running", which is both unhelpful and untrue.
+- **Settings UI**: every launchable app, searchable, protected ones first, with the package name shown and a `· looks sensitive` marker on guesses.
+- **First-run seeding.** Package-name fragments (bank names, wallet, pay, authenticator, password managers, health, tax) pre-tick likely-sensitive apps at app start, before the agent has had a chance to read anything. On this device it caught Samsung Wallet and Samsung Health. It is a visible guess the user can change, never a silent decision.
+- **Notification capture is now off by default**, skips protected apps entirely, and the log can be deleted from Settings.
+
+#### Proven on device
+
+- Seeding wrote `com.samsung.android.spay` and `com.sec.android.app.shealth`; service logged `protected apps loaded: 2`.
+- Chrome protected through the UI → `protected apps loaded: 3` → asked the agent to read a page in Chrome: every read refused at the native layer (`SCREEN_FLAT: BLOCKED — protected app in front`), and the agent told the user *"The Chrome browser is on your protected list, and I'm not allowed to read its screen."*
+- Chrome unprotected again → reading works normally. Gate unit tests 14/14.
+
+#### Still open, and it matters
+
+`react_navigate` taps are ungated once the goal is approved. Protecting an app keeps the navigator out of it entirely — that is the mitigation today — but within an *unprotected* app the agent can tap anything the model decides to tap. A per-action check inside the navigator (at minimum: a confirm before any control whose label reads like send, pay, buy, confirm, delete, or transfer) is the next piece of safety work.
 
 ### Session 16d — structured extraction: which price belongs to which product (2026-08-28, branch `native`)
 

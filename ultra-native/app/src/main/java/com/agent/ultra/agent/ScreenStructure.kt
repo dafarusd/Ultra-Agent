@@ -37,7 +37,9 @@ object ScreenStructure {
         val signature: String get() = labels.joinToString("|").take(240)
     }
 
-    fun parse(flatJson: String): List<Node> = try {
+    fun parse(flatJson: String): List<Node> {
+        if (flatJson == com.agent.ultra.AgentAccessibilityService.PROTECTED) return emptyList()
+        return try {
         val arr = JSONArray(flatJson)
         (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -52,7 +54,8 @@ object ScreenStructure {
                 bottom = o.optInt("b", o.optInt("y", 0)),
             )
         }
-    } catch (_: Exception) { emptyList() }
+        } catch (_: Exception) { emptyList() }
+    }
 
     /**
      * Find the repeating list on screen and return its rows.

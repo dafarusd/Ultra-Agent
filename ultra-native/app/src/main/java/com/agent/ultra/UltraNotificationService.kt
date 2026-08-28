@@ -20,6 +20,14 @@ class UltraNotificationService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         try {
+            // Capture is standing collection, not a per-task read: without
+            // these two checks every banking alert, message preview and
+            // two-factor code lands in a log on disk.
+            if (!com.agent.ultra.ui.UltraPrefs.captureNotifications(this)) return
+            if (AgentAccessibilityService.isPackageBlocked(sbn.packageName)) {
+                Log.i(TAG, "skipped protected app: ${sbn.packageName}")
+                return
+            }
             val extras = sbn.notification.extras
             val title = extras.getCharSequence("android.title")?.toString() ?: ""
             val text = extras.getCharSequence("android.text")?.toString() ?: ""
