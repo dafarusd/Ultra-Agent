@@ -78,21 +78,22 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     }
 
     private fun emit(text: String) {
-        ChatStore.messages.add(ChatMessage(fromUser = false, text = text))
+        ChatStore.add(ChatMessage(fromUser = false, text = text))
     }
 
     /** Direct local answer for the offline path — no tool loop at 1B scale. */
     private suspend fun emitLocal(userInput: String) {
-        val bubble = ChatMessage(false, "")
-        ChatStore.messages.add(bubble)
+        val msg = ChatMessage(false, "")
+        ChatStore.addToState(msg)
         val idx = ChatStore.messages.size - 1
         val prompt = "You are Ultra, a concise assistant on an offline Android phone. " +
             "Answer briefly and honestly.\n\nUser: $userInput\nUltra:"
         local.generate(prompt, 400) { piece ->
-            ChatStore.messages[idx] = ChatMessage(false, ChatStore.messages[idx].text + piece)
+            ChatStore.messages[idx] = ChatStore.messages[idx].copy(text = ChatStore.messages[idx].text + piece)
         }.onFailure {
-            ChatStore.messages[idx] = ChatMessage(false, "Error: on-device model failed — ${it.message}")
+            ChatStore.messages[idx] = ChatStore.messages[idx].copy(text = "Error: on-device model failed — ${it.message}")
         }
+        ChatStore.persist(ChatStore.messages[idx])
     }
 
     private suspend fun runLoop(

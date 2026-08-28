@@ -1,5 +1,6 @@
 package com.agent.ultra.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,14 +14,19 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -33,13 +39,6 @@ import com.agent.ultra.AgentAccessibilityService
 import com.agent.ultra.agent.Brain
 import com.agent.ultra.local.LocalModelEngine
 import kotlinx.coroutines.launch
-
-data class ChatMessage(val fromUser: Boolean, val text: String)
-
-/** Process-wide chat state for the M1 shell. The brain wires in at M2. */
-object ChatStore {
-    val messages = mutableStateListOf<ChatMessage>()
-}
 
 @Composable
 fun ChatScreen(
@@ -55,6 +54,9 @@ fun ChatScreen(
     var thinking by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     var a11yRunning by remember { mutableStateOf(AgentAccessibilityService.isRunning()) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+
+    LaunchedEffect(Unit) { ChatStore.init(context.applicationContext) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -67,6 +69,51 @@ fun ChatScreen(
         if (ChatStore.messages.isNotEmpty()) listState.animateScrollToItem(ChatStore.messages.size - 1)
     }
 
+    val currentTitle = ChatStore.conversations
+        .find { it.id == ChatStore.conversationId.value }?.title ?: "Agent Ultra"
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    TextButton(onClick = {
+                        scope.launch {
+                            ChatStore.newChat()
+                            drawerState.close()
+                        }
+                    }) { Text("+ New chat", color = MaterialTheme.colorScheme.primary) }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    LazyColumn {
+                        items(ChatStore.conversations, key = { it.id }) { conv ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        scope.launch {
+                                            ChatStore.openConversation(conv.id)
+                                            drawerState.close()
+                                        }
+                                    }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    conv.title,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                TextButton(onClick = {
+                                    scope.launch { ChatStore.deleteConversation(conv.id) }
+                                }) { Text("✕", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)) }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
     Column(
         modifier = Modifier
@@ -77,12 +124,16 @@ fun ChatScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            TextButton(onClick = { scope.launch { drawerState.open() } }) {
+                Text("☰", style = MaterialTheme.typography.titleLarge)
+            }
             Text(
-                text = "Agent Ultra",
+                text = currentTitle,
                 style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
                 modifier = Modifier.weight(1f),
             )
             Text(
@@ -94,7 +145,7 @@ fun ChatScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             )
-            androidx.compose.material3.TextButton(onClick = onOpenSettings) {
+            TextButton(onClick = onOpenSettings) {
                 Text("⚙", style = MaterialTheme.typography.titleLarge)
             }
         }
@@ -107,7 +158,7 @@ fun ChatScreen(
                 .padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(ChatStore.messages) { msg ->
+            items(ChatStore.messages, key = { it.id }) { msg ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = if (msg.fromUser) Arrangement.End else Arrangement.Start,
@@ -147,31 +198,33 @@ fun ChatScreen(
                 onClick = {
                     val text = input.trim()
                     if (text.isEmpty()) return@Button
-                    ChatStore.messages.add(ChatMessage(fromUser = true, text = text))
+                    ChatStore.add(ChatMessage(fromUser = true, text = text))
                     input = ""
                     thinking = true
                     scope.launch {
                         try {
                             if (text.startsWith("/local ")) {
-                                // Dev path: raw on-device generation (M4 spike proof)
+                                // Dev path: raw on-device generation
                                 val prompt = text.removePrefix("/local ").trim()
-                                val bubble = ChatMessage(false, "")
-                                ChatStore.messages.add(bubble)
+                                val msg = ChatMessage(false, "")
+                                ChatStore.addToState(msg)
                                 val idx = ChatStore.messages.size - 1
                                 val r = localEngine.generate(prompt, 300) { piece ->
                                     ChatStore.messages[idx] =
-                                        ChatMessage(false, ChatStore.messages[idx].text + piece)
+                                        ChatStore.messages[idx].copy(
+                                            text = ChatStore.messages[idx].text + piece
+                                        )
                                 }
                                 r.onFailure {
-                                    ChatStore.messages[idx] = ChatMessage(false, "Error: ${it.message}")
+                                    ChatStore.messages[idx] =
+                                        ChatStore.messages[idx].copy(text = "Error: ${it.message}")
                                 }
+                                ChatStore.persist(ChatStore.messages[idx])
                             } else {
                                 brain.run(text)
                             }
                         } catch (e: Exception) {
-                            ChatStore.messages.add(
-                                ChatMessage(false, "Error: brain fault — ${e.message}")
-                            )
+                            ChatStore.add(ChatMessage(false, "Error: brain fault — ${e.message}"))
                         } finally {
                             thinking = false
                         }
@@ -181,6 +234,7 @@ fun ChatScreen(
                 Text("Send")
             }
         }
+    }
     }
     }
 }
