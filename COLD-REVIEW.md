@@ -210,12 +210,19 @@ image is never captured.**
 > routine and saving one silently replaced the other. Naming and lookup are now
 > separate operations.
 >
-> **What does not work: the model's use of these tools.** It calls `watch_me`
-> during a request to stop watching, and saves tool-recipes named after routines
-> the user just taught — the routine store now contains two entries whose only
-> step is `watch_me`. The mechanism is sound and the instructions around it are
-> not. That is a prompt and tool-shape problem, not a capture problem, and it is
-> the next thing to fix here.
+> **The model's use of these tools is fixed too, and one of the causes was
+> mine.** It had been calling `watch_me` during a request to *stop* watching,
+> looping stop → watch → stop → watch until the budget died. The cause was the
+> error text: it ended "Start watching first, then do the task", so the model
+> obediently did, hit the same error, and went round again. **An error that
+> instructs an action which re-triggers the same error is a trap.** The wording
+> now gives the model nothing to do except speak to the user.
+>
+> Two guards on the store, both proven on the phone: a routine made only of
+> routine-management tools cannot be created ("there is nothing to save — this
+> conversation has not done anything yet, only asked me to manage routines"),
+> and a taught route cannot be silently replaced by a tool recipe sharing its
+> name. One `stop_watching` call now, no loop, and the right routine comes back.
 >
 > Replay — walking a remembered route — is still not built. A saved route says
 > so rather than pretending.

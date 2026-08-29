@@ -24,15 +24,37 @@ class Recipes(private val dao: RecipeDao) {
 
     data class Step(val tool: String, val params: JSONObject)
 
-    suspend fun save(rawName: String, steps: List<Step>): String {
+    /**
+     * Tools that manage the agent rather than do anything.
+     *
+     * Saving these as a routine produces something absurd: the store came out
+     * of a test session holding two entries whose only step was "start
+     * watching". Running one starts a recording, reports success, and does
+     * nothing the user wanted — a routine that is purely a way to confuse
+     * yourself later.
+     */
+    private val META_TOOLS = setOf(
+        "watch_me", "stop_watching", "cancel_watching",
+        "recipe_save", "recipe_run", "recipe_list", "recipe_delete",
+    )
+
+    suspend fun save(rawName: String, rawSteps: List<Step>): String {
         val name = normalizeForName(rawName)
         if (name.isEmpty()) return "Error: a recipe needs a name"
-        if (steps.isEmpty()) return "Error: nothing to save — no successful tool calls in this conversation yet"
+        val steps = rawSteps.filterNot { it.tool in META_TOOLS }
+        if (steps.isEmpty()) return "Error: there is nothing to save — this conversation " +
+            "has not done anything yet, only asked me to manage routines"
         val arr = JSONArray()
         for (s in steps) {
             arr.put(JSONObject().put("tool", s.tool).put("params", s.params))
         }
         val existing = dao.byName(name)
+        // A taught route is not something to overwrite with a tool list that
+        // happens to share a name. The user spent time showing it.
+        if (existing != null && journeyOf(name) != null) {
+            return "Error: \"$name\" is a route you showed me. Pick another name, or " +
+                "delete that one first if you meant to replace it."
+        }
         dao.upsert(
             RecipeEntity(
                 name = name,

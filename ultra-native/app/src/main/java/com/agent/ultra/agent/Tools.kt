@@ -95,7 +95,9 @@ class Tools(
                     }
                 }
                 "stop_watching" -> {
-                    if (!Demonstration.isRecording) "Error: I was not watching anything."
+                    if (!Demonstration.isRecording)
+                        "I was not watching anything. Do not start watching now — tell the " +
+                            "user to say \"watch me\" when they are ready to show you."
                     else {
                         val route = Demonstration.journey
                         val steps = Demonstration.stop()
@@ -104,10 +106,19 @@ class Tools(
                             // The route is what actually works. Android reports
                             // taps only when an app chooses to, so the step list
                             // is a bonus rather than the substance.
+                            // Deliberately gives the model nothing to DO.
+                            //
+                            // The first wording ended "Start watching first,
+                            // then do the task" and the model obediently called
+                            // watch_me, hit the same message, and called it
+                            // again — stop, watch, stop, watch, until the
+                            // budget ran out. An error that instructs an action
+                            // which re-triggers the same error is a trap. This
+                            // one asks it to speak to the user instead.
                             !ScreenJourney.worthKeeping(route) ->
-                                "I did not see you go anywhere — only " +
-                                    ScreenJourney.describe(route) + ". Nothing was saved. " +
-                                    "Start watching first, then do the task."
+                                "Nothing was recorded, so there is nothing to save. Do not " +
+                                    "start watching again. Tell the user: say \"watch me\", " +
+                                    "then do the task on the phone, then say \"stop watching\"."
                             name.isBlank() ->
                                 "I followed you through " + ScreenJourney.describe(route) +
                                     ".\n\nSay \"stop watching and call it <name>\" to keep it."

@@ -825,12 +825,15 @@ RULES:
         private const val TOOL_CATALOG = """
 LEARNING BY BEING SHOWN — use when the user offers to demonstrate, or when a task
 keeps failing and they could just show you:
-- watch_me — start watching. They then do the task by hand on the phone.
-- stop_watching {"name":"..."} — stop and save it under that name. Without a name
-  it reports what it saw and waits.
+- watch_me — start watching. ONLY when they are about to show you something.
+- stop_watching {"name":"..."} — stop and save under that name. Without a name it
+  reports what it saw and waits.
 - cancel_watching — stop and throw it away.
-Only which app and which control they touched is kept, never what they typed. Say
-so if they ask.
+
+Use exactly ONE of these per request, and never watch_me in the same turn as
+stop_watching: "stop watching and call it X" means stop_watching {"name":"X"} and
+nothing else. Only the screens they passed through are kept, never what was on
+them and never what they typed. Say so if they ask.
 
 DEVICE CONTROL (instant, ~99% reliable):
   wifi_toggle, bluetooth_toggle, do_not_disturb, flashlight_toggle, volume_set
