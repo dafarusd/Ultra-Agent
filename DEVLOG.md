@@ -20,9 +20,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16p — controls remembered per app; 113/113 tests)
+**Last updated:** 2026-08-29 (Session 16q — planning with checkpoints; 134/134 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **113/113**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **134/134**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
@@ -143,6 +143,66 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16q — planning with checkpoints (2026-08-29, branch `native`, Galaxy A15)
+
+Owner: "do 4, the planning with checkpoints."
+
+#### What was wrong
+
+The loop was purely reactive: look at the screen, ask the model for one action, do it, repeat until a fixed budget runs out. It had no idea whether it was getting closer. Two failures came straight out of that:
+
+- **The model spent turns deciding whether it had finished.** "Go to google.com" loaded the page on step one and then deliberated for fourteen more. That was patched in 16i by checking the screen for a domain name — a fix that only works for goals naming a website.
+- **A stuck run looked exactly like a working one** until the budget ended, and then all it could say was `iteration budget exhausted`.
+
+#### What it does now (PROVEN on the phone)
+
+The model writes a plan: 2–4 stages, each with the text that will be on screen when that stage is done. **The model owns the plan** — how to approach a goal is intent. **The engine owns the checking** — it verifies checkpoints, counts the budget and decides when to replan, because a model asked "are you finished?" says yes more readily than it should.
+
+```
+PLAN 2 stages, 7 steps each: Tap Customize and control Chrome => Chrome menu
+                           | Tap History => History
+stage 1/2 reached at step 1
+REPLAN at step 8: 2 stages
+plan abandoned at step 13, continuing on the goal
+navigation incomplete after 15 steps — reached 1 of 2 stages,
+  stuck on: Tap "History" from menu (the plan was abandoned before the end)
+```
+
+**That last line is the deliverable.** It replaces "iteration budget exhausted", which told the owner only that time ran out and told the brain nothing it could act on.
+
+#### Three things the first live runs taught
+
+Each was a real reply from the model on this phone, not something imagined:
+
+1. **"EXPECT: none"** — written exactly as the prompt asked, and it became a gate no screen could ever open. The run pushed against it for a whole stage budget. An uncheckable stage is guidance now: it passes as soon as an action moves the screen.
+2. **Prose instead of a label** — one stage expected `The Eiffel Tower (/ˈaɪfəl/ EYE-fəl; French: La Tour Eiffel [tuʁ ɛfɛl]) is an iro`. That is a description of the page, not text printed on it. An expectation over 60 characters is a description and is not treated as checkable.
+3. **Two stages with the SAME expectation** — "New tab", which the screen already showed. Both completed instantly without the menu ever opening, and the stage that mattered became unreachable. **A checkpoint has to mark a change**: an expectation already true when its stage begins is demoted to guidance.
+
+The engine cannot fix a bad plan. It can refuse to be fooled by one.
+
+#### The honest outcome
+
+**The machinery is proven and the task still fails.** The navigator cannot find and tap Chrome's three-dot menu. That is a step-level action failure, not a planning failure — and planning is what made it legible. Before, the same run said "budget exhausted"; now it names the stage it could not get past.
+
+This is worth stating plainly: item 4 improved the diagnosis, not the success rate. The next real gain is at the level of a single action, not the plan around it.
+
+#### Safety of the change
+
+Planning can never make a run worse than not planning. Every failure path — no reply, an unparseable reply, an empty plan — falls back to the single-goal loop that ran before.
+
+#### Test suite
+
+**134/134.** `NavPlanTest` covers parsing, checking, budget and reporting; `NavPlanRealRepliesTest` covers the three real replies above verbatim.
+
+#### Harness note
+
+`tools/ask.sh` does not escape quotes, so a task containing an apostrophe fails silently with `no closing quote` from `adb shell input text` and no log at all. Cost two runs before it was spotted. **Avoid apostrophes in task text, or fix the script.**
+
+#### Open
+
+- Items 2 (tasks that cross apps) and 3 (undo) are untouched.
+- Step-level action reliability is now the binding constraint on multi-step tasks, ahead of anything in the plan layer.
 
 ### Session 16p — remembering where the controls are (2026-08-29, branch `native`, Galaxy A15)
 
