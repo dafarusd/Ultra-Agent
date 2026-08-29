@@ -105,6 +105,25 @@ Java_com_agent_ultra_local_LlmNative_nativeGenerate(
         gCallback = nullptr;
     }
 
+    // Release the callback on EVERY exit from here down, not just the happy one.
+    //
+    // The prompt-decode failure below returns -4 between minting that global
+    // reference and releasing it. That leaked the reference, and left gCallback
+    // non-null and dangling for whatever called next — a stale pointer into a
+    // Java object that may no longer exist. A guard makes the class of mistake
+    // impossible rather than fixing the one path that happened to show it: any
+    // return added later is covered without anyone having to remember.
+    struct CallbackScope {
+        JNIEnv *env;
+        explicit CallbackScope(JNIEnv *e) : env(e) {}
+        ~CallbackScope() {
+            if (gCallback) { env->DeleteGlobalRef(gCallback); gCallback = nullptr; }
+            gOnToken = nullptr;
+        }
+        CallbackScope(const CallbackScope &) = delete;
+        CallbackScope &operator=(const CallbackScope &) = delete;
+    } cbScope(env);
+
     // Evaluate prompt
     llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
     if (llama_decode(engine->ctx, batch) != 0) { LOGE("prompt decode failed"); return -4; }
@@ -130,8 +149,7 @@ Java_com_agent_ultra_local_LlmNative_nativeGenerate(
     }
 
     llama_sampler_free(chain);
-    if (gCallback) { env->DeleteGlobalRef(gCallback); gCallback = nullptr; }
-    return generated;
+    return generated;   // cbScope releases the callback
 }
 
 JNIEXPORT void JNICALL

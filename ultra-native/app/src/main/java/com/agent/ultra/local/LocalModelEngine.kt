@@ -2,13 +2,14 @@ package com.agent.ultra.local
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
  * The on-device model engine. Owns model lifecycle (file presence, memory
  * headroom check, load) and exposes one suspend generate(). Single-flight:
- * the agent loop is sequential, so a lock guards the native context.
+ * the agent loop is sequential, so a mutex serialises generation, and freeing waits for it.
  */
 class LocalModelEngine(private val context: Context) {
 
@@ -57,7 +58,7 @@ class LocalModelEngine(private val context: Context) {
      * two sets of weights do not fit. Does not download; call downloadModel()
      * afterwards if the new file is not already on disk.
      */
-    fun selectModel(choice: ModelChoice) {
+    suspend fun selectModel(choice: ModelChoice) {
         unload()
         modelUrl = choice.url
         modelFileName = choice.fileName
@@ -66,7 +67,7 @@ class LocalModelEngine(private val context: Context) {
     }
 
     /** Delete the weights for the current selection. */
-    fun deleteModelFile(): Boolean {
+    suspend fun deleteModelFile(): Boolean {
         unload()
         return modelFile.exists() && modelFile.delete()
     }
@@ -163,28 +164,66 @@ class LocalModelEngine(private val context: Context) {
         }
     }
 
+    /**
+     * One generation at a time, enforced rather than assumed.
+     *
+     * The header of this class claimed a lock guarded the native context. It
+     * did not: the lock covered loading and freeing, and `generate` called into
+     * the engine with nothing held at all. Two callers reach this object from
+     * independent coroutine scopes — the chat screen and the voice session —
+     * and the C++ side keeps its callback references in process globals with no
+     * mutex of its own. A voice command arriving while a chat reply was
+     * streaming would overwrite those globals and re-enter a context that
+     * cannot be re-entered.
+     *
+     * A coroutine Mutex rather than `synchronized`, because this is a suspend
+     * function: blocking a thread here would hold it for the whole generation
+     * and can deadlock against the dispatcher. Waiting is the correct
+     * behaviour — the second request runs when the first finishes.
+     */
+    private val genMutex = kotlinx.coroutines.sync.Mutex()
+
     suspend fun generate(
         prompt: String,
         maxTokens: Int,
         onToken: (String) -> Unit = {},
     ): Result<String> = withContext(Dispatchers.IO) {
-        if (!ensureLoaded()) return@withContext Result.failure(
-            IllegalStateException("on-device model not available")
-        )
-        val sb = StringBuilder()
-        val n = LlmNative.nativeGenerate(handle, prompt, maxTokens, 0.2f) { piece ->
-            sb.append(piece)
-            onToken(piece)
+        genMutex.withLock {
+            if (!ensureLoaded()) return@withLock Result.failure(
+                IllegalStateException("on-device model not available")
+            )
+            // Read the handle INSIDE the lock. Reading it outside was the
+            // use-after-free: unload could zero and free it between the check
+            // and the call.
+            val h = handle
+            if (h == 0L) return@withLock Result.failure(
+                IllegalStateException("on-device model was unloaded")
+            )
+            val sb = StringBuilder()
+            val n = LlmNative.nativeGenerate(h, prompt, maxTokens, 0.2f) { piece ->
+                sb.append(piece)
+                onToken(piece)
+            }
+            if (n < 0) Result.failure(IllegalStateException("native generate failed ($n)"))
+            else Result.success(sb.toString())
         }
-        if (n < 0) Result.failure(IllegalStateException("native generate failed ($n)"))
-        else Result.success(sb.toString())
     }
 
-    fun unload() {
-        synchronized(lock) {
-            if (handle != 0L) {
-                LlmNative.nativeFree(handle)
-                handle = 0
+    /**
+     * Free the model, waiting for any generation already running.
+     *
+     * Freeing under a live generation is a use-after-free in native code — the
+     * kind that corrupts memory quietly rather than crashing where the mistake
+     * was. "Free memory" is a button a user presses whenever they like, so this
+     * has to be safe at any moment, not only at a convenient one.
+     */
+    suspend fun unload() {
+        genMutex.withLock {
+            synchronized(lock) {
+                if (handle != 0L) {
+                    LlmNative.nativeFree(handle)
+                    handle = 0
+                }
             }
         }
     }

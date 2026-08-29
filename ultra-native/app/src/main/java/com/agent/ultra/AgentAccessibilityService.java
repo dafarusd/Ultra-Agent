@@ -850,26 +850,65 @@ public class AgentAccessibilityService extends AccessibilityService {
         Log.i(TAG, "WAIT_UI: changed=false");
         return false;
     }
+    /**
+     * The package an action would actually land in.
+     *
+     * The gate used to decide against `currentPackage`, which is set from event
+     * history and — as the comments around it already admitted — goes stale.
+     * Every action, meanwhile, resolves its target from the LIVE topmost
+     * window: a tap dispatches absolute coordinates, and those coordinates land
+     * wherever the top window happens to be. So the gate could pass on a stale
+     * but still-allowed app while the tap executed in a different one. The
+     * boundary failed open, which is the only direction a security check must
+     * never fail.
+     *
+     * Now the check and the action ask the same question of the same source. If
+     * no window can be resolved at all, fall back to the tracked package rather
+     * than to "allow" — not knowing where we are is a reason to be more
+     * careful, not less.
+     */
+    private String actionTargetPackage() {
+        AccessibilityNodeInfo root = null;
+        try {
+            root = topmostWindowRoot("GATE");
+            if (root == null) return currentPackage;
+            CharSequence p = root.getPackageName();
+            return p != null ? p.toString() : currentPackage;
+        } catch (Exception e) {
+            Log.e(TAG, "GATE: could not resolve the target window: " + e.getMessage());
+            return currentPackage;
+        } finally {
+            if (root != null) root.recycle();
+        }
+    }
+
     private boolean checkPackageAllowed() {
+        String target = actionTargetPackage();
+        if (!target.equals(currentPackage)) {
+            // Worth seeing when it happens: it is the exact divergence that
+            // used to let an action through into the wrong app.
+            Log.i(TAG, "GATE: deciding on the live target " + target
+                + " (event tracker still says " + currentPackage + ")");
+        }
         // Never allow actions on Agent Ultra's own UI — prevents self-interaction
-        if ("com.agent.ultra".equals(currentPackage)) {
-            emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_SELF\",\"pkg\":\"" + currentPackage + "\"}");
-            Log.i(TAG, "GATE: BLOCKED_SELF pkg=" + currentPackage);
+        if ("com.agent.ultra".equals(target)) {
+            emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_SELF\",\"pkg\":\"" + target + "\"}");
+            Log.i(TAG, "GATE: BLOCKED_SELF pkg=" + target);
             return false;
         }
-        if (!agentMayUse(currentPackage)) {
-            emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_USER\",\"pkg\":\"" + currentPackage + "\"}");
-            Log.i(TAG, "GATE: BLOCKED pkg=" + currentPackage
+        if (!agentMayUse(target)) {
+            emitA11yLog("A11Y_GATE", "{\"action\":\"BLOCKED_USER\",\"pkg\":\"" + target + "\"}");
+            Log.i(TAG, "GATE: BLOCKED pkg=" + target
                 + " (" + (allowlistMode ? "not on the allowed list" : "protected") + ")");
             return false;
         }
-        if (!isPackageAllowed(currentPackage)) {
-            allowPackage(currentPackage);
-            emitA11yLog("A11Y_GATE", "{\"action\":\"AUTO_ALLOWED\",\"pkg\":\"" + currentPackage + "\"}");
-            Log.i(TAG, "GATE: AUTO_ALLOWED pkg=" + currentPackage);
+        if (!isPackageAllowed(target)) {
+            allowPackage(target);
+            emitA11yLog("A11Y_GATE", "{\"action\":\"AUTO_ALLOWED\",\"pkg\":\"" + target + "\"}");
+            Log.i(TAG, "GATE: AUTO_ALLOWED pkg=" + target);
         }
-        emitA11yLog("A11Y_GATE", "{\"action\":\"PASSED\",\"pkg\":\"" + currentPackage + "\"}");
-        Log.i(TAG, "GATE: PASSED pkg=" + currentPackage);
+        emitA11yLog("A11Y_GATE", "{\"action\":\"PASSED\",\"pkg\":\"" + target + "\"}");
+        Log.i(TAG, "GATE: PASSED pkg=" + target);
         return true;
     }
     public boolean performTap(int x, int y) {
@@ -953,7 +992,11 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     public boolean performText(String selector, String text) {
         if (!checkPackageAllowed()) return false;
-        Log.i(TAG, "TEXT: selector=" + selector + " text=" + text.substring(0, Math.min(text.length(), 30)) + " pkg=" + currentPackage);
+        // Length, never content. This logged the first 30 characters of
+        // whatever was being typed, which on a login screen is the password and
+        // on a bank screen is the one-time code — written to logcat, where any
+        // app holding READ_LOGS on an older device could read it back.
+        Log.i(TAG, "TEXT: selector=" + selector + " len=" + text.length() + " pkg=" + currentPackage);
         // Multi-window scan (same pattern as performImeAction): once the
         // keyboard opens, getRootInActiveWindow() is the IME window, not the
         // target app — proven failure on Chrome's omnibox (TEXT result=false
@@ -1093,6 +1136,14 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public boolean performImeAction() {
+        // Pressing Enter submits: it sends the message, runs the search, places
+        // the order. It reached here with no policy check at all, so an app the
+        // user had never allowed could still have something committed in it —
+        // the single most consequential keystroke was the one nothing guarded.
+        if (!checkPackageAllowed()) {
+            Log.i(TAG, "IME_ENTER: BLOCKED — not allowed in " + actionTargetPackage());
+            return false;
+        }
         Log.i(TAG, "IME_ENTER: firing");
         // Strategy 1: Find focused OR any editable field across all windows
         AccessibilityNodeInfo target = null;
@@ -1231,6 +1282,12 @@ public class AgentAccessibilityService extends AccessibilityService {
         return null;
     }
 
+    // Back and Home are deliberately NOT gated, and that is a decision rather
+    // than an oversight. They act on the system, not on an app's content: they
+    // change nothing, send nothing and commit nothing. More to the point they
+    // are how the agent LEAVES somewhere it should not be — gating them on the
+    // current app would mean that the moment it landed somewhere disallowed, it
+    // would be forbidden from backing out, which is precisely backwards.
     public boolean performBack() { Log.i(TAG, "BACK: fired"); return performGlobalAction(GLOBAL_ACTION_BACK); }
     public boolean performHome() { Log.i(TAG, "HOME: fired"); return performGlobalAction(GLOBAL_ACTION_HOME); }
     public boolean performQuickSettings() { return performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS); }

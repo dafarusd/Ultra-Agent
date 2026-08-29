@@ -195,7 +195,7 @@ fun SettingsScreen(
                 }) { Text("Download") }
             }
             if (localEngine.loaded) {
-                OutlinedButton(onClick = { localEngine.unload() }) { Text("Free memory") }
+                OutlinedButton(onClick = { scope.launch { localEngine.unload() } }) { Text("Free memory") }
             }
         }
 
@@ -249,7 +249,7 @@ fun SettingsScreen(
                         if (!current) {
                             OutlinedButton(
                                 enabled = !downloading && fit != com.agent.ultra.local.Fit.TOO_BIG,
-                                onClick = {
+                                onClick = { scope.launch {
                                 localEngine.selectModel(m)
                                 if (!localEngine.modelPresent) {
                                     downloading = true; downloadError = null; progress = 0f
@@ -261,7 +261,7 @@ fun SettingsScreen(
                                     }
                                 }
                                 statusTick++
-                            }) { Text(if (here) "Use this" else "Download & use") }
+                            } }) { Text(if (here) "Use this" else "Download & use") }
                         }
                         if (here && !current) {
                             TextButton(onClick = {
@@ -285,17 +285,17 @@ fun SettingsScreen(
                     val url = customUrl.trim()
                     val name = url.substringAfterLast('/').substringBefore('?')
                         .ifBlank { "custom-model.gguf" }
-                    localEngine.selectModel(
-                        com.agent.ultra.local.ModelChoice(
-                            label = name.removeSuffix(".gguf"),
-                            url = url,
-                            fileName = name,
-                            approxMb = 0,
-                            note = "Custom",
-                        )
-                    )
                     downloading = true; downloadError = null; progress = 0f
                     scope.launch {
+                        localEngine.selectModel(
+                            com.agent.ultra.local.ModelChoice(
+                                label = name.removeSuffix(".gguf"),
+                                url = url,
+                                fileName = name,
+                                approxMb = 0,
+                                note = "Custom",
+                            )
+                        )
                         localEngine.downloadModel { p ->
                             scope.launch(kotlinx.coroutines.Dispatchers.Main) { progress = p }
                         }.onFailure { downloadError = it.message }
