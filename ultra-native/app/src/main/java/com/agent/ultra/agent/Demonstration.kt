@@ -162,6 +162,33 @@ object Demonstration {
     @Volatile private var recording = false
     private val captured = mutableListOf<Step>()
 
+    /** The screens passed through, which is the part that actually works. */
+    private var route = listOf<ScreenJourney.Waypoint>()
+    @Volatile private var lastSample = 0L
+
+    val journey: List<ScreenJourney.Waypoint> get() = synchronized(this) { route.toList() }
+
+    /**
+     * A screen came to the front while recording.
+     *
+     * Called from the service when a window changes. Throttled, because a
+     * single navigation fires several window events and reading the whole tree
+     * for each is wasted work on someone's phone while they are trying to
+     * demonstrate something.
+     */
+    @Synchronized
+    fun noteScreen(pkg: String, nodes: List<ScreenStructure.Node>) {
+        if (!recording) return
+        val now = System.currentTimeMillis()
+        if (now - lastSample < SAMPLE_THROTTLE_MS) return
+        lastSample = now
+        val before = route.size
+        route = ScreenJourney.append(route, ScreenJourney.waypointOf(pkg, nodes))
+        if (route.size != before) {
+            android.util.Log.i("UltraLearn", "screen ${route.size}: $pkg")
+        }
+    }
+
     val isRecording: Boolean get() = recording
 
     /**
@@ -185,6 +212,8 @@ object Demonstration {
         }
         com.agent.ultra.AgentAccessibilityService.drainPendingLogs()
         captured.clear()
+        route = emptyList()
+        lastSample = 0L
         recording = true
         android.util.Log.i("UltraLearn", "watching — nothing was kept from before this moment")
         return true
@@ -223,6 +252,7 @@ object Demonstration {
     fun cancel() {
         recording = false
         captured.clear()
+        route = emptyList()
         com.agent.ultra.AgentAccessibilityService.drainPendingLogs()
     }
 
@@ -233,4 +263,8 @@ object Demonstration {
     private const val OWN_PACKAGE = "com.agent.ultra"
     private const val MAX_STEPS = 40
     private const val MIN_STEPS = 2
+
+    /** One navigation fires several window events; reading the whole tree for
+     * each is wasted work on the phone of someone mid-demonstration. */
+    private const val SAMPLE_THROTTLE_MS = 700L
 }

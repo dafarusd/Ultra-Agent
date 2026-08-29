@@ -97,17 +97,21 @@ class Tools(
                 "stop_watching" -> {
                     if (!Demonstration.isRecording) "Error: I was not watching anything."
                     else {
+                        val route = Demonstration.journey
                         val steps = Demonstration.stop()
                         val name = params.optString("name").trim()
                         when {
-                            !Demonstration.worthKeeping(steps) ->
-                                "I did not see enough to learn a routine — only ${steps.size} " +
-                                    "step(s). Nothing was saved."
+                            // The route is what actually works. Android reports
+                            // taps only when an app chooses to, so the step list
+                            // is a bonus rather than the substance.
+                            !ScreenJourney.worthKeeping(route) ->
+                                "I did not see you go anywhere — only " +
+                                    ScreenJourney.describe(route) + ". Nothing was saved. " +
+                                    "Start watching first, then do the task."
                             name.isBlank() ->
-                                "I watched ${steps.size} steps:\n\n" +
-                                    Demonstration.describe(steps) +
-                                    "\n\nSay \"stop watching and call it <name>\" to keep it."
-                            else -> saveDemonstration(name, steps)
+                                "I followed you through " + ScreenJourney.describe(route) +
+                                    ".\n\nSay \"stop watching and call it <name>\" to keep it."
+                            else -> saveJourney(name, route, steps)
                         }
                     }
                 }
@@ -301,13 +305,25 @@ class Tools(
      * and one way to run them, with a marker saying this one was learned by
      * watching rather than assembled from tools.
      */
-    private suspend fun saveDemonstration(name: String, steps: List<Demonstration.Step>): String {
+    /**
+     * Keep the route, and whatever taps happened to be visible.
+     *
+     * The route is the substance: it is built from screens, which can always be
+     * read. The tap list is kept when it exists but is never relied on, because
+     * Android reports a tap only when the app chooses to — measured, four
+     * deliberate taps produced one event.
+     */
+    private suspend fun saveJourney(
+        name: String,
+        route: List<ScreenJourney.Waypoint>,
+        steps: List<Demonstration.Step>,
+    ): String {
         val store = recipes ?: return "Error: routines are unavailable"
         return try {
-            store.saveDemonstration(name, Demonstration.toJson(steps))
-            "Saved as \"$name\" — ${steps.size} steps:\n\n" +
-                Demonstration.describe(steps) +
-                "\n\nNothing you typed was kept."
+            store.saveJourney(name, ScreenJourney.toJson(route), Demonstration.toJson(steps))
+            "Saved as \"$name\" — " + ScreenJourney.describe(route) + ".\n\n" +
+                "I remember the screens you passed through, not what was on them, and " +
+                "nothing you typed."
         } catch (e: Exception) {
             "Error: could not save that routine (${e.message})"
         }

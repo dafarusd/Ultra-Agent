@@ -201,11 +201,11 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         // A routine learned by watching holds UI steps, not tool calls, and
         // replaying those is not built yet. Say that plainly rather than
         // running an empty list and reporting success.
-        recipes.demonstrationOf(row.name)?.let { json ->
-            val shown = Demonstration.fromJson(json)
-            return "\"${row.name}\" is something you showed me rather than a set of tools, " +
-                "and I cannot replay it yet. Here is what I have:\n\n" +
-                Demonstration.describe(shown)
+        recipes.journeyOf(row.name)?.let { json ->
+            val route = ScreenJourney.fromJson(json)
+            return "\"${row.name}\" is a route you showed me — " +
+                ScreenJourney.describe(route) + ". I can recognise those screens but " +
+                "cannot walk the route on my own yet."
         }
         val steps = recipes.stepsOf(row.name).orEmpty()
         if (steps.isEmpty()) return "Error: recipe \"${row.name}\" has no steps"

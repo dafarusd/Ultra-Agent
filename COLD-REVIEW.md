@@ -188,7 +188,39 @@ image is never captured.**
 
 ## Latent capabilities — already almost there
 
-### L1 — Learning by being shown — BLOCKED BY ANDROID, 2026-08-29
+### L1+L2 — Learning a route by its screens — WORKS, RECALL UNRELIABLE, 2026-08-29
+
+> The redesign is built and the sensor works. `ScreenJourney` records the
+> screens a person passes through, sampled when a window changes, off the main
+> thread because reading the tree from the event handler would deadlock the
+> service. Proven on the phone following a real three-screen route:
+> `screen 1 / 2 / 3: com.android.chrome`, then
+> `Saved as "my morning sites" — 3 screens, all in com.android.chrome`.
+>
+> Fingerprints and package names only. A fingerprint cannot be turned back into
+> anything that was on the screen, and excludes all text so a new message does
+> not make an inbox a different screen. 15 tests, including one asserting that
+> nothing visible on a real captured screen survives into storage.
+>
+> **Two real bugs found by using it**, both the same shape as the task-memory
+> bug — a shorter remembered name claiming a request that merely contains it:
+> `resolve` took the first match in database order, so "run my morning sites"
+> ran an older routine called "morning sites"; and `normalize` stripped a
+> leading "my" when NAMING, so "my morning sites" and "morning sites" were one
+> routine and saving one silently replaced the other. Naming and lookup are now
+> separate operations.
+>
+> **What does not work: the model's use of these tools.** It calls `watch_me`
+> during a request to stop watching, and saves tool-recipes named after routines
+> the user just taught — the routine store now contains two entries whose only
+> step is `watch_me`. The mechanism is sound and the instructions around it are
+> not. That is a prompt and tool-shape problem, not a capture problem, and it is
+> the next thing to fix here.
+>
+> Replay — walking a remembered route — is still not built. A saved route says
+> so rather than pretending.
+
+### L1 (superseded design) — click-event capture — BLOCKED BY ANDROID, 2026-08-29
 
 > **The blocker is found and it is not in this code.** `TYPE_VIEW_CLICKED` is
 > fired at each app's discretion and most controls never fire it. Measured on

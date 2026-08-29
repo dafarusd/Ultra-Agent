@@ -235,6 +235,23 @@ public class AgentAccessibilityService extends AccessibilityService {
                         lastLoggedWindowCls = cls;
                         emitA11yLog("A11Y_WINDOW", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\"}");
                     }
+                    // While the user is demonstrating, a screen coming to the
+                    // front IS the observation. Off the main thread on purpose:
+                    // reading the tree posts to main and waits on a latch, and
+                    // this handler already runs on main — calling it here would
+                    // deadlock the whole service.
+                    if (com.agent.ultra.agent.Demonstration.INSTANCE.isRecording()) {
+                        final String journeyPkg = pkg;
+                        new Thread(() -> {
+                            try {
+                                com.agent.ultra.agent.Demonstration.INSTANCE.noteScreen(
+                                    journeyPkg,
+                                    com.agent.ultra.agent.ScreenStructure.INSTANCE.parse(getScreenTree()));
+                            } catch (Exception e) {
+                                Log.w(TAG, "journey sample failed: " + e.getMessage());
+                            }
+                        }, "ultra-journey").start();
+                    }
                     break;
                 }
                 case AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED: {
