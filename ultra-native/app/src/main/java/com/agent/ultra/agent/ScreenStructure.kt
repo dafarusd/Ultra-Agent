@@ -37,6 +37,21 @@ object ScreenStructure {
         val signature: String get() = labels.joinToString("|").take(240)
     }
 
+    /**
+     * A field inside a row, named only when the pattern is unmistakable.
+     *
+     * `name` is null for anything the classifier does not recognise, and that
+     * is the point. Grouping fixed which price belongs to which product; it
+     * did not say which of a row's values *is* the price. The row arrived as
+     * ordered anonymous lines and the model had to guess from position, which
+     * is the same inference problem one level down.
+     *
+     * A wrong name is worse than no name, because a named field gets trusted.
+     * So the engine names what it can prove from the text itself and leaves
+     * the rest as plain lines for the model to read.
+     */
+    data class Field(val name: String?, val value: String)
+
     fun parse(flatJson: String): List<Node> {
         if (flatJson == com.agent.ultra.AgentAccessibilityService.PROTECTED) return emptyList()
         return try {
@@ -145,17 +160,94 @@ object ScreenStructure {
 
     private val PRICE = Regex("""[$£€]\s?\d[\d,]*(?:\.\d{2})?""")
 
-    /** Render rows for the brain: one numbered item, its fields beneath it. */
+    /** "4.5 out of 5 stars", "4.5/5", "Rated 4.5 stars". The bound to 0-5
+     * keeps it off prices and quantities. */
+    private val RATING = Regex(
+        """\b([0-5](?:[.,]\d)?)\s*(?:out of\s*5|/\s*5|star)""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** "1,234 ratings", "89 reviews". Needs the noun — a bare number is not
+     * evidence of anything. */
+    private val REVIEWS = Regex(
+        """\b(\d[\d,]*)\s*(?:ratings?|reviews?)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Points, votes, likes — the counter on a link aggregator or a feed. */
+    private val POINTS = Regex(
+        """\b(\d[\d,]*)\s*(?:points?|upvotes?|votes?|likes?)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * Name the fields in a row.
+     *
+     * The first label is the title: across a list, the first descendant that
+     * carries text is the heading in every layout measured. Everything after
+     * it is matched against the patterns above, and anything that matches
+     * none of them keeps its text with no name attached.
+     */
+    fun fields(item: Item): List<Field> {
+        if (item.labels.isEmpty()) return emptyList()
+        val out = mutableListOf(Field("title", item.labels.first()))
+        for (label in item.labels.drop(1)) {
+            out.add(Field(nameOf(label), label))
+        }
+        return out
+    }
+
+    /**
+     * The single field name this text proves, or null.
+     *
+     * Order matters. "4.5 out of 5 stars, 1,234 ratings" contains a rating and
+     * a count, and it is a rating line — the count is a detail of it. A text
+     * that matches two unrelated patterns is left unnamed rather than
+     * arbitrated, because guessing between them is the failure this exists to
+     * prevent.
+     */
+    private fun nameOf(label: String): String? {
+        val price = PRICE.containsMatchIn(label)
+        val rating = RATING.containsMatchIn(label)
+        val reviews = REVIEWS.containsMatchIn(label)
+        val points = POINTS.containsMatchIn(label)
+        return when {
+            rating -> "rating"
+            price && !reviews && !points -> "price"
+            reviews && !price && !points -> "reviews"
+            points && !price && !reviews -> "points"
+            else -> null
+        }
+    }
+
+    /**
+     * Render rows for the brain: one numbered item, its fields beneath it.
+     *
+     * A named field reads `price: $89.99`. An unnamed one is printed as it
+     * appeared. When a row shows more than one price the values are listed
+     * together and flagged, because a list price beside a sale price is the
+     * normal case and silently picking one of them is how the agent buys the
+     * wrong thing.
+     */
     fun render(items: List<Item>, budget: Int): Pair<String, Int> {
         val sb = StringBuilder()
         var used = 0
         var shown = 0
         for ((n, item) in items.withIndex()) {
-            val prices = item.labels.flatMap { PRICE.findAll(it).map { m -> m.value }.toList() }.distinct()
-            val head = "${n + 1}. ${item.labels.first()}"
-            val rest = item.labels.drop(1).joinToString("\n") { "   $it" }
-            val priceLine = if (prices.size == 1) "\n   price: ${prices.first()}" else ""
-            val block = head + (if (rest.isNotBlank()) "\n$rest" else "") + priceLine + "\n"
+            val f = fields(item)
+            val lines = mutableListOf<String>()
+            for (field in f.drop(1)) {
+                lines.add(if (field.name != null) "   ${field.name}: ${field.value}" else "   ${field.value}")
+            }
+            val prices = item.labels
+                .flatMap { PRICE.findAll(it).map { m -> m.value }.toList() }
+                .distinct()
+            if (prices.size > 1) {
+                lines.add("   prices shown: ${prices.joinToString(", ")} " +
+                    "(more than one — do not assume which is charged)")
+            }
+            val head = "${n + 1}. ${f.first().value}"
+            val block = head + (if (lines.isEmpty()) "" else "\n" + lines.joinToString("\n")) + "\n"
             if (used + block.length > budget) break
             sb.append(block)
             used += block.length
