@@ -20,9 +20,11 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-28 (Session 16i — navigator budget fix; release published; announced)
+**Last updated:** 2026-08-29 (Session 16j — R8 minification; release site published; site linked on X)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+
+**Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
 **The Expo / React Native app at the repo root is superseded.** `src/`, `app/`, `components/`, `server/`, `android/`, `ios/`, `app.json`, and `eas.json` belong to the old build. Nothing on the active path reads them — do not fix bugs there. The "Local Build Reference" section at the bottom of this file documents the **old** EAS/Expo build and applies only to that dead tree. The `BRAIN_*`, `REPLIT_*`, and `*_PROOF.md` files in the repo root are from the same era.
 
@@ -141,6 +143,74 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16j — R8, and the public repo becomes the proof of creation (2026-08-28/29, branch `native`)
+
+Owner: "turn on R8 and test the build" → "make the public repo my proof of creation… screen shots of the advance task… architecture overview, non revealing… a slide show demo. and a roadmap" → "any screen shots must be clear, show no internal work, each must have a written explanation."
+
+#### R8 (PROVEN on device)
+
+`minifyEnabled` and `shrinkResources` are on for `release`. The APK went **15,014,327 → 8,665,752 bytes**, a 42% cut.
+
+The risk with this app is not Compose or Room, it is **JNI**. Native symbols bind by exact class and method name — `Java_com_agent_ultra_local_LlmNative_nativeLoad` has to still be called that after shrinking, and R8 has no way to know. `proguard-rules.pro` keeps:
+
+- `LlmNative` entirely, plus `TokenCallback.onToken`, which the C++ calls back into.
+- The service classes **by name only** (`-keep,allowobfuscation,allowoptimization`), because the manifest and `enabled_accessibility_services` refer to them as strings.
+- The Room `data` package, whose generated code reflects over field names.
+
+Verified by installing the minified build and loading Qwen2.5 7B on the phone, not by reading the mapping file. It loaded and answered.
+
+**Honest note the owner made himself:** the unobfuscated APK had already been public for about six hours. R8 protects builds from here; it does not retrieve what shipped.
+
+#### The "looks sensitive" check was flagging Calculator (FIXED)
+
+Found while framing the safety screenshot — one screen away from being published as a feature demonstration.
+
+`looksSensitive()` matched hints as bare substrings, so the hint `tor` matched **calcula*tor*** and **edi*tor***. Calculator and Avatar Editor were being offered as apps to protect.
+
+Short hints (≤4 characters) now have to sit on a token boundary — package names are dotted and lowercase, so splitting on `.`, `_` and `-` gives the tokens. Longer hints keep substring matching, which is safe at that length. `tor` was replaced with `torproject` and `orbot`, and `irs` with `taxact`, since both were guessing at the wrong thing anyway.
+
+The failure was cosmetic, not a safety hole — a false positive over-protects. But it was about to appear in a screenshot arguing the safety model is precise.
+
+#### The advanced task, run for real (PROVEN)
+
+Ran on the A15 with Chrome allowed (`app policy: mode=allowlist allowed=1 protected=5`):
+
+```
+open https://news.ycombinator.com and list the top stories with their points
+→ STRUCTURED 60 items, 5 scrolls
+→ 8 stories, each with its own score
+```
+
+The part worth keeping: **two entries genuinely have no score, and it reported "no points listed" rather than borrowing a nearby number.** That is the structured extraction from Session 16d doing its job — pairing comes from the tree, so an absent field reads as absent instead of drifting to the neighbour.
+
+Venice was seeded onto the test phone by writing `ultra_provider.json` into the app's files directory, so the key never appeared on a command line. **The seed file was deleted afterwards.**
+
+#### The release site
+
+`dafarusd.github.io/Ultra-Agent-Release` — one page, GitHub Pages off `main` at `/root`.
+
+- Five screenshots, each with a written explanation: the Hacker News run, the model picker, the safety screen, the on-device engine, the model-fit banding.
+- Architecture as **four layers described by responsibility only** — perceive, decide, gate, act and verify. No file names, no algorithms, no thresholds. A reader learns what it does and not how to rebuild it.
+- "What it will not do", written as design rather than disclaimer.
+- A roadmap, and a provenance section crediting **gatellml** (the policy gate), **gate** (the resolve channel) and **Mind Meld**, each linking to its public repo.
+
+All assets verified serving 200, including the 8,665,752-byte APK.
+
+**Caveat carried on purpose:** the screenshots come from the mid-range A15, which is why larger models read "too big for this phone" at 1,840 MB of headroom. A flagship reads very differently. The page does not claim otherwise, but anyone on good hardware will find those numbers pessimistic.
+
+#### Posted
+
+Site linked as a reply on the announcement (`status/2093413816822305144`) rather than a fresh post — the audience that engaged is already in that thread.
+
+**New composer quirk, logged to `vault/publishing/log.md`:** X warns "Only the first 280 characters will be visible on the timeline", and that fold counts **displayed** characters, not the 23-character t.co length. The approved draft had the URL on the last line, which put it below the fold on a post whose entire purpose was the link. Moved to line two, at character 148. On any long post carrying a link, the link goes inside the first 280 characters.
+
+#### Open
+
+- The demo still needs a genuine multi-step task on film. The Hacker News run is now that task and it exists as stills; nobody has recorded it moving.
+- The About screen's tool count has rotted twice (24 → 30 → 31) and should read from the manifest.
+- Structured fields are ordered, not labelled — the extractor knows a row has three values, not that the third is a price.
+- A deep read leaves the page scrolled where it stopped. Harmless so far, but it means two reads of the same screen do not start from the same place.
 
 ### Session 16i — navigator budget fix, release build, announcement (2026-08-28, branch `native`)
 

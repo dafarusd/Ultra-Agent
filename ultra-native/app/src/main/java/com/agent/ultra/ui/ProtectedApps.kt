@@ -33,7 +33,7 @@ object ProtectedApps {
         "lottery", "auction", "ezpass", "turnpike", "lifelock", "grants",
         "docusign", "adobe.reader", "keychain", "openkeychain", "ssh",
         "termius", "auditor", "termux", "vnc", "teamviewer", "anydesk",
-        "tor", "vpn", "cyberghost", "tailscale", "protonmail", "proton",
+        "torproject", "orbot", "vpn", "cyberghost", "tailscale", "protonmail", "proton",
         "mychart", "anthem", "epic", "cvs", "walgreens", "goodrx", "teladoc",
         "signal", "securesms", "telegram", "whatsapp", "orca", "messenger",
         "outlook", "gmail", "slack", "discord", "snapchat",
@@ -48,7 +48,7 @@ object ProtectedApps {
         "authenticator", "lastpass", "1password", "bitwarden", "dashlane",
         "keepass", "authy", "duo",
         "健康", "health", "myfitnesspal",
-        "irs", "turbotax", "hrblock",
+        "turbotax", "hrblock", "taxact",
     )
 
     /** True when the agent may only enter apps the user has chosen. */
@@ -132,9 +132,21 @@ object ProtectedApps {
             .toList()
     }
 
+    /**
+     * Guess whether a package holds money, identity or credentials.
+     *
+     * Substring matching alone is too blunt: "tor" flagged Calculator and
+     * Avatar Editor, because calcula-tor and edi-tor contain it. Short hints
+     * must sit on a token boundary — package names are dotted and
+     * lowercase, so the separators are '.', '_' and '-'.
+     */
     fun looksSensitive(pkg: String): Boolean {
         val p = pkg.lowercase()
-        return SENSITIVE_HINTS.any { p.contains(it) }
+        val tokens = p.split('.', '_', '-').filter { it.isNotBlank() }
+        return SENSITIVE_HINTS.any { hint ->
+            if (hint.length <= 4) tokens.any { it == hint || it.startsWith(hint) }
+            else p.contains(hint)
+        }
     }
 
     /**
