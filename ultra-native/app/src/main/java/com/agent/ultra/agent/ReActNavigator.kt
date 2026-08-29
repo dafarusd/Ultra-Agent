@@ -114,6 +114,32 @@ ACTION:"""
         if (goalSatisfied(goal, observation)) {
             return NavResult(true, "already showing the goal", 0)
         }
+        // Ask for a plan before acting. A failure here is not fatal: an empty
+        // plan runs the old single-goal loop, which is what happened before
+        // any of this existed.
+        var plan = requestPlan(goal, observation)
+        var stage = 0
+        var stageSteps = 0
+        // Was this stage's expectation already true when the stage began?
+        //
+        // Measured: a plan gave stages 1 and 2 the same expectation, "New tab",
+        // which the screen already showed. Both stages completed instantly
+        // without the menu ever opening, and stage 3 — the one that mattered —
+        // became unreachable. A checkpoint has to mark a CHANGE. A condition
+        // that held before the stage started is not evidence the stage did
+        // anything, so the stage falls back to being guidance.
+        var stagePreSatisfied = false
+        var stageBudget = NavPlan.budgetFor(MAX_ITER, plan.size)
+        var replanned = false
+        // The plan stops steering the run when it is abandoned, but it is kept
+        // so the run can still report how far it got.
+        var planActive = plan.isNotEmpty()
+        if (plan.isNotEmpty()) {
+            stagePreSatisfied = NavPlan.satisfied(plan[0], observation)
+            android.util.Log.i("UltraNav", "PLAN ${plan.size} stages, $stageBudget steps each: " +
+                plan.joinToString(" | ") { "${it.description} => ${it.expect.ifBlank { "(model decides)" }}" })
+        }
+
         var lastTreePrefix = ""
         var stuckCount = 0
         var lastAction = ""
@@ -130,7 +156,10 @@ ACTION:"""
         var iter = 0
         while (iter < MAX_ITER + grace) {
             iter++
-            val prompt = buildPrompt(goal, observation, history, repeatedNoOp, leftAppFor, pkg)
+            val aim = (if (planActive) plan.getOrNull(stage) else null)?.let {
+                "${it.description}  (part of: $goal)"
+            } ?: goal
+            val prompt = buildPrompt(aim, observation, history, repeatedNoOp, leftAppFor, pkg)
             val reply = client.complete(
                 listOf(OpenAiClient.ChatMessage("user", prompt)),
                 maxTokens = 600,
@@ -156,6 +185,66 @@ ACTION:"""
 
             if (goalSatisfied(goal, observation)) {
                 return NavResult(true, "goal visible on screen after $iter steps", iter)
+            }
+
+            // Has this stage arrived? The engine checks the text the plan named,
+            // which costs nothing. The old loop spent model turns asking itself
+            // whether it had finished, and a model asked that question says yes
+            // more readily than it should.
+            if (planActive) {
+                stageSteps++
+                val here = plan[stage]
+                // A stage the engine cannot check is guidance, not a gate. It
+                // is done as soon as an action moves the screen — otherwise a
+                // model that answered "EXPECT: none", exactly as it was asked
+                // to, would leave the run stuck against a door with no handle.
+                if ((!here.checkable || stagePreSatisfied) && changed) {
+                    stage++
+                    stageSteps = 0
+                    stagePreSatisfied = plan.getOrNull(stage)
+                        ?.let { NavPlan.satisfied(it, observation) } ?: false
+                    android.util.Log.i("UltraNav", "stage $stage/${plan.size} passed (nothing to check) at step $iter")
+                    if (stage >= plan.size) {
+                        return NavResult(true, "all ${plan.size} stages done", iter)
+                    }
+                } else if (NavPlan.satisfied(here, observation)) {
+                    stage++
+                    stageSteps = 0
+                    stagePreSatisfied = plan.getOrNull(stage)
+                        ?.let { NavPlan.satisfied(it, observation) } ?: false
+                    if (stagePreSatisfied) {
+                        android.util.Log.i("UltraNav",
+                            "stage ${stage + 1} expects something already on screen — treating it as guidance")
+                    }
+                    android.util.Log.i("UltraNav", "stage ${stage}/${plan.size} reached at step $iter")
+                    history += "step $iter: reached \"${here.description}\" — now do the next stage"
+                    if (stage >= plan.size) {
+                        return NavResult(true, "all ${plan.size} stages done", iter)
+                    }
+                } else if (stageSteps >= stageBudget) {
+                    // Out of room on this stage. Replan once from where we
+                    // actually are, then accept that the plan was wrong and
+                    // finish the run on the goal alone rather than looping.
+                    if (!replanned) {
+                        replanned = true
+                        val fresh = requestPlan(goal, observation)
+                        if (fresh.isNotEmpty()) {
+                            plan = fresh
+                            stage = 0
+                            stageSteps = 0
+                            stagePreSatisfied = fresh.firstOrNull()
+                                ?.let { NavPlan.satisfied(it, observation) } ?: false
+                            stageBudget = NavPlan.budgetFor(MAX_ITER - iter, fresh.size)
+                            android.util.Log.i("UltraNav", "REPLAN at step $iter: ${fresh.size} stages")
+                            history += "step $iter: that approach stalled, starting a new plan"
+                        } else {
+                            planActive = false
+                        }
+                    } else {
+                        android.util.Log.i("UltraNav", "plan abandoned at step $iter, continuing on the goal")
+                        planActive = false
+                    }
+                }
             }
 
             // An action that changes nothing, twice, is the model looping. Say
@@ -212,7 +301,12 @@ ACTION:"""
             } else stuckCount = 0
             lastTreePrefix = prefix
         }
-        return NavResult(false, "iteration budget exhausted", iter)
+        // Say how far it got. "Iteration budget exhausted" tells the user only
+        // that time ran out, and tells the brain nothing it can act on.
+        val summary = if (plan.isEmpty()) "iteration budget exhausted"
+            else "iteration budget exhausted — " + NavPlan.progressSummary(plan, stage) +
+                if (!planActive) " (the plan was abandoned before the end)" else ""
+        return NavResult(false, summary, iter)
     }
 
     /** a11y flat nodes → indexed TAPPABLE/TYPEABLE/SCROLLABLE lists (visible-only). */
@@ -471,6 +565,27 @@ ACTION:"""
             all
         } catch (e: Exception) {
             android.util.Log.w("UltraNav", "controls unavailable: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
+     * Ask the model for a plan.
+     *
+     * One call, low temperature, and every failure returns an empty list: no
+     * plan simply means the old single-goal loop runs. Planning must never be
+     * able to make a run worse than not planning.
+     */
+    private suspend fun requestPlan(goal: String, observation: String): List<NavPlan.Checkpoint> {
+        return try {
+            val reply = client.complete(
+                listOf(OpenAiClient.ChatMessage("user", NavPlan.prompt(goal, observation))),
+                maxTokens = 400,
+                temperature = 0.1,
+            ).getOrNull() ?: return emptyList()
+            NavPlan.parse(reply)
+        } catch (e: Exception) {
+            android.util.Log.w("UltraNav", "planning failed, continuing without one: ${e.message}")
             emptyList()
         }
     }
