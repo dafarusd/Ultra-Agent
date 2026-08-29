@@ -32,6 +32,8 @@ object ScreenStructure {
         /** View id, short form: "price", "title_row". Native apps expose it;
          * web content usually does not. */
         val vid: String = "",
+        val editable: Boolean = false,
+        val enabled: Boolean = true,
     ) {
         val label: String get() = text.ifBlank { desc }.trim()
 
@@ -93,6 +95,8 @@ object ScreenStructure {
                 bottom = o.optInt("b", o.optInt("y", 0)),
                 cls = o.optString("cls"),
                 vid = o.optString("vid"),
+                editable = o.optBoolean("e", false),
+                enabled = o.optBoolean("en", true),
             )
         }
         } catch (_: Exception) { emptyList() }

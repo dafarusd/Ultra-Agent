@@ -32,6 +32,9 @@ data class ScreenMemoryEntity(
     /** Field names this screen is known to expose, comma separated. Names
      * only — never values. */
     val fieldsCsv: String,
+    /** The screen's controls as JSON: view id and kind only, never a label
+     * and never a value. See [com.agent.ultra.agent.ScreenControls]. */
+    val controlsJson: String = "",
     val seenCount: Int,
     val lastSeen: Long,
     /** IDS or CLASSES: how the screen was recognised. A CLASSES match is a

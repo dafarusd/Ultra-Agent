@@ -591,6 +591,11 @@ public class AgentAccessibilityService extends AccessibilityService {
             // node and would trip the node budget for nothing.
             obj.put("cls", shortName(node.getClassName()));
             obj.put("vid", shortName(idOf(node)));
+            // Which nodes can be acted on. Needed to remember where a screen's
+            // controls are rather than re-deriving them from an indexed list
+            // that renumbers itself every time the screen moves.
+            obj.put("e", node.isEditable());
+            obj.put("en", node.isEnabled());
             me = tree.length();
             tree.put(obj);
         } catch (Exception ignored) {}
@@ -635,6 +640,10 @@ public class AgentAccessibilityService extends AccessibilityService {
                     obj.put("c", node.isClickable());
                     obj.put("e", node.isEditable());
                     obj.put("s", node.isScrollable());
+                    // The app's own name for this control, so a remembered one
+                    // can be found again without depending on an index that
+                    // renumbers every time the screen moves.
+                    obj.put("vid", shortName(idOf(node)));
                     obj.put("x", bounds.centerX());
                     obj.put("y", bounds.centerY());
                     obj.put("l", bounds.left);

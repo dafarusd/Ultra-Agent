@@ -273,6 +273,7 @@ class Tools(
         if (fp == null || !fp.known || rows.size < 3) return
         val template = ScreenStructure.lastTemplate
         if (template.isBlank()) return
+        val controls = ScreenControls.of(ScreenStructure.parse(controller.screenTree()))
         try {
             val fields = rows.asSequence()
                 .flatMap { ScreenStructure.fields(it).asSequence() }
@@ -290,12 +291,17 @@ class Tools(
                     seenCount = (prior?.seenCount ?: 0) + 1,
                     lastSeen = System.currentTimeMillis(),
                     confidence = fp.confidence.name,
+                    // Keep what is already known if this read found nothing —
+                    // a control list is not wrong just because the screen was
+                    // scrolled away from it.
+                    controlsJson = if (controls.isNotEmpty()) ScreenControls.toJson(controls)
+                        else prior?.controlsJson.orEmpty(),
                 )
             )
             dao.trimTo(SCREEN_MEMORY_LIMIT)
             android.util.Log.i(
                 "UltraPerceive",
-                "learned screen ${fp.key} (${fp.confidence}) ${rows.size} records, fields=[$fields]",
+                "learned screen ${fp.key} (${fp.confidence}) ${rows.size} records, fields=[$fields], ${controls.size} controls",
             )
         } catch (e: Exception) {
             android.util.Log.w("UltraPerceive", "could not record screen: ${e.message}")

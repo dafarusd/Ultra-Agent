@@ -39,7 +39,9 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         val cfg = ProviderConfig.load(context)
         client = if (cfg.isUsable) OpenAiClient(cfg) else null
         tools = Tools(context, controller)
-        if (client != null) tools.navigator = ReActNavigator(controller, client)
+        if (client != null) tools.navigator = ReActNavigator(controller, client).also {
+            it.screenMemory = com.agent.ultra.data.UltraDatabase.get(context).screenMemory()
+        }
         tools.recipes = recipes
         tools.screenMemory = com.agent.ultra.data.UltraDatabase.get(context).screenMemory()
         tools.recipeRunner = { name -> runRecipe(name) }

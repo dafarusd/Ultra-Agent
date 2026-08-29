@@ -11,7 +11,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [ConversationEntity::class, MessageEntity::class,
         TaskShortcutEntity::class, ToolReliabilityEntity::class,
         RecipeEntity::class, ScreenMemoryEntity::class],
-    version = 5,
+    version = 6,
 )
 abstract class UltraDatabase : RoomDatabase() {
     abstract fun conversations(): ConversationDao
@@ -65,10 +65,18 @@ abstract class UltraDatabase : RoomDatabase() {
             }
         }
 
+        /** v5 → v6 remembers where a screen's controls are. Ids and roles
+         * only — no label and no value is written here. */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `screen_memory` ADD COLUMN `controlsJson` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun get(context: Context): UltraDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, UltraDatabase::class.java, "ultra.db"
-            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .fallbackToDestructiveMigration()  // last resort for older dev schemas
             .build().also { instance = it }
         }

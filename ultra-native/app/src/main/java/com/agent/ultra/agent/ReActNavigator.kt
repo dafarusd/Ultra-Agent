@@ -23,6 +23,9 @@ class ReActNavigator(
         /** How many steps a run may be repaid for being pushed out of its own
          * app. Capped so a run that is genuinely lost still ends. */
         private const val MAX_RECOVERY_GRACE = 5
+
+        /** How many controls an app may accumulate across all its screens. */
+        private const val APP_CONTROL_LIMIT = 80
         private val DOMAIN =
             Regex("[a-z0-9-]+\\.(com|org|net|io|gov|edu)", RegexOption.IGNORE_CASE)
 
@@ -68,6 +71,13 @@ ACTION:"""
 
     data class NavResult(val success: Boolean, val summary: String, val steps: Int)
 
+    /** Where the screens this navigator drives keep what has been learned about
+     * them. Set by Brain, which owns the database. */
+    var screenMemory: com.agent.ultra.data.ScreenMemoryDao? = null
+
+    /** Controls known for the screen this run is working on. */
+    private var known: List<ScreenControls.Control> = emptyList()
+
     /**
      * Has the goal visibly happened, without asking the model?
      *
@@ -96,6 +106,8 @@ ACTION:"""
             ?: return NavResult(false, "no app matching '$appHint'", 0)
         if (!controller.launchApp(pkg)) return NavResult(false, "could not launch $pkg", 0)
         delay(2500)
+
+        known = loadOrLearnControls(pkg)
 
         var observation = observe()
         // Launching the app may already have satisfied the goal.
@@ -283,7 +295,11 @@ ACTION:"""
             // If nothing is focused (the proven Chrome failure: TEXT result=false
             // forever), tap the first editable node to focus it first.
             val selector = if (idx == null) "" else labelForIndex(idx) ?: return false
-            if (idx == null) focusFirstEditable()
+            // Typing with no index used to tap "the first editable node on
+            // screen", which is a guess that is wrong on any page with more
+            // than one box. When this screen has been here before, the app's
+            // own name for its input is known and is used instead.
+            if (idx == null && !focusKnownInput()) focusFirstEditable()
             val ok = controller.typeInto(selector, text)
             if (ok) { delay(300); controller.imeEnter() }
             return ok
@@ -361,6 +377,110 @@ ACTION:"""
     }
 
     /** Tap the first editable node's center so performText("") has focus. */
+    /**
+     * Tap the input this screen is known to have.
+     *
+     * False when the screen is new, when the app names nothing, or when the
+     * remembered control is not on screen right now — in every one of those
+     * cases the caller falls back to looking for an editable field, which is
+     * what happened before any of this existed.
+     */
+    private suspend fun focusKnownInput(): Boolean {
+        val target = ScreenControls.find(known, "search", ScreenControls.Role.INPUT)
+            ?: known.firstOrNull { it.role == ScreenControls.Role.INPUT }
+            ?: return false
+        return try {
+            val arr = JSONArray(controller.screenFlat())
+            for (i in 0 until arr.length()) {
+                val n = arr.getJSONObject(i)
+                if (n.optString("vid") != target.vid) continue
+                val x = n.optInt("x", -1)
+                val y = n.optInt("y", -1)
+                if (x < 0 || y < 0) return false
+                controller.tap(x, y)
+                delay(500)
+                android.util.Log.i("UltraNav", "typed into known control #${target.vid}")
+                return true
+            }
+            false
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * The controls for the screen just launched, remembered or worked out now.
+     *
+     * Ids and roles only, never a label — a button's label is user content and
+     * a view id is a constant from a layout file. Failing to load or store is
+     * not an error: the run carries on exactly as it did before.
+     */
+    private suspend fun loadOrLearnControls(pkg: String): List<ScreenControls.Control> {
+        val dao = screenMemory ?: return emptyList()
+        return try {
+            val nodes = ScreenStructure.parse(controller.screenTree())
+            if (nodes.isEmpty()) return emptyList()
+            val fp = ScreenSignature.of(pkg, nodes)
+            if (!fp.known) return emptyList()
+
+            // Two places to look, because an app's furniture and its content
+            // are not learned at the same rate.
+            //
+            // A browser's fingerprint includes the ids of whatever page is
+            // loaded, so every website is a different screen — which is right,
+            // and which means the toolbar was being relearned on every visit
+            // to every site. The address bar is the same control on all of
+            // them. Controls seen anywhere in an app accumulate under an
+            // app-level row and are available everywhere in it; the screen row
+            // holds what is specific to that page.
+            val appKey = "$pkg/*"
+            val screenRow = dao.get(fp.key)
+            val appRow = dao.get(appKey)
+
+            val found = ScreenControls.of(nodes)
+            val remembered = (
+                ScreenControls.fromJson(screenRow?.controlsJson ?: "") +
+                    ScreenControls.fromJson(appRow?.controlsJson ?: "")
+                ).distinctBy { it.vid }
+
+            if (found.isNotEmpty()) {
+                dao.put(
+                    (screenRow ?: newRow(fp.key, pkg, fp.confidence.name)).copy(
+                        controlsJson = ScreenControls.toJson(found),
+                        seenCount = (screenRow?.seenCount ?: 0) + 1,
+                        lastSeen = System.currentTimeMillis(),
+                    )
+                )
+                // The app-level set is a union: a control seen on any screen of
+                // the app stays available on the others.
+                val union = (found + ScreenControls.fromJson(appRow?.controlsJson ?: ""))
+                    .distinctBy { it.vid }
+                    .take(APP_CONTROL_LIMIT)
+                dao.put(
+                    (appRow ?: newRow(appKey, pkg, fp.confidence.name)).copy(
+                        controlsJson = ScreenControls.toJson(union),
+                        seenCount = (appRow?.seenCount ?: 0) + 1,
+                        lastSeen = System.currentTimeMillis(),
+                    )
+                )
+            }
+
+            val all = (found + remembered).distinctBy { it.vid }
+            android.util.Log.i(
+                "UltraNav",
+                "screen ${fp.key}: ${found.size} on screen, ${remembered.size} remembered, ${all.size} usable",
+            )
+            all
+        } catch (e: Exception) {
+            android.util.Log.w("UltraNav", "controls unavailable: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun newRow(key: String, pkg: String, confidence: String) =
+        com.agent.ultra.data.ScreenMemoryEntity(
+            screenKey = key, pkg = pkg, template = "", recordCount = 0,
+            fieldsCsv = "", seenCount = 0, lastSeen = 0L, confidence = confidence,
+        )
+
     private suspend fun focusFirstEditable() {
         try {
             val arr = JSONArray(controller.screenFlat())
