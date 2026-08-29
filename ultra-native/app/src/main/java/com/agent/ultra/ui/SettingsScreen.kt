@@ -2,6 +2,8 @@ package com.agent.ultra.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -445,6 +447,16 @@ fun SettingsScreen(
             }
         }
 
+        // ── What Android has actually granted ───────────────────────────
+        //
+        // Every dangerous permission this app declares starts denied, and
+        // nothing in the app ever asked for one. Voice, the camera, texts,
+        // contacts, the calendar and location therefore did nothing at all on
+        // a fresh install, silently, with no way for the owner to find out
+        // why. Declaring a permission in the manifest is not being granted it.
+        SectionTitle("PERMISSIONS ANDROID CONTROLS")
+        PermissionPanel(context)
+
         SectionTitle("PERSONAL DATA")
         var personal by remember { mutableStateOf(UltraPrefs.allowPersonalData(context)) }
         Row(
@@ -578,3 +590,140 @@ private fun steps(json: String): String = try {
     val arr = org.json.JSONArray(json)
     (0 until arr.length()).joinToString(" → ") { arr.getJSONObject(it).optString("tool") }
 } catch (_: Exception) { "—" }
+
+
+/** One capability, and whether Android has actually allowed it. */
+private data class Capability(
+    val label: String,
+    val why: String,
+    val permissions: List<String>,
+)
+
+private val CAPABILITIES = listOf(
+    Capability("Voice", "Speaking to it, and the hands-free session.",
+        listOf(android.Manifest.permission.RECORD_AUDIO)),
+    Capability("Camera", "Taking a picture when asked.",
+        listOf(android.Manifest.permission.CAMERA)),
+    Capability("Texts", "Reading and sending SMS.",
+        listOf(android.Manifest.permission.READ_SMS, android.Manifest.permission.SEND_SMS)),
+    Capability("Contacts", "Looking someone up by name.",
+        listOf(android.Manifest.permission.READ_CONTACTS)),
+    Capability("Calendar", "Reading and adding events.",
+        listOf(android.Manifest.permission.READ_CALENDAR)),
+    Capability("Location", "Answering where you are.",
+        listOf(android.Manifest.permission.ACCESS_COARSE_LOCATION)),
+    Capability("Notifications", "Showing you what it is doing while it works.",
+        listOf(android.Manifest.permission.POST_NOTIFICATIONS)),
+)
+
+/**
+ * Ask for what is missing, and show what is already there.
+ *
+ * Each of these is refused by default and stays refused until Android is
+ * asked. Nothing here changes what the agent may do — the app list and the
+ * personal-data switch decide that. This only decides whether the phone lets
+ * the app try at all.
+ */
+@Composable
+private fun PermissionPanel(context: android.content.Context) {
+    var tick by remember { mutableStateOf(0) }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { tick++ }
+
+    fun granted(perms: List<String>) = perms.all {
+        androidx.core.content.ContextCompat.checkSelfPermission(context, it) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    val missing = remember(tick) { CAPABILITIES.filterNot { granted(it.permissions) } }
+
+    Text(
+        if (missing.isEmpty())
+            "Everything below is allowed. The agent can still only enter the apps you ticked."
+        else
+            "Android refuses these until you allow them, and until then the matching " +
+                "features do nothing at all. Allowing one does not let the agent use it — " +
+                "the app list and the personal-data switch still decide that.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+    )
+    Spacer(Modifier.height(8.dp))
+
+    for (cap in CAPABILITIES) {
+        val ok = remember(tick) { granted(cap.permissions) }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(cap.label, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (ok) "Allowed. ${cap.why}" else "Not allowed. ${cap.why}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            if (!ok) {
+                TextButton(onClick = { launcher.launch(cap.permissions.toTypedArray()) }) {
+                    Text("Allow")
+                }
+            } else {
+                Text("✓", color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+
+    if (missing.size > 1) {
+        Spacer(Modifier.height(4.dp))
+        TextButton(onClick = {
+            launcher.launch(missing.flatMap { it.permissions }.distinct().toTypedArray())
+        }) { Text("Allow all of the above") }
+    }
+
+    // Notification access is not a normal permission and cannot be requested.
+    // Until now the only documented way to turn it on was an adb command,
+    // which is not a thing to ask of anyone.
+    val listeners = android.provider.Settings.Secure.getString(
+        context.contentResolver, "enabled_notification_listeners"
+    ).orEmpty()
+    val notifOk = listeners.contains(context.packageName)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Reading notifications", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                if (notifOk) "Allowed. Telling you what came in while you were away."
+                else "Not allowed. Android keeps this one on its own screen — no app can " +
+                    "ask for it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
+        if (notifOk) Text("✓", color = MaterialTheme.colorScheme.primary)
+        else TextButton(onClick = {
+            context.startActivity(
+                android.content.Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }) { Text("Open") }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Android will not let an app ask twice if you have refused it. If a request " +
+            "no longer appears, open it in the phone's own settings instead.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+    )
+    TextButton(onClick = {
+        context.startActivity(
+            android.content.Intent(
+                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.parse("package:" + context.packageName),
+            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }) { Text("Open this app in Android settings") }
+}
