@@ -189,10 +189,30 @@ He will record his own. Files kept at `~/Videos/agent-ultra-demo-2x.mp4` (1:47) 
 
 **Harness limitation, now reproducible:** X's composer will not bind a video placed into its file input programmatically. Three attempts, two encodings, 1.7 MB and 5.6 MB, in both a post and a reply. The upload reports "Preparing media…" and completes, then the post publishes without it. **Attaching media to X is hand-only** — same class as the account-switch limitation already logged. Belongs in `vault/publishing/log.md`.
 
+
+#### Public repo housekeeping (all five, verified live)
+
+Checked every public repo for a description, a real README, and a link back to @Dafarusd. Consistency across channels is the credibility mechanism in `vault/publishing/CLAUDE.md` — a reader who follows a post to the repo should find the same name.
+
+| Repo | Was | Now |
+|---|---|---|
+| `everyvoice` | no description | description added |
+| `gate` | description had a run of stray spaces ("LLM&nbsp;&nbsp;&nbsp;&nbsp;agents") | cleaned, wording unchanged |
+| `mindmeld` | fine | unchanged |
+| `sentinel-public` | no description, **no LICENSE at all** | description added, AGPL-3.0 + NOTICE added |
+| `Ultra-Agent-Release` | no description | description added |
+
+All five now end their README with `Built by Dafarus — @Dafarusd on X`. Standing rule from this session: every public README links the personal account.
+
+**`sentinel-public` had no license**, which its own README flagged — default copyright applied and nobody could legally reuse it. Now **AGPL-3.0-only** with the same commercial-exception NOTICE `gate` uses, chosen by the owner for consistency with the other three. The README paragraph saying "no license file is included yet" was true until then and would have become a false claim; rewritten to state the actual terms.
+
+Descriptions are repo settings, not files — API-only, and there is no token on this machine. Set through GitHub in the browser, where the owner was already signed in. Worth remembering: **the browser is the fallback for anything that needs the GitHub API.**
+
+The whitespace in `gate`'s description was invisible on the repo page because HTML collapses it. It was real in the stored value, which is what search, the API and repo listings use. Verified against the stored value, not the render.
+
 #### Open
 
 - The demo needs a genuine multi-step task to be worth showing. That is the honest next piece of work, not a filming problem.
-- Three repos still have no GitHub description: `everyvoice`, `sentinel-public`, `Ultra-Agent-Release`. Descriptions are API-only and could not be set over SSH.
 - The About screen's tool count has now rotted twice (24 → 30 → 31). It should read from the manifest rather than a literal.
 
 ### Session 16h — release build, and models chosen per device (2026-08-28, branch `native`)
