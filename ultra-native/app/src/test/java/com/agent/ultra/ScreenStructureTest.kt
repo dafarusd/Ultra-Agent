@@ -69,8 +69,8 @@ class ScreenStructureTest {
 
     @Test
     fun `unrecognised text keeps its value with no name`() {
-        val f = named(row("Thing", "Delivery Tuesday", "Sponsored"))
-        assertEquals(listOf("Delivery Tuesday", "Sponsored"), f[null])
+        val f = named(row("Thing", "Delivery Tuesday", "Colour: Midnight Black"))
+        assertEquals(listOf("Delivery Tuesday", "Colour: Midnight Black"), f[null])
     }
 
     @Test
@@ -109,6 +109,33 @@ class ScreenStructureTest {
         val (out, shown) = ScreenStructure.render(rows, budget = 120)
         assertTrue("must stop early", shown in 1..49)
         assertTrue("output stays within budget", out.length <= 120)
+    }
+
+    @Test
+    fun `a sponsored badge is named, so an ad is not mistaken for the best buy`() {
+        val f = named(row("Cheap Thing", "Sponsored", "$9.99"))
+        assertEquals(listOf("Sponsored"), f["sponsored"])
+        assertEquals(listOf("$9.99"), f["price"])
+    }
+
+    @Test
+    fun `a word merely containing ad is not a sponsored badge`() {
+        // "ad" as a substring hits Adapter and Radio. The badge stands alone.
+        val f = named(row("Thing", "USB Adapter", "Radio"))
+        assertNull(f["sponsored"])
+        assertEquals(listOf("USB Adapter", "Radio"), f[null])
+    }
+
+    @Test
+    fun `out of stock is named, so a price on it is not the cheapest option`() {
+        val f = named(row("Thing", "$4.99", "Currently unavailable"))
+        assertEquals(listOf("Currently unavailable"), f["availability"])
+    }
+
+    @Test
+    fun `in stock is named too`() {
+        val f = named(row("Thing", "In stock", "Arrives Tuesday"))
+        assertEquals(listOf("In stock", "Arrives Tuesday"), f["availability"])
     }
 
     @Test

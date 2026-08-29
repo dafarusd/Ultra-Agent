@@ -205,6 +205,32 @@ object ScreenStructure {
     )
 
     /**
+     * Paid placement. The cheapest result is not the best buy if it is an ad,
+     * and the model cannot tell unless the row says so.
+     *
+     * Anchored to the whole label: these are short badges that stand alone.
+     * Matching "ad" as a substring would hit "Adapter" and "Radio".
+     */
+    private val SPONSORED = Regex(
+        """^(sponsored|ad|advertisement|promoted|paid)$""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * Whether the thing can actually be bought. A price on an unavailable
+     * item is the classic wrong answer to "find the cheapest".
+     */
+    private val UNAVAILABLE = Regex(
+        """\b(out of stock|currently unavailable|temporarily unavailable|sold out|unavailable|back ?ordered|pre-?order)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private val AVAILABLE = Regex(
+        """\b(in stock|available now|ships? (?:today|tomorrow)|arrives)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
      * Name the fields in a row.
      *
      * The first label is the title: across a list, the first descendant that
@@ -231,6 +257,13 @@ object ScreenStructure {
      * prevent.
      */
     private fun nameOf(label: String): String? {
+        val trimmed = label.trim()
+        // Checked before the numeric patterns: these are decisive for a buying
+        // decision and carry no digits to confuse them with.
+        if (SPONSORED.matches(trimmed)) return "sponsored"
+        if (UNAVAILABLE.containsMatchIn(trimmed)) return "availability"
+        if (AVAILABLE.containsMatchIn(trimmed)) return "availability"
+
         val price = PRICE.containsMatchIn(label)
         val rating = RATING.containsMatchIn(label)
         val reviews = REVIEWS.containsMatchIn(label)
