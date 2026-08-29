@@ -159,7 +159,9 @@ object ScreenStructure {
             // the extra line while still separating a product card from a
             // banner.
             n.kind + "{" + kids.map { shapeOf(it, children, depth - 1, memo) }
-                .distinct().sorted().joinToString(",") + "}"
+                .groupingBy { it }.eachCount()
+                .map { (kind, count) -> "$kind*${countBand(count)}" }
+                .sorted().joinToString(",") + "}"
         }
         memo[key] = s
         return s
@@ -240,6 +242,114 @@ object ScreenStructure {
         return best
     }
 
+    /**
+     * Take in the other half of each record when a table splits them.
+     *
+     * A shape says where the list is; it does not always cover a whole record.
+     * On a link aggregator each story is two sibling table rows — the headline
+     * in one, "123 points by tosh" in the next — and they have different
+     * shapes, so matching a template picked up thirty headlines and left every
+     * score behind. Matching the other shape instead would have done the
+     * mirror image.
+     *
+     * If the matched records share a parent, that parent holds the whole list,
+     * both halves included. Taking all of its qualifying children hands the
+     * complete list to [mergeSplitRows], which already knows how to pair rows
+     * that strictly alternate.
+     *
+     * The expansion is kept only when it genuinely pairs up. On a page whose
+     * records are whole cards, the parent also holds banners and fragments,
+     * and those do not alternate — so nothing is taken in and the matched
+     * records stand as they are.
+     */
+    private fun withSplitHalves(
+        records: List<Node>,
+        children: Map<Int, MutableList<Node>>,
+        labelCount: Map<Int, Int>,
+        nodes: List<Node>,
+    ): List<Node> {
+        // The container, not the immediate parent. A matched shape often sits
+        // INSIDE a row rather than being the row: on a link aggregator the
+        // template matched a block within each headline row, so the thirty
+        // records had thirty different parents and there was no list to widen
+        // to. Their deepest common ancestor is the list itself.
+        val container = commonAncestor(records, nodes) ?: return records
+        val siblings = children[container].orEmpty()
+            .filter { (labelCount[it.index] ?: 0) >= 2 }
+            .sortedBy { it.top }
+        if (siblings.size <= records.size) return records
+
+        val asRows = siblings.map { Item(labelsUnderOf(it, children), it.top, false) }
+        val merged = mergeSplitRows(asRows)
+        // Merging happened, and it produced records carrying real fields.
+        val paired = merged.size < asRows.size && merged.any { hasMetadata(it) }
+        return if (paired) siblings else records
+    }
+
+    /**
+     * The deepest node that has every record somewhere beneath it.
+     *
+     * Null when they share nothing, which means they are not one list.
+     */
+    private fun commonAncestor(records: List<Node>, nodes: List<Node>): Int? {
+        if (records.isEmpty()) return null
+        val byIndex = nodes.associateBy { it.index }
+        fun chain(n: Node): List<Int> {
+            val out = mutableListOf<Int>()
+            var p: Node? = n
+            var hops = 0
+            while (p != null && hops < 60) { out.add(p.index); p = byIndex[p.parent]; hops++ }
+            return out.asReversed()   // root first
+        }
+        val chains = records.map { chain(it) }
+        val shortest = chains.minOf { it.size }
+        var last: Int? = null
+        for (depth in 0 until shortest) {
+            val here = chains[0][depth]
+            if (chains.all { it[depth] == here }) last = here else break
+        }
+        // The common ancestor is only useful if it is above the records.
+        return if (last != null && records.none { it.index == last }) last else null
+    }
+
+    /** Labels beneath a node, first occurrence of each. */
+    private fun labelsUnderOf(n: Node, children: Map<Int, MutableList<Node>>): List<String> {
+        val out = mutableListOf<String>()
+        val seen = HashSet<String>()
+        fun walk(x: Node) {
+            val l = x.label
+            if (isUseful(l) && seen.add(l.take(160))) out.add(l.take(160))
+            for (kid in children[x.index].orEmpty()) walk(kid)
+        }
+        walk(n)
+        return out
+    }
+
+    /**
+     * The nodes on this screen matching a remembered template.
+     *
+     * Empty when too few match, which is the signal that the memory is stale.
+     * The same minimum applies as when the template was learned, so a screen
+     * that has genuinely changed falls back to being read properly rather than
+     * returning one lonely row that happens to still fit.
+     */
+    private fun groupMatching(
+        nodes: List<Node>,
+        children: Map<Int, MutableList<Node>>,
+        template: String,
+        labelCount: Map<Int, Int>,
+        minItems: Int,
+    ): List<Node> {
+        val memo = HashMap<Long, String>()
+        val hits = nodes.filter {
+            (labelCount[it.index] ?: 0) >= 2 &&
+                shapeOf(it, children, SHAPE_DEPTH, memo) == template
+        }
+        if (hits.size < minItems) return emptyList()
+        val kept = dropNested(hits, nodes)
+        return if (kept.size < minItems) emptyList() else kept
+    }
+
     /** Remove any node that is a descendant of another node in the same set. */
     private fun dropNested(members: List<Node>, all: List<Node>): List<Node> {
         val byIndex = all.associateBy { it.index }
@@ -256,18 +366,45 @@ object ScreenStructure {
         }
     }
 
-    fun items(nodes: List<Node>, minItems: Int = 3): List<Item> {
+    /** The record template that won the last call to [items]. The caller
+     * stores it against the screen so the next visit can start from it. */
+    @Volatile var lastTemplate: String = ""
+        private set
+
+    /**
+     * @param knownTemplate a template remembered from a previous visit to this
+     *   screen. When it still fits, it is used as-is: the same screen then
+     *   groups the same way every time instead of drifting as its content
+     *   changes, and the scoring pass is skipped entirely. When it no longer
+     *   fits — the app updated, the layout changed — it is ignored and the
+     *   screen is worked out afresh. A remembered answer is a shortcut, never
+     *   an override of what is actually on screen.
+     */
+    fun items(nodes: List<Node>, minItems: Int = 3, knownTemplate: String = ""): List<Item> {
+        lastTemplate = ""
         if (nodes.isEmpty()) return emptyList()
         val children = HashMap<Int, MutableList<Node>>()
         for (n in nodes) children.getOrPut(n.parent) { mutableListOf() }.add(n)
 
-        val labelCount = HashMap<Int, Int>()
-        fun countLabels(n: Node): Int = labelCount.getOrPut(n.index) {
-            var c = if (isUseful(n.label)) 1 else 0
-            for (kid in children[n.index].orEmpty()) c += countLabels(kid)
-            c
+        // DISTINCT labels, because that is what a row ends up holding.
+        //
+        // Counting every occurrence disagreed with the rows themselves: a link
+        // carries the same words as a content-description on the wrapper and
+        // as text on the child, so it counted as two fields and became one
+        // label. Groups of those passed the "a record has two fields" test,
+        // won on coverage, and then every row was dropped for having a single
+        // label — the read fell back to flat with nothing structured at all.
+        // The two counts have to mean the same thing.
+        val labelSets = HashMap<Int, Set<String>>()
+        fun labelsOfSubtree(n: Node): Set<String> = labelSets.getOrPut(n.index) {
+            val out = HashSet<String>()
+            if (isUseful(n.label)) out.add(n.label.take(160))
+            for (kid in children[n.index].orEmpty()) out.addAll(labelsOfSubtree(kid))
+            out
         }
-        for (n in nodes) countLabels(n)
+        for (n in nodes) labelsOfSubtree(n)
+        val labelCount = HashMap<Int, Int>()
+        for (n in nodes) labelCount[n.index] = labelSets[n.index]?.size ?: 0
 
         // Substance is measured in characters, not in number of labels.
         //
@@ -288,6 +425,30 @@ object ScreenStructure {
         }
         for (n in nodes) countChars(n)
 
+        // Remembered first. A template that still matches this screen is the
+        // answer we computed last time, and recomputing it cannot improve on
+        // it — it can only differ, which is how the same page came back as
+        // 130, then 126, then 123 records across one read.
+        if (knownTemplate.isNotBlank()) {
+            val recalled = groupMatching(nodes, children, knownTemplate, labelCount, minItems)
+            if (recalled.isNotEmpty()) {
+                lastTemplate = knownTemplate
+                // Through the same widening as a fresh read. Recalling a
+                // template and stopping there gave a WORSE answer than working
+                // it out: on a link aggregator the remembered shape is the
+                // headline block, and without this the thirty stories came
+                // back with their scores stripped off again. A shortcut that
+                // changes the answer is not a shortcut.
+                val records = withSplitHalves(recalled, children, labelCount, nodes)
+                android.util.Log.i(
+                    "UltraPerceive",
+                    "structure: recalled template, ${records.size} records",
+                )
+                return finish(records, children)
+            }
+            android.util.Log.i("UltraPerceive", "structure: remembered template no longer fits")
+        }
+
         // Preferred: the page's own repeating template. Falls through to the
         // older statistical method when the tree carries no class information.
         val byTemplate = templateGroups(
@@ -297,8 +458,14 @@ object ScreenStructure {
             minItems = minItems,
         )
         if (byTemplate.isNotEmpty()) {
-            android.util.Log.i("UltraPerceive", "structure: template match, ${byTemplate.size} records")
-            return finish(byTemplate, children)
+            lastTemplate = shapeOf(byTemplate.first(), children, SHAPE_DEPTH, HashMap())
+            val records = withSplitHalves(byTemplate, children, labelCount, nodes)
+            android.util.Log.i(
+                "UltraPerceive",
+                "structure: template match, ${byTemplate.size} records" +
+                    if (records !== byTemplate) " (+${records.size - byTemplate.size} paired halves)" else "",
+            )
+            return finish(records, children)
         }
 
         var bestScore = 0.0
@@ -341,8 +508,16 @@ object ScreenStructure {
             return labels to ids
         }
 
+        // Document order, not screen position.
+        //
+        // Bounds are only trustworthy for what is currently visible: rows
+        // above and below the viewport report stale or identical tops, so
+        // sorting by `top` shuffled a link aggregator's 60 rows into 14 correct
+        // pairs followed by a block of 17 score rows with no headlines near
+        // them. The tree arrives in reading order, and reading order is what a
+        // list means.
         val rows = records
-            .sortedBy { it.top }
+            .sortedBy { it.index }
             .map {
                 val (labels, ids) = labelsUnder(it)
                 Item(labels, it.top, it.clickable || anyClickableUnder(it, children), ids)
@@ -375,7 +550,10 @@ object ScreenStructure {
             kept += r
             keptSets += set
         }
-        return kept.sortedBy { it.top }
+        // Back into the order they came in. Sorting by `top` here reordered
+        // off-screen rows, which is what broke the pairing above.
+        val keptSet = kept.toHashSet()
+        return rows.filter { it in keptSet }
     }
 
 
@@ -409,28 +587,46 @@ object ScreenStructure {
      */
     internal fun mergeSplitRows(rows: List<Item>): List<Item> {
         if (rows.size < 4) return rows
-        val pairs = rows.size / 2
-        for (p in 0 until pairs) {
-            if (hasMetadata(rows[2 * p])) return rows        // heading half must have none
-            if (!hasMetadata(rows[2 * p + 1])) return rows   // detail half must have one
-        }
+
+        // Pair greedily, left to right: a row with no metadata field followed
+        // by one that has it are two halves of the same thing.
+        //
+        // Requiring perfect alternation down the whole list was too brittle
+        // for a real page. A link aggregator carries the occasional job post
+        // with no score, and one exception aborted every pair on the page,
+        // leaving thirty headlines with their scores stranded beside them.
         val out = mutableListOf<Item>()
-        for (p in 0 until pairs) {
-            val head = rows[2 * p]
-            val tail = rows[2 * p + 1]
-            val labels = mutableListOf<String>()
-            val ids = mutableListOf<String>()
-            for (src in listOf(head, tail)) {
-                src.labels.forEachIndexed { i, l ->
-                    if (l !in labels) { labels.add(l); ids.add(src.idAt(i)) }
+        var paired = 0
+        var i = 0
+        while (i < rows.size) {
+            val head = rows[i]
+            val tail = rows.getOrNull(i + 1)
+            if (tail != null && !hasMetadata(head) && hasMetadata(tail)) {
+                val labels = mutableListOf<String>()
+                val ids = mutableListOf<String>()
+                for (src in listOf(head, tail)) {
+                    src.labels.forEachIndexed { k, l ->
+                        if (l !in labels) { labels.add(l); ids.add(src.idAt(k)) }
+                    }
                 }
+                out += Item(labels, head.top, head.clickable || tail.clickable, ids)
+                paired++
+                i += 2
+            } else {
+                out += head
+                i++
             }
-            out += Item(labels, head.top, head.clickable || tail.clickable, ids)
         }
-        // An odd trailing row is kept as it stands rather than dropped.
-        if (rows.size % 2 == 1) out += rows.last()
-        return out
+
+        // Pairing is a property of the list, not of one lucky row. A page where
+        // a single pair happens to fit is a coincidence, and merging there
+        // would join two unrelated records.
+        val couldPair = rows.size / 2
+        return if (paired * 100 >= couldPair * PAIR_MAJORITY_PCT) out else rows
     }
+
+    /** How much of a list must pair up before the pairing is believed. */
+    private const val PAIR_MAJORITY_PCT = 60
 
     /** Tracking parameters and opaque ids are labels to a screen reader and
      * noise to everyone else. `vote?id=...&how=up` is a real one, read off
@@ -476,6 +672,27 @@ object ScreenStructure {
      * counting. Without a cap, one container of long paragraphs outscores a
      * genuine list of short rows. */
     private const val SUBSTANCE_CAP = 300.0
+
+    /**
+     * How many children of one kind, banded.
+     *
+     * A bare set of child kinds was too coarse: `View{TextView}` matched a
+     * wrapper holding one line of text and a story row holding four, so on a
+     * link aggregator a swarm of 153 tiny wrappers outweighed the actual
+     * stories and the read collapsed to nothing. An exact count is too strict
+     * the other way — it split one product grid into groups of two.
+     *
+     * A band tolerates a card with four fields next to one with five, while
+     * keeping one field distinct from four.
+     */
+    private fun countBand(n: Int): Int = when {
+        n <= 1 -> 1
+        n == 2 -> 2
+        n == 3 -> 3
+        n <= 6 -> 4
+        n <= 12 -> 5
+        else -> 6
+    }
 
     /** How deep a structural signature looks. Two levels distinguishes a
      * product card from a heading without making every node unique the moment
@@ -610,6 +827,7 @@ object ScreenStructure {
      */
     internal fun fieldNameFor(vid: String): String? {
         if (vid.isBlank()) return null
+        if (!looksLikeAName(vid)) return null
         var v = vid.lowercase()
         for (noise in ID_NOISE) v = v.replace(noise, "_")
         v = v.trim('_').replace(Regex("_+"), "_")
@@ -618,6 +836,34 @@ object ScreenStructure {
         if (Regex("^[a-z]{1,4}\\d*$").matches(v)) return null   // t1, tv, txt2
         return v
     }
+
+    /**
+     * Does this id look like a name a developer wrote, or a value the content
+     * generated?
+     *
+     * Read off two live pages: Amazon exposes product ASINs and UUIDs as ids
+     * ("1248879011", "0d6f55ac-a8a3-46bb-a6a5-f7e069fa3ff1"), and Hacker News
+     * exposes story ids ("49417298"). Those are content. Taking them as field
+     * names would hand the model `49417298: 130 points`, and fingerprinting a
+     * screen on them would mean the same page never looked the same twice,
+     * because the ids change with every story on it.
+     *
+     * A real name has a word in it.
+     */
+    internal fun looksLikeAName(id: String): Boolean {
+        if (id.length > 48) return false
+        if (UUID_LIKE.matches(id)) return false
+        if (id.none { it.isLetter() }) return false
+        // At least one run of three letters — "alarm_time" passes, "a1b2c3"
+        // and "0d6f55ac" do not.
+        if (!Regex("[A-Za-z]{3,}").containsMatchIn(id)) return false
+        // Mostly digits with a letter or two mixed in is still an identifier.
+        val digits = id.count { it.isDigit() }
+        return digits * 2 <= id.length
+    }
+
+    private val UUID_LIKE =
+        Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
     private val ID_NOISE = listOf("_item_", "_view_", "_label_", "_text_")
 

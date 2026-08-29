@@ -257,18 +257,30 @@ class ScreenContainerTest {
     }
 
     @Test
-    fun `rows come back in screen order`() {
+    fun `rows come back in reading order, which is tree order`() {
+        // This test used to assert screen order, sorting by `top`. Real pages
+        // disproved that: bounds are only trustworthy for what is currently
+        // visible, and rows above and below the viewport report stale or
+        // identical tops. Sorting a link aggregator's 60 rows by `top` put 14
+        // correct pairs first and then a block of 17 scores with no headlines
+        // beside them, and the pairing collapsed.
+        //
+        // The tree arrives in reading order. That is what a list means, and it
+        // does not change when the user scrolls.
         val t = Tree()
         val root = t.add(-1, "")
         val list = t.add(root, "")
-        // Added bottom-first on purpose.
         for (top in listOf(300, 100, 200)) {
             val row = t.add(list, "", top = top)
             t.add(row, "Row at $top")
             t.add(row, "detail")
         }
         val items = ScreenStructure.items(t.nodes())
-        assertEquals(listOf(100, 200, 300), items.map { it.top })
+        assertEquals(
+            "rows keep the order the tree gave them",
+            listOf("Row at 300", "Row at 100", "Row at 200"),
+            items.map { it.labels.first() },
+        )
     }
 
     @Test

@@ -10,13 +10,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [ConversationEntity::class, MessageEntity::class,
         TaskShortcutEntity::class, ToolReliabilityEntity::class,
-        RecipeEntity::class],
-    version = 4,
+        RecipeEntity::class, ScreenMemoryEntity::class],
+    version = 5,
 )
 abstract class UltraDatabase : RoomDatabase() {
     abstract fun conversations(): ConversationDao
     abstract fun taskMemory(): TaskMemoryDao
     abstract fun recipes(): RecipeDao
+    abstract fun screenMemory(): ScreenMemoryDao
 
     companion object {
         @Volatile private var instance: UltraDatabase? = null
@@ -45,10 +46,29 @@ abstract class UltraDatabase : RoomDatabase() {
             }
         }
 
+        /** v4 → v5 adds what the agent has learned about each screen. Structure
+         * only: no text from any screen is stored here. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `screen_memory` (" +
+                        "`screenKey` TEXT NOT NULL, " +
+                        "`pkg` TEXT NOT NULL, " +
+                        "`template` TEXT NOT NULL, " +
+                        "`recordCount` INTEGER NOT NULL, " +
+                        "`fieldsCsv` TEXT NOT NULL, " +
+                        "`seenCount` INTEGER NOT NULL, " +
+                        "`lastSeen` INTEGER NOT NULL, " +
+                        "`confidence` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`screenKey`))"
+                )
+            }
+        }
+
         fun get(context: Context): UltraDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, UltraDatabase::class.java, "ultra.db"
-            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .fallbackToDestructiveMigration()  // last resort for older dev schemas
             .build().also { instance = it }
         }

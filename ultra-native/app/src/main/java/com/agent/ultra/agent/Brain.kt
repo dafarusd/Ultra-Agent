@@ -41,6 +41,7 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         tools = Tools(context, controller)
         if (client != null) tools.navigator = ReActNavigator(controller, client)
         tools.recipes = recipes
+        tools.screenMemory = com.agent.ultra.data.UltraDatabase.get(context).screenMemory()
         tools.recipeRunner = { name -> runRecipe(name) }
         gate = Gate(loadManifest(context))
     }

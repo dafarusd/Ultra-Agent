@@ -25,6 +25,10 @@ class Tools(
 
     var navigator: ReActNavigator? = null
 
+    /** What the agent has learned about screens it has read before. Set by
+     * Brain, which owns the database. */
+    var screenMemory: com.agent.ultra.data.ScreenMemoryDao? = null
+
     /** Recipe store and the replay entry point. The runner lives in Brain —
      * replay needs the policy gate and the episode, which Tools does not own. */
     var recipes: Recipes? = null
@@ -242,6 +246,62 @@ class Tools(
         seen.toList()
     } catch (_: Exception) { emptyList() }
 
+    /** The template this screen used last time, or "" if it is new to us. */
+    private suspend fun rememberedTemplate(fp: ScreenSignature.Fingerprint?): String {
+        val dao = screenMemory ?: return ""
+        if (fp == null || !fp.known) return ""
+        return try { dao.get(fp.key)?.template ?: "" } catch (_: Exception) { "" }
+    }
+
+    /**
+     * Record what this screen turned out to be.
+     *
+     * Structure only — the template signature and the field names, never a
+     * value. A memory row says "this screen's records look like this and carry
+     * a price and a rating"; it never says what the price was.
+     *
+     * Never fails a read. A screen that cannot be remembered is simply read
+     * from scratch next time, which is exactly what happened before any of
+     * this existed.
+     */
+    private suspend fun learnScreen(
+        fp: ScreenSignature.Fingerprint?,
+        pkg: String,
+        rows: List<ScreenStructure.Item>,
+    ) {
+        val dao = screenMemory ?: return
+        if (fp == null || !fp.known || rows.size < 3) return
+        val template = ScreenStructure.lastTemplate
+        if (template.isBlank()) return
+        try {
+            val fields = rows.asSequence()
+                .flatMap { ScreenStructure.fields(it).asSequence() }
+                .mapNotNull { it.name }
+                .filter { it != "title" }
+                .distinct().sorted().take(20).joinToString(",")
+            val prior = dao.get(fp.key)
+            dao.put(
+                com.agent.ultra.data.ScreenMemoryEntity(
+                    screenKey = fp.key,
+                    pkg = pkg,
+                    template = template,
+                    recordCount = rows.size,
+                    fieldsCsv = fields,
+                    seenCount = (prior?.seenCount ?: 0) + 1,
+                    lastSeen = System.currentTimeMillis(),
+                    confidence = fp.confidence.name,
+                )
+            )
+            dao.trimTo(SCREEN_MEMORY_LIMIT)
+            android.util.Log.i(
+                "UltraPerceive",
+                "learned screen ${fp.key} (${fp.confidence}) ${rows.size} records, fields=[$fields]",
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("UltraPerceive", "could not record screen: ${e.message}")
+        }
+    }
+
     /**
      * Put the page back where the read found it.
      *
@@ -299,10 +359,22 @@ class Tools(
         if (first == "[]" || first.isBlank()) {
             return "Error: screen empty or accessibility service not running"
         }
+        // What this screen looked like last time, if it has been read before.
+        // Looked up once for the whole read rather than per scroll: scrolling
+        // does not change which screen you are on.
+        val pkg = controller.activePackage()
+        var recalled = ""
+        var fingerprint: ScreenSignature.Fingerprint? = null
+
         suspend fun absorb(flat: String): Int {
             val before = seen.size + items.size
             seen += labelsOf(flat)
-            for (it in ScreenStructure.items(ScreenStructure.parse(controller.screenTree()))) {
+            val nodes = ScreenStructure.parse(controller.screenTree())
+            if (fingerprint == null && nodes.isNotEmpty()) {
+                fingerprint = ScreenSignature.of(pkg, nodes)
+                recalled = rememberedTemplate(fingerprint)
+            }
+            for (it in ScreenStructure.items(nodes, knownTemplate = recalled)) {
                 items.putIfAbsent(it.signature, it)
             }
             return seen.size + items.size - before
@@ -326,6 +398,7 @@ class Tools(
         if (scrolls >= maxScrolls) stoppedBecause = "hit the $maxScrolls-scroll limit"
 
         restoreScroll(scrolls)
+        learnScreen(fingerprint, pkg, items.values.toList())
 
         // Structured when the screen genuinely has a repeating list; flat when
         // it does not. Inventing groups where there are none is how a wrong
@@ -492,6 +565,9 @@ class Tools(
         /** Shorter than SCROLL_SETTLE_MS: scrolling back reads nothing, so it
          * only has to let each gesture land, not wait for content to render. */
         const val RESTORE_SETTLE_MS = 250L
+
+        /** Screens are cheap to relearn, so the table stays small. */
+        const val SCREEN_MEMORY_LIMIT = 300
 
         const val PROTECTED = com.agent.ultra.AgentAccessibilityService.PROTECTED
         const val PROTECTED_MSG =
