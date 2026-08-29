@@ -19,6 +19,10 @@ class ReActNavigator(
         /** Ultra surfacing its own action-gate card is not drifting away from
          * the task — it is the task waiting for a tap. */
         private const val OWN_PACKAGE = "com.agent.ultra"
+
+        /** How many steps a run may be repaid for being pushed out of its own
+         * app. Capped so a run that is genuinely lost still ends. */
+        private const val MAX_RECOVERY_GRACE = 5
         private val DOMAIN =
             Regex("[a-z0-9-]+\\.(com|org|net|io|gov|edu)", RegexOption.IGNORE_CASE)
 
@@ -47,18 +51,18 @@ class ReActNavigator(
             val hist = if (history.isEmpty()) "" else "\nHISTORY:\n" + history.takeLast(6).joinToString("\n")
             return """You are driving an Android phone's UI to accomplish: "$goal"
 
-    CURRENT SCREEN:
-    $observation
-    $hist$noteBlock
-    Reply with exactly ONE action on one line, one of:
-      tap(INDEX)        — tap a listed element by its [index]
-      type("text")      — type into the first TYPEABLE field, then submit
-      type(INDEX, "text") — type into a specific field
-      scroll(down) / scroll(up)
-      back()
-      done              — only when the goal is visibly complete
+CURRENT SCREEN:
+$observation
+$hist$noteBlock
+Reply with exactly ONE action on one line, one of:
+  tap(INDEX)        — tap a listed element by its [index]
+  type("text")      — type into the first TYPEABLE field, then submit
+  type(INDEX, "text") — type into a specific field
+  scroll(down) / scroll(up)
+  back()
+  done              — only when the goal is visibly complete
 
-    ACTION:"""
+ACTION:"""
         }
     }
 
@@ -105,7 +109,15 @@ class ReActNavigator(
         var leftAppFor = 0
         val history = mutableListOf<String>()
 
-        for (iter in 1..MAX_ITER) {
+        // Steps spent because something else took the screen are not steps the
+        // agent wasted. Measured: an alarm app taking the foreground mid-task
+        // cost four steps to notice and back out of, and the run then died of
+        // "iteration budget exhausted" having recovered correctly. Recovery is
+        // repaid, up to a cap so a genuinely lost run still ends.
+        var grace = 0
+        var iter = 0
+        while (iter < MAX_ITER + grace) {
+            iter++
             val prompt = buildPrompt(goal, observation, history, repeatedNoOp, leftAppFor, pkg)
             val reply = client.complete(
                 listOf(OpenAiClient.ChatMessage("user", prompt)),
@@ -150,9 +162,22 @@ class ReActNavigator(
             // Reported, not corrected. Some goals legitimately leave the app —
             // a link in an email opens the browser — so the engine states the
             // fact and the model decides whether to go back.
+            // activePackage() returns "" when it cannot tell, not null, so a
+            // null check passes for every String and an unknown foreground
+            // would be reported as having left the app. Not knowing where we
+            // are is not evidence of being somewhere else.
             val onPkg = controller.activePackage()
-            val drifted = onPkg != null && onPkg != pkg && onPkg != OWN_PACKAGE
-            if (drifted) leftAppFor++ else leftAppFor = 0
+            val drifted = onPkg.isNotBlank() && onPkg != pkg && onPkg != OWN_PACKAGE
+            if (drifted) {
+                leftAppFor++
+                if (grace < MAX_RECOVERY_GRACE) grace++
+                android.util.Log.i(
+                    "UltraNav",
+                    "DRIFT: now in $onPkg, target $pkg (step $iter, $leftAppFor in a row, grace $grace)",
+                )
+            } else {
+                leftAppFor = 0
+            }
 
             val outcome = if (changed) "screen changed"
                 else if (ok) "NO CHANGE - do not repeat this"
@@ -175,7 +200,7 @@ class ReActNavigator(
             } else stuckCount = 0
             lastTreePrefix = prefix
         }
-        return NavResult(false, "iteration budget exhausted", MAX_ITER)
+        return NavResult(false, "iteration budget exhausted", iter)
     }
 
     /** a11y flat nodes → indexed TAPPABLE/TYPEABLE/SCROLLABLE lists (visible-only). */
