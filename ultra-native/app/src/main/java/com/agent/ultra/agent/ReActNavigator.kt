@@ -99,7 +99,7 @@ ACTION:"""
     }
 
     suspend fun execute(goal: String, appHint: String): NavResult {
-        if (!controller.serviceRunning) return NavResult(false, "accessibility service not running", 0)
+        if (!controller.serviceRunning) return NavResult(false, controller.serviceProblem, 0)
 
         // Resolve and launch the target app
         val pkg = controller.findPackage(if (appHint.isBlank()) goal else appHint)

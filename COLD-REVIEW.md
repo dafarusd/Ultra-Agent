@@ -22,7 +22,12 @@ fix is proven on a device, not when the code compiles.
 
 ---
 
-## F1 — The gate can authorize one app while the action lands in another
+## ~~F1 — The gate can authorize one app while the action lands in another~~ FIXED, PROVEN 2026-08-29
+
+> Closed. Proven on the phone by intruding a disallowed app into a running
+> navigation: 2 x `GATE: BLOCKED pkg=com.sec.android.app.clockpackage` against
+> 14 x `GATE: PASSED pkg=com.android.chrome`. `performImeAction` is gated.
+> Back and Home stay ungated deliberately — they are how the agent leaves.
 
 `checkPackageAllowed()` (`AgentAccessibilityService.java:853`) decides against the
 field `currentPackage`, set from event history (`:192`). **The code's own comments
@@ -43,7 +48,13 @@ the keyboard's Enter key (`:1180`), entirely outside the gate.
 > That was true of reads and false of writes. The fix was real and incomplete, and
 > it was reported as complete.
 
-## F2 — Native generation is not thread-safe, and the lock does not do what it says
+## ~~F2 — Native generation is not thread-safe~~ FIXED, RACE NOT REPRODUCED 2026-08-29
+
+> Generation serialised on a coroutine Mutex, handle read inside the lock,
+> `unload()` waits for work in flight, JNI ref released by an RAII guard on
+> every path. **The original race was never reproduced and then shown gone** —
+> it needs a voice command landing inside a streaming reply. Correct by
+> construction is not the same as verified.
 
 `LocalModelEngine`'s header claims "a lock guards the native context"
 (`local/LocalModelEngine.kt:10`). The lock wraps only `ensureLoaded` (`:152`) and
@@ -148,3 +159,40 @@ already exists on every step — the identical machinery stamps provenance on **
 field on screen**, and can enforce cross-app dataflow: a banking OTP physically
 cannot be typed into a messaging field. The type system generalises cleanly; the
 wiring stops at the tool boundary.
+
+---
+
+## Found while fixing, 2026-08-29 — not from the review
+
+### ~~M1 — A short memory could claim a long request~~ FIXED
+`bestShortcut` scored containment as `overlap / min(size)`, so a two-word memory
+was perfectly "contained" in any longer request mentioning it. "battery level"
+scored **1.0** against "check the battery level then open my banking app and pay
+the bill", and the agent would be told that exact job had already succeeded with
+one tool — the banking half of the sentence evaporating.
+
+That is L1's failure mode one size smaller: a remembered thing firing on a
+request that merely *contains* it. Fixed before building anything that replays
+learned routines, not after. Scoring moved to `agent/TaskMatch.kt` so it can be
+argued with in a test; both directions must now hold — containment, and how much
+of the new request the memory actually accounts for. Six tests.
+
+### ~~M2 — "accessibility service not running" told the user nothing~~ FIXED
+Every read failure said the same unhelpful sentence. It now says which of two
+states it is in and what to do about each. The second state is real and
+horrible: after an update Android still LISTS the service, so its own switch is
+drawn ON, while `dumpsys` reports `Bound services:{}` and nothing works. The only
+cure is turning that switch off and on again, which nobody would guess from a
+switch already in the right position.
+
+**Proven for the "genuinely off" branch** — the message appeared in a real run.
+The listed-but-not-bound branch is source-correct but was never observed firing;
+the state kept collapsing to plain "off" before it could be caught.
+
+### M3 — Conversation history bleeds between unrelated tasks (OPEN, defended)
+A run asked to open a menu instead reached for a URL from an earlier, unrelated
+task in the chat window. **The origin gate caught it** — `BLOCK open_url: domain
+does not trace to the user's request` — so the defence worked and nothing
+happened. Left alone deliberately: shrinking the history window would break
+legitimate follow-ups ("do that again for X"), and the gate is the right layer
+for this. Recorded because it will look like a new bug the next time it appears.

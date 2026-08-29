@@ -257,8 +257,7 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             // lengths ("battery level" vs "how is the battery doing") scores
             // badly under Jaccard purely for being wordier. What matters is
             // whether the smaller request's subject is present in the larger.
-            val overlap = mine.intersect(theirs).size.toDouble()
-            val score = overlap / minOf(mine.size, theirs.size)
+            val score = TaskMatch.score(mine, theirs)
             if (score > bestScore) { bestScore = score; best = row }
         }
         return if (best != null && bestScore >= MATCH_THRESHOLD) best!! to bestScore else null

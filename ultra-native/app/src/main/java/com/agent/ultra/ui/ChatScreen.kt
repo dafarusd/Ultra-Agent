@@ -66,6 +66,10 @@ fun ChatScreen(
     val thinking by ChatStore.thinking
     val listState = rememberLazyListState()
     var a11yRunning by remember { mutableStateOf(AgentAccessibilityService.isRunning()) }
+    // Enabled in Android's settings, yet not bound. The switch looks on and
+    // nothing works; only turning it off and on again fixes it, and nobody
+    // would guess that from a switch that is already in the right position.
+    var a11yStuck by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
 
     LaunchedEffect(Unit) { ChatStore.init(context.applicationContext) }
@@ -78,6 +82,7 @@ fun ChatScreen(
     LaunchedEffect(Unit) {
         while (true) {
             a11yRunning = AgentAccessibilityService.isRunning()
+            a11yStuck = AgentAccessibilityService.listedButNotBound(context)
             kotlinx.coroutines.delay(3000)
         }
     }
@@ -157,6 +162,7 @@ fun ChatScreen(
                 text = when {
                     thinking -> "agent: thinking…"
                     a11yRunning -> "agent: ready"
+                    a11yStuck -> "agent: switch it off and on ›"
                     else -> "agent: a11y off ›"
                 },
                 style = MaterialTheme.typography.bodySmall,

@@ -29,6 +29,24 @@ class AgentController(private val context: Context) {
     val serviceRunning: Boolean get() = AgentAccessibilityService.isRunning()
 
     /**
+     * Why the service is not running, in words the user can act on.
+     *
+     * "Accessibility service not running" is true and unhelpful when Android's
+     * own switch is already showing ON — which happens after a reinstall, where
+     * the setting survives but the binding does not.
+     */
+    val serviceProblem: String get() = when {
+        AgentAccessibilityService.isRunning() -> ""
+        AgentAccessibilityService.listedButNotBound(context) ->
+            "the accessibility service is switched on in Android's settings but is not " +
+                "actually running — this happens after an update. Turn it OFF and back ON " +
+                "under Settings > Accessibility > Installed apps > Agent Ultra."
+        else ->
+            "the accessibility service is off. Tap the red text at the top of the chat " +
+                "screen to switch it on; nothing can be read or tapped until then."
+    }
+
+    /**
      * The service can be momentarily unbound (bind races after process start,
      * Samsung background churn). Poll briefly before declaring it absent.
      */

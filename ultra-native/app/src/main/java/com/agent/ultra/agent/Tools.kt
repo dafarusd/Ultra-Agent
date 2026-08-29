@@ -53,7 +53,7 @@ class Tools(
                     when {
                         flat == PROTECTED -> PROTECTED_MSG
                         flat == "[]" || flat.isBlank() ->
-                            "Error: screen empty or accessibility service not running"
+                            "Error: nothing could be read — " + controller.serviceProblem.ifBlank { "the screen was empty" }
                         else -> summarizeFlat(flat)
                     }
                 }
@@ -68,7 +68,7 @@ class Tools(
                     when {
                         flat == PROTECTED -> PROTECTED_MSG
                         flat == "[]" || flat.isBlank() ->
-                            "Error: screen empty or accessibility service not running"
+                            "Error: nothing could be read — " + controller.serviceProblem.ifBlank { "the screen was empty" }
                         else -> "Current app: ${controller.activePackage()}\n" + summarizeFlat(flat)
                     }
                 }
@@ -363,7 +363,7 @@ class Tools(
         val first = controller.screenFlat()
         if (first == PROTECTED) return PROTECTED_MSG
         if (first == "[]" || first.isBlank()) {
-            return "Error: screen empty or accessibility service not running"
+            return "Error: nothing could be read — " + controller.serviceProblem.ifBlank { "the screen was empty" }
         }
         // What this screen looked like last time, if it has been read before.
         // Looked up once for the whole read rather than per scroll: scrolling

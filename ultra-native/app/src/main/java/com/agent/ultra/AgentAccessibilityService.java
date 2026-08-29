@@ -36,6 +36,30 @@ public class AgentAccessibilityService extends AccessibilityService {
     public static AgentAccessibilityService getInstance() {
         synchronized (instanceLock) { return instance; }
     }
+    /**
+     * Android lists this service as enabled, but has not bound it.
+     *
+     * A real state, hit after reinstalling: `enabled_accessibility_services`
+     * still names the service, so Android's own toggle is drawn as ON, while
+     * `dumpsys accessibility` reports `Bound services:{}` and nothing works.
+     * The user sees a switch that is already on and an app that says it is off,
+     * with no reason to suspect the cure is to turn the switch off and on
+     * again — which is the only thing that fixes it.
+     *
+     * Distinguishing this from "simply not enabled" is the difference between
+     * an instruction that works and one that reads as nonsense.
+     */
+    public static boolean listedButNotBound(android.content.Context ctx) {
+        if (isRunning()) return false;
+        try {
+            String listed = android.provider.Settings.Secure.getString(
+                    ctx.getContentResolver(), "enabled_accessibility_services");
+            return listed != null && listed.contains(ctx.getPackageName());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public static boolean isRunning() {
         synchronized (instanceLock) { return instance != null; }
     }
