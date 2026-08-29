@@ -20,7 +20,7 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16q — planning with checkpoints; 134/134 tests)
+**Last updated:** 2026-08-29 (Session 16r — step-level action reliability; the History task completes in 4 steps)
 
 **App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **134/134**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
@@ -143,6 +143,62 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16r — step-level action reliability (2026-08-29, branch `native`, Galaxy A15)
+
+Owner: "fix this then. step-level action reliability is now the binding constraint."
+
+#### The result
+
+The same task that failed all session — open Chrome's History page from the three-dot menu — now completes.
+
+```
+before:  navigation incomplete after 15 steps: iteration budget exhausted
+after:   Goal achieved after 4 steps: all 3 stages done
+```
+
+Chrome is showing the History page. Verified on the phone, not inferred from a log line.
+
+#### The thing that made it findable
+
+**The navigator never logged which action it chose.** Every failure looked the same from outside, and a bad choice was indistinguishable from a good choice executed badly. Adding one line — the action, and its outcome — turned four invisible bugs into four obvious ones inside a single run.
+
+Worth generalising: **anything that decides on the agent's behalf has to say what it decided.** That is the same lesson as the 120-character tool-result cap in 16m, which hid four bugs for a day.
+
+#### Four bugs
+
+1. **The keyboard blocked everything.** `currentPackage` was set from any accessibility event, and the keyboard, status bar and notification shade all emit them. The policy gate then believed the agent was "in" `com.android.systemui`, which is on nobody's allowed list, so **every action after a keyboard appeared was refused**. Any task that typed could do nothing afterwards.
+
+   The code already knew. It skipped *logging* systemui and the keyboard as a package change while still recording them as one — it recognised the case and then did the harmful thing anyway.
+
+2. **An index was resolved against a fresh dump.** The model chose an index from the screen it was shown; the tap looked that index up in a newly taken dump. If an advert loaded or a page settled in between, index N was a different node and the agent confidently tapped the wrong thing. The label the model saw is now carried alongside the index, and a mismatch is refused rather than acted on.
+
+   It fired on a real run: `NOT DONE: [15] is no longer on the screen — look at it again`. That is a wrong tap prevented.
+
+3. **Taps were pixels, not nodes.** A coordinate tap misses a node behind an overlay, one that has moved, or one only partly on screen. The node is asked to activate now, through the same path the app uses for a real touch, with the gesture kept as a fallback for views that handle touch while reporting themselves unclickable.
+
+4. **Typed text was silently corrupted.** `chrome://history/` went in; the field held `chrome//history/`. The colon was gone, the page failed to load, **the type reported success**, and the run spent its remaining budget wondering why the site would not open. The field is read back before enter is pressed now, and a mismatch is reported instead of committed.
+
+   This one is a safety matter as much as a reliability one: pressing enter on text a field did not accept is how an agent searches for, or sends, something nobody asked for.
+
+#### A regression made and fixed in the same pass
+
+Preferring the **topmost** window — so an open menu is described rather than the page behind it — picked systemui the moment a keyboard appeared. Device furniture (status bar, navigation bar, keyboard) is never the task, and is now excluded everywhere the foreground app is decided.
+
+The allowlist is what caught it: every action came back `GATE: BLOCKED pkg=com.android.systemui`. The safety model did its job on a bug introduced ten minutes earlier.
+
+#### Honest scope
+
+Chrome's overflow menu turned out **not** to be a separate window (layer 0 throughout), so the topmost-window work was not what fixed this task. It is still correct for dialogs and popups that are separate windows, and it is unproven for those.
+
+#### Harness note
+
+`tools/ask.sh` does not escape quotes: a task containing an apostrophe fails silently with `no closing quote` and produces no log at all. Cost two runs before it was spotted.
+
+#### Open
+
+- Items 2 (tasks that cross apps) and 3 (undo) remain untouched.
+- The demo now has a genuine multi-step task that works end to end and can be filmed.
 
 ### Session 16q — planning with checkpoints (2026-08-29, branch `native`, Galaxy A15)
 
