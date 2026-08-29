@@ -243,6 +243,34 @@ class Tools(
     } catch (_: Exception) { emptyList() }
 
     /**
+     * Put the page back where the read found it.
+     *
+     * Reading is not supposed to move anything. Without this, a deep read
+     * leaves the screen wherever it stopped, so the next tool call sees a
+     * different page than the one the model was told about — it taps the
+     * third row and hits whatever scrolled into that spot.
+     *
+     * Scrolls back the same number of times rather than jumping to the top,
+     * because the page was not necessarily at the top when the read began.
+     * Best-effort: a failed restore is logged and never fails a read that
+     * already succeeded.
+     */
+    private suspend fun restoreScroll(scrolls: Int) {
+        if (scrolls <= 0) return
+        var undone = 0
+        try {
+            while (undone < scrolls) {
+                if (!controller.scrollDeep("up")) break
+                undone++
+                kotlinx.coroutines.delay(RESTORE_SETTLE_MS)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("UltraPerceive", "deep read: scroll restore failed: ${e.message}")
+        }
+        android.util.Log.i("UltraPerceive", "deep read: restored $undone/$scrolls scrolls")
+    }
+
+    /**
      * Read a whole scrollable page, not just the viewport.
      *
      * Scrolls the largest container forward, re-reads, and accumulates labels
@@ -283,6 +311,8 @@ class Tools(
             if (seen.size >= MAX_DEEP_LABELS) { stoppedBecause = "hit the ${MAX_DEEP_LABELS}-item limit"; break }
         }
         if (scrolls >= maxScrolls) stoppedBecause = "hit the $maxScrolls-scroll limit"
+
+        restoreScroll(scrolls)
 
         // Structured when the screen genuinely has a repeating list; flat when
         // it does not. Inventing groups where there are none is how a wrong
@@ -445,6 +475,10 @@ class Tools(
         const val DEEP_BUDGET = 12000
         const val MAX_DEEP_LABELS = 600
         const val SCROLL_SETTLE_MS = 650L
+
+        /** Shorter than SCROLL_SETTLE_MS: scrolling back reads nothing, so it
+         * only has to let each gesture land, not wait for content to render. */
+        const val RESTORE_SETTLE_MS = 250L
 
         const val PROTECTED = com.agent.ultra.AgentAccessibilityService.PROTECTED
         const val PROTECTED_MSG =
