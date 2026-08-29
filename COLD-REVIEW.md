@@ -82,7 +82,35 @@ silently degrades to "final text". The navigator matches typed text with `[^)]`
 no parseable action")` kills the entire 15-step run. **One chatty sentence from a
 1B model ends the task.**
 
-## F4 — The taint gate is blind to the UI-driving path, and matches by substring
+## ~~F4 / L3 — The taint gate is blind to the UI-driving path~~ BUILT, DEVICE-UNPROVEN 2026-08-29
+
+> F4 and L3 were the same problem seen twice: the machinery that tracks where a
+> value came from stopped at the tool boundary, and the UI path it could not see
+> is exactly where a secret flows. Fixing one builds the other.
+>
+> `gate/ScreenSecrets.kt` recognises what is actually secret on a phone — the
+> old detector wanted 40-character keys, so **a six-digit bank code was never
+> secret-shaped**, while the notification logger two files away redacted at
+> twenty. Every screen the navigator reads and every deep read now feeds a flow
+> tracker on `AgentController`, carrying the package it was seen in. Typing is
+> checked BEFORE the keystroke; `sms_send` is checked for anything leaving the
+> phone at all.
+>
+> **The rule: a code may go back into the app it came from, and nowhere else.**
+> Reading a code from a banking app and entering it in that same app is the
+> normal thing and stays allowed; carrying it to a chat app is the leak, and
+> that is all it refuses.
+>
+> 13 tests, weighted toward false positives — a guard that fires while someone
+> types a house number gets switched off, and a guard that is off protects
+> nobody. **Not demonstrated end-to-end on the phone**: every attempt was
+> stopped first by another layer (Chrome not allowed, personal data off), which
+> is defence in depth working and also why the new layer never ran.
+>
+> Still true from the original finding, and NOT fixed: `mintOrigin` is pure
+> substring, so short or common arguments remain trivially "user-traceable".
+
+## F4 (original finding) — The taint gate is blind to the UI-driving path, and matches by substring
 
 `episode.observeSecrets()` runs on tool *result strings* (`Brain.kt:561`), but
 `react_navigate` returns only a short summary (`Tools.kt:105`). **The screen text

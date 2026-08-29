@@ -333,6 +333,12 @@ ACTION:"""
     private suspend fun observe(): String {
         val flat = controller.screenFlat()
         lastFlat = flat
+        // Every screen the navigator reads goes past the flow tracker. This is
+        // the path the taint gate could not see: react_navigate returns a short
+        // summary, so nothing the navigator READ ever reached the episode, and
+        // a code on screen could be typed into another app with nothing
+        // watching.
+        controller.noteScreenSecrets(flat)
         return try {
             val arr = JSONArray(flat)
             if (arr.length() == 0) return "Screen: empty or inaccessible"
@@ -415,6 +421,13 @@ ACTION:"""
             // than one box. When this screen has been here before, the app's
             // own name for its input is known and is used instead.
             if (idx == null && !focusKnownInput()) focusFirstEditable()
+            // Before the keystroke, not after. Typing it and then noticing is
+            // not a check, it is a log entry about a leak that already happened.
+            controller.refuseTyping(text)?.let { why ->
+                lastRefusal = "I did not type that: $why"
+                android.util.Log.i("UltraFlow", "REFUSED typing into ${controller.activePackage()}: $why")
+                return false
+            }
             val ok = controller.typeInto(selector, text)
             if (!ok) return false
             delay(300)

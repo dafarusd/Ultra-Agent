@@ -93,6 +93,10 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     }
 
     suspend fun run(userInput: String) {
+        // A new request starts with no memory of what was on screen during the
+        // last one. Secrets outliving the task that saw them would be a worse
+        // thing than the leak this prevents.
+        controller.forgetScreenSecrets()
         // A recipe is a name the user chose. Matching it is a lookup, not a
         // judgment call — measured: llama-3.3-70b read "run my morning
         // briefing" as a question about which model it is. The engine owns

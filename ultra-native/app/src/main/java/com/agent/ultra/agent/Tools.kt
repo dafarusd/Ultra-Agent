@@ -185,6 +185,14 @@ class Tools(
                     when {
                         to.isBlank() -> "Error: sms_send needs a 'to' phone number — ask the user or use contacts_read first"
                         msg.isBlank() -> "Error: sms_send needs a 'message'"
+                        // The classic one: read the code off the screen, text it
+                        // somewhere. A message leaves the phone entirely, so
+                        // "back to the same app" cannot apply and any secret in
+                        // it is a secret leaving.
+                        secretInOutbound(msg) != null ->
+                            "Error: that message contains ${secretInOutbound(msg)} that was on " +
+                                "screen a moment ago. I will not send a code or a card number in " +
+                                "a text. Ask the user to send it themselves if they meant to."
                         controller.sendSms(to, msg) -> "SMS sent to $to"
                         else -> "Error: SMS send failed"
                     }
@@ -304,6 +312,15 @@ class Tools(
             "Error: could not save that routine (${e.message})"
         }
     }
+
+    /**
+     * A secret from any app, about to leave the phone.
+     *
+     * Unlike typing, there is no "back where it came from" here: a message goes
+     * outward, so every tracked value counts regardless of which app it was
+     * read in.
+     */
+    private fun secretInOutbound(text: String): String? = controller.outboundSecret(text)
 
     /** The template this screen used last time, or "" if it is new to us. */
     private suspend fun rememberedTemplate(fp: ScreenSignature.Fingerprint?): String {
@@ -433,6 +450,7 @@ class Tools(
 
         suspend fun absorb(flat: String): Int {
             val before = seen.size + items.size
+            controller.noteScreenSecrets(flat)
             seen += labelsOf(flat)
             val nodes = ScreenStructure.parse(controller.screenTree())
             if (fingerprint == null && nodes.isNotEmpty()) {

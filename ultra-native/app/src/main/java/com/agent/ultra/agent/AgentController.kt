@@ -26,6 +26,55 @@ class AgentController(private val context: Context) {
 
     private val service get() = AgentAccessibilityService.getInstance()
 
+    // ── What has been read off the screen that must not travel ──────
+    //
+    // Held here rather than in the navigator because the dangerous flow crosses
+    // tools: a deep read of a banking screen, then a navigation that types into
+    // a messaging app. Both go through this object, so this is the one place
+    // that sees the whole path.
+    //
+    // Values only, never persisted, cleared at the start of every request. A
+    // list of secrets that outlived the task that saw them would be a worse
+    // thing than the leak it prevents.
+    private val seenSecrets = mutableListOf<com.agent.ultra.gate.ScreenSecrets.Seen>()
+
+    /** Note anything secret-shaped on a screen, with the app it was seen in. */
+    fun noteScreenSecrets(screenText: String) {
+        if (screenText.isBlank()) return
+        val pkg = activePackage()
+        if (pkg.isBlank()) return
+        val found = com.agent.ultra.gate.ScreenSecrets.find(screenText, pkg)
+        for (f in found) {
+            if (seenSecrets.none { it.value == f.value && it.pkg == f.pkg }) {
+                seenSecrets += f
+                android.util.Log.i("UltraFlow", "noted ${f.why} on screen in ${f.pkg}")
+            }
+        }
+        // A handful is all a single request should ever produce; a screen
+        // generating hundreds is noise, not evidence.
+        while (seenSecrets.size > 32) seenSecrets.removeAt(0)
+    }
+
+    /** Why this text must not be typed into the app in front, or null. */
+    fun refuseTyping(text: String): String? =
+        com.agent.ultra.gate.ScreenSecrets.refuseTyping(text, activePackage(), seenSecrets)
+
+    /**
+     * A tracked secret contained in text that is about to leave the phone.
+     *
+     * Typing has a legitimate destination — the app the value came from.
+     * Sending does not: a message goes outward and never comes home, so every
+     * value counts here regardless of where it was read.
+     */
+    fun outboundSecret(text: String): String? {
+        if (text.isBlank()) return null
+        return seenSecrets.firstOrNull { text.contains(it.value) }
+            ?.let { "${it.why} read from ${it.pkg}" }
+    }
+
+    /** Forget everything at the start of a new request. */
+    fun forgetScreenSecrets() { seenSecrets.clear() }
+
     val serviceRunning: Boolean get() = AgentAccessibilityService.isRunning()
 
     /**
