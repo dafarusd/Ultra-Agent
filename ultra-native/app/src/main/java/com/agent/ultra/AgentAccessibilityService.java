@@ -177,10 +177,22 @@ public class AgentAccessibilityService extends AccessibilityService {
                 .apply();
         } catch (Exception e) {}
         if (event.getPackageName() != null) {
-            String prevPkg = currentPackage;
-            currentPackage = event.getPackageName().toString();
-            if (!currentPackage.equals(prevPkg) && !"com.android.systemui".equals(currentPackage) && !"com.samsung.android.honeyboard".equals(currentPackage)) {
-                Log.i(TAG, "PKG_CHANGE: " + prevPkg + " -> " + currentPackage);
+            String evtPkg = event.getPackageName().toString();
+            // The keyboard, the status bar and the notification shade all emit
+            // events, and none of them means the user has changed app. Taking
+            // them as the current package told the policy gate the agent was
+            // "in" systemui, and since systemui is on nobody's allowed list
+            // every action after a keyboard appeared was refused. A task that
+            // types was therefore unable to do anything after typing.
+            //
+            // This code already knew: it skipped LOGGING these as a package
+            // change while still recording them as one.
+            if (!isDeviceFurniture(evtPkg)) {
+                String prevPkg = currentPackage;
+                currentPackage = evtPkg;
+                if (!currentPackage.equals(prevPkg)) {
+                    Log.i(TAG, "PKG_CHANGE: " + prevPkg + " -> " + currentPackage);
+                }
             }
         }
         int type = event.getEventType();
@@ -295,7 +307,12 @@ public class AgentAccessibilityService extends AccessibilityService {
             AccessibilityWindowInfo best = null;
             for (AccessibilityWindowInfo w : windows) {
                 if (w.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
-                if (w.getRoot() == null) continue;
+                AccessibilityNodeInfo r = w.getRoot();
+                if (r == null) continue;
+                // Same reason as above: device furniture is never the app the
+                // user is in, however high it is layered.
+                CharSequence rp = r.getPackageName();
+                if (rp != null && isDeviceFurniture(rp.toString())) continue;
                 if (best == null || w.getLayer() > best.getLayer()) best = w;
             }
             if (best != null) {
@@ -391,27 +408,10 @@ public class AgentAccessibilityService extends AccessibilityService {
         new Handler(Looper.getMainLooper()).post(() -> {
             try {
                 // Find the target app window, not Agent Ultra's own window
-                AccessibilityNodeInfo root = null;
-                try {
-                    java.util.List<AccessibilityWindowInfo> windows = getWindows();
-                    // First pass: find type=1 (application) window that isn't Agent Ultra
-                    for (AccessibilityWindowInfo w : windows) {
-                        if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
-                            AccessibilityNodeInfo wRoot = w.getRoot();
-                            if (wRoot != null) {
-                                CharSequence pkg = wRoot.getPackageName();
-                                if (pkg == null || !"com.agent.ultra".contentEquals(pkg)) {
-                                    root = wRoot;
-                                    Log.i(TAG, "SCREEN_FLAT: using_window pkg=" + pkg + " layer=" + w.getLayer());
-                                    break;
-                                }
-                                wRoot.recycle();
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "SCREEN_FLAT: window scan failed: " + e.getMessage());
-                }
+                // Topmost, not first: an open menu is a window above the page,
+                // and reading the page behind it is why a successful tap on
+                // the menu button looked like a failure.
+                AccessibilityNodeInfo root = topmostWindowRoot("SCREEN_FLAT");
                 // Fallback to default if no other app window found
                 if (root == null) {
                     root = getRootInActiveWindow();
@@ -463,6 +463,185 @@ public class AgentAccessibilityService extends AccessibilityService {
         return result.get();
     }
 
+    /**
+     * Click the node the model chose, by its position in the last flat dump.
+     *
+     * Two problems this fixes, both of which look identical from outside — the
+     * agent "did not tap the button".
+     *
+     * The index came from a dump taken before the model was asked what to do.
+     * Resolving it against a NEW dump means that if anything shifted in
+     * between — an advert loading, a page settling, a spinner finishing —
+     * index N is now a different node and the agent confidently taps the wrong
+     * thing. So the caller passes the label it saw, and a mismatch is reported
+     * rather than acted on: seeing something else there is information, and
+     * tapping it anyway is how an agent ends up somewhere nobody asked for.
+     *
+     * And a tap at coordinates misses a node that is behind an overlay, or has
+     * moved a few pixels, or is only partly on screen. Asking the node itself
+     * to activate goes through the same path the app uses for a real touch.
+     * The gesture is kept as a fallback, because some views handle touch and
+     * report themselves as not clickable.
+     *
+     * @return "ok", "moved" when the label no longer matches, "gone" when
+     *   there is no such index, or "failed" when both click and tap refused.
+     */
+    public String clickByIndex(int index, String expectedLabel) {
+        AtomicReference<String> result = new AtomicReference<>("gone");
+        CountDownLatch latch = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            AccessibilityNodeInfo root = null;
+            try {
+                if (!checkPackageAllowed()) { result.set("failed"); return; }
+                root = targetWindowRoot();
+                if (root == null) { result.set("gone"); return; }
+                java.util.List<AccessibilityNodeInfo> order = new java.util.ArrayList<>();
+                collectInFlatOrder(root, order);
+                if (index < 0 || index >= order.size()) {
+                    Log.i(TAG, "CLICK_INDEX: index " + index + " out of range, collected " + order.size());
+                    result.set("gone");
+                    return;
+                }
+                AccessibilityNodeInfo target = order.get(index);
+
+                String actual = labelOf(target);
+                if (expectedLabel != null && !expectedLabel.isEmpty()
+                        && !expectedLabel.equals(actual)) {
+                    Log.i(TAG, "CLICK_INDEX: index " + index + " now holds \"" + actual
+                            + "\", expected \"" + expectedLabel + "\" — refusing");
+                    result.set("moved");
+                    return;
+                }
+
+                AccessibilityNodeInfo clickable = target;
+                int hops = 0;
+                while (clickable != null && !clickable.isClickable() && hops < 6) {
+                    clickable = clickable.getParent();
+                    hops++;
+                }
+                boolean ok = false;
+                if (clickable != null) {
+                    ok = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    Log.i(TAG, "CLICK_INDEX: ACTION_CLICK on \"" + actual + "\" result=" + ok);
+                }
+                if (!ok) {
+                    Rect b = new Rect();
+                    target.getBoundsInScreen(b);
+                    if (b.width() > 0 && b.height() > 0) {
+                        performTap(b.centerX(), b.centerY());
+                        Log.i(TAG, "CLICK_INDEX: fell back to a gesture at " + b.centerX() + "," + b.centerY());
+                        ok = true;
+                    }
+                }
+                result.set(ok ? "ok" : "failed");
+            } catch (Exception e) {
+                Log.e(TAG, "CLICK_INDEX failed: " + e.getMessage());
+                result.set("failed");
+            } finally {
+                if (root != null) root.recycle();
+                latch.countDown();
+            }
+        });
+        try { latch.await(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        return result.get();
+    }
+
+    /**
+     * The window the user is actually looking at.
+     *
+     * Taking the first application window in the list read the page BEHIND an
+     * open menu. Measured on Chrome: the overflow button was clicked
+     * successfully, over and over — ACTION_CLICK returned true every time —
+     * and the agent then described the web page, never saw the menu it had
+     * just opened, and concluded the tap had failed.
+     *
+     * A menu, a dialog and an autocomplete dropdown are all windows layered
+     * above the page. The focused one is what the user is dealing with; when
+     * nothing claims focus, the highest layer is on top. Order in the list
+     * means nothing.
+     */
+    private AccessibilityNodeInfo topmostWindowRoot(String tag) {
+        AccessibilityNodeInfo best = null;
+        int bestLayer = Integer.MIN_VALUE;
+        boolean bestFocused = false;
+        try {
+            for (AccessibilityWindowInfo w : getWindows()) {
+                int type = w.getType();
+                if (type != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+                AccessibilityNodeInfo wRoot = w.getRoot();
+                if (wRoot == null) continue;
+                CharSequence pkg = wRoot.getPackageName();
+                if (pkg != null && "com.agent.ultra".contentEquals(pkg)) { wRoot.recycle(); continue; }
+                // The status bar, the navigation bar and the keyboard are the
+                // device's own furniture, not the task. Preferring the topmost
+                // window without this picked systemui the moment a keyboard
+                // appeared — and since systemui is not on the user's allowed
+                // list, the policy gate then correctly refused every following
+                // action. The agent looked broken; it was being protected from
+                // reading a window it had no business in.
+                if (pkg != null && isDeviceFurniture(pkg.toString())) { wRoot.recycle(); continue; }
+
+                boolean focused = w.isFocused() || w.isActive();
+                int layer = w.getLayer();
+                boolean better = (best == null)
+                        || (focused && !bestFocused)
+                        || (focused == bestFocused && layer > bestLayer);
+                if (better) {
+                    if (best != null) best.recycle();
+                    best = wRoot;
+                    bestLayer = layer;
+                    bestFocused = focused;
+                } else {
+                    wRoot.recycle();
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, tag + ": window scan failed: " + e.getMessage());
+        }
+        if (best != null) {
+            Log.i(TAG, tag + ": using topmost window layer=" + bestLayer + " focused=" + bestFocused);
+            return best;
+        }
+        return getRootInActiveWindow();
+    }
+
+    /** Windows that belong to the phone rather than to whatever is being done. */
+    private static boolean isDeviceFurniture(String pkg) {
+        if (pkg.equals("com.android.systemui")) return true;
+        // Keyboards name themselves in many ways; what they have in common is
+        // being an input method, and none of them is ever the task.
+        return pkg.contains("inputmethod") || pkg.contains("honeyboard")
+                || pkg.contains("latin") || pkg.endsWith(".ime");
+    }
+
+    /** The same order flattenNode writes, so an index means the same node. */
+    private void collectInFlatOrder(AccessibilityNodeInfo node, java.util.List<AccessibilityNodeInfo> out) {
+        if (node == null || out.size() >= 1200) return;
+        String text = node.getText() != null ? node.getText().toString().trim() : "";
+        String desc = node.getContentDescription() != null ? node.getContentDescription().toString().trim() : "";
+        boolean hasContent = !text.isEmpty() || !desc.isEmpty();
+        boolean interactive = node.isClickable() || node.isScrollable() || node.isEditable();
+        if (hasContent || interactive) {
+            Rect b = new Rect();
+            node.getBoundsInScreen(b);
+            if (b.width() > 0 && b.height() > 0) out.add(node);
+        }
+        for (int i = 0; i < Math.min(node.getChildCount(), 200); i++) {
+            collectInFlatOrder(node.getChild(i), out);
+        }
+    }
+
+    private static String labelOf(AccessibilityNodeInfo n) {
+        String t = n.getText() != null ? n.getText().toString().trim() : "";
+        if (!t.isEmpty()) return t;
+        return n.getContentDescription() != null ? n.getContentDescription().toString().trim() : "";
+    }
+
+    /** The foreground app's window, never Agent Ultra's own. */
+    private AccessibilityNodeInfo targetWindowRoot() {
+        return topmostWindowRoot("CLICK_INDEX");
+    }
+
     private void flattenNode(AccessibilityNodeInfo node, JSONArray flat) {
         flattenNode(node, flat, -1, 0);
     }
@@ -485,19 +664,13 @@ public class AgentAccessibilityService extends AccessibilityService {
         new Handler(Looper.getMainLooper()).post(() -> {
             AccessibilityNodeInfo root = null;
             try {
-                try {
-                    java.util.List<AccessibilityWindowInfo> windows = getWindows();
-                    for (AccessibilityWindowInfo w : windows) {
-                        if (w.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
-                            AccessibilityNodeInfo wRoot = w.getRoot();
-                            if (wRoot != null) {
-                                CharSequence pkg = wRoot.getPackageName();
-                                if (pkg == null || !"com.agent.ultra".contentEquals(pkg)) { root = wRoot; break; }
-                                wRoot.recycle();
-                            }
-                        }
-                    }
-                } catch (Exception ignored) {}
+                // Same rule as the flat read: whatever is on top, so a menu or
+                // dialog is what gets described rather than the page under it.
+                root = topmostWindowRoot("SCREEN_TREE");
+                if (root != null) {
+                    CharSequence rp = root.getPackageName();
+                    if (rp != null && "com.agent.ultra".contentEquals(rp)) { root.recycle(); root = null; }
+                }
                 if (root == null) {
                     root = getRootInActiveWindow();
                     if (root != null) {

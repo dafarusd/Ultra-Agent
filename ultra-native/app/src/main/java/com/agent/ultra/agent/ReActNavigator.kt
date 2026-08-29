@@ -178,6 +178,10 @@ ACTION:"""
             }
 
             val before = observation
+            // Log the action and its outcome. Without this a failing run gives
+            // no way to tell a bad choice from a good choice executed badly,
+            // and both look like "the tap did not work".
+            android.util.Log.i("UltraNav", "step $iter action: $action")
             val ok = executeAction(action, observation)
             delay(900)
             observation = observe()
@@ -280,12 +284,18 @@ ACTION:"""
                 leftAppFor = 0
             }
 
-            val outcome = if (changed) "screen changed"
-                else if (ok) "NO CHANGE - do not repeat this"
-                else "FAILED - do not repeat this"
+            val refusal = lastRefusal
+            lastRefusal = null
+            val outcome = when {
+                refusal != null -> "NOT DONE: $refusal"
+                changed -> "screen changed"
+                ok -> "NO CHANGE - do not repeat this"
+                else -> "FAILED - do not repeat this"
+            }
             val drift = if (drifted)
                 " — you are now in $onPkg, NOT $pkg. Use back() unless leaving was intended."
             else ""
+            android.util.Log.i("UltraNav", "step $iter outcome: $outcome$drift")
             history += "step $iter: $action → $outcome$drift"
 
             // Stuck detector: same tree twice → scroll down once
@@ -309,9 +319,20 @@ ACTION:"""
         return NavResult(false, summary, iter)
     }
 
+    /**
+     * The dump the current observation was built from.
+     *
+     * Kept because everything downstream must talk about the screen the MODEL
+     * was shown, not whatever the screen looks like by the time an action
+     * runs. Reading it again to resolve an index is how a stale index turns
+     * into a confident tap on the wrong thing.
+     */
+    private var lastFlat: String = ""
+
     /** a11y flat nodes → indexed TAPPABLE/TYPEABLE/SCROLLABLE lists (visible-only). */
     private suspend fun observe(): String {
         val flat = controller.screenFlat()
+        lastFlat = flat
         return try {
             val arr = JSONArray(flat)
             if (arr.length() == 0) return "Screen: empty or inaccessible"
@@ -395,8 +416,26 @@ ACTION:"""
             // own name for its input is known and is used instead.
             if (idx == null && !focusKnownInput()) focusFirstEditable()
             val ok = controller.typeInto(selector, text)
-            if (ok) { delay(300); controller.imeEnter() }
-            return ok
+            if (!ok) return false
+            delay(300)
+            // Read back what actually landed before committing it.
+            //
+            // Measured on Chrome: "chrome://history/" was typed and the field
+            // held "chrome//history/". The colon was gone, the page failed to
+            // load, and nothing in the run knew anything had happened — the
+            // type reported success and the agent spent the rest of its budget
+            // wondering why the site would not open. Pressing enter on text
+            // the field did not accept is how an agent searches for, or sends,
+            // something nobody asked for.
+            val landed = textInFocusedField()
+            if (landed != null && !landed.contains(text, ignoreCase = true)) {
+                lastRefusal = "the field holds \"$landed\", not \"$text\" — " +
+                    "it did not accept that text, so try another way in"
+                android.util.Log.i("UltraNav", "type mismatch: wanted \"$text\", field has \"$landed\"")
+                return false
+            }
+            controller.imeEnter()
+            return true
         }
         Regex("scroll\\((up|down)\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
             return controller.scroll(m.groupValues[1].lowercase())
@@ -407,27 +446,52 @@ ACTION:"""
     }
 
     /** Resolve an [index] from the flat list to on-screen coordinates and tap. */
+    /**
+     * Tap what the model chose, or say why not.
+     *
+     * The label is carried from the observation the model was shown, so the
+     * service can tell whether that index still holds the same thing. A
+     * mismatch means the screen moved between being described and being acted
+     * on — an advert loading, a page settling — and the honest response is to
+     * look again, not to tap whatever is there now.
+     */
     private suspend fun tapNodeIndex(index: Int): Boolean {
-        val flat = controller.screenFlat()
-        return try {
-            val arr = JSONArray(flat)
-            for (i in 0 until arr.length()) {
-                val n = arr.getJSONObject(i)
-                if (n.optInt("i", -1) == index) {
-                    val x = n.optInt("x", -1)
-                    val y = n.optInt("y", -1)
-                    val label = n.optString("t").ifBlank { n.optString("d") }.trim()
-                    if (x >= 0 && y >= 0) {
-                        if (!approveTap(label, "tap_index($index)")) return false
-                        return controller.tap(x, y)
-                    }
-                }
+        val label = labelForIndex(index).orEmpty()
+        if (!approveTap(label, "tap_index($index)")) return false
+        return when (val outcome = controller.clickByIndex(index, label)) {
+            "ok" -> true
+            "moved" -> {
+                lastRefusal = "the screen changed before that could be tapped — look at it again"
+                android.util.Log.i("UltraNav", "tap refused: [$index] no longer holds \"$label\"")
+                false
             }
-            false
-        } catch (_: Exception) {
-            false
+            "gone" -> {
+                lastRefusal = "[$index] is no longer on the screen — look at it again"
+                false
+            }
+            else -> {
+                android.util.Log.i("UltraNav", "tap failed on [$index] \"$label\" ($outcome)")
+                false
+            }
         }
     }
+
+    /** What the focused text field holds now, or null if none can be read. */
+    private suspend fun textInFocusedField(): String? = try {
+        val arr = JSONArray(controller.screenFlat())
+        var found: String? = null
+        for (i in 0 until arr.length()) {
+            val n = arr.getJSONObject(i)
+            if (!n.optBoolean("e", false)) continue
+            val t = n.optString("t")
+            if (t.isNotBlank()) { found = t; break }
+        }
+        found
+    } catch (_: Exception) { null }
+
+    /** Why the last action was refused, so the model is told rather than left
+     * to guess from a bare failure. Cleared once reported. */
+    private var lastRefusal: String? = null
 
     /**
      * Stop and ask before a tap that commits something. Everything else runs
@@ -614,10 +678,17 @@ ACTION:"""
         } catch (_: Exception) {}
     }
 
-    /** Look up a node's text/description label by flat-list index. */
-    private suspend fun labelForIndex(index: Int): String? {
+    /**
+     * The label the model was shown for this index.
+     *
+     * Read from the dump the observation was built from, never a fresh one.
+     * Re-reading the screen here would return whatever is at that index NOW,
+     * which is exactly the value that cannot be used to detect that the screen
+     * moved.
+     */
+    private fun labelForIndex(index: Int): String? {
         return try {
-            val arr = JSONArray(controller.screenFlat())
+            val arr = JSONArray(lastFlat.ifBlank { "[]" })
             for (i in 0 until arr.length()) {
                 val n = arr.getJSONObject(i)
                 if (n.optInt("i", -1) == index) {
