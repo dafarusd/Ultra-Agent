@@ -94,7 +94,7 @@ silently degrades to "final text". The navigator matches typed text with `[^)]`
 no parseable action")` kills the entire 15-step run. **One chatty sentence from a
 1B model ends the task.**
 
-## ~~F4 / L3 — The taint gate is blind to the UI-driving path~~ BUILT, DEVICE-UNPROVEN 2026-08-29
+## ~~F4 / L3 — The taint gate is blind to the UI-driving path~~ FIXED, PROVEN 2026-08-29
 
 > F4 and L3 were the same problem seen twice: the machinery that tracks where a
 > value came from stopped at the tool boundary, and the UI path it could not see
@@ -232,7 +232,7 @@ image is never captured.**
 
 ## Latent capabilities — already almost there
 
-### L1+L2 — Learning a route by its screens — WORKS, RECALL UNRELIABLE, 2026-08-29
+### L1+L2 — Learning a route by its screens — CAPTURE PROVEN, REPLAY NOT BUILT, 2026-08-29
 
 > The redesign is built and the sensor works. `ScreenJourney` records the
 > screens a person passes through, sampled when a window changes, off the main
