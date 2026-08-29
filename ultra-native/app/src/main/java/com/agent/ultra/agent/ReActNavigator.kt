@@ -329,6 +329,104 @@ ACTION:"""
      */
     private var lastFlat: String = ""
 
+    /**
+     * Walk a route the user once showed us.
+     *
+     * No model turns at all. Each hop is: am I on the next screen yet; if not,
+     * try a control that is safe to guess at; if that was wrong, go back and try
+     * another. Arrival is a fingerprint match, which is a fact rather than a
+     * judgement — the reason this can run without asking anyone anything.
+     *
+     * Stops and says where it got to rather than flailing. A route that has
+     * stopped working is information; a walker that keeps pressing buttons on
+     * someone's phone is not.
+     */
+    suspend fun walkRoute(name: String, route: List<ScreenJourney.Waypoint>): String {
+        if (!controller.serviceRunning) return "Error: ${controller.serviceProblem}"
+        if (route.size < 2) return "Error: \"$name\" has too little to follow."
+
+        val start = route.first()
+        if (!controller.launchApp(start.pkg)) return "Error: could not open ${start.pkg}"
+        delay(2000)
+
+        var hop = 1
+        var steps = 0
+        while (hop < route.size && steps < MAX_ITER) {
+            val target = route[hop]
+            val here = ScreenStructure.parse(controller.screenTree())
+            val pkg = controller.activePackage()
+
+            if (ScreenJourney.arrivedAt(target, pkg, here)) {
+                android.util.Log.i("UltraWalk", "hop $hop/${route.size - 1} reached")
+                hop++
+                continue
+            }
+
+            val tried = mutableSetOf<String>()
+            var moved = false
+            for (attempt in 1..RouteWalker.TRIES_PER_HOP) {
+                if (steps++ >= MAX_ITER) break
+                // Choose from the same dump the tap indexes into. Choosing from
+                // the tree and tapping by flat index meant the two disagreed
+                // about which node an index named.
+                // Read, and if the screen is mid-transition give it one more
+                // look before concluding there is nothing to try. Going back
+                // from a wrong guess leaves a browser reloading, and the first
+                // read after that returns almost nothing — the walk used to
+                // give up on hop one because of it.
+                var flatNow = controller.screenFlat()
+                var choice = RouteWalker.candidatesFromFlat(flatNow, tried).firstOrNull()
+                if (choice == null) {
+                    delay(1200)
+                    flatNow = controller.screenFlat()
+                    choice = RouteWalker.candidatesFromFlat(flatNow, tried).firstOrNull()
+                }
+                if (choice == null) break
+                lastFlat = flatNow
+                tried += RouteWalker.keyOf(choice)
+                android.util.Log.i(
+                    "UltraWalk",
+                    "hop $hop: trying ${choice.vid.ifBlank { "[" + choice.index + "]" }}",
+                )
+                if (!tapNodeIndex(choice.index)) continue
+                delay(1200)
+
+                val after = ScreenStructure.parse(controller.screenTree())
+                if (ScreenJourney.arrivedAt(target, controller.activePackage(), after)) {
+                    android.util.Log.i("UltraWalk", "hop $hop/${route.size - 1} reached")
+                    hop++
+                    moved = true
+                    break
+                }
+                // Wrong door. Undo it before trying the next one, or the search
+                // wanders instead of searching.
+                //
+                // Back can leave the app altogether — pressing it on a
+                // browser's first page closes the browser — and the next read
+                // then finds nothing, which the walk read as "no candidates
+                // left" and gave up on hop one every time. If back took us out,
+                // go back in.
+                controller.back()
+                delay(1200)
+                if (controller.activePackage() != target.pkg) {
+                    android.util.Log.i("UltraWalk", "back left ${target.pkg}; reopening")
+                    controller.launchApp(target.pkg)
+                    delay(1800)
+                }
+            }
+            if (!moved) {
+                return "I got ${hop - 1} of ${route.size - 1} steps into \"$name\" and could " +
+                    "not find the way to the next screen. Either the app has changed, or the " +
+                    "next step is something I will not press on a guess."
+            }
+        }
+
+        return if (hop >= route.size)
+            "Followed \"$name\" — all ${route.size - 1} steps."
+        else
+            "I got ${hop - 1} of ${route.size - 1} steps into \"$name\" before running out of tries."
+    }
+
     /** a11y flat nodes → indexed TAPPABLE/TYPEABLE/SCROLLABLE lists (visible-only). */
     private suspend fun observe(): String {
         val flat = controller.screenFlat()

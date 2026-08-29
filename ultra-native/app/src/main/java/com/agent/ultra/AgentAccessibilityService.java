@@ -386,6 +386,26 @@ public class AgentAccessibilityService extends AccessibilityService {
                     break;
                 }
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED: {
+                    // Sample here too while recording. A browser reuses one
+                    // window for every page, so navigating from one site to
+                    // another fires no WINDOW_STATE_CHANGED at all and a
+                    // three-page route was recorded as one screen. In-app
+                    // navigation is most of what anyone would demonstrate.
+                    //
+                    // Content changes constantly, so the recorder throttles and
+                    // only keeps a sample whose fingerprint actually differs;
+                    // the cost is a tree parse every second or so, and only
+                    // while someone is deliberately being watched.
+                    if (com.agent.ultra.agent.Demonstration.INSTANCE.isRecording()) {
+                        final String contentPkg = currentPackage;
+                        new Thread(() -> {
+                            try {
+                                com.agent.ultra.agent.Demonstration.INSTANCE.noteScreen(
+                                    contentPkg,
+                                    com.agent.ultra.agent.ScreenStructure.INSTANCE.parse(getScreenTree()));
+                            } catch (Exception ignored) {}
+                        }, "ultra-journey-content").start();
+                    }
                     long now = System.currentTimeMillis();
                     if (now - lastContentChangedLog > CONTENT_THROTTLE_MS) {
                         lastContentChangedLog = now;

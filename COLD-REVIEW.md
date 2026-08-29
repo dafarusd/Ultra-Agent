@@ -232,7 +232,41 @@ image is never captured.**
 
 ## Latent capabilities — already almost there
 
-### L1+L2 — Learning a route by its screens — CAPTURE PROVEN, REPLAY NOT BUILT, 2026-08-29
+### L1+L2 — Learning and walking a route — BOTH BUILT, SEARCH UNDIRECTED, 2026-08-29
+
+> **Replay is built and runs with no model turns at all.** Each hop is: am I on
+> the next screen yet; if not, try a control that is safe to guess at; if that
+> was wrong, undo it and try another. Arrival is a fingerprint match — a fact
+> rather than a judgement — which is why the whole walk needs nobody's opinion.
+>
+> **What may be touched while guessing is the design, not an afterthought.** A
+> search is an agent pressing buttons to see what they do, in an app the user
+> allowed it into. Anything reading like a commitment — pay, send, delete,
+> confirm, book, install — is never tapped speculatively. Not deferred, not
+> confirmed: a guess is not grounds to ask someone to approve a payment. If a
+> route genuinely ends behind such a button the walk stops and says so.
+>
+> On the phone it walked hop 1 of a taught route, searched safely for hop 2
+> through six controls, recovered each time `back()` closed the browser, and
+> reported: *"I got 1 of 2 steps into 'open history' and could not find the way
+> to the next screen. Either the app has changed, or the next step is something
+> I will not press on a guess."*
+>
+> **The search is undirected, and that is the honest limit.** It tries named
+> controls in dump order with no idea which is likely, so it found the way once
+> and ran out of tries the second time. The fix is obvious and not yet built:
+> **remember which control worked for each hop**, turning the second walk from a
+> search into a lookup. Everything needed for it already exists.
+>
+> Three real bugs fixed getting here, each found by running it: candidates were
+> chosen from the screen TREE and tapped by FLAT index — two different
+> traversals, so six taps went out in a third of a second and none landed, the
+> same class of mistake as the two flatteners disagreeing on their cap; `back()`
+> from a browser's first page closes the browser, so the next read found nothing
+> and the walk gave up on hop one every time; and the model kept calling
+> `watch_me` and `stop_watching` in the same turn, which no instruction stopped
+> — the engine now refuses a stop that comes within six seconds of a start,
+> because nobody demonstrates a task that fast.
 
 > The redesign is built and the sensor works. `ScreenJourney` records the
 > screens a person passes through, sampled when a window changes, off the main

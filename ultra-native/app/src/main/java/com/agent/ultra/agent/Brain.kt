@@ -203,9 +203,11 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         // running an empty list and reporting success.
         recipes.journeyOf(row.name)?.let { json ->
             val route = ScreenJourney.fromJson(json)
-            return "\"${row.name}\" is a route you showed me — " +
-                ScreenJourney.describe(route) + ". I can recognise those screens but " +
-                "cannot walk the route on my own yet."
+            val nav = tools.navigator
+                ?: return "\"${row.name}\" is a route you showed me — " +
+                    ScreenJourney.describe(route) + " — but navigation is unavailable."
+            android.util.Log.i("UltraWalk", "walking \"${row.name}\": ${route.size} screens")
+            return nav.walkRoute(row.name, route)
         }
         val steps = recipes.stepsOf(row.name).orEmpty()
         if (steps.isEmpty()) return "Error: recipe \"${row.name}\" has no steps"

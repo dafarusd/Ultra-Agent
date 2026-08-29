@@ -160,6 +160,7 @@ object Demonstration {
     // worse than no routine.
 
     @Volatile private var recording = false
+    @Volatile private var startedAt = 0L
     private val captured = mutableListOf<Step>()
 
     /** The screens passed through, which is the part that actually works. */
@@ -214,6 +215,7 @@ object Demonstration {
         captured.clear()
         route = emptyList()
         lastSample = 0L
+        startedAt = System.currentTimeMillis()
         recording = true
         android.util.Log.i("UltraLearn", "watching — nothing was kept from before this moment")
         return true
@@ -235,6 +237,21 @@ object Demonstration {
             captured.add(s)
         }
     }
+
+    /**
+     * Has enough time passed for anyone to have shown us anything?
+     *
+     * The catalog says to use one of these tools per request and never to start
+     * and stop in the same turn. The model does it anyway — twice, watched
+     * live: it called watch_me, then stop_watching, and the demonstration the
+     * user was about to give never had a chance to happen.
+     *
+     * Words in a prompt are a request. This is the engine holding the shape:
+     * nobody demonstrates a task in under a few seconds, so a stop that soon is
+     * not a stop, it is the model finishing its own sentence.
+     */
+    val tooSoonToStop: Boolean
+        get() = recording && System.currentTimeMillis() - startedAt < MIN_WATCH_MS
 
     /** Stop watching and hand back what was learned. */
     @Synchronized
@@ -266,5 +283,9 @@ object Demonstration {
 
     /** One navigation fires several window events; reading the whole tree for
      * each is wasted work on the phone of someone mid-demonstration. */
-    private const val SAMPLE_THROTTLE_MS = 700L
+    private const val SAMPLE_THROTTLE_MS = 1200L
+
+    /** Below this, nothing was demonstrated — the request simply came back
+     * round to the model too fast. */
+    private const val MIN_WATCH_MS = 6000L
 }

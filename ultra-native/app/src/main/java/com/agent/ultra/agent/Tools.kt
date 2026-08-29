@@ -118,7 +118,11 @@ class Tools(
                     }
                 }
                 "stop_watching" -> {
-                    if (!Demonstration.isRecording)
+                    if (Demonstration.tooSoonToStop)
+                        "Still watching — you only just started, so the user has not had time " +
+                            "to show you anything. Do NOT call this again. Tell them to do the " +
+                            "task on the phone now and say \"stop watching\" when they are done."
+                    else if (!Demonstration.isRecording)
                         "I was not watching anything. Do not start watching now — tell the " +
                             "user to say \"watch me\" when they are ready to show you."
                     else {
