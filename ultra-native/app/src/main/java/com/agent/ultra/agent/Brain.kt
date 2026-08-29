@@ -106,7 +106,24 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         if (ai == null) {
             // Offline/unconfigured path: the on-device model is the brain.
             if (!local.ensureLoaded()) {
-                answer("No AI provider configured and no on-device model present.")
+                // The first thing a brand-new install says to whoever just
+                // fought their way past four Android warnings. "No AI provider
+                // configured and no on-device model present" is accurate and
+                // useless: it names two things they have never heard of and
+                // does not say where either lives.
+                answer(
+                    "I have no brain yet — that is the one thing you have to give me.\n\n" +
+                        "Open Settings (the gear, top right) and pick one:\n\n" +
+                        "• ON-DEVICE MODEL — download one and I run entirely on this phone, " +
+                        "no account and no internet needed afterwards. The list says which " +
+                        "ones fit this handset.\n" +
+                        "• AI PROVIDER — paste in a service's address and key, if you already " +
+                        "have one.\n\n" +
+                        "While you are there: I also need the accessibility service switched " +
+                        "on before I can see or touch any other app. Tap the red " +
+                        "\"agent: a11y off\" at the top of this screen and it takes you " +
+                        "straight to it."
+                )
                 return
             }
             emitLocal(userInput)
