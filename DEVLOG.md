@@ -20,9 +20,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16j — R8 minification; release site published; site linked on X)
+**Last updated:** 2026-08-29 (Session 16k — scroll restore; named fields; container scoring fix; 41/41 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, gate unit tests **14/14**. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **41/41** (gate 14, action gate 6, field naming 12, container selection 9). Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
@@ -143,6 +143,63 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16k — a read stops moving the page, and a scoring bug the tests caught (2026-08-29, branch `native`)
+
+Owner left mid-session: "fix that and proceed improving the app in the next logical ways."
+
+#### A deep read puts the page back where it found it (SOURCE-FIXED BUT RUNTIME-UNPROVEN)
+
+Reading was moving the screen. `deepRead` scrolled to the bottom and left it there, so the next tool call saw a different page than the one the model had just been told about — it taps the third row and hits whatever scrolled into that spot.
+
+`restoreScroll(scrolls)` scrolls back the same number of times, **not to the top**, because the page was not necessarily at the top when the read began. Best-effort: a failed restore is logged and never fails a read that already succeeded. Restore uses `RESTORE_SETTLE_MS = 250L` against the read's 650, since scrolling back renders nothing worth waiting for.
+
+**No phone was attached.** Compiles and the suite passes; the behaviour has not been seen on a device.
+
+#### Fields carry names now (PROVEN offline, 12 tests)
+
+Session 16d fixed *which price belongs to which product*. It did not fix *which of a row's values is the price* — the row arrived as ordered anonymous lines and the model guessed from position, which is the same inference problem one level down.
+
+`ScreenStructure.fields()` names a field only when the text proves it: `price`, `rating`, `reviews`, `points`, and the leading label as `title`. Anything matching no pattern, **or matching two unrelated ones**, is printed as it appeared with no name. A wrong name is worse than no name, because a named field gets trusted.
+
+Rows showing more than one price list all of them and say `do not assume which is charged`. A list price beside a sale price is the normal case, and quietly picking one is how the agent buys the wrong thing.
+
+Tests cover the ambiguous cases specifically: a rating line that also carries a count, a bare number, "48 out of 5", and two prices in one row.
+
+#### The container scoring was size-biased (FIXED — and it was live)
+
+The new synthetic-tree tests caught a real bug in shipped code.
+
+```
+14-entry nav menu, 2 labels each:  14 x 1.0 x 2 = 28   ← won
+ 5-product grid,   4 labels each:   5 x 1.0 x 4 = 20
+```
+
+`score = count x uniformity x substance` measured substance as a **count of labels**. The count term is linear, and two labels versus four does not overcome a 2.8x count advantage.
+
+**The page it was validated against happened to have eleven products**, which scored 44 and hid this. A search page showing five results above the fold would have read the left-hand navigation menu instead — silently, as a confident list of departments.
+
+Substance is now **characters of text in the median row**. A nav entry carries about seven characters; a product row forty-plus. That is the thing that actually differs. `SUBSTANCE_CAP` raised 40 → 300 so one container of long paragraphs cannot outscore a genuine list.
+
+The eleven-product layout is now a regression test in its own right, so a later tweak to the heuristic cannot quietly undo what was proven on hardware.
+
+**Worth keeping:** this is the second time this heuristic has been wrong in a way that produces a confident wrong answer rather than an error, and the first time a test found it instead of a phone.
+
+#### The About tool count reads from the manifest
+
+The literal had rotted twice (24 → 30 → 31). `Manifest.size` and `Manifest.fromAssets()` now exist, `Brain` uses the shared loader, and the About screen states the count the gate actually enforces — or `MANIFEST UNREADABLE - every tool will be refused` if it cannot load, which is the truthful reading of that state.
+
+It currently says 31, which the literal also said. It will not agree by luck next time.
+
+#### Test suite
+
+**41/41**: gate 14, action gate 6, field naming 12, container selection 9. Container and field logic are now provable without a phone, which is what made the scoring bug findable.
+
+#### Open
+
+- `restoreScroll` needs a device. So does the field naming against a real store page.
+- The demo still needs a genuine multi-step task on film.
+- Structured extraction now names fields; it still does not know a row is *out of stock* or *sponsored*, which matters for "find the best buy".
 
 ### Session 16j — R8, and the public repo becomes the proof of creation (2026-08-28/29, branch `native`)
 
