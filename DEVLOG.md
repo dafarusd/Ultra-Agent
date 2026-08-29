@@ -20,9 +20,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16o — native apps verified; screens remembered; 101/101 tests)
+**Last updated:** 2026-08-29 (Session 16p — controls remembered per app; 113/113 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **101/101**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **113/113**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
@@ -143,6 +143,65 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16p — remembering where the controls are (2026-08-29, branch `native`, Galaxy A15)
+
+Owner: "keep going on 1, remember where the controls are."
+
+#### Answering the question asked alongside it
+
+**The tests are not part of the app.** Verified against the shipped APK: zero test classes, zero fixtures. The 464 KB of captured screens and 88 KB of tests live in `app/src/test/`, a source set Gradle compiles only for the JVM test task and never packages. The APK is 8,682,136 bytes and contains none of it. They are development tooling, not product.
+
+#### What was wrong
+
+The navigator hands the model a freshly numbered list of everything on screen and asks it to pick an index. Those numbers mean nothing beyond the moment — the same search box is `[3]` now and `[11]` after the page shifts — so every visit costs a model call to find a control the agent has already found a hundred times.
+
+Worse: typing with no index tapped **"the first editable node on screen"**, which is a guess, and wrong on any page with two boxes.
+
+#### What it does now (PROVEN on the phone)
+
+A control has an identity the app gave it. `url_bar` is the address bar today, tomorrow, and after an update moves it down the page.
+
+```
+screen .../773d46c9b25327b7: 6 on screen, 6 remembered, 6 usable
+typed into known control #url_bar
+
+screen .../d40543a58faf33b7: 7 on screen, 6 remembered, 7 usable
+typed into known control #url_bar
+```
+
+The second run is a **different website**, and therefore a different screen, and the controls still carried over.
+
+#### The app-level row, which took a second pass
+
+The first attempt remembered controls per screen and never recalled them in a browser. A browser's fingerprint includes the ids of whatever page is loaded, so **every website is a different screen** — which is correct, and which meant the toolbar was relearned on every visit to every site. The address bar is the same control on all of them.
+
+Controls seen anywhere in an app now accumulate under an app-level row (`pkg/*`) and are available everywhere in it; the screen row holds what is specific to that page. Capped at 80 per app.
+
+#### Privacy — the point, not a footnote
+
+**Only the view id and the kind of control are stored. Never the label, never the contents.**
+
+A button's label is user content: "Send to Mum", "Pay £240.00", a contact's name. Writing that to disk would turn a structural memory into a record of what the user does. A view id is a constant a developer typed into a layout file — it says *where* the button is, not what it says.
+
+- A control with no view id is **skipped** rather than remembered by its label. It stays perfectly usable in the moment through the ordinary indexed list; this is only about what survives to the next visit.
+- Content dressed up as an id — the product codes and story numbers found in 16o — is rejected by the same test.
+- The cost is that web pages, which rarely give real ids, mostly cannot have their controls remembered. That is the right trade.
+
+There are tests holding this line specifically: a screen containing "Send to Mum" and "240.00" must produce a stored value containing neither.
+
+#### Also
+
+`add` chose `address_bar_container`, because "address" starts with "add", while the actual add button sat in the same list. Whole-word matching now runs before prefix matching.
+
+The tree dump carries `editable` and `enabled`, and the flat dump carries `vid`, so a remembered control can be resolved to a tap without depending on an index.
+
+Room v5 → v6, real migration. **Suite 113/113.**
+
+#### Open
+
+- A navigation run in Chrome still exhausted its step budget on a search task. Remembering the control removed one guess; the loop's step-by-step reasoning is item 4 of the plan and is untouched.
+- Items 2 (tasks that cross apps) and 3 (undo) are untouched.
 
 ### Session 16o — native apps verified, and the agent starts remembering screens (2026-08-29, branch `native`, Galaxy A15)
 
