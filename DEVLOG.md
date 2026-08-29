@@ -20,9 +20,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16l — dead repeat hint found; app-drift detection; 54/54 tests)
+**Last updated:** 2026-08-29 (Session 16m — device-verified; table-row pairing fixed; 70/70 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **54/54** (gate 14, action gate 6, field naming 16, container selection 9, navigator prompt 9). Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **70/70** (gate 14, action gate 6, navigator prompt 9, field naming 16, container selection 9, split rows 6, title/redundancy 6, separator filter 4). Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
@@ -143,6 +143,77 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16m — device verification, and the pairing that was never structural (2026-08-29, branch `native`, Galaxy A15)
+
+Phone attached mid-session. Everything below is **PROVEN on hardware** unless it says otherwise.
+
+#### Session 16k's scroll restore works, and the proof is better than the log line
+
+```
+deep scroll 1: +38 new (labels 178, items 60)
+…
+deep scroll 5: +39 new (labels 318, items 60)
+deep read: restored 5/5 scrolls
+```
+
+The log line says `restored 5/5`. The real evidence is the **second** deep read in the same run reproducing the first read's scroll-by-scroll gains exactly — +38, +34, +35, +32, +39. That is only possible if the page went back to the top. Before this fix the second read would have started at the bottom and found nothing.
+
+#### The pairing on Hacker News was never structural
+
+Raising the tool-result log cap from 120 to 2000 characters made this visible for the first time. The old cap cut a structured read off at its header, so **the rows the model actually reasoned over had never once been looked at.**
+
+What they contained:
+
+```
+1. 1.
+   vote?id=49489057&how=up&goto=news
+   Iceland votes on whether to restart talks on joining EU (bbc.com)
+2. 120 points by tosh 1 hour ago | hide | 125 comments
+   points: 120 points
+```
+
+**The title and the score are separate items.** Hacker News is a table where each story is two sibling rows. Container grouping returned them ungrouped, so the model was pairing a score to a headline **by adjacency** — the exact inference `ScreenStructure` exists to eliminate, still happening one level up.
+
+The answers in 16j and 16l were correct. The mechanism behind them was not the one that was claimed. **The earlier "structured extraction, correct product↔price pairing" claim holds for card layouts and did not hold for table layouts.**
+
+`mergeSplitRows` merges a pair only on strict evidence: the list alternates all the way down, every even row carrying no metadata field and every odd row carrying one. A product grid fails that test, because every card has a price. A list where only some rows are sponsored fails it too. **60 items became 30**, each carrying its own score.
+
+#### Three more, all found by reading what the model was given
+
+- **The rank marker won the title.** Every row read `1. 1.` with the headline demoted to a detail line. Title is now the first label that is not a bare ordinal; the ordinal is kept as its own `rank` field.
+- **The score was named twice** — alone, and inside the whole subtext line. Only an exact superset is dropped, so a row with two genuinely different prices still keeps both.
+- **`|` survived every filter.** The regex was correct; the label was not a plain pipe. The page wraps it in **non-breaking spaces**, which Java's `\s` does not match and Kotlin's `trim()` does not remove. Replaced with a character test that strips separators first and then asks whether anything alphanumeric is left — it cannot be fooled by whichever space character a page happens to use. Also drops bare query strings like `vote?id=…&how=up`.
+
+Rows now reach the model like this:
+
+```
+1. Iceland votes on whether to restart talks on joining EU (bbc.com)
+   rank: 1.
+   bbc.com
+   points: 130 points
+   by / tosh / 1 hour ago / hide / 138 comments
+```
+
+Final answer: **10 stories, each with its own score**, in the page's own rank order rather than re-sorted.
+
+#### Diagnostics
+
+`TOOL_LOG_CHARS = 2000`, up from 120. On a release build there is no debugger, and this log is the only window into what the model was handed. The 120-character cap is why four bugs sat in shipped code unseen.
+
+#### Test suite
+
+**70/70**: gate 14, action gate 6, navigator prompt 9, field naming 16, container selection 9, split rows 6, title and redundancy 6, separator filter 4.
+
+#### Standing note on Play Protect
+
+Every fresh build triggers "Send app for a security check?". The owner's answer has been **Don't send** every time, and that is now handled automatically during install — it is also the option that does not upload his APK to Google.
+
+#### Open
+
+- The navigator's app-drift detection is still **RUNTIME-UNPROVEN**. It needs a task that actually leaves the target app.
+- Field naming is proven for `points` on a live page. `price`, `rating`, `reviews`, `sponsored` and `availability` are proven only by unit test — no store page has been read.
+- The demo still needs a genuine multi-step task on film.
 
 ### Session 16l — a hint that was never sent, and the agent noticing it left the app (2026-08-29, branch `native`)
 
