@@ -154,6 +154,17 @@ public class AgentAccessibilityService extends AccessibilityService {
                 allowedApps.addAll(allow);
                 p.edit().putStringSet(ALLOW_KEY, allow).apply();
             }
+            if (j.has("personalData")) {
+                // The switch that governs messages, contacts and location. In
+                // the setup file only so a device test can exercise the layers
+                // BEHIND it — with this off, an attempt to text a secret is
+                // refused for the wrong reason and the flow guard is never
+                // reached, which is exactly what happened for a whole
+                // afternoon.
+                ctx.getSharedPreferences("ultra_settings", Context.MODE_PRIVATE)
+                    .edit().putBoolean("allow_personal_data", j.getBoolean("personalData")).apply();
+                Log.w(TAG, "SETUP FILE: personal data set to " + j.getBoolean("personalData"));
+            }
             Log.w(TAG, "SETUP FILE APPLIED — allowlistMode=" + allowlistMode
                 + " allowed=" + allowedApps.size() + " (file deleted)");
             f.delete();

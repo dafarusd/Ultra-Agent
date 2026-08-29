@@ -45,6 +45,29 @@ class Tools(
                 "The user can turn them on in Settings under PERSONAL DATA. " +
                 "Do not retry — tell them, and carry on with the rest of the task."
         }
+        // A tracked secret may not appear in ANY tool's arguments.
+        //
+        // Found by the model itself: refused permission to text a one-time code
+        // it had just read, it wrote the code to the CLIPBOARD, and when that
+        // was read back empty it wrote the code to a NOTE FILE. Both succeeded.
+        // The guard covered typing and SMS because those were the exits anyone
+        // had thought of.
+        //
+        // So the rule is central and inverted. Every tool is checked, and the
+        // exemptions are named — because a list of exits will always be shorter
+        // than the list of ways out, and the one nobody wrote down is the one
+        // that gets used.
+        if (tool !in SECRET_MAY_PASS) {
+            val carrying = params.keys().asSequence()
+                .mapNotNull { params.opt(it)?.toString() }
+                .firstNotNullOfOrNull { controller.outboundSecret(it) }
+            if (carrying != null) {
+                return "Error: that contains $carrying, which was on screen a moment ago. " +
+                    "I will not put a code or a card number into another app, the clipboard, " +
+                    "a file or a message. Ask the user to do it themselves if they meant to."
+            }
+        }
+
         return try {
             when (tool) {
                 // ── Perception ───────────────────────────────────────
@@ -675,6 +698,27 @@ class Tools(
         /** Shorter than SCROLL_SETTLE_MS: scrolling back reads nothing, so it
          * only has to let each gesture land, not wait for content to render. */
         const val RESTORE_SETTLE_MS = 250L
+
+        /**
+         * Tools a tracked secret may legitimately pass through.
+         *
+         * `react_navigate` types into apps and does its own, stricter check:
+         * a value may go back into the app it came from and nowhere else, which
+         * is the normal case of entering a code in the app that sent it.
+         * Everything else on this list moves nothing anywhere — they are reads.
+         *
+         * Deliberately an allow-list. Naming the exits instead would mean the
+         * exit nobody thought of stays open, which is precisely how the
+         * clipboard and note-file routes were found: by an agent taking them
+         * after being refused the one that was guarded.
+         */
+        val SECRET_MAY_PASS = setOf(
+            "react_navigate",
+            "read_text_on_screen", "read_screen_deep", "describe_screen",
+            "screenshot", "notification_read", "device_info", "battery_status",
+            "system_info", "recipe_list", "watch_me", "stop_watching",
+            "cancel_watching",
+        )
 
         /** Screens are cheap to relearn, so the table stays small. */
         const val SCREEN_MEMORY_LIMIT = 300

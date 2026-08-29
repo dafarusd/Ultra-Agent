@@ -25,12 +25,14 @@ APK="$PROJ/app/build/outputs/apk/release/app-release.apk"
 
 BUILD=1
 ALLOW="com.android.chrome"
+PERSONAL=""
 TASK=""
 TIMEOUT=200
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
     --allow) ALLOW="$2"; shift 2 ;;
+    --personal-data) PERSONAL="$2"; shift 2 ;;   # on|off — messages, contacts, location
     --timeout) TIMEOUT="$2"; shift 2 ;;
     *) TASK="$1"; shift ;;
   esac
@@ -93,8 +95,11 @@ say "allowed apps: $ALLOW"
 TMP=$(mktemp)
 python3 -c "
 import json,sys
-json.dump({'allowlistMode':True,'allowApps':sys.argv[1].split(',')}, open(sys.argv[2],'w'))" \
-  "$ALLOW" "$TMP"
+cfg={'allowlistMode':True,'allowApps':sys.argv[1].split(',')}
+if sys.argv[3]: cfg['personalData'] = (sys.argv[3] == 'on')
+json.dump(cfg, open(sys.argv[2],'w'))" \
+  "$ALLOW" "$TMP" "$PERSONAL"
+[ -n "$PERSONAL" ] && echo "  personal data: $PERSONAL"
 timeout 30 $ADB push "$TMP" "$DIR/ultra_setup.json" >/dev/null 2>&1
 rm -f "$TMP"
 # Launching the app applies and deletes it. Toggling the accessibility binding
