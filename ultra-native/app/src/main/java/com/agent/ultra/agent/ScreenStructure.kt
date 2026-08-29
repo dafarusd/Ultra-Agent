@@ -40,10 +40,25 @@ object ScreenStructure {
         val kind: String get() = if (vid.isNotBlank()) "#$vid" else cls
     }
 
-    /** One row of a list: the labels that genuinely belong together. */
-    data class Item(val labels: List<String>, val top: Int, val clickable: Boolean) {
+    /**
+     * One row of a list: the labels that genuinely belong together.
+     *
+     * `ids` runs parallel to `labels` and holds the view id the label came
+     * from, or "" when the app did not provide one. A native app names its own
+     * fields — `alarm_item_time` really is the time — and guessing that from
+     * the text with a regex when the app already said it is exactly the
+     * re-derivation this file keeps having to unlearn.
+     */
+    data class Item(
+        val labels: List<String>,
+        val top: Int,
+        val clickable: Boolean,
+        val ids: List<String> = emptyList(),
+    ) {
         /** Identity across overlapping reads while scrolling. */
         val signature: String get() = labels.joinToString("|").take(240)
+
+        fun idAt(i: Int): String = ids.getOrElse(i) { "" }
     }
 
     /**
@@ -307,21 +322,31 @@ object ScreenStructure {
 
     /** Turn chosen record nodes into rows, whichever method chose them. */
     private fun finish(records: List<Node>, children: Map<Int, MutableList<Node>>): List<Item> {
-        fun labelsUnder(n: Node): List<String> {
-            val out = mutableListOf<String>()
+        fun labelsUnder(n: Node): Pair<List<String>, List<String>> {
+            val labels = mutableListOf<String>()
+            val ids = mutableListOf<String>()
+            val seen = HashSet<String>()
             fun walk(x: Node) {
-                if (isUseful(x.label)) out.add(x.label.take(160))
+                val l = x.label
+                // Pages repeat a title across the image link, the heading and
+                // the anchor; the reader only needs it once. Keep the first
+                // occurrence, and the id that came with it.
+                if (isUseful(l) && seen.add(l.take(160))) {
+                    labels.add(l.take(160))
+                    ids.add(x.vid)
+                }
                 for (kid in children[x.index].orEmpty()) walk(kid)
             }
             walk(n)
-            // Pages repeat a title across the image link, the heading and the
-            // anchor; the reader only needs it once.
-            return out.distinct()
+            return labels to ids
         }
 
         val rows = records
             .sortedBy { it.top }
-            .map { Item(labelsUnder(it), it.top, it.clickable || anyClickableUnder(it, children)) }
+            .map {
+                val (labels, ids) = labelsUnder(it)
+                Item(labels, it.top, it.clickable || anyClickableUnder(it, children), ids)
+            }
             .filter { it.labels.size >= 2 }
 
         return mergeSplitRows(dropContained(rows))
@@ -393,11 +418,14 @@ object ScreenStructure {
         for (p in 0 until pairs) {
             val head = rows[2 * p]
             val tail = rows[2 * p + 1]
-            out += Item(
-                labels = (head.labels + tail.labels).distinct(),
-                top = head.top,
-                clickable = head.clickable || tail.clickable,
-            )
+            val labels = mutableListOf<String>()
+            val ids = mutableListOf<String>()
+            for (src in listOf(head, tail)) {
+                src.labels.forEachIndexed { i, l ->
+                    if (l !in labels) { labels.add(l); ids.add(src.idAt(i)) }
+                }
+            }
+            out += Item(labels, head.top, head.clickable || tail.clickable, ids)
         }
         // An odd trailing row is kept as it stands rather than dropped.
         if (rows.size % 2 == 1) out += rows.last()
@@ -532,7 +560,14 @@ object ScreenStructure {
             when {
                 i == titleIndex -> Field("title", label)
                 ORDINAL.matches(label.trim()) -> Field("rank", label)
-                else -> Field(nameOf(label), label)
+                // The app's own name for the field beats any guess from the
+                // text. A native screen labels its nodes `alarm_item_time`,
+                // `price`, `sender` — reading a regex over the value to work
+                // out what it is, when the app already said so, is the same
+                // mistake as rebuilding the page structure from text
+                // statistics. Web content rarely provides one, so this is
+                // mostly a native-app win.
+                else -> Field(fieldNameFor(item.idAt(i)) ?: nameOf(label), label)
             }
         }
         return dropRedundant(raw)
@@ -564,6 +599,34 @@ object ScreenStructure {
 
     /** "1.", "12)", "3" — a position marker, not a heading. */
     private val ORDINAL = Regex("""^\d{1,3}[.)]?$""")
+
+    /**
+     * Turn a view id into a field name, or null when it says nothing useful.
+     *
+     * Ids describing layout rather than content are rejected: `text1`,
+     * `container`, `row_2` name a slot, not a meaning, and a field called
+     * "container" is worse than an unnamed one. Common wrapper words are
+     * trimmed so `alarm_item_time` reads as `alarm_time`.
+     */
+    internal fun fieldNameFor(vid: String): String? {
+        if (vid.isBlank()) return null
+        var v = vid.lowercase()
+        for (noise in ID_NOISE) v = v.replace(noise, "_")
+        v = v.trim('_').replace(Regex("_+"), "_")
+        if (v.isBlank() || v.length > 32) return null
+        if (v in ID_MEANINGLESS) return null
+        if (Regex("^[a-z]{1,4}\\d*$").matches(v)) return null   // t1, tv, txt2
+        return v
+    }
+
+    private val ID_NOISE = listOf("_item_", "_view_", "_label_", "_text_")
+
+    /** Ids that name a slot rather than a meaning. */
+    private val ID_MEANINGLESS = setOf(
+        "text", "text1", "text2", "title_container", "container", "content",
+        "row", "item", "layout", "wrapper", "holder", "value", "label",
+        "icon", "image", "img", "summary_container", "list_item",
+    )
 
     /**
      * The single field name this text proves, or null.
