@@ -57,11 +57,50 @@ class Gate(private val manifest: Manifest) {
         }
     }
 
-    private fun mintOrigin(text: String, ep: Episode): OriginSet {
-        val n = norm(text)
-        return if (n.isNotEmpty() && n in ep.effectiveRequestNorm) OriginSet(setOf(UserOrigin))
-        else OriginSet(setOf(ToolOrigin()))
+    /**
+     * Did the user actually say this, or does it merely appear inside what they
+     * said?
+     *
+     * The ported rule was plain substring containment, and that is trivially
+     * satisfied: an argument of "on", "to", "1" or "a" is inside almost any
+     * sentence, so the gate would mark it as coming from the user and let it
+     * through. A check that anything short passes is not a check.
+     *
+     * This is the fourth time today the same shape has been found — a short
+     * value claiming a longer one that merely contains it. It broke
+     * "looks sensitive" (`tor` matching calcula*tor*), task memory ("battery
+     * level" claiming a request about banking), and routine names ("morning
+     * sites" claiming "my morning sites"). Worth stating as a rule: **never let
+     * containment alone decide a match.**
+     *
+     * Whole words now, in order. Punctuation is trimmed from both sides before
+     * comparing, so a request ending "...open news.ycombinator.com." still
+     * matches the domain argument.
+     *
+     * This is deliberately the strict direction. Being wrong here means either
+     * refusing something the user asked for, which they see and can confirm, or
+     * permitting something they did not, which they never see at all.
+     */
+    internal fun saidByUser(value: String, requestNorm: String): Boolean {
+        fun tokens(s: String) = s.split(' ')
+            .map { it.trim('.', ',', ';', ':', '!', '?', '"', '\'', '(', ')') }
+            .filter { it.isNotEmpty() }
+        // Normalise BOTH. Taking the request pre-normalised was a footgun: any
+        // caller passing raw text got silent non-matches, and a security check
+        // that quietly says "no" is as wrong as one that quietly says "yes".
+        // norm is idempotent, so doing it again costs nothing.
+        val want = tokens(norm(value))
+        val said = tokens(norm(requestNorm))
+        if (want.isEmpty() || want.size > said.size) return false
+        for (i in 0..(said.size - want.size)) {
+            if (want.indices.all { said[i + it] == want[it] }) return true
+        }
+        return false
     }
+
+    private fun mintOrigin(text: String, ep: Episode): OriginSet =
+        if (saidByUser(text, ep.effectiveRequestNorm)) OriginSet(setOf(UserOrigin))
+        else OriginSet(setOf(ToolOrigin()))
 
     private fun bindArgs(args: JSONObject, ep: Episode): Map<String, TrackedArg> {
         val out = mutableMapOf<String, TrackedArg>()

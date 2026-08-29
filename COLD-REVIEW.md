@@ -119,8 +119,32 @@ no parseable action")` kills the entire 15-step run. **One chatty sentence from 
 > stopped first by another layer (Chrome not allowed, personal data off), which
 > is defence in depth working and also why the new layer never ran.
 >
-> Still true from the original finding, and NOT fixed: `mintOrigin` is pure
-> substring, so short or common arguments remain trivially "user-traceable".
+> **The substring hole is now closed too.** `mintOrigin` compared the argument
+> to the request by plain containment, so an argument of "on", "to" or "1" was
+> inside almost any sentence and passed as something the user had asked for. A
+> check that anything short passes is not a check. Attribution requires whole
+> words, in order, punctuation trimmed from both sides. 8 tests.
+>
+> That was the **fourth** appearance of one shape today — a short value claiming
+> a longer one that merely contains it. It broke "looks sensitive" (`tor`
+> matching calcula*tor*), task memory ("battery level" claiming a request about
+> banking), routine names ("morning sites" claiming "my morning sites"), and
+> this. **House rule: never let containment alone decide a match.**
+>
+> Two things stated rather than glossed. `norm` was applied to the argument but
+> not to the request, so any caller passing raw text got a silent non-match — a
+> security check that quietly says "no" is as wrong as one that quietly says
+> "yes"; both sides are normalised now. And whole-word matching narrows the hole
+> without closing it: in "send a message" the user genuinely did say "a", so an
+> argument of "a" is still traceable to them. The remaining defence is that a
+> value that trivial is not a meaningful target for any tool. There is a test
+> saying exactly that.
+>
+> **Still not demonstrated end-to-end on the phone.** Repeated attempts were
+> spent on setup churn rather than on the check — the allowlist clears on every
+> reinstall, and each attempt needs the provider re-seeded and Chrome re-allowed
+> through the settings UI. The decision logic is thoroughly tested offline; the
+> live refusal is not proven, and that gap is the honest status.
 
 ## F4 (original finding) — The taint gate is blind to the UI-driving path, and matches by substring
 
