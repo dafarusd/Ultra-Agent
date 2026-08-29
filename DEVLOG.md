@@ -20,9 +20,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16n — pages read by their own template; store test passed; 78/78 tests)
+**Last updated:** 2026-08-29 (Session 16o — native apps verified; screens remembered; 101/101 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **78/78**, including a real 1,907-node Amazon tree committed as a fixture (`app/src/test/resources/amazon-search.json`) so perception can be developed without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **101/101**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
@@ -143,6 +143,76 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16o — native apps verified, and the agent starts remembering screens (2026-08-29, branch `native`, Galaxy A15)
+
+Owner: "do 5 then start on 1".
+
+#### Item 5 — native apps (PROVEN)
+
+| Screen | Nodes | Carrying a view id |
+|---|---|---|
+| Amazon search, in Chrome | 1,907 | 0 usable — 1,096 anonymous `android.view.View` |
+| Samsung Clock | 132 | 84 |
+| Settings app list | 107 | 56 |
+
+Template matching needed **no changes** to work on native: 4 alarms out of the Clock and 12 entries out of Settings, correctly grouped first try.
+
+The real find is that **native apps name their own fields**. The Clock exposes `alarm_item_time`, `alarm_item_ampm`, `alarm_list_alarm_name`. Running a regex over "8:15" to decide it is a time, when the app has already said so, is the same mistake as rebuilding page structure from text statistics — which this file has now had three times.
+
+A label's view id is its field name when the id means something. Ids naming a slot rather than a meaning are rejected (`text1`, `container`, `row`, `tv`) — a field called "container" is worse than an unnamed one. The text-pattern classifier stays as the fallback and is what still runs on web content.
+
+An alarm now reaches the model as:
+
+```
+alarm_list_alarm_name=Morning Alarm, alarm_time=8:15, alarm_ampm=AM,
+alarm_list_alert_date=Sun, Aug 30
+```
+
+#### Item 1 — the agent remembers what a screen is (PROVEN, first increment)
+
+Every read was done from scratch, and the answer thrown away. The thousandth visit to a page worked as hard as the first, and **the same page came back as 130, then 126, then 123 records inside one read.**
+
+A screen now has an identity that survives its content changing — the vocabulary of view ids and widget kinds on it, never its text. What was learned is kept and recalled.
+
+```
+learned screen com.android.chrome/773d46c9b25327b7 (IDS) 31 records, fields=[points,rank]
+structure: recalled template, 60 records
+```
+
+Recall was proven **across separate runs**, not just within one.
+
+**Structure only.** A memory row is the shape of a page and the *names* of its fields, never a value. Nothing about what was read, bought or messaged is persisted. Room v4 → v5, real migration, table capped at 300 rows.
+
+#### Five bugs found while proving it — three of them mine, from earlier today
+
+1. **A fingerprint built on view ids had to reject ids that are content.** Amazon exposes product codes and UUIDs as ids; Hacker News exposes story numbers. They change every visit, so the same page would never match itself — and as a field name one would have reached the model as `49417298: 130 points`.
+
+2. **Rows were ordered by screen position.** Bounds are only trustworthy for what is visible; off-screen rows report stale or identical tops. A 60-row page sorted into 14 correct pairs followed by 17 scores with no headlines beside them, and the pairing collapsed. **The tree arrives in reading order, and reading order is what a list means.**
+
+3. **Pairing demanded perfect alternation** down the whole list, so one job post with no score aborted every pair on the page. It pairs greedily now and is believed when a majority of the list pairs up — a property of the list, not of one lucky row.
+
+4. **The shape signature counted distinct child kinds**, so `View{TextView}` matched a wrapper holding one line and a story row holding four. 153 tiny wrappers then outweighed the real stories and the read collapsed to nothing structured at all. Counts are banded: tolerant of four fields beside five, decisive between one and four.
+
+5. **Recall returned a worse answer than computing fresh.** It skipped the widening that pairs split table rows, so recalled stories came back with their scores stripped. **A shortcut that changes the answer is not a shortcut.**
+
+Numbers 3 and 4 were regressions introduced by the template work in 16n and **not caught because Hacker News was never re-tested after that change**. The store page got better while the aggregator silently got worse.
+
+#### The fixture suite is the durable win
+
+Every captured page is now a test. `hn-front` joins `amazon-search` and the two native fixtures, and `AllFixturesTest` reads all four, asserting that stories carry their own score, products carry a price, alarms carry the app's own time field, and **no page returns a row holding a single stray value**.
+
+That last one is the assertion that would have caught both regressions the minute they landed instead of two device installs later.
+
+#### Test suite
+
+**101/101.**
+
+#### Open
+
+- The plan's items 2 (tasks that cross apps), 3 (undo) and 4 (planning with checkpoints) are untouched.
+- Screen memory currently only recalls the record template. The next increment is remembering *where the controls are*, which is what turns a fifteen-step navigation into a lookup.
+- `restoreScroll` still reports partial restores on some store pages.
 
 ### Session 16n — the store test, and reading a page by its own template (2026-08-29, branch `native`, Galaxy A15)
 
