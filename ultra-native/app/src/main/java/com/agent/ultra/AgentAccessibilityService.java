@@ -12,6 +12,8 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.util.Log;
+import android.content.SharedPreferences;
+import android.content.Context;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.*;
@@ -107,6 +109,59 @@ public class AgentAccessibilityService extends AccessibilityService {
         }
     }
 
+    /**
+     * Apply a setup file dropped next to the provider seed, then delete it.
+     *
+     * Same mechanism, same directory, same reason: `Android/data/<pkg>/files` is
+     * writable by adb and by no other app, which makes a device test
+     * reproducible without anyone tapping through four settings screens. Each
+     * hand-driven step is a step that gets skipped, done differently, or done
+     * wrong at eleven at night, and a test whose setup is unreliable produces
+     * results that are unreliable in the same way.
+     *
+     * Applied once and deleted, so it configures a device rather than becoming
+     * a second source of truth that quietly disagrees with the user's own
+     * settings. Logged loudly, because something that changes which apps the
+     * agent may enter should never do so silently.
+     *
+     * Anyone who can write this file already has adb over the device and can do
+     * considerably worse; this grants no capability that was not already theirs.
+     */
+    public static void applySetupFile(Context ctx) {
+        try {
+            java.io.File dir = ctx.getExternalFilesDir(null);
+            if (dir == null) return;
+            java.io.File f = new java.io.File(dir, "ultra_setup.json");
+            if (!f.exists()) return;
+
+            StringBuilder sb = new StringBuilder();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f))) {
+                String line;
+                while ((line = r.readLine()) != null) sb.append(line);
+            }
+            JSONObject j = new JSONObject(sb.toString());
+
+            SharedPreferences p = ctx.getSharedPreferences(BLOCK_PREFS, Context.MODE_PRIVATE);
+            if (j.has("allowlistMode")) {
+                allowlistMode = j.getBoolean("allowlistMode");
+                p.edit().putBoolean(MODE_KEY, allowlistMode).apply();
+            }
+            if (j.has("allowApps")) {
+                JSONArray arr = j.getJSONArray("allowApps");
+                java.util.Set<String> allow = new java.util.HashSet<>(allowedApps);
+                for (int i = 0; i < arr.length(); i++) allow.add(arr.getString(i));
+                allowedApps.clear();
+                allowedApps.addAll(allow);
+                p.edit().putStringSet(ALLOW_KEY, allow).apply();
+            }
+            Log.w(TAG, "SETUP FILE APPLIED — allowlistMode=" + allowlistMode
+                + " allowed=" + allowedApps.size() + " (file deleted)");
+            f.delete();
+        } catch (Exception e) {
+            Log.w(TAG, "setup file ignored: " + e.getMessage());
+        }
+    }
+
     public static void blockPackage(String pkg) { blockedPackages.add(pkg); allowedPackages.remove(pkg); }
     public static void unblockPackage(String pkg) { blockedPackages.remove(pkg); }
     public static boolean isPackageBlocked(String pkg) { return blockedPackages.contains(pkg); }
@@ -138,7 +193,11 @@ public class AgentAccessibilityService extends AccessibilityService {
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
+
         synchronized (instanceLock) { instance = this; }
+        // Before the policy is read, so a seeded setup is in force from the
+        // first event rather than from the next restart.
+        applySetupFile(this);
         loadBlockedPackages(this);
         AccessibilityServiceInfo info = getServiceInfo();
         if (info == null) info = new AccessibilityServiceInfo();

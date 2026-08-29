@@ -376,3 +376,40 @@ Two further properties fell out and are worth keeping:
   extends to learning.
 - **A recording that dies with the process is simply gone.** A half-remembered
   routine surviving a crash is worse than no routine.
+
+---
+
+## Device testing — the setup churn, fixed 2026-08-29
+
+Every device test used to need four settings screens driven by hand: enable the
+accessibility service, seed the provider, tick an app on the allow-list, and
+hope the task text contained no apostrophe. Each hand-driven step is a step that
+gets skipped, done in a different order, or done wrong late at night — and a
+test whose setup is unreliable produces results unreliable in the same way. It
+cost most of an afternoon: the F4 leak path was never demonstrated, not because
+it failed, but because the runs went on setup instead.
+
+`tools/devtest.sh` is now one command: build, install, verify, seed, allow, run,
+report. Three things made it possible.
+
+**It never uninstalls.** Uninstalling wipes the allow-list, the provider, the
+screen memory and the accessibility binding. The signing key is stable now, so
+`install -r` keeps all of it — and most of the churn was self-inflicted by
+uninstalling out of habit.
+
+**A setup file, seeded the same way the provider already was.**
+`ultra_setup.json` in the app's external files directory sets allow-list mode
+and allowed apps, then deletes itself. Applied on app start rather than on
+service connect: forcing a reconnect by toggling the binding is unreliable —
+Android frequently leaves the service listed but unbound, a worse state than the
+one being fixed. Logged loudly, because something that changes which apps the
+agent may enter must never do so quietly. Anyone who can write that file already
+has adb over the device and can do considerably worse.
+
+**Preconditions fail loudly with the exact fix.** If the service is listed but
+not bound, it says so and names the four taps, rather than running a test that
+will fail for a reason nobody will look for.
+
+And `ask.sh` now escapes quotes. An apostrophe used to reach `adb shell input
+text` unescaped, fail with "no closing quote", and produce no log at all — two
+runs were lost before anyone noticed the task had never been sent.

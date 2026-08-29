@@ -13,7 +13,11 @@ sleep 3
 adb logcat -c
 bash "$DIR/uitap.sh" "Ask Agent Ultra…" || { echo "[ask] input field not found" >&2; exit 1; }
 sleep 1
-adb shell input text "${TEXT// /%s}"
+# Quote-safe. An apostrophe in the task used to reach `adb shell input text`
+# unescaped, which failed with "no closing quote" and produced no log at all —
+# two runs were lost before anyone noticed the task had never been sent.
+ESCAPED=$(printf '%s' "$TEXT" | sed "s/'/'\\\\''/g")
+adb shell "input text '${ESCAPED// /%s}'"
 sleep 1
 bash "$DIR/uitap.sh" "Send" || { echo "[ask] send button not found" >&2; exit 1; }
 

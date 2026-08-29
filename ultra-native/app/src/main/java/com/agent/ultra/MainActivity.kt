@@ -17,6 +17,13 @@ import com.agent.ultra.ui.theme.AgentUltraTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A seeded setup applies here too, not only when the service connects.
+        // Toggling the accessibility binding to force a reconnect is unreliable
+        // — Android often leaves the service listed but unbound — and the
+        // activity and the service share a process, so applying it here updates
+        // the very same state. This is what makes a device test one command
+        // instead of four settings screens.
+        AgentAccessibilityService.applySetupFile(this)
         enableEdgeToEdge()
         setContent {
             AgentUltraTheme {
