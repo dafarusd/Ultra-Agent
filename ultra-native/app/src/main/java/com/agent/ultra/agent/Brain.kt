@@ -571,7 +571,12 @@ JSON:"""
             toolSequence += Triple(toolCall.first, toolCall.second, !failed)
             if (failed) anyToolFailed = true
             val verification = if (!failed) verifyAction(toolCall.first, toolCall.second) else null
-            android.util.Log.i("UltraBrain", "TOOL RESULT (${if (failed) "fail" else "ok"}): ${resultText.take(120)}${verification ?: ""}")
+            // 120 characters cut a structured read off at its header, so the
+            // rows the model actually reasoned over never reached the log. On
+            // a release build there is no debugger and this is the only window
+            // into what the model was given, so log enough to check it.
+            // Android caps a single entry near 4 KB and splits on newlines.
+            android.util.Log.i("UltraBrain", "TOOL RESULT (${if (failed) "fail" else "ok"}): ${resultText.take(TOOL_LOG_CHARS)}${verification ?: ""}")
 
             // Stuck detector: same tool failed twice in a row → stop honestly
             if (failed && lastToolFailed && lastTool == toolCall.first) {
@@ -780,6 +785,11 @@ RULES:
 
         /** A tool needs a real track record of failing before it gets named. */
         const val MIN_FAILURES_TO_WARN = 3
+
+        /** How much of a tool result reaches logcat. A structured read's
+         * header alone is 120 characters, so the old cap logged the sentence
+         * describing the rows and none of the rows. */
+        const val TOOL_LOG_CHARS = 2000
 
         /** Words that say nothing about what a request is for. */
         val STOPWORDS = setOf(

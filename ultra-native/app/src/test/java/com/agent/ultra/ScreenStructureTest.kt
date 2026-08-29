@@ -3,6 +3,7 @@ package com.agent.ultra
 import com.agent.ultra.agent.ScreenStructure
 import com.agent.ultra.agent.ScreenStructure.Item
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -320,5 +321,205 @@ class ScreenContainerTest {
     fun `malformed json is empty, not a crash`() {
         assertTrue(ScreenStructure.parse("not json at all").isEmpty())
         assertTrue(ScreenStructure.parse("").isEmpty())
+    }
+}
+
+/**
+ * Joining rows that are two halves of one thing.
+ *
+ * Read off a live Hacker News page: each story is two sibling table rows, the
+ * title in one and "120 points by tosh 1 hour ago" in the next. Grouping by
+ * container produced two separate items, so the model paired a score to a
+ * headline by adjacency — the exact guess this file exists to remove.
+ */
+class SplitRowTest {
+
+    private fun row(vararg labels: String) =
+        ScreenStructure.Item(labels.toList(), top = 0, clickable = false)
+
+    /** Two rows per story, the way the page reports them. */
+    private fun hackerNews(count: Int) = (1..count).flatMap {
+        listOf(
+            row("$it.", "Story number $it (example.com)"),
+            row("${it * 10} points by someone $it hours ago", "$it comments"),
+        )
+    }
+
+    @Test
+    fun `a title row and its points row become one item`() {
+        val merged = ScreenStructure.mergeSplitRows(hackerNews(4))
+        assertEquals(4, merged.size)
+        merged.forEachIndexed { i, item ->
+            val n = i + 1
+            assertTrue("story $n keeps its title", item.labels.any { it.contains("Story number $n") })
+            assertTrue("story $n keeps its own score", item.labels.any { it.contains("${n * 10} points") })
+        }
+    }
+
+    @Test
+    fun `a product grid where every row has a price is left alone`() {
+        // Every card carries a price, so there is no heading-half to pair with.
+        // Merging here would join two unrelated products.
+        val grid = (1..6).map { row("Product $it", "$$it.99", "4.5 out of 5 stars") }
+        assertEquals(6, ScreenStructure.mergeSplitRows(grid).size)
+    }
+
+    @Test
+    fun `a list where only some rows carry metadata is left alone`() {
+        // Alternation has to hold all the way down. A half-matching list is a
+        // coincidence, not a structure.
+        val mixed = listOf(
+            row("Title A", "detail"),
+            row("10 points by x", "1 comment"),
+            row("Title B", "detail"),
+            row("Title C", "detail"),
+        )
+        assertEquals(4, ScreenStructure.mergeSplitRows(mixed).size)
+    }
+
+    @Test
+    fun `too short a list is never merged`() {
+        val two = hackerNews(1)
+        assertEquals(2, ScreenStructure.mergeSplitRows(two).size)
+    }
+
+    @Test
+    fun `an odd trailing row is kept, not dropped`() {
+        val rows = hackerNews(2) + row("More", "link to page 2")
+        val merged = ScreenStructure.mergeSplitRows(rows)
+        // Two merged stories, plus the unpaired "More" link kept as it stands.
+        assertEquals(3, merged.size)
+        assertTrue(merged.last().labels.contains("More"))
+    }
+
+    @Test
+    fun `merged rows render with the score named against the right title`() {
+        val merged = ScreenStructure.mergeSplitRows(hackerNews(3))
+        val (out, _) = ScreenStructure.render(merged, budget = 4000)
+        // Each numbered block must contain its own title and its own score.
+        val blocks = out.split(Regex("(?m)^\\d+\\. ")).filter { it.isNotBlank() }
+        assertEquals(3, blocks.size)
+        blocks.forEachIndexed { i, b ->
+            val n = i + 1
+            assertTrue("block $n has its title", b.contains("Story number $n"))
+            assertTrue("block $n has its score", b.contains("${n * 10} points"))
+        }
+    }
+}
+
+/** The title is the headline, not the rank marker in front of it. */
+class TitleAndRedundancyTest {
+
+    private fun row(vararg labels: String) =
+        ScreenStructure.Item(labels.toList(), top = 0, clickable = false)
+
+    private fun named(item: ScreenStructure.Item) =
+        ScreenStructure.fields(item).groupBy({ it.name }, { it.value })
+
+    @Test
+    fun `a leading rank marker does not become the title`() {
+        val f = named(row("1.", "GUIs should be fully keyboard-driven", "881 points"))
+        assertEquals(listOf("GUIs should be fully keyboard-driven"), f["title"])
+        assertEquals(listOf("1."), f["rank"])
+    }
+
+    @Test
+    fun `the rendered headline is the story, not the number`() {
+        val (out, _) = ScreenStructure.render(
+            listOf(row("2.", "Htmx 4.0", "708 points")),
+            budget = 4000,
+        )
+        assertTrue("headline must be the story", out.startsWith("1. Htmx 4.0"))
+        assertTrue("the rank is kept as a field", out.contains("rank: 2."))
+    }
+
+    @Test
+    fun `rank markers in several shapes are all recognised`() {
+        for (marker in listOf("1.", "12)", "3", "100.")) {
+            val f = named(row(marker, "A headline", "5 points"))
+            assertEquals("$marker should be a rank", listOf("A headline"), f["title"])
+        }
+    }
+
+    @Test
+    fun `a row that is all ordinals still yields a title`() {
+        val f = named(row("1.", "2."))
+        assertEquals(listOf("1."), f["title"])
+    }
+
+    @Test
+    fun `a long line restating a short one is dropped`() {
+        // Hacker News reports the score twice: on its own, and inside the
+        // whole subtext line. Both name themselves points.
+        val f = named(row(
+            "Iceland votes on whether to restart talks",
+            "123 points by tosh 1 hour ago | hide | 127 comments",
+            "123 points",
+        ))
+        assertEquals("only the specific score survives", listOf("123 points"), f["points"])
+    }
+
+    @Test
+    fun `two genuinely different values both survive`() {
+        // Not redundancy — a row really can show two prices.
+        val f = named(row("Kettle", "$99.99", "$79.99"))
+        assertEquals(listOf("$99.99", "$79.99"), f["price"])
+    }
+}
+
+/**
+ * Separator labels carry nothing and must not reach the model.
+ *
+ * A regex over `[\p{Punct}\s]` was not enough: the page emits "|" wrapped in
+ * non-breaking spaces, which Java's `\s` does not match and Kotlin's `trim()`
+ * does not remove, so it survived every filter and reached the model as a
+ * field of its own.
+ */
+class SeparatorFilterTest {
+
+    private fun labelsOf(vararg labels: String): List<String> {
+        val t = StringBuilder("[")
+        // one container, N children each holding one label
+        t.append("""{"i":0,"p":-1,"dep":0,"t":"","d":"","c":false,"tp":0,"b":10}""")
+        var i = 1
+        val rows = mutableListOf<String>()
+        repeat(3) { r ->
+            val row = i++
+            rows.add("""{"i":$row,"p":0,"dep":1,"t":"","d":"","c":true,"tp":${r * 50},"b":${r * 50 + 10}}""")
+            for (l in labels) {
+                rows.add("""{"i":${i++},"p":$row,"dep":2,"t":"${l.replace("\"", "\\\"")}","d":"","c":false,"tp":${r * 50},"b":${r * 50 + 10}}""")
+            }
+        }
+        t.append(",").append(rows.joinToString(","))
+        t.append("]")
+        return ScreenStructure.items(ScreenStructure.parse(t.toString()))
+            .firstOrNull()?.labels ?: emptyList()
+    }
+
+    @Test
+    fun `a pipe wrapped in non-breaking spaces is dropped`() {
+        val labels = labelsOf("A real headline here", " | ", "123 points")
+        assertFalse("the separator must not survive", labels.any { it.contains("|") })
+        assertTrue(labels.any { it.contains("A real headline") })
+    }
+
+    @Test
+    fun `plain separators are dropped`() {
+        val labels = labelsOf("A real headline here", "|", "(", ")", "·", "123 points")
+        assertEquals(listOf("A real headline here", "123 points"), labels)
+    }
+
+    @Test
+    fun `a bare query string is dropped`() {
+        val labels = labelsOf("A real headline here", "vote?id=49489057&how=up&goto=news", "123 points")
+        assertFalse(labels.any { it.startsWith("vote?") })
+    }
+
+    @Test
+    fun `real short text is kept`() {
+        // Not everything short is noise: a currency amount or a count matters.
+        val labels = labelsOf("A real headline here", "$5", "4.5", "123 points")
+        assertTrue(labels.contains("$5"))
+        assertTrue(labels.contains("4.5"))
     }
 }

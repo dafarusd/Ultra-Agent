@@ -158,18 +158,97 @@ object ScreenStructure {
             return out.distinct()
         }
 
-        return bestKids
+        val rows = bestKids
             .sortedBy { it.top }
             .map { Item(labelsUnder(it), it.top, it.clickable || anyClickableUnder(it, children)) }
             .filter { it.labels.size >= 2 }
+
+        return mergeSplitRows(rows)
+    }
+
+    /** The named fields that make a row a *record* rather than a heading. */
+    private val METADATA = setOf("points", "price", "rating", "reviews", "availability")
+
+    /**
+     * Classifies every label, not `fields()`.
+     *
+     * `fields()` names the first label "title" unconditionally, so a detail
+     * row whose only content is "120 points by tosh" would report no metadata
+     * at all and no pair would ever merge.
+     */
+    private fun hasMetadata(item: Item): Boolean =
+        item.labels.any { nameOf(it) in METADATA }
+
+    /**
+     * Join rows that are two halves of one thing.
+     *
+     * Measured on Hacker News: each story is two sibling table rows — the
+     * title in one, "120 points by tosh 1 hour ago" in the next. Grouping by
+     * container gave two separate items, so the model was pairing a score to a
+     * headline by adjacency. That is the guess this whole file exists to
+     * remove, and it was still happening one level up.
+     *
+     * Merged only on strict evidence: the list alternates, every even row
+     * carries no metadata field, and every odd row carries one. A product grid
+     * fails that test because every card has a price, so it is left alone. A
+     * list where only some rows are sponsored fails it too — the alternation
+     * has to hold all the way down.
+     */
+    internal fun mergeSplitRows(rows: List<Item>): List<Item> {
+        if (rows.size < 4) return rows
+        val pairs = rows.size / 2
+        for (p in 0 until pairs) {
+            if (hasMetadata(rows[2 * p])) return rows        // heading half must have none
+            if (!hasMetadata(rows[2 * p + 1])) return rows   // detail half must have one
+        }
+        val out = mutableListOf<Item>()
+        for (p in 0 until pairs) {
+            val head = rows[2 * p]
+            val tail = rows[2 * p + 1]
+            out += Item(
+                labels = (head.labels + tail.labels).distinct(),
+                top = head.top,
+                clickable = head.clickable || tail.clickable,
+            )
+        }
+        // An odd trailing row is kept as it stands rather than dropped.
+        if (rows.size % 2 == 1) out += rows.last()
+        return out
     }
 
     /** Tracking parameters and opaque ids are labels to a screen reader and
-     * noise to everyone else. */
-    private val JUNK = Regex("""^(ref=|https?://|[A-Za-z0-9+/=_.\-]{28,}$)""")
+     * noise to everyone else. `vote?id=...&how=up` is a real one, read off
+     * Hacker News: a bare query string with no host. */
+    private val JUNK = Regex("""^(ref=|https?://|[a-z]+\?[a-z]+=|[A-Za-z0-9+/=_.\-]{28,}$)""")
+
+    /**
+     * A label that is only punctuation or a bare separator carries nothing.
+     * Real ones read off a page: "(", ")", "|", "·".
+     *
+     * Tested by character rather than by regex on purpose. The first attempt
+     * used `[\p{Punct}\s]` and still let "|" through, because the page emits
+     * it wrapped in non-breaking spaces — Java's `\s` does not match U+00A0,
+     * and neither Kotlin's `trim()` nor `isBlank()` removes it. Stripping
+     * every separator first, then asking whether anything alphanumeric is
+     * left, cannot be fooled by whichever space character a page happens to
+     * use.
+     */
+    private fun isPunctuationOnly(label: String): Boolean {
+        val core = label.filterNot { it.isWhitespace() || it in SPACE_LOOKALIKES }
+        return core.isNotEmpty() && core.length <= 3 && core.none { it.isLetterOrDigit() }
+    }
+
+    private val SPACE_LOOKALIKES = charArrayOf(
+        ' ', // non-breaking space
+        '​', // zero-width space
+        ' ', // thin space
+        '﻿', // zero-width no-break space
+    )
 
     private fun isUseful(label: String): Boolean =
-        label.isNotBlank() && !JUNK.containsMatchIn(label)
+        label.isNotBlank() &&
+            !JUNK.containsMatchIn(label) &&
+            !isPunctuationOnly(label)
 
 
     private fun anyClickableUnder(n: Node, children: Map<Int, MutableList<Node>>): Boolean {
@@ -240,12 +319,49 @@ object ScreenStructure {
      */
     fun fields(item: Item): List<Field> {
         if (item.labels.isEmpty()) return emptyList()
-        val out = mutableListOf(Field("title", item.labels.first()))
-        for (label in item.labels.drop(1)) {
-            out.add(Field(nameOf(label), label))
+
+        // A ranked list puts "1." in front of the headline, and taking the
+        // first label blindly made the rank the title — every row read as
+        // "1. 1." with the real headline demoted to a detail line.
+        val titleIndex = item.labels.indexOfFirst { !ORDINAL.matches(it.trim()) }
+            .let { if (it < 0) 0 else it }
+
+        val raw = item.labels.mapIndexed { i, label ->
+            when {
+                i == titleIndex -> Field("title", label)
+                ORDINAL.matches(label.trim()) -> Field("rank", label)
+                else -> Field(nameOf(label), label)
+            }
         }
-        return out
+        return dropRedundant(raw)
     }
+
+    /**
+     * Drop a field that only restates a shorter one.
+     *
+     * A page often exposes the same fact twice: Hacker News reports both
+     * "123 points" and the whole subtext line "123 points by tosh 1 hour ago
+     * | hide | 127 comments", and both name themselves `points`. Keeping both
+     * spends the read budget saying one thing twice, and offers the model two
+     * candidate scores for one row.
+     *
+     * Only an exact superset is dropped — the longer text has to contain the
+     * shorter one. Two genuinely different values keep both, since a row with
+     * two different prices is information, not noise.
+     */
+    private fun dropRedundant(fields: List<Field>): List<Field> {
+        val shortestByName = fields
+            .filter { it.name != null && it.name in METADATA }
+            .groupBy { it.name }
+            .mapValues { (_, v) -> v.minByOrNull { it.value.length }!!.value }
+        return fields.filterNot { f ->
+            val keep = shortestByName[f.name] ?: return@filterNot false
+            f.value != keep && f.value.contains(keep)
+        }
+    }
+
+    /** "1.", "12)", "3" — a position marker, not a heading. */
+    private val ORDINAL = Regex("""^\d{1,3}[.)]?$""")
 
     /**
      * The single field name this text proves, or null.
@@ -292,8 +408,10 @@ object ScreenStructure {
         var shown = 0
         for ((n, item) in items.withIndex()) {
             val f = fields(item)
+            val title = f.firstOrNull { it.name == "title" } ?: f.first()
             val lines = mutableListOf<String>()
-            for (field in f.drop(1)) {
+            for (field in f) {
+                if (field === title) continue
                 lines.add(if (field.name != null) "   ${field.name}: ${field.value}" else "   ${field.value}")
             }
             val prices = item.labels
@@ -303,7 +421,7 @@ object ScreenStructure {
                 lines.add("   prices shown: ${prices.joinToString(", ")} " +
                     "(more than one — do not assume which is charged)")
             }
-            val head = "${n + 1}. ${f.first().value}"
+            val head = "${n + 1}. ${title.value}"
             val block = head + (if (lines.isEmpty()) "" else "\n" + lines.joinToString("\n")) + "\n"
             if (used + block.length > budget) break
             sb.append(block)
