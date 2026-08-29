@@ -194,6 +194,15 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
     private suspend fun runRecipe(name: String): String {
         val row = recipes.resolve(name)
             ?: return "Error: no recipe named \"$name\". Say \"list my recipes\" to see what is saved."
+        // A routine learned by watching holds UI steps, not tool calls, and
+        // replaying those is not built yet. Say that plainly rather than
+        // running an empty list and reporting success.
+        recipes.demonstrationOf(row.name)?.let { json ->
+            val shown = Demonstration.fromJson(json)
+            return "\"${row.name}\" is something you showed me rather than a set of tools, " +
+                "and I cannot replay it yet. Here is what I have:\n\n" +
+                Demonstration.describe(shown)
+        }
         val steps = recipes.stepsOf(row.name).orEmpty()
         if (steps.isEmpty()) return "Error: recipe \"${row.name}\" has no steps"
 
@@ -827,6 +836,15 @@ RULES:
         )
 
         private const val TOOL_CATALOG = """
+LEARNING BY BEING SHOWN — use when the user offers to demonstrate, or when a task
+keeps failing and they could just show you:
+- watch_me — start watching. They then do the task by hand on the phone.
+- stop_watching {"name":"..."} — stop and save it under that name. Without a name
+  it reports what it saw and waits.
+- cancel_watching — stop and throw it away.
+Only which app and which control they touched is kept, never what they typed. Say
+so if they ask.
+
 DEVICE CONTROL (instant, ~99% reliable):
   wifi_toggle, bluetooth_toggle, do_not_disturb, flashlight_toggle, volume_set
   media_play, media_next

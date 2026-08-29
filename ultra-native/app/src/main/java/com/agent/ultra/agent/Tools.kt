@@ -78,6 +78,46 @@ class Tools(
                 }
                 "notification_read" -> controller.readNotifications(params.optInt("limit", 15))
 
+                // ── Learning by being shown ──────────────────────────
+                "watch_me" -> {
+                    if (!controller.serviceRunning)
+                        "Error: nothing could be watched — " + controller.serviceProblem
+                    else {
+                        if (!Demonstration.start())
+                            "Already watching — ${Demonstration.soFar().size} steps so far. " +
+                                "Carry on, then say \"stop watching\" and give it a name."
+                        else
+                        "Watching. Do the task on your phone now, then say \"stop watching\" " +
+                            "and give it a name.\n\nI record which app and which control you " +
+                            "touch — never what you type into it. If the task needs an amount " +
+                            "or a message, I will ask for that each time rather than remember " +
+                            "yours."
+                    }
+                }
+                "stop_watching" -> {
+                    if (!Demonstration.isRecording) "Error: I was not watching anything."
+                    else {
+                        val steps = Demonstration.stop()
+                        val name = params.optString("name").trim()
+                        when {
+                            !Demonstration.worthKeeping(steps) ->
+                                "I did not see enough to learn a routine — only ${steps.size} " +
+                                    "step(s). Nothing was saved."
+                            name.isBlank() ->
+                                "I watched ${steps.size} steps:\n\n" +
+                                    Demonstration.describe(steps) +
+                                    "\n\nSay \"stop watching and call it <name>\" to keep it."
+                            else -> saveDemonstration(name, steps)
+                        }
+                    }
+                }
+                "cancel_watching" -> {
+                    val was = Demonstration.isRecording
+                    Demonstration.cancel()
+                    if (was) "Stopped, and threw away everything I saw."
+                    else "I was not watching anything."
+                }
+
                 // ── Apps & navigation ────────────────────────────────
                 "app_launch" -> {
                     val target = params.optString("target")
@@ -245,6 +285,25 @@ class Tools(
         }
         seen.toList()
     } catch (_: Exception) { emptyList() }
+
+    /**
+     * Keep what was demonstrated, under a name the user chose.
+     *
+     * Stored in the same table as spoken recipes so there is one place to look
+     * and one way to run them, with a marker saying this one was learned by
+     * watching rather than assembled from tools.
+     */
+    private suspend fun saveDemonstration(name: String, steps: List<Demonstration.Step>): String {
+        val store = recipes ?: return "Error: routines are unavailable"
+        return try {
+            store.saveDemonstration(name, Demonstration.toJson(steps))
+            "Saved as \"$name\" — ${steps.size} steps:\n\n" +
+                Demonstration.describe(steps) +
+                "\n\nNothing you typed was kept."
+        } catch (e: Exception) {
+            "Error: could not save that routine (${e.message})"
+        }
+    }
 
     /** The template this screen used last time, or "" if it is new to us. */
     private suspend fun rememberedTemplate(fp: ScreenSignature.Fingerprint?): String {

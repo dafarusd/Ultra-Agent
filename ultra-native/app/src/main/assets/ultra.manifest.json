@@ -264,6 +264,27 @@
       "effects": [
         "read"
       ]
+    },
+    {
+      "name": "watch_me",
+      "effects": [
+        "read"
+      ],
+      "requires": []
+    },
+    {
+      "name": "stop_watching",
+      "effects": [
+        "mutate"
+      ],
+      "requires": []
+    },
+    {
+      "name": "cancel_watching",
+      "effects": [
+        "mutate"
+      ],
+      "requires": []
     }
   ]
 }

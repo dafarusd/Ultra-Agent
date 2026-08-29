@@ -134,7 +134,18 @@ image is never captured.**
 
 ## Latent capabilities — already almost there
 
-### L1 — A complete cross-app behavioural stream, collected and thrown away
+### L1 — Learning by being shown — PARTIAL, 2026-08-29
+
+> Built, wired and tested offline. **Capture is proven from a real tap on a real
+> phone** — the buffer, the drain, the step conversion and the storage all work.
+> **It reliably records only ONE step of a multi-tap demonstration and I do not
+> yet know why the others never arrive**: three distinct Chrome toolbar taps
+> produce one A11Y_CLICK. Suspect the click event is not fired for synthetic
+> taps on some controls, or `currentPackage` is the menu overlay at the moment
+> of the tap so the allow check fails. Replay is not built at all — a saved
+> routine says so rather than pretending.
+
+### L1 (original finding) — A complete cross-app behavioural stream, collected and thrown away
 `onAccessibilityEvent` already records every click (text + content-desc), every
 notification and every window change **across every app**, token-redacted, into
 `pendingA11yLogs` (`:96`-`:260`). **`drainPendingLogs()` (`:106`) has no caller
@@ -196,3 +207,29 @@ does not trace to the user's request` — so the defence worked and nothing
 happened. Left alone deliberately: shrinking the history window would break
 legitimate follow-ups ("do that again for X"), and the gate is the right layer
 for this. Recorded because it will look like a new bug the next time it appears.
+
+### D1 — The decision made while building L1
+
+The buffer records the label of everything tapped in every allowed app, plus
+notification text. **Wiring an ambient consumer to it would have turned a
+dormant buffer into a running log of everything its owner does on their phone.**
+
+So recording is explicit and bounded: nothing is read unless the user says
+"watch me", and it stops when they say stop. There is no ambient mode and no
+setting to enable one, because the useful thing and the invasive thing are not
+the same feature and must not share a switch.
+
+**No label is stored at all.** The first attempt kept "control-like" labels —
+short, wordlike, no digits — so a routine would read as "Log in, Pay". Its own
+test killed it: **"Sarah Miller" passes every one of those checks**, as does any
+person, place or thing that is the payload rather than the path. There is no
+reliable way to tell a control's name from a value by looking at the text, and a
+rule that is right most of the time is not good enough when being wrong means
+writing someone's contacts to disk. Only the app's own view id is kept, filtered
+through the same check that rejects content-shaped ids.
+
+Two further properties fell out and are worth keeping:
+- **It can only be taught about apps the user has allowed.** Deny-by-default
+  extends to learning.
+- **A recording that dies with the process is simply gone.** A half-remembered
+  routine surviving a crash is worse than no routine.

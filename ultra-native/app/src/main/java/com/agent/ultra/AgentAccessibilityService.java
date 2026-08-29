@@ -251,7 +251,21 @@ public class AgentAccessibilityService extends AccessibilityService {
                     String pkg = currentPackage;
                     boolean isOwnApp = "com.agent.ultra".equals(pkg);
                     boolean isSystemUi = "com.android.systemui".equals(pkg);
-                    boolean isAllowed = isOwnApp || isSystemUi || isPackageAllowed(pkg);
+                    // The USER'S list, not the auto-allowed set.
+                    //
+                    // isPackageAllowed holds apps the AGENT has already acted
+                    // in, filled by the gate when it passes. Gating capture on
+                    // that meant a demonstration in an app the agent had never
+                    // touched was discarded — which is every app worth being
+                    // shown, since the reason to demonstrate something is that
+                    // the agent cannot do it yet. Two runs recorded zero steps
+                    // before this was spotted.
+                    //
+                    // agentMayUse is the question that was actually meant: has
+                    // the user let it into this app. Deny-by-default still
+                    // holds, so it can only be taught about apps it is allowed
+                    // to be in.
+                    boolean isAllowed = isOwnApp || isSystemUi || agentMayUse(pkg);
                     String cls = event.getClassName() != null ? event.getClassName().toString() : "null";
                     if (isAllowed) {
                         java.util.List<CharSequence> tl = event.getText();
@@ -263,7 +277,15 @@ public class AgentAccessibilityService extends AccessibilityService {
                         if (desc.length() > 50) desc = desc.substring(0, 50);
                         if (desc.matches(".*[A-Za-z0-9_-]{20,}.*")) { desc = "[REDACTED]"; }
                         desc = desc.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");
-                        emitA11yLog("A11Y_CLICK", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\",\"text\":\"" + txt + "\",\"desc\":\"" + desc + "\"}");
+                        // The app's own id for what was tapped. A label moves
+                        // with translation and wording; an id is what makes a
+                        // demonstrated step replayable later.
+                        String vid = "";
+                        try {
+                            AccessibilityNodeInfo src = event.getSource();
+                            if (src != null) { vid = shortName(idOf(src)); src.recycle(); }
+                        } catch (Exception ignored) {}
+                        emitA11yLog("A11Y_CLICK", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\",\"vid\":\"" + vid + "\",\"text\":\"" + txt + "\",\"desc\":\"" + desc + "\"}");
                     } else {
                         emitA11yLog("A11Y_CLICK", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\",\"text\":\"[external]\",\"desc\":\"[external]\"}");
                     }

@@ -46,6 +46,41 @@ class Recipes(private val dao: RecipeDao) {
         return "$verb recipe \"$name\": ${steps.joinToString(" → ") { it.tool }}"
     }
 
+    /**
+     * Keep a routine that was learned by watching.
+     *
+     * Same table as a spoken recipe, so there is one place to look and one
+     * "list my routines" that shows everything. The steps are UI steps rather
+     * than tool calls, so the JSON is stored under a marker key: a runner can
+     * tell the two apart without guessing, and an old build reading a new row
+     * sees an empty tool list rather than misinterpreting it.
+     */
+    suspend fun saveDemonstration(rawName: String, stepsJson: String): String {
+        val name = normalize(rawName)
+        if (name.isEmpty()) return "Error: a routine needs a name"
+        val payload = JSONObject().put("demonstrated", JSONArray(stepsJson)).toString()
+        val existing = dao.byName(name)
+        dao.upsert(
+            RecipeEntity(
+                name = name,
+                stepsJson = payload,
+                createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                lastRun = existing?.lastRun ?: 0L,
+                runCount = existing?.runCount ?: 0,
+            )
+        )
+        return name
+    }
+
+    /** The UI steps of a routine learned by watching, or null if it is a tool recipe. */
+    suspend fun demonstrationOf(rawName: String): String? {
+        val row = dao.byName(normalize(rawName)) ?: return null
+        return try {
+            val o = JSONObject(row.stepsJson)
+            if (o.has("demonstrated")) o.getJSONArray("demonstrated").toString() else null
+        } catch (_: Exception) { null }
+    }
+
     suspend fun stepsOf(rawName: String): List<Step>? {
         val row = dao.byName(normalize(rawName)) ?: return null
         return parse(row.stepsJson)
