@@ -20,9 +20,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16m — device-verified; table-row pairing fixed; 70/70 tests)
+**Last updated:** 2026-08-29 (Session 16n — pages read by their own template; store test passed; 78/78 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **70/70** (gate 14, action gate 6, navigator prompt 9, field naming 16, container selection 9, split rows 6, title/redundancy 6, separator filter 4). Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **78/78**, including a real 1,907-node Amazon tree committed as a fixture (`app/src/test/resources/amazon-search.json`) so perception can be developed without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
@@ -143,6 +143,77 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16n — the store test, and reading a page by its own template (2026-08-29, branch `native`, Galaxy A15)
+
+Owner: "run the store page test. im talking about leaps in advancement, magnatudes"
+
+#### What the store test showed
+
+The price-ambiguity work from 16k held up immediately and it matters:
+
+```
+price: $25.98
+price: List:$35.99
+prices shown: $25.98, $35.99 (more than one — do not assume which is charged)
+```
+
+That is the difference between the agent knowing it pays $25.98 and confidently reporting $35.99.
+
+Everything else was bad. **18 rows from 11 screens** of a search page, mostly orphaned rating fragments with no product name attached:
+
+```
+2. Rated 4.4 out of 5 stars by 88506 reviews.   ← not a product
+```
+
+#### The root cause, and the leap
+
+**The accessibility tree carries `className` and `viewIdResourceName`, and the service threw both away** before `ScreenStructure` ever saw them. The page was telling us its structure and we discarded it, then reconstructed it from text statistics — scoring containers by how uniform their children looked. Every fix since has been a patch on that guess, including two in the last two sessions.
+
+The service now emits `cls` and `vid` in short form. The reader groups nodes by a **structural signature** — what kinds of thing a node is made of — and takes the largest repeating group. That is the page saying which nodes are the same kind of thing rather than the reader inferring it.
+
+#### Three corrections that only a real page could produce
+
+A real tree was captured from the phone and committed as `app/src/test/resources/amazon-search.json` — 1,907 nodes. **All three of these were invisible in synthetic trees**, and the fixture means this can now be developed and regression-tested without a device.
+
+1. **Chrome exposes web content as 1,096 identical `android.view.View` nodes with no view ids.** A class-based signature is decisive in a native app and nearly useless on a web page. The signature had to become a **set** of child kinds, tolerant of a card carrying a "Limited time deal" badge its neighbour does not.
+
+2. **Scoring `count × median size` picked the rating widget** — twenty-four of them, tidy and identical, nested inside the product cards that were the answer. Every record came back as "4.3 out of 5 stars" and nothing else. Scoring by **total text covered** picks the outermost repeating unit, which is the thing a person would point at and call a result.
+
+3. **One card matches the template at several nesting levels**, so a product came back three times, and not as exact repeats — an outer layer picks up a "More like this" heading the inner one does not. A record whose content is contained in another record's is that record seen from further in; the outer one is kept.
+
+#### Measured
+
+On the captured fixture: **19 distinct products, 22 of 27 records carrying a price, 22 carrying a rating.** Previously: 24 records that were a rating and nothing else.
+
+On the phone, the answer came back as:
+
+```
+1. TAGRY Bluetooth Headphones - $25.98, $35.99
+2. TALIX H30 Hybrid Active Noise Cancelling Headphones - $69.99
+3. Sony WH-CH520 Wireless On-Ear Bluetooth Headphones - $38.00, $69.99
+4. KVIDIO Bluetooth Headphones - $18.96, $24.56
+
+Note: the prices shown are the current price and the list price, but it's not
+clear which one is the actual price charged.
+```
+
+**The model relayed the engine's ambiguity rather than picking one.** That is the designed behaviour surviving all the way from the tree to the answer, and it is the difference between an agent that could buy the right thing and one that guesses.
+
+#### Scroll restore, second attempt
+
+`restored 0/7 scrolls` on the store page: the node that scrolled forward refused `ACTION_SCROLL_BACKWARD` and the page stayed at the bottom. Restore now falls back to the plain gesture when the deep scroll refuses.
+
+#### Test suite
+
+**78/78.** New: template matching 5, real page 3. `unitTests.isReturnDefaultValues` is on, because the reader logs which method chose the records and `android.util.Log` throws in a JVM test otherwise — that log line is the only way to tell on a device whether the template match or the fallback ran.
+
+#### Honest status
+
+- Template matching, coverage scoring and containment: **PROVEN** on a real store page and on Hacker News.
+- The fallback scorer is still in place for a tree with no class names, and is still what runs against a dump from an older build.
+- Some products appear more than once, because the page genuinely shows them in several carousels. Not fixed, and probably not a defect.
+- The navigator's app-drift detection remains **RUNTIME-UNPROVEN**.
 
 ### Session 16m — device verification, and the pairing that was never structural (2026-08-29, branch `native`, Galaxy A15)
 
