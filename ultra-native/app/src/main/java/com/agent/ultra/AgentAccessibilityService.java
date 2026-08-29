@@ -286,8 +286,15 @@ public class AgentAccessibilityService extends AccessibilityService {
                             if (src != null) { vid = shortName(idOf(src)); src.recycle(); }
                         } catch (Exception ignored) {}
                         emitA11yLog("A11Y_CLICK", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\",\"vid\":\"" + vid + "\",\"text\":\"" + txt + "\",\"desc\":\"" + desc + "\"}");
+                        // Package, class and the app's own id — never the label.
+                        // The label is what the user tapped and is theirs; the
+                        // same rule the demonstration recorder holds to. This
+                        // exists because "did it see what I just did" was
+                        // otherwise unanswerable without a debugger.
+                        Log.i(TAG, "CLICK_SEEN " + pkg + " " + cls + (vid.isEmpty() ? "" : " #" + vid));
                     } else {
                         emitA11yLog("A11Y_CLICK", "{\"pkg\":\"" + pkg + "\",\"cls\":\"" + cls + "\",\"text\":\"[external]\",\"desc\":\"[external]\"}");
+                        Log.i(TAG, "CLICK_SEEN " + pkg + " (not an allowed app — recorded as external)");
                     }
                     break;
                 }

@@ -188,7 +188,33 @@ image is never captured.**
 
 ## Latent capabilities — already almost there
 
-### L1 — Learning by being shown — PARTIAL, 2026-08-29
+### L1 — Learning by being shown — BLOCKED BY ANDROID, 2026-08-29
+
+> **The blocker is found and it is not in this code.** `TYPE_VIEW_CLICKED` is
+> fired at each app's discretion and most controls never fire it. Measured on
+> the phone with a log of every click the service actually receives: four
+> deliberate taps in Chrome produced **one** event, and that one was a native
+> toolbar button. Taps inside web content produce nothing at all — the page is
+> a compositor surface, not a tree of clickable views — and even Chrome's own
+> menu button fired nothing.
+>
+> So watching a user by listening for click events can see *some* of what they
+> do, never all of it, and there is no way to tell which from inside. A routine
+> learned from a partial recording is worse than no routine: it would replay a
+> fragment and report success.
+>
+> **The design has to change rather than be debugged.** The alternative uses
+> what already works: record the sequence of SCREENS the user passes through
+> (`ScreenSignature` already fingerprints them, content-independently) plus the
+> controls present on each (`ScreenControls` already collects them). Replay then
+> means "get from this screen to that one", which needs no click events at all
+> and is exactly the L2 machinery. That is a redesign, not a fix, and it is the
+> right next move for this capability.
+>
+> What was built stands and is not wasted: the recorder, the privacy rule, the
+> storage and the tools all carry over to the screen-sequence design unchanged.
+
+### L1 (superseded design) — click-event capture — PARTIAL, 2026-08-29
 
 > Built, wired and tested offline. **Capture is proven from a real tap on a real
 > phone** — the buffer, the drain, the step conversion and the storage all work.
