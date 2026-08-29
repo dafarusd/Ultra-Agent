@@ -20,9 +20,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16k — scroll restore; named fields; container scoring fix; 41/41 tests)
+**Last updated:** 2026-08-29 (Session 16l — dead repeat hint found; app-drift detection; 54/54 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **41/41** (gate 14, action gate 6, field naming 12, container selection 9). Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **54/54** (gate 14, action gate 6, field naming 16, container selection 9, navigator prompt 9). Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
@@ -143,6 +143,51 @@ Decisions that affect ongoing work. Update as decisions are made or reversed.
 ## Session Log
 
 <!-- Add new entries at the top. Most recent first. -->
+
+### Session 16l — a hint that was never sent, and the agent noticing it left the app (2026-08-29, branch `native`)
+
+#### Correction to Session 16i
+
+**16i claims the repeat hint shipped. It did not.** That entry says: "A no-op repeated twice triggers an explicit 'you are repeating yourself' line." The line was computed into a local variable in `buildPrompt` and **never interpolated into the returned prompt**. It compiled. Kotlin reports an unused local as a warning, which scrolls past in a build log. The model has never once seen it.
+
+The navigator budget fix in 16i is still real — `goalSatisfied()` and the plain-language history were both wired in correctly, and those are what produced the measured 15-steps-to-2 improvement. Only the repeat hint was dead.
+
+`buildPrompt` is now `internal` and lives in the companion object so a test can read the prompt directly. **Nine tests do**, two of them asserting the exact thing that was broken: the hint appears when repeating, and does not when not.
+
+The general lesson: a test that asserts on the loop's *behaviour* would not have caught this. Only reading the prompt text does. Anything the engine computes for the model to read needs a test that reads it.
+
+#### The agent notices when it leaves the app (SOURCE-FIXED BUT RUNTIME-UNPROVEN)
+
+A tap can open an ad, a share sheet or the Play Store, and a call can arrive mid-task. The screen genuinely changed, so the step recorded "screen changed" — which reads as progress — and the loop carried on driving whatever app it had landed in, describing it to the model as though it were the target.
+
+Each step now reads the foreground package. When it is not the target, the history line says so by name: `you are now in com.android.vending, NOT com.android.chrome. Use back() unless leaving was intended.`
+
+**Reported, not corrected.** Some goals legitimately leave the app — a link in an email opens the browser — so the engine states the fact and the model decides. This is the same split as everywhere else: the model owns intent, the engine owns structure. After two consecutive steps away it escalates to an explicit note to press back until it returns.
+
+Ultra's own package is exempt. The action-gate card is the task waiting for a tap, not a detour.
+
+This matters for the owner's stated worry about the phone taking a call mid-task: the agent now sees the dialer in the foreground and is told, in words, that it is not where it should be.
+
+#### Sponsored and availability are named (PROVEN offline)
+
+Completing the field naming from 16k for the buying case. The cheapest result is not the best buy if it is an ad, and a price on an out-of-stock item is the classic wrong answer to "find the cheapest". Both facts used to arrive as anonymous lines beside the price.
+
+- `sponsored` is anchored to the **whole label**, not matched as a substring. "ad" inside *Ad*apter and R*ad*io would otherwise mark half a results page as paid placement — the same class of bug as `tor` matching calcula*tor* in 16j, which is now twice.
+- `availability` matches in both directions, so "In stock" is as visible as "Currently unavailable".
+
+One existing test asserted "Sponsored" was unrecognised. That expectation is what changed, so the test changed with it.
+
+#### Test suite
+
+**54/54**: gate 14, action gate 6, field naming 16, container selection 9, navigator prompt 9.
+
+Three real bugs in shipped code have now been found by tests written offline: the size-biased container score, the dead repeat hint, and the substring matches. **None of them threw an error.** All three produced a confident wrong answer or a silent no-op, which is the failure mode this app has to be tested for.
+
+#### Open
+
+- Everything in 16k and 16l is device-unproven. No phone has been attached since 16j.
+- `restoreScroll`, the drift detection, and the field naming all need one run on a real page.
+- The demo still needs a genuine multi-step task on film.
 
 ### Session 16k — a read stops moving the page, and a scoring bug the tests caught (2026-08-29, branch `native`)
 
