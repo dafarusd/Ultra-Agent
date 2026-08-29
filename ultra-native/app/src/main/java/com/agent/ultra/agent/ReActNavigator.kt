@@ -15,8 +15,51 @@ class ReActNavigator(
 ) {
     companion object {
         private const val MAX_ITER = 15
+
+        /** Ultra surfacing its own action-gate card is not drifting away from
+         * the task — it is the task waiting for a tap. */
+        private const val OWN_PACKAGE = "com.agent.ultra"
         private val DOMAIN =
             Regex("[a-z0-9-]+\\.(com|org|net|io|gov|edu)", RegexOption.IGNORE_CASE)
+
+        /**
+         * Internal, not private, so a test can prove the notes actually reach the
+         * model. The repeat hint was computed and never interpolated — it existed
+         * in the source, was logged as shipped, and was never once sent.
+         */
+        internal fun buildPrompt(
+            goal: String,
+            observation: String,
+            history: List<String>,
+            repeatedNoOp: Int = 0,
+            leftAppFor: Int = 0,
+            target: String = "",
+        ): String {
+            val stuck = if (repeatedNoOp >= 2)
+                "You are repeating yourself. Try back(), or type the destination directly."
+            else ""
+            // Two steps in a row outside the target app is not a detour any more.
+            val strayed = if (leftAppFor >= 2)
+                "You have been outside $target for $leftAppFor steps. Press back() until you are back in it."
+            else ""
+            val notes = listOf(stuck, strayed).filter { it.isNotBlank() }
+            val noteBlock = if (notes.isEmpty()) "" else "\nNOTES:\n" + notes.joinToString("\n") { "- $it" } + "\n"
+            val hist = if (history.isEmpty()) "" else "\nHISTORY:\n" + history.takeLast(6).joinToString("\n")
+            return """You are driving an Android phone's UI to accomplish: "$goal"
+
+    CURRENT SCREEN:
+    $observation
+    $hist$noteBlock
+    Reply with exactly ONE action on one line, one of:
+      tap(INDEX)        — tap a listed element by its [index]
+      type("text")      — type into the first TYPEABLE field, then submit
+      type(INDEX, "text") — type into a specific field
+      scroll(down) / scroll(up)
+      back()
+      done              — only when the goal is visibly complete
+
+    ACTION:"""
+        }
     }
 
     data class NavResult(val success: Boolean, val summary: String, val steps: Int)
@@ -59,10 +102,11 @@ class ReActNavigator(
         var stuckCount = 0
         var lastAction = ""
         var repeatedNoOp = 0
+        var leftAppFor = 0
         val history = mutableListOf<String>()
 
         for (iter in 1..MAX_ITER) {
-            val prompt = buildPrompt(goal, observation, history, repeatedNoOp)
+            val prompt = buildPrompt(goal, observation, history, repeatedNoOp, leftAppFor, pkg)
             val reply = client.complete(
                 listOf(OpenAiClient.ChatMessage("user", prompt)),
                 maxTokens = 600,
@@ -96,10 +140,27 @@ class ReActNavigator(
             if (!changed && action == lastAction) repeatedNoOp++ else repeatedNoOp = 0
             lastAction = action
 
+            // Did that action take us out of the app we were sent to?
+            //
+            // A tap can open an ad, a share sheet, the Play Store, or a call
+            // can arrive mid-task. The screen genuinely changed, so without
+            // this the step reads as progress and the loop carries on driving
+            // whatever app it landed in.
+            //
+            // Reported, not corrected. Some goals legitimately leave the app —
+            // a link in an email opens the browser — so the engine states the
+            // fact and the model decides whether to go back.
+            val onPkg = controller.activePackage()
+            val drifted = onPkg != null && onPkg != pkg && onPkg != OWN_PACKAGE
+            if (drifted) leftAppFor++ else leftAppFor = 0
+
             val outcome = if (changed) "screen changed"
                 else if (ok) "NO CHANGE - do not repeat this"
                 else "FAILED - do not repeat this"
-            history += "step $iter: $action → $outcome"
+            val drift = if (drifted)
+                " — you are now in $onPkg, NOT $pkg. Use back() unless leaving was intended."
+            else ""
+            history += "step $iter: $action → $outcome$drift"
 
             // Stuck detector: same tree twice → scroll down once
             val prefix = observation.take(80)
@@ -158,32 +219,6 @@ class ReActNavigator(
         } catch (e: Exception) {
             "Screen: observation failed (${e.message})"
         }
-    }
-
-    private fun buildPrompt(
-        goal: String,
-        observation: String,
-        history: List<String>,
-        repeatedNoOp: Int = 0,
-    ): String {
-        val stuck = if (repeatedNoOp >= 2)
-            "4. You are repeating yourself. Try back(), or type the destination directly."
-        else ""
-        val hist = if (history.isEmpty()) "" else "\nHISTORY:\n" + history.takeLast(6).joinToString("\n")
-        return """You are driving an Android phone's UI to accomplish: "$goal"
-
-CURRENT SCREEN:
-$observation
-$hist
-Reply with exactly ONE action on one line, one of:
-  tap(INDEX)        — tap a listed element by its [index]
-  type("text")      — type into the first TYPEABLE field, then submit
-  type(INDEX, "text") — type into a specific field
-  scroll(down) / scroll(up)
-  back()
-  done              — only when the goal is visibly complete
-
-ACTION:"""
     }
 
     /** Accepts "ACTION: tap(5) // reason" or a bare "tap(5)" line. */
