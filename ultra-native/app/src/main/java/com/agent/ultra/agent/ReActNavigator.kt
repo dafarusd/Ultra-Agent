@@ -379,18 +379,8 @@ ACTION:"""
         }
     }
 
-    /** Accepts "ACTION: tap(5) // reason" or a bare "tap(5)" line. */
-    private fun extractAction(text: String): String? {
-        val t = text.trim()
-        Regex("^ACTION:\\s*(.+)$", RegexOption.MULTILINE).find(t)?.let { m ->
-            return m.groupValues[1].replace(Regex("\\s*//.*$"), "").trim()
-        }
-        Regex(
-            "^(tap_index\\(\\s*\\d+\\s*\\)|tap\\(\\s*\\d+(?:\\s*,\\s*\\d+)?\\s*\\)|type\\(\\s*\\d*\\s*,?\\s*[\"'][^)]*[\"']\\s*\\)|scroll\\((?:up|down)\\)|back\\(\\)|home\\(\\)|done)$",
-            setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE),
-        ).find(t)?.let { return it.groupValues[1].trim() }
-        return null
-    }
+    /** The one action in the reply. See ModelOutput for what changed and why. */
+    private fun extractAction(text: String): String? = ModelOutput.action(text)
 
     private suspend fun executeAction(action: String, observation: String): Boolean {
         val a = action.trim()

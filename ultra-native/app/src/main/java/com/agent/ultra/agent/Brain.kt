@@ -649,25 +649,8 @@ JSON:"""
     // ── Parsing & prompt (ported shapes) ───────────────────────────────
 
     /** First balanced {...} containing a "tool" key, code fences stripped. */
-    private fun parseToolCall(text: String): Pair<String, JSONObject>? {        val cleaned = text.replace("```json", "").replace("```", "").trim()
-        val start = cleaned.indexOf('{')
-        if (start < 0) return null
-        var depth = 0
-        var end = -1
-        for (i in start until cleaned.length) {
-            when (cleaned[i]) {
-                '{' -> depth++
-                '}' -> { depth--; if (depth == 0) { end = i; break } }
-            }
-        }
-        if (end < 0) return null
-        return try {
-            val obj = JSONObject(cleaned.substring(start, end + 1))
-            val tool = obj.optString("tool")
-            if (tool.isBlank()) null
-            else tool to (obj.optJSONObject("params") ?: JSONObject())
-        } catch (_: Exception) { null }
-    }
+    private fun parseToolCall(text: String): Pair<String, JSONObject>? =
+        ModelOutput.toolCall(text)
 
     /** Bare tool-name fallback for the 1B model: it emits the intent name, a
      * deterministic engine shapes params from the request text. */

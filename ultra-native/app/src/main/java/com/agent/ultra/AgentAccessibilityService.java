@@ -349,25 +349,30 @@ public class AgentAccessibilityService extends AccessibilityService {
      */
     public String getForegroundPackage() {
         try {
-            java.util.List<AccessibilityWindowInfo> windows = getWindows();
-            AccessibilityWindowInfo best = null;
-            for (AccessibilityWindowInfo w : windows) {
+            // Every getRoot() here used to leak: one per window on the way in,
+            // and another for the winner on the way out. This runs on every
+            // gate check, so it leaked more the more careful the agent was.
+            String bestPkg = null;
+            int bestLayer = Integer.MIN_VALUE;
+            for (AccessibilityWindowInfo w : getWindows()) {
                 if (w.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
                 AccessibilityNodeInfo r = w.getRoot();
                 if (r == null) continue;
-                // Same reason as above: device furniture is never the app the
-                // user is in, however high it is layered.
-                CharSequence rp = r.getPackageName();
-                if (rp != null && isDeviceFurniture(rp.toString())) continue;
-                if (best == null || w.getLayer() > best.getLayer()) best = w;
-            }
-            if (best != null) {
-                CharSequence pkg = best.getRoot().getPackageName();
-                if (pkg != null) {
-                    String p = pkg.toString();
-                    Log.i(TAG, "FG_PKG(live): " + p);
-                    return p;
+                try {
+                    CharSequence rp = r.getPackageName();
+                    if (rp == null) continue;
+                    String p = rp.toString();
+                    // Device furniture is never the app the user is in,
+                    // however high it is layered.
+                    if (isDeviceFurniture(p)) continue;
+                    if (w.getLayer() > bestLayer) { bestLayer = w.getLayer(); bestPkg = p; }
+                } finally {
+                    r.recycle();
                 }
+            }
+            if (bestPkg != null) {
+                Log.i(TAG, "FG_PKG(live): " + bestPkg);
+                return bestPkg;
             }
         } catch (Exception e) {
             Log.i(TAG, "FG_PKG live scan failed: " + e.getMessage());
@@ -549,6 +554,13 @@ public class AgentAccessibilityService extends AccessibilityService {
                     return;
                 }
                 AccessibilityNodeInfo target = order.get(index);
+                // Everything else walked to find it is dead weight. Without
+                // this, every single click leaked the whole node list.
+                for (int i = 0; i < order.size(); i++) {
+                    if (i != index) {
+                        try { order.get(i).recycle(); } catch (Exception ignored) {}
+                    }
+                }
 
                 String actual = labelOf(target);
                 if (expectedLabel != null && !expectedLabel.isEmpty()
@@ -580,6 +592,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                     }
                 }
                 result.set(ok ? "ok" : "failed");
+                try { target.recycle(); } catch (Exception ignored) {}
             } catch (Exception e) {
                 Log.e(TAG, "CLICK_INDEX failed: " + e.getMessage());
                 result.set("failed");
@@ -662,7 +675,7 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     /** The same order flattenNode writes, so an index means the same node. */
     private void collectInFlatOrder(AccessibilityNodeInfo node, java.util.List<AccessibilityNodeInfo> out) {
-        if (node == null || out.size() >= 1200) return;
+        if (node == null || out.size() >= FLAT_NODE_LIMIT) return;
         String text = node.getText() != null ? node.getText().toString().trim() : "";
         String desc = node.getContentDescription() != null ? node.getContentDescription().toString().trim() : "";
         boolean hasContent = !text.isEmpty() || !desc.isEmpty();
@@ -838,8 +851,19 @@ public class AgentAccessibilityService extends AccessibilityService {
      * @param parent index in `flat` of the nearest ancestor that was emitted,
      *               or -1 when this node hangs directly off the root.
      */
+    /**
+     * The SAME limit both walkers use.
+     *
+     * flattenNode had none while the click resolver stopped at 1200, so on a
+     * dense screen the model could be handed a valid index that clickByIndex
+     * then reported as "gone" — directly under a comment promising the two
+     * produce the same order. A cap only one of them obeys is not a cap, it is
+     * a disagreement.
+     */
+    static final int FLAT_NODE_LIMIT = 1200;
+
     private void flattenNode(AccessibilityNodeInfo node, JSONArray flat, int parent, int depth) {
-        if (node == null) return;
+        if (node == null || flat.length() >= FLAT_NODE_LIMIT) return;
         String text = node.getText() != null ? node.getText().toString().trim() : "";
         String desc = node.getContentDescription() != null ? node.getContentDescription().toString().trim() : "";
         boolean hasContent = !text.isEmpty() || !desc.isEmpty();

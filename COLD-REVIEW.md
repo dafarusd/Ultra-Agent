@@ -72,7 +72,19 @@ during a chat reply stomps the global callback refs and re-enters a non-reentran
   failure returns `-4` at `:110`, *before* the `DeleteGlobalRef` at `:133` — leaks
   the ref and leaves `gCallback` dangling non-null for the next call.
 
-## F3 — Model text → action parsing aborts the whole run
+## ~~F3 — Model text → action parsing aborts the whole run~~ FIXED 2026-08-29
+
+> Both parsers moved to `agent/ModelOutput.kt` so they can be argued with in a
+> test rather than only observed failing on a phone. Brace counting now honours
+> string literals and escapes, so a value containing `{` no longer truncates a
+> tool call into a plain answer. Typed text runs to its own closing quote, so
+> `type("call me :)")` types all of it. An `ACTION:` line is checked against the
+> vocabulary instead of trusted, and the search no longer stops at the first
+> line — a model that explains itself for a paragraph and then gives a good
+> action used to lose the whole run. **16 tests**, each built from a way a real
+> model actually answers.
+
+## F3 (original finding) — Model text → action parsing aborts the whole run
 
 `Brain.parseToolCall` (`agent/Brain.kt:640`) counts braces **without honouring
 string literals**; any param value containing `{` or `}` miscounts and the call
@@ -124,7 +136,21 @@ trivially "user-traceable". `findSecrets` (`gate/Origins.kt:12-20`) only recogni
 notification logger redacts at 20+ chars (`AgentAccessibilityService.java:215`).
 Two subsystems disagree on what a secret is.
 
-## F5 — Accessibility node lifecycle leaks, and two walkers disagree
+## ~~F5 — Accessibility node lifecycle leaks, and two walkers disagree~~ FIXED 2026-08-29
+
+> `collectInFlatOrder` now recycles every node it walked except the one it
+> clicks, and that one when it is done — previously every single click leaked
+> the entire node list. `getForegroundPackage` leaked a root per window plus one
+> more for the winner, on **every gate check**, so it leaked more the more
+> careful the agent was; it now recycles in a finally.
+>
+> Both walkers share `FLAT_NODE_LIMIT`. `flattenNode` had no cap while the click
+> resolver stopped at 1200, so on a dense screen the model could be handed a
+> valid index that came back "gone" — under a comment promising the two produce
+> the same order. A cap only one of them obeys is not a cap, it is a
+> disagreement.
+
+## F5 (original finding) — Accessibility node lifecycle leaks, and two walkers disagree
 
 `collectInFlatOrder` — the click-resolution path (`:615`-`:625`) — never recycles
 the nodes it walks, so **every `clickByIndex` leaks nodes**. `getForegroundPackage`
