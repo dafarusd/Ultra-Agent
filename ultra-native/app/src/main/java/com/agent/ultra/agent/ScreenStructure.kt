@@ -27,8 +27,17 @@ object ScreenStructure {
         val clickable: Boolean,
         val top: Int,
         val bottom: Int,
+        /** Widget class, short form: "TextView", "RecyclerView". */
+        val cls: String = "",
+        /** View id, short form: "price", "title_row". Native apps expose it;
+         * web content usually does not. */
+        val vid: String = "",
     ) {
         val label: String get() = text.ifBlank { desc }.trim()
+
+        /** What this node *is*, structurally. A view id is definitive when the
+         * app provides one; the class is the fallback. */
+        val kind: String get() = if (vid.isNotBlank()) "#$vid" else cls
     }
 
     /** One row of a list: the labels that genuinely belong together. */
@@ -67,6 +76,8 @@ object ScreenStructure {
                 clickable = o.optBoolean("c", false),
                 top = o.optInt("tp", o.optInt("y", 0)),
                 bottom = o.optInt("b", o.optInt("y", 0)),
+                cls = o.optString("cls"),
+                vid = o.optString("vid"),
             )
         }
         } catch (_: Exception) { emptyList() }
@@ -98,6 +109,138 @@ object ScreenStructure {
      * settings page. The caller falls back to a flat read, which is honest
      * rather than inventing groups that are not there.
      */
+    /**
+     * The shape of a node's subtree, ignoring every word of text.
+     *
+     * Two product cards contain different words and the same structure. That
+     * is what makes them the same kind of thing, and it is the fact the reader
+     * needs. Depth is capped because the top of a deep card is enough to
+     * identify it, and because a full-depth signature makes every node unique
+     * the moment one child differs.
+     */
+    private fun shapeOf(
+        n: Node,
+        children: Map<Int, MutableList<Node>>,
+        depth: Int,
+        memo: HashMap<Long, String>,
+    ): String {
+        val key = n.index.toLong() * 8 + depth
+        memo[key]?.let { return it }
+        val kids = children[n.index].orEmpty()
+        val s = if (depth <= 0 || kids.isEmpty()) {
+            n.kind
+        } else {
+            // The DISTINCT kinds of child, sorted — a set, not a list.
+            //
+            // Matching the exact sequence of children was too strict for a
+            // real page. Store cards are not identical: one carries a
+            // "Limited time deal" badge, the next does not, a third has two
+            // lines of title instead of one. Comparing exact child lists split
+            // one product grid into many groups of two or three, and a swarm
+            // of small groups then outscored the real one.
+            //
+            // What actually identifies a card is the kinds of thing it is made
+            // of, not how many of each. A set tolerates the optional badge and
+            // the extra line while still separating a product card from a
+            // banner.
+            n.kind + "{" + kids.map { shapeOf(it, children, depth - 1, memo) }
+                .distinct().sorted().joinToString(",") + "}"
+        }
+        memo[key] = s
+        return s
+    }
+
+    /**
+     * Find the repeating record template, using the page's own structure.
+     *
+     * This replaces scoring containers by how uniform their children looked.
+     * That heuristic had to be corrected twice — it read a navigation menu as
+     * a product list, and on a real store page it returned eighteen rows from
+     * eleven screens, mixing whole product cards with orphaned fragments of
+     * other cards.
+     *
+     * A results page is built from one template repeated. Nodes sharing a
+     * structural signature are instances of that template, so the records are
+     * the largest such group carrying real content — no scoring, no guess
+     * about which container "looks like" a list.
+     *
+     * Returns an empty list when the tree carries no class information, which
+     * is the case for a dump made by an older build. The caller falls back to
+     * the previous method rather than failing.
+     */
+    private fun templateGroups(
+        nodes: List<Node>,
+        children: Map<Int, MutableList<Node>>,
+        charsOf: (Node) -> Int,
+        labelsOf: (Node) -> Int,
+        minItems: Int,
+    ): List<Node> {
+        if (nodes.none { it.cls.isNotBlank() }) return emptyList()
+        val memo = HashMap<Long, String>()
+        val groups = HashMap<String, MutableList<Node>>()
+        for (n in nodes) {
+            // A record has fields. A leaf IS a field, and there are always more
+            // leaves than records — on a twelve-product page the bare TextViews
+            // formed a group of thirty and outscored the twelve cards that
+            // contain them, so every row came back with a single label and was
+            // then discarded as too thin. Requiring two labels is what makes a
+            // record a record.
+            if (labelsOf(n) < 2) continue
+            if (charsOf(n) < MIN_RECORD_CHARS) continue
+            val shape = shapeOf(n, children, SHAPE_DEPTH, memo)
+            if (shape.length < 4) continue
+            groups.getOrPut(shape) { mutableListOf() }.add(n)
+        }
+
+        var best: List<Node> = emptyList()
+        var bestScore = 0.0
+        for ((_, members) in groups) {
+            if (members.size < minItems) continue
+            // Never let an ancestor and its own descendant both count as
+            // records: a nested identical layout would report the card and the
+            // block inside it as two results.
+            val kept = dropNested(members, nodes)
+            if (kept.size < minItems) continue
+            // Coverage, not count.
+            //
+            // Scoring count x median picked the RATING WIDGET on a real store
+            // page: twenty-four of them, tidy and identical, nested inside the
+            // product cards that were the actual answer. Every record came
+            // back as "4.3 out of 5 stars" and nothing else.
+            //
+            // Total text under the group is what separates an inner widget
+            // from the thing that contains it. A rating widget accounts for a
+            // sliver of the page; the card group accounts for nearly all of
+            // it. The outermost repeating unit wins, which is the one a person
+            // would point at and call a result.
+            val coverage = kept.sumOf { charsOf(it).toDouble() }
+            val score = coverage
+            if (score > bestScore ||
+                (score > bestScore * NEAR_TIE && kept.size > best.size)
+            ) {
+                if (score > bestScore) bestScore = score
+                best = kept
+            }
+        }
+        return best
+    }
+
+    /** Remove any node that is a descendant of another node in the same set. */
+    private fun dropNested(members: List<Node>, all: List<Node>): List<Node> {
+        val byIndex = all.associateBy { it.index }
+        val chosen = members.map { it.index }.toHashSet()
+        return members.filter { n ->
+            var p = byIndex[n.parent]
+            var hops = 0
+            while (p != null && hops < 60) {
+                if (p.index in chosen) return@filter false
+                p = byIndex[p.parent]
+                hops++
+            }
+            true
+        }
+    }
+
     fun items(nodes: List<Node>, minItems: Int = 3): List<Item> {
         if (nodes.isEmpty()) return emptyList()
         val children = HashMap<Int, MutableList<Node>>()
@@ -130,6 +273,19 @@ object ScreenStructure {
         }
         for (n in nodes) countChars(n)
 
+        // Preferred: the page's own repeating template. Falls through to the
+        // older statistical method when the tree carries no class information.
+        val byTemplate = templateGroups(
+            nodes, children,
+            charsOf = { labelChars[it.index] ?: 0 },
+            labelsOf = { labelCount[it.index] ?: 0 },
+            minItems = minItems,
+        )
+        if (byTemplate.isNotEmpty()) {
+            android.util.Log.i("UltraPerceive", "structure: template match, ${byTemplate.size} records")
+            return finish(byTemplate, children)
+        }
+
         var bestScore = 0.0
         var bestKids: List<Node> = emptyList()
         for ((_, kids) in children) {
@@ -145,7 +301,12 @@ object ScreenStructure {
             if (score > bestScore) { bestScore = score; bestKids = items }
         }
         if (bestKids.isEmpty()) return emptyList()
+        android.util.Log.i("UltraPerceive", "structure: fallback scoring, ${bestKids.size} rows")
+        return finish(bestKids, children)
+    }
 
+    /** Turn chosen record nodes into rows, whichever method chose them. */
+    private fun finish(records: List<Node>, children: Map<Int, MutableList<Node>>): List<Item> {
         fun labelsUnder(n: Node): List<String> {
             val out = mutableListOf<String>()
             fun walk(x: Node) {
@@ -158,13 +319,40 @@ object ScreenStructure {
             return out.distinct()
         }
 
-        val rows = bestKids
+        val rows = records
             .sortedBy { it.top }
             .map { Item(labelsUnder(it), it.top, it.clickable || anyClickableUnder(it, children)) }
             .filter { it.labels.size >= 2 }
 
-        return mergeSplitRows(rows)
+        return mergeSplitRows(dropContained(rows))
     }
+
+    /**
+     * Keep the outer record when one record's content sits inside another's.
+     *
+     * Chrome wraps a product card in several layers, and each layer matches
+     * the template, so one product came back three times. They are not exact
+     * duplicates either — an outer layer picks up a "More like this" heading
+     * the inner one does not — so removing exact repeats was not enough.
+     *
+     * Containment is the honest test: if everything a record says is already
+     * said by a bigger record, it is that record seen from further in. The
+     * bigger one is kept because it is the whole card, which is what a person
+     * would point at and call a result.
+     */
+    private fun dropContained(rows: List<Item>): List<Item> {
+        val bySize = rows.sortedByDescending { it.labels.size }
+        val kept = mutableListOf<Item>()
+        val keptSets = mutableListOf<Set<String>>()
+        for (r in bySize) {
+            val set = r.labels.toSet()
+            if (keptSets.any { it.containsAll(set) }) continue
+            kept += r
+            keptSets += set
+        }
+        return kept.sortedBy { it.top }
+    }
+
 
     /** The named fields that make a row a *record* rather than a heading. */
     private val METADATA = setOf("points", "price", "rating", "reviews", "availability")
@@ -260,6 +448,20 @@ object ScreenStructure {
      * counting. Without a cap, one container of long paragraphs outscores a
      * genuine list of short rows. */
     private const val SUBSTANCE_CAP = 300.0
+
+    /** How deep a structural signature looks. Two levels distinguishes a
+     * product card from a heading without making every node unique the moment
+     * one grandchild differs. */
+    private const val SHAPE_DEPTH = 2
+
+    /** Text a node must carry before it can be a record. A leaf with one word
+     * is a field, not a result. */
+    private const val MIN_RECORD_CHARS = 12
+
+    /** Two groups covering nearly the same text are the same list seen at
+     * two depths. Prefer the finer one, so a page of cards does not come back
+     * as three mega-rows. */
+    private const val NEAR_TIE = 0.8
 
     private val PRICE = Regex("""[$£€]\s?\d[\d,]*(?:\.\d{2})?""")
 

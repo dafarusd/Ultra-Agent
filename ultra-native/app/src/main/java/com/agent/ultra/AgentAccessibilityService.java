@@ -545,6 +545,25 @@ public class AgentAccessibilityService extends AccessibilityService {
 
     private static final int TREE_NODE_LIMIT = 3000;
 
+    /** "android.widget.TextView" -> "TextView", "com.app:id/price" -> "price". */
+    private static String shortName(CharSequence raw) {
+        if (raw == null) return "";
+        String s = raw.toString();
+        int slash = s.lastIndexOf('/');
+        if (slash >= 0) s = s.substring(slash + 1);
+        int dot = s.lastIndexOf('.');
+        if (dot >= 0) s = s.substring(dot + 1);
+        return s.length() > 40 ? s.substring(0, 40) : s;
+    }
+
+    private static CharSequence idOf(AccessibilityNodeInfo node) {
+        try {
+            return node.getViewIdResourceName();
+        } catch (Exception e) {
+            return null;   // not every node exposes one, and some throw
+        }
+    }
+
     private void treeNode(AccessibilityNodeInfo node, JSONArray tree, int parent, int depth) {
         if (node == null || tree.length() >= TREE_NODE_LIMIT || depth > 60) return;
         int me = parent;
@@ -562,6 +581,16 @@ public class AgentAccessibilityService extends AccessibilityService {
             obj.put("c", node.isClickable());
             obj.put("tp", bounds.top);
             obj.put("b", bounds.bottom);
+            // Structural identity. Without these the reader has to reconstruct
+            // the page's shape from text statistics, which is guesswork: it
+            // scored containers by how uniform their children looked and got
+            // it wrong on any page whose records are not the biggest thing on
+            // screen. A repeating record has a repeating class path; that is
+            // the page telling us directly which nodes are the same kind of
+            // thing. Short form only — the package prefix is the same on every
+            // node and would trip the node budget for nothing.
+            obj.put("cls", shortName(node.getClassName()));
+            obj.put("vid", shortName(idOf(node)));
             me = tree.length();
             tree.put(obj);
         } catch (Exception ignored) {}

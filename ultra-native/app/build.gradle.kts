@@ -6,6 +6,14 @@ plugins {
 }
 
 android {
+    testOptions {
+        // ScreenStructure logs which method chose the records, which is the
+        // only way to tell on a device whether the template match or the
+        // fallback ran. android.util.Log throws in a JVM unit test unless
+        // stubs return defaults.
+        unitTests.isReturnDefaultValues = true
+    }
+
     namespace = "com.agent.ultra"
     compileSdk = 35
 

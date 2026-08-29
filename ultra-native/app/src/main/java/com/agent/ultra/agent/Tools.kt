@@ -260,14 +260,27 @@ class Tools(
         var undone = 0
         try {
             while (undone < scrolls) {
-                if (!controller.scrollDeep("up")) break
+                // Two ways up. Measured on a store page: after reading to the
+                // bottom, the node that scrolled forward refused
+                // ACTION_SCROLL_BACKWARD and the page stayed where it was —
+                // "restored 0/7". The plain gesture works there, so a refusal
+                // from one is not the end of the attempt.
+                val moved = controller.scrollDeep("up") || controller.scroll("up")
+                if (!moved) break
                 undone++
                 kotlinx.coroutines.delay(RESTORE_SETTLE_MS)
             }
         } catch (e: Exception) {
             android.util.Log.w("UltraPerceive", "deep read: scroll restore failed: ${e.message}")
         }
-        android.util.Log.i("UltraPerceive", "deep read: restored $undone/$scrolls scrolls")
+        if (undone < scrolls) {
+            android.util.Log.w(
+                "UltraPerceive",
+                "deep read: restored only $undone/$scrolls scrolls — page left part-way down",
+            )
+        } else {
+            android.util.Log.i("UltraPerceive", "deep read: restored $undone/$scrolls scrolls")
+        }
     }
 
     /**
