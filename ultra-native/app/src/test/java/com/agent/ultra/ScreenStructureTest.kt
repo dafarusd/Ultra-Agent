@@ -116,3 +116,182 @@ class ScreenStructureTest {
         assertEquals(emptyList<ScreenStructure.Field>(), ScreenStructure.fields(row()))
     }
 }
+
+/**
+ * Container selection.
+ *
+ * Picking the wrong container is the failure that produced "Unknown product"
+ * and a sign-in row where a product grid should have been. The winning signal
+ * is uniformity times substance, never area — virtualised rows report zero
+ * bounds, so an area score picks the page banner every time.
+ *
+ * These build the flat tree by hand so the heuristic can be proven without a
+ * phone.
+ */
+class ScreenContainerTest {
+
+    /** Build the flat JSON that [ScreenStructure.parse] consumes. */
+    private class Tree {
+        private val rows = mutableListOf<String>()
+        var next = 0; private set
+
+        fun add(parent: Int, text: String, top: Int = 0, clickable: Boolean = false): Int {
+            val i = next++
+            rows.add("""{"i":$i,"p":$parent,"dep":0,"t":${quote(text)},"d":"","c":$clickable,"tp":$top,"b":${top + 10}}""")
+            return i
+        }
+
+        private fun quote(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        fun json() = rows.joinToString(",", "[", "]")
+        fun nodes() = ScreenStructure.parse(json())
+    }
+
+    @Test
+    fun `a product grid beats a bigger navigation menu`() {
+        val t = Tree()
+        val root = t.add(-1, "")
+        // 14 nav entries of one word each — more children, far less substance.
+        val nav = t.add(root, "")
+        repeat(14) {
+            val entry = t.add(nav, "")
+            t.add(entry, "Dept $it")
+            t.add(entry, "›")
+        }
+        // 5 products, each carrying a title, a price and a rating.
+        val grid = t.add(root, "")
+        repeat(5) {
+            val card = t.add(grid, "", top = 100 + it * 50, clickable = true)
+            t.add(card, "Product $it")
+            t.add(card, "$${it + 10}.99")
+            t.add(card, "4.${it} out of 5 stars")
+            t.add(card, "${it * 100 + 7} ratings")
+        }
+
+        val items = ScreenStructure.items(t.nodes())
+        assertEquals("should pick the 5-product grid", 5, items.size)
+        assertTrue(items.all { it.labels.any { l -> l.startsWith("Product ") } })
+    }
+
+    @Test
+    fun `the eleven-product page still wins - the case proven on device`() {
+        // This is the layout validated on a live Amazon page before the
+        // scoring changed. Keeping it means a future tweak to the heuristic
+        // cannot quietly undo what was proven on hardware.
+        val t = Tree()
+        val root = t.add(-1, "")
+        val nav = t.add(root, "")
+        repeat(14) {
+            val entry = t.add(nav, "")
+            t.add(entry, "Dept $it")
+            t.add(entry, "\u203a")
+        }
+        val grid = t.add(root, "")
+        repeat(11) {
+            val card = t.add(grid, "", top = 100 + it * 50, clickable = true)
+            t.add(card, "Wireless Noise Cancelling Headphones model $it")
+            t.add(card, "$${it + 10}.99")
+            t.add(card, "4.${it % 6} out of 5 stars")
+        }
+        assertEquals(11, ScreenStructure.items(t.nodes()).size)
+    }
+
+    @Test
+    fun `a long list of short entries loses to a short list of substantial rows`() {
+        // The general form of the bug: count is linear, so without measuring
+        // how much text a row carries, any long shallow menu wins.
+        val t = Tree()
+        val root = t.add(-1, "")
+        val menu = t.add(root, "")
+        repeat(30) {
+            val entry = t.add(menu, "")
+            t.add(entry, "Tag$it")
+            t.add(entry, "·")
+        }
+        val list = t.add(root, "")
+        repeat(3) {
+            val row = t.add(list, "", top = it * 50)
+            t.add(row, "A headline that carries real content number $it")
+            t.add(row, "412 points by someone 3 hours ago")
+            t.add(row, "128 comments")
+        }
+        val items = ScreenStructure.items(t.nodes())
+        assertEquals(3, items.size)
+    }
+
+    @Test
+    fun `a screen with no repeating list returns nothing`() {
+        val t = Tree()
+        val root = t.add(-1, "")
+        t.add(root, "Settings")
+        val a = t.add(root, ""); t.add(a, "Wi-Fi"); t.add(a, "Connected")
+        val b = t.add(root, ""); t.add(b, "About this phone")
+        assertTrue(ScreenStructure.items(t.nodes()).isEmpty())
+    }
+
+    @Test
+    fun `rows come back in screen order`() {
+        val t = Tree()
+        val root = t.add(-1, "")
+        val list = t.add(root, "")
+        // Added bottom-first on purpose.
+        for (top in listOf(300, 100, 200)) {
+            val row = t.add(list, "", top = top)
+            t.add(row, "Row at $top")
+            t.add(row, "detail")
+        }
+        val items = ScreenStructure.items(t.nodes())
+        assertEquals(listOf(100, 200, 300), items.map { it.top })
+    }
+
+    @Test
+    fun `a title repeated across image, heading and link appears once`() {
+        val t = Tree()
+        val root = t.add(-1, "")
+        val list = t.add(root, "")
+        repeat(3) {
+            val row = t.add(list, "", top = it * 50)
+            t.add(row, "Same Title $it")   // image alt
+            t.add(row, "Same Title $it")   // heading
+            t.add(row, "Same Title $it")   // anchor
+            t.add(row, "$${it}9.99")
+        }
+        val items = ScreenStructure.items(t.nodes())
+        assertEquals(3, items.size)
+        items.forEachIndexed { i, item ->
+            assertEquals("title should not repeat", 1, item.labels.count { it == "Same Title $i" })
+        }
+    }
+
+    @Test
+    fun `tracking parameters and opaque ids are not fields`() {
+        val t = Tree()
+        val root = t.add(-1, "")
+        val list = t.add(root, "")
+        repeat(3) {
+            val row = t.add(list, "", top = it * 50)
+            t.add(row, "Real Title $it")
+            t.add(row, "ref=sr_pg_1_$it")
+            t.add(row, "https://example.com/dp/B0${it}XYZ")
+            t.add(row, "$${it}9.99")
+        }
+        val items = ScreenStructure.items(t.nodes())
+        assertEquals(3, items.size)
+        assertTrue(
+            "junk must be filtered",
+            items.flatMap { it.labels }.none { it.startsWith("ref=") || it.startsWith("http") },
+        )
+    }
+
+    @Test
+    fun `a protected screen yields no nodes`() {
+        val nodes = ScreenStructure.parse(com.agent.ultra.AgentAccessibilityService.PROTECTED)
+        assertTrue(nodes.isEmpty())
+        assertTrue(ScreenStructure.items(nodes).isEmpty())
+    }
+
+    @Test
+    fun `malformed json is empty, not a crash`() {
+        assertTrue(ScreenStructure.parse("not json at all").isEmpty())
+        assertTrue(ScreenStructure.parse("").isEmpty())
+    }
+}

@@ -547,9 +547,14 @@ fun SettingsScreen(
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
             } catch (_: Exception) { "unknown" }
         }
+        // Read from the manifest the gate actually enforces. A literal here
+        // went stale twice (24 -> 30 -> 31): adding a tool never reminded
+        // anyone to come back and edit this line.
+        val toolCount = remember { com.agent.ultra.gate.Manifest.fromAssets(context).size }
         Text(
             "Agent Ultra $version\n" +
-                "Policy gate: active (gatellml manifest, 31 tools declared)\n" +
+                "Policy gate: " + (if (toolCount > 0) "active (gatellml manifest, $toolCount tools declared)"
+                    else "MANIFEST UNREADABLE - every tool will be refused") + "\n" +
                 "Accessibility: " + if (com.agent.ultra.AgentAccessibilityService.isRunning()) "connected" else "not connected",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),

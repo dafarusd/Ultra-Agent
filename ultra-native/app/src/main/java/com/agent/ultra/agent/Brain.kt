@@ -45,14 +45,7 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         gate = Gate(loadManifest(context))
     }
 
-    private fun loadManifest(context: Context): Manifest = try {
-        context.assets.open("ultra.manifest.json").bufferedReader().use { r ->
-            Manifest.fromJson(JSONObject(r.readText()))
-        }
-    } catch (e: Exception) {
-        android.util.Log.e("UltraBrain", "manifest load failed — gate will deny everything", e)
-        Manifest.fromJson(JSONObject("""{"tools":[]}"""))
-    }
+    private fun loadManifest(context: Context): Manifest = Manifest.fromAssets(context)
 
     val configured: Boolean get() = client != null
 

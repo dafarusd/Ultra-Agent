@@ -88,9 +88,11 @@ object ScreenStructure {
      * identical label counts. Height is useless here: virtualised rows report
      * zero bounds, which is why an area-based score picked the page banner.
      *
-     * The count of items is multiplied by how substantial each one is, so a
-     * fourteen-entry navigation menu of two words each loses to an
-     * eleven-entry product list carrying titles, ratings and prices.
+     * The count of items is multiplied by how substantial each one is, where
+     * substance is characters of text in the median row. A fourteen-entry
+     * navigation menu of two words each loses to a product list carrying
+     * titles, ratings and prices — and now loses to a five-entry one, which
+     * it did not when substance was counted in labels rather than characters.
      *
      * Empty when the screen has no such structure — a dialog, an article, a
      * settings page. The caller falls back to a flat read, which is honest
@@ -109,12 +111,31 @@ object ScreenStructure {
         }
         for (n in nodes) countLabels(n)
 
+        // Substance is measured in characters, not in number of labels.
+        //
+        // Counting labels made this size-biased: a fourteen-entry navigation
+        // menu of two words each scored 14 x 2 = 28 and beat a five-product
+        // grid at 5 x 4 = 20, because the count term is linear and two labels
+        // versus four is not enough to overcome it. The earlier page happened
+        // to have eleven products, so it won and hid this.
+        //
+        // A nav entry and a product row differ most in how much text they
+        // carry — "Dept 0" is seven characters, a product row is forty-plus.
+        // That is the signal.
+        val labelChars = HashMap<Int, Int>()
+        fun countChars(n: Node): Int = labelChars.getOrPut(n.index) {
+            var c = if (isUseful(n.label)) n.label.length else 0
+            for (kid in children[n.index].orEmpty()) c += countChars(kid)
+            c
+        }
+        for (n in nodes) countChars(n)
+
         var bestScore = 0.0
         var bestKids: List<Node> = emptyList()
         for ((_, kids) in children) {
             val items = kids.filter { (labelCount[it.index] ?: 0) >= 2 }
             if (items.size < minItems) continue
-            val counts = items.map { (labelCount[it.index] ?: 0).toDouble() }
+            val counts = items.map { (labelChars[it.index] ?: 0).toDouble() }
             val mean = counts.average()
             if (mean <= 0) continue
             val sd = kotlin.math.sqrt(counts.sumOf { (it - mean) * (it - mean) } / counts.size)
@@ -156,7 +177,10 @@ object ScreenStructure {
         return children[n.index].orEmpty().any { anyClickableUnder(it, children) }
     }
 
-    private const val SUBSTANCE_CAP = 40.0
+    /** Characters of text in a median row, past which extra length stops
+     * counting. Without a cap, one container of long paragraphs outscores a
+     * genuine list of short rows. */
+    private const val SUBSTANCE_CAP = 300.0
 
     private val PRICE = Regex("""[$£€]\s?\d[\d,]*(?:\.\d{2})?""")
 
