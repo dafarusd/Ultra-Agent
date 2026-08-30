@@ -43,8 +43,27 @@ import org.json.JSONObject
  */
 object ScreenJourney {
 
-    /** One place the user arrived at. */
-    data class Waypoint(val pkg: String, val digest: String, val confidence: String) {
+    /**
+     * One place the user arrived at, and how the walker got there.
+     *
+     * `via` is filled in the first time a route is successfully walked: the
+     * app's own id for the control that led here from the previous screen. It
+     * turns the second walk from a search into a lookup — the difference
+     * between an agent pressing six buttons to find a door and one that
+     * remembers which door it is.
+     *
+     * **Only an id is ever stored, never a position.** A control's index is a
+     * position in one reading of one screen and means something different the
+     * next time; remembering it would be remembering noise, and the walker
+     * would trust it. A control with no id simply stays unremembered and is
+     * searched for again, which is no worse than before.
+     */
+    data class Waypoint(
+        val pkg: String,
+        val digest: String,
+        val confidence: String,
+        val via: String = "",
+    ) {
         val key: String get() = "$pkg/$digest"
     }
 
@@ -91,7 +110,8 @@ object ScreenJourney {
     fun toJson(route: List<Waypoint>): String {
         val arr = JSONArray()
         for (w in route) {
-            arr.put(JSONObject().put("pkg", w.pkg).put("d", w.digest).put("c", w.confidence))
+            arr.put(JSONObject().put("pkg", w.pkg).put("d", w.digest)
+                .put("c", w.confidence).put("via", w.via))
         }
         return arr.toString()
     }
@@ -99,7 +119,9 @@ object ScreenJourney {
     fun fromJson(json: String): List<Waypoint> = try {
         val arr = JSONArray(json)
         (0 until arr.length()).mapNotNull { i ->
-            arr.optJSONObject(i)?.let { Waypoint(it.optString("pkg"), it.optString("d"), it.optString("c")) }
+            arr.optJSONObject(i)?.let {
+                Waypoint(it.optString("pkg"), it.optString("d"), it.optString("c"), it.optString("via"))
+            }
         }.filter { it.usable }
     } catch (_: Exception) { emptyList() }
 
@@ -115,6 +137,34 @@ object ScreenJourney {
         val hops = route.size
         return "$hops screen${if (hops == 1) "" else "s"}, " +
             (if (apps.size == 1) "all in ${apps.first()}" else "across ${apps.joinToString(" → ")}")
+    }
+
+    /** Has this route learned anything the stored one does not know? */
+    fun learnedSomethingNew(before: List<Waypoint>, after: List<Waypoint>): Boolean {
+        if (before.size != after.size) return false
+        return before.indices.any { before[it].via != after[it].via && after[it].via.isNotBlank() }
+    }
+
+    /**
+     * Doors that were learned once and are somewhere else now.
+     *
+     * Not the same as learning a door for the first time, and worth counting
+     * separately: a blank hop becoming known is the agent getting better at a
+     * route, while a known hop changing is the *app* changing underneath it.
+     * Only the second is a reason to tell the user anything.
+     *
+     * The earlier version of `learnedSomethingNew` only noticed blank becoming
+     * non-blank, so when a control moved the walk found the new way, reported
+     * success, and then threw the discovery away — leaving the agent to search
+     * for the same door again on every future run, permanently.
+     */
+    fun doorsThatMoved(before: List<Waypoint>, after: List<Waypoint>): Int {
+        if (before.size != after.size) return 0
+        return before.indices.count {
+            before[it].via.isNotBlank() &&
+                after[it].via.isNotBlank() &&
+                before[it].via != after[it].via
+        }
     }
 
     /** Long enough to hold a real task, short enough that a wander is not one. */

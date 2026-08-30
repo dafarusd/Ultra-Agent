@@ -101,6 +101,10 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         // judgment call — measured: llama-3.3-70b read "run my morning
         // briefing" as a question about which model it is. The engine owns
         // structure; the model never sees this one.
+        // The navigator compares what is on a payment screen against what the
+        // person actually asked for, so it needs their words rather than the
+        // model's summary of them.
+        tools.navigator?.userRequest = userInput
         if (tryRecipeShortcut(userInput)) {
             android.util.Log.i("UltraBrain", "RUN COMPLETE (recipe shortcut)")
             return
@@ -206,8 +210,44 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             val nav = tools.navigator
                 ?: return "\"${row.name}\" is a route you showed me — " +
                     ScreenJourney.describe(route) + " — but navigation is unavailable."
-            android.util.Log.i("UltraWalk", "walking \"${row.name}\": ${route.size} screens")
-            return nav.walkRoute(row.name, route)
+            // Say what is known before doing it, not after.
+            //
+            // A routine the user showed us once and a routine the agent has
+            // walked forty times produce identical output today, which makes
+            // the confident-sounding one worth nothing. Reported first because
+            // afterwards is too late to be told the agent was guessing.
+            val before = recipes.competenceOf(row.name)
+            android.util.Log.i(
+                "UltraWalk",
+                "walking \"${row.name}\": ${route.size} screens — ${before?.describe() ?: "no history"}",
+            )
+            val result = nav.walkRoute(row.name, route)
+            // Keep what the walk worked out, and record how it went. A route
+            // walked once should not be searched again — the second run is a
+            // lookup, which is the whole reason for walking it the first time.
+            val moved = ScreenJourney.doorsThatMoved(route, result.learned)
+            try {
+                recipes.noteWalk(
+                    row.name,
+                    completed = result.completed,
+                    routeJson = ScreenJourney.toJson(result.learned),
+                    doorsMoved = moved,
+                )
+                val known = result.learned.count { it.via.isNotBlank() }
+                android.util.Log.i("UltraWalk", "remembered the way for $known hop(s)")
+                if (moved > 0) android.util.Log.i("UltraWalk", "$moved door(s) had moved since last time")
+            } catch (e: Exception) {
+                android.util.Log.w("UltraWalk", "could not keep what was learned: ${e.message}")
+            }
+            // Only worth saying when the agent was working partly blind, or
+            // when the app turned out to have changed. Announcing full
+            // competence on every successful run is noise.
+            val note = when {
+                moved > 0 -> " (something had moved since I learned it, so I found it again)"
+                before?.everWalked == false -> " (I had only watched this before, never done it)"
+                else -> ""
+            }
+            return result.message + note
         }
         val steps = recipes.stepsOf(row.name).orEmpty()
         if (steps.isEmpty()) return "Error: recipe \"${row.name}\" has no steps"
@@ -795,7 +835,21 @@ RULES:
          * sequence, so the steps to save must come from the run before it. */
         @Volatile var lastRunSteps: List<Recipes.Step> = emptyList()
 
-        val RECIPE_TOOLS = setOf("recipe_save", "recipe_run", "recipe_list", "recipe_delete")
+        /**
+         * Tools that are *about* remembering, and so must never be remembered.
+         *
+         * The recipe store learned this months ago and the task-memory store
+         * did not, because they are two stores with two exclusion lists. The
+         * watching tools were missing here: asked to "watch me", the model
+         * called cancel_watching, the run counted as a success, and the lesson
+         * "when they say watch me, cancel watching" was filed as a shortcut —
+         * a memory of the agent's own mistake, ready to be replayed the next
+         * time someone tries to teach it anything.
+         */
+        val RECIPE_TOOLS = setOf(
+            "recipe_save", "recipe_run", "recipe_list", "recipe_delete",
+            "watch_me", "stop_watching", "cancel_watching",
+        )
 
         /** How much two requests must overlap to count as the same job. */
         const val MATCH_THRESHOLD = 0.5

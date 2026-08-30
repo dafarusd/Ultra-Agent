@@ -467,3 +467,389 @@ will fail for a reason nobody will look for.
 And `ask.sh` now escapes quotes. An apostrophe used to reach `adb shell input
 text` unescaped, fail with "no closing quote", and produce no log at all — two
 runs were lost before anyone noticed the task had never been sent.
+
+---
+
+## Replay: remembering the way — proven on device, 2026-08-29
+
+The instruction was "remember which control worked for each hop". That turned
+out to sit on top of a stack of defects that had to be cleared first, every one
+of them the same shape: **two parts of the system looking at the same screen and
+disagreeing about what they saw.**
+
+### Proven
+
+Two consecutive walks of a route taught by demonstration, Chrome page → menu →
+History:
+
+    WALK 1                              WALK 2
+    hop 1: trying reload-button         hop 1: remembered menu_button
+    hop 1: trying home_button           hop 1: trying menu_button
+    hop 1: trying location_bar_status   hop 1/2 reached
+    hop 1: trying url_bar               hop 2: remembered open_history_menu_id
+    hop 1: trying tab_switcher_button   hop 2: trying open_history_menu_id
+    hop 1: trying menu_button           hop 2/2 reached
+    hop 1: learned the way is menu_button
+    ...recovered, then...
+    hop 2: trying open_history_menu_id
+    hop 2: learned the way is open_history_menu_id
+    hop 2/2 reached
+    remembered the way for 2 hop(s)
+
+Eight taps and two recoveries became two taps. Both walks ended on
+`HistoryActivity`. Only a view id is ever stored, never an index.
+
+### What was actually wrong
+
+1. **The gate on candidates disagreed with the clicker.** Selection required
+   `clickable=true`; the clicker already walked up to a clickable ancestor and
+   fell back to a gesture. Fixed by making selection safe on the view id too, so
+   an unlabelled `delete_button` is refused like a labelled one.
+2. **A hop was not anchored to a screen.** The tried-list and the candidate list
+   only mean something on one screen. A wrong guess sent the walk out of Chrome,
+   reopening landed on a different tab, and it carried on ticking off a new tab
+   page's microphone and camera as candidates for a hop that started on a web
+   page — twelve tries, none on the screen in question.
+3. **It undid taps that had changed nothing.** Pressing reload reloaded the page;
+   the walk pressed back to "undo" it, which closed the browser, because a page
+   opened from a link has no history behind it. One wasted candidate cost the
+   whole hop.
+4. **Some screens cannot be returned to, only re-reached.** Guess wrong in a menu
+   and the menu closes; back does not reopen it. The walker now replays the route
+   it already knows to get back — using only doors it has learned, never a search
+   inside a search.
+5. **The recorder saved the agent's own screens.** `OWN_PACKAGE` was checked in
+   the step recorder and not in the screen recorder. Every route began with Agent
+   Ultra, because the user must open Agent Ultra to say "stop watching". Replay
+   then tried to launch the agent from inside the agent and reported reaching a
+   step it had not taken.
+6. **Recording and replay fingerprinted screens at different moments.** The
+   recorder hashed a screen the instant it announced itself — Chrome's History as
+   an empty frame — while replay waits for a screen to settle before judging it.
+   Two readings of one screen taken at two different instants can never match,
+   however good everything else is. Both now settle first, on the same timing.
+7. **Task memory learned the agent's own mistake.** Asked to "watch me", the model
+   called `cancel_watching`, the run counted as a success, and "when they say
+   watch me, cancel watching" was filed as a shortcut. The recipe store had
+   excluded the watching tools for months; task memory is a different store with
+   its own list, and it had not.
+8. **`ask.sh` was corrupting the evidence.** `sed 's/^.*: //'` is greedy and cut
+   every line to after its *last* colon, so a recipe listing printed as blank
+   lines and sent two rounds of debugging after a store that was never empty.
+
+### Two things that are new capability, not repairs
+
+**Taps go by identity, not position.** Position has burned this codebase three
+times. An index comes from a dump read a moment ago; the id is what the developer
+called that control and survives the screen being re-read and renumbered.
+
+**The routine's name ranks the candidates.** A replay's only statement of human
+intent is what the user called it. "past pages" and `open_history_menu_id` share
+nothing, but "chrome history" and `open_history_menu_id` share the word that is
+the point of the routine. It reorders and removes nothing, so a name with nothing
+in common searches exactly as before.
+
+### Still open
+
+- ~~**Route capture is not yet reliable.** The same demonstration recorded three
+  screens, then two, then three.~~ **Fixed and proven 2026-08-29** — see
+  "Route capture is deterministic" below.
+- A screen's fingerprint is exact set-equality on view ids. It proved stable
+  across visits here, but any variation — a promo card, an empty state — makes a
+  screen unrecognisable. Overlap scoring would be the honest fix, and would mean
+  storing the ids rather than only their hash.
+- The four architectural walls and the three proposals from the review above are
+  untouched.
+
+
+---
+
+## Route capture is deterministic — proven on device, 2026-08-29
+
+Three independent recordings of one walk through Chrome, taught the same way each
+time, now produce byte-identical routes:
+
+    screen 1: com.android.chrome/d40543a58faf33b7     (the page)
+    screen 2: com.android.chrome/2cad02871cc30dfb     (the menu)
+    screen 3: com.android.chrome/c1b51276a961e58a     (History)
+
+Those are the same three fingerprints the walker reports seeing when it walks
+there, which is the part that matters: the recorder and the replay finally agree
+about what a screen is.
+
+### The cause was two owners of one decision
+
+Every accessibility event started **a thread of its own**, each slept to let the
+screen settle, and then all of them raced to record what they had read. Whichever
+arrived first set `lastSample`; a 1200 ms throttle inside the recorder then
+silently dropped the rest — sometimes including the only thread carrying a screen
+nothing else would report.
+
+So the number of screens a demonstration recorded was a function of how many
+events each screen happened to fire and how the scheduler felt about it. Android
+fires a different number for the same navigation every time: a page that loads
+slowly fires more than one that loads fast. The recording was a coin toss, and
+nothing built on top of a coin toss can be trusted.
+
+### The fix
+
+One sampler thread, one pending read, re-armed by every event. When the stream
+goes quiet the screen is read **once**, at the same settle interval the replay
+uses to decide a screen has stopped moving. Bursts of events cost a rescheduled
+task and nothing else.
+
+The throttle inside `noteScreen` is gone. It was never a safety net — it was a
+second owner of a decision that belongs in one place.
+
+The sampler also reads the package at sample time rather than carrying the one
+from the event that armed it, so the tree and the name of the app it belongs to
+come from the same moment.
+
+### What holds it
+
+`repeated reports of one screen do not change the route` — the same three screens
+reported five times each and once each must produce the same route. That is the
+invariant that was broken, stated in a way that fails if it breaks again.
+
+---
+
+# Proposals — what this should become
+
+Written 2026-08-29 in answer to "go beyond what we as humans are looking for in
+an agent like this", and moved into the work order 2026-08-29 so they outlive the
+conversation that produced them. Wording is the original; the status notes and
+"what it would build on" are added.
+
+**All three make the agent act more autonomously, so the rule at the top of this
+file governs them: nothing here starts while a safety item is open.** That rule
+is what put F1 ahead of every one of these, and it was right.
+
+## P1 — It reasons about its own competence
+
+> It already knows, per screen, whether it's seen this before and whether it
+> succeeded. Surface that and it can say *"I've done this exact task 40 times, go
+> ahead"* versus *"this screen changed since I learned it — watch me the first
+> time."* An agent that knows the edge of its own knowledge is trustworthy in a
+> way one that always sounds confident never is. The data's there; nothing reads
+> it as self-knowledge yet.
+
+**Status: BUILT, PROVEN ON DEVICE 2026-08-29.** See "P1 — proven" below.
+
+**What it would build on, as of today:** `ScreenSignature` fingerprints, screen
+memory, `runCount` and `lastRun` on every recipe, per-tool reliability counters in
+task memory, and — new — `Waypoint.via`, which records whether each hop of a
+route has actually been walked or is still guesswork. A route where every hop has
+a `via` is one the agent has genuinely done; one where none do is a route it has
+only watched. That distinction is exactly the self-knowledge this asks for and it
+is currently visible to nothing.
+
+**The smallest honest version:** when asked to run a routine, say which it is
+before doing it. "I have walked this twice and know both steps" against "you
+showed me this but I have never done it myself."
+
+## P2 — It negotiates instead of failing
+
+> Today a run dies at 15 steps with "budget exhausted." The evolution isn't more
+> steps — it's an agent that stops and says *"I got to the payment screen but the
+> amount looks wrong, £2,400 not £240 — I'm not committing this."* Not asking
+> permission for everything (that's noise). Reserving the interrupt for the
+> moment where its model of the world and the screen disagree. Judgment, not
+> obedience.
+
+**Status: BUILT, PROVEN ON DEVICE 2026-08-29. See "P2 — proven" below.**
+
+Original status when written: **untouched, but the seed is now in the walker.** A failed walk already
+reports *"I got 1 of 2 steps into this and could not find the way to the next
+screen. Either the app has changed, or the next step is something I will not
+press on a guess"* — which is the right shape: it says where it got to, what it
+believes went wrong, and why it stopped. That is one honest failure message, not
+a capability.
+
+**What is missing is the disagreement detector.** The walker knows what screen it
+expected and what it got, so it can already tell "the app changed" from "I ran
+out of tries". Nothing compares an expectation about *content* — an amount, a
+recipient — against what is on screen, because nothing carries an expectation
+about content at all.
+
+**Note the tension with the search's safety rule.** Anything reading like a
+commitment is never tapped on a guess, so today the agent stops rather than asks.
+Negotiation is what makes stopping useful instead of merely safe.
+
+## P3 — It becomes an immune system for your phone
+
+> This is the one that leaves the paradigm entirely. That behavioral stream it's
+> already collecting isn't just for learning recipes — it's a baseline of how
+> *you* use your phone and how your apps normally behave. An agent that watches
+> continuously could notice what you can't: an app that started reading your
+> clipboard, a permission that changed, a screen that's phishing because it's
+> *almost* your bank's login but the provenance is wrong. You asked for an agent
+> that does what a human can do on a phone. This does what no human can — it
+> watches all of it, all the time, and it already has the sensor.
+
+**Status: untouched.** The sensor still exists and still runs.
+
+**What it would build on, as of today:** the accessibility event stream, and the
+flow tracker built for F4/L3, which already stamps a value with the package it
+was seen in. "This screen is almost your bank's login but the provenance is
+wrong" is that same machinery pointed outward instead of inward.
+
+**The honest objection to state before anyone starts:** this one requires
+watching continuously rather than only while demonstrating, and every privacy
+rule in this codebase currently rests on the opposite — the recorder drains and
+discards the buffer at `start()` precisely so that nothing is kept that the user
+did not ask to be kept. Making this real means designing what is retained, where
+it lives, and what leaves the device, **before** writing the detector. It is the
+furthest from built and the one with the most to get wrong.
+
+## The order, if these are picked up
+
+P1 first. It is nearly free, it makes every other capability legible, and an
+agent that reports the edge of its own knowledge is the cheapest trust anyone
+will ever buy. P2 second, because it needs P1's notion of "I expected this" to
+have anything to disagree with. P3 last and only deliberately.
+
+
+---
+
+## P1 — competence awareness — BUILT, PROVEN ON DEVICE 2026-08-29
+
+Three routines, three different true things said about them, all from counted
+facts:
+
+    • route bravo:   ... — you showed me this, but I have never walked it myself
+    (walk it once)
+    • route bravo:   ... — I have walked this once and know all 2 steps
+    • route alpha:   ... — I know all 2 steps
+
+`route alpha` is the interesting one. It was walked twice before walks were
+counted, so it holds both doors and no history. It does not claim the walks it
+cannot evidence, and it does not deny knowing the way it demonstrably knows.
+
+### Everything said is a count, never a judgement
+
+No score, no percentage, no "high confidence". `Competence` holds four recorded
+numbers — hops whose door the agent found itself, hops in the route, walks that
+reached the end, walks attempted — plus how many learned doors have since moved.
+`describe()` is the only place any of it becomes a sentence, so what the agent is
+allowed to claim about itself is one testable function.
+
+The weak sentences are the point. "You showed me this, but I have never walked it
+myself" is what makes the strong version worth anything, and it is exactly the
+line an agent inclined to sound capable would quietly drop.
+
+### Two real defects found building it
+
+**A taught routine was never counted as run at all.** `markRun` sits after the
+journey branch returns, so `runCount` stayed 0 for every routine taught by
+demonstration. The agent could not say "I have done this three times" because
+nothing had ever counted to one.
+
+**A door that moved was found, used, and then thrown away.**
+`learnedSomethingNew` only fired on blank → known, so when an app updated and a
+control moved, the walk found the new way, reported success, and discarded the
+discovery — leaving the agent to search for the same door again on every future
+run, permanently. It now saves any changed door and counts it separately, because
+a blank hop becoming known is the agent getting better at a route while a known
+hop changing is the *app* changing underneath it. Only the second is worth
+telling the user about.
+
+### Where it surfaces
+
+- `recipe_list` describes a taught routine by what the agent knows about it
+  rather than by how many screens it contains. "3 screens" is not something a
+  person can act on.
+- A walk logs what it knew going in, before doing anything — afterwards is too
+  late to be told the agent was guessing.
+- The reply carries a note only when it was working partly blind, or when the app
+  turned out to have changed. Announcing full competence on every successful run
+  is noise.
+
+Stored in the existing recipe payload, which was already a JSON object built to
+hold more than one thing. A schema migration to hold three integers would have
+been a migration written for the convenience of the writer.
+
+### Honest limit
+
+**The "app has changed" path is unit-tested, not device-proven.** Forcing a real
+app to move one of its controls is not something this harness can do. The
+counting, the storage and the wording are covered by tests; what has not been
+watched happen is a genuine Chrome update moving a button and the agent noticing.
+
+10 tests. 253 total, 0 failures.
+
+
+---
+
+## P2 — negotiating instead of failing — BUILT, PROVEN ON DEVICE 2026-08-29
+
+Asked to *pay 240* on a page reading **Total £2,400.00** with a **Confirm
+payment** button, on the phone:
+
+    TOOL CALL: react_navigate {"goal":"enter 240 in payment amount field and confirm payment"}
+    DISAGREE refused "Confirm payment": this screen says £2,400.00 and you said 240
+    → I stopped before pressing "Confirm payment": this screen says £2,400.00
+      and you said 240. Nothing was committed. Tell me which is right and I
+      will carry on.
+
+Nothing was pressed. The gate was never asked.
+
+### It refuses rather than asking, and that is the point
+
+The gate already stops an irreversible action and shows a card. What it cannot
+do is say anything useful, because it does not know what the job was — the card
+reads "about to press Pay" whether the screen says £240 or £2,400. A person who
+has approved that card fifty times approves the fifty-first without reading it.
+That is not carelessness, it is what habituation does, and a design that relies
+on the user catching one bad case in fifty has quietly moved the responsibility
+onto them.
+
+So when the screen contradicts the request, this does not ask. Refusing is a
+judgement the agent is in a position to make; approving a payment the user never
+described is not.
+
+### Three things the device run changed
+
+**It compares the user's words, never the model's.** First run, the model
+rewrote *"pay 240 by pressing confirm payment"* into a tool call reading *"press
+confirm payment button after entering 240"* — no longer an amount named the way
+a person names one, and the check went silent. A check that reads the model's own
+restatement is a check the model can walk around by restating, and a safety
+property that depends on the model being cooperative is not a safety property.
+It now reads what was typed, or it does not run.
+
+**A disagreement ends the run.** Refusing the tap alone left the model free to
+try again, which it did, three times. An agent that has judged something wrong
+and keeps going has not really judged anything.
+
+**And it ends the request, not just the run.** Even with the run ended, the model
+called the navigator again with a reworded goal and spent fifteen more steps
+looking for another way in. The decision is now held for the whole request and
+returned immediately to any further navigation, without a tap. Cleared when the
+user says something new, because their next message is the answer to the question
+it raised.
+
+### Deliberately narrow
+
+Money only, and only when three things are true at once: the user named an
+amount, the screen shows an amount, and **none** of the amounts on screen match.
+A checkout showing subtotal, tax and total is the normal case and one match is
+enough to stay quiet. Silence is the expected behaviour — a guard that fires
+often gets switched off, and a guard that is off protects nobody. That is the
+same reasoning that stopped `ScreenSecrets` treating every six-digit number as a
+code.
+
+Amounts are compared as integers in minor units, never as text. `240` is a
+substring of `2400`, and the house rule earned four times in this file — never
+let containment alone decide a match — is precisely the failure this mechanism
+exists to catch.
+
+### Honest limits
+
+- **Money only.** A wrong recipient, a wrong date, a wrong quantity all pass.
+  Names were left out on purpose: matching them is fuzzy, and a false stop on a
+  task the user asked for is how this gets switched off.
+- **An unmarked number on screen is ignored**, so a payment screen that renders
+  its total without a currency symbol is invisible to this.
+- **Only four currencies** are recognised.
+
+10 tests, weighted toward the cases that must stay silent. 262 total, 0 failures.

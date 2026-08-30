@@ -42,3 +42,6 @@ yarn-error.*
 
 # Signing key password. Never commit.
 keystore.properties
+build-*.apk
+logdump.txt
+screen_test.png

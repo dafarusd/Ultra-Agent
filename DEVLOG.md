@@ -2529,3 +2529,120 @@ Historical note: previous environment was WSL Ubuntu on a Windows laptop. Build 
 ---
 
 **End of DEVLOG.**
+
+## 2026-08-29 — Replay remembers the way
+
+**Goal:** "remember which control worked for each hop" — turn replay's
+undirected search into a lookup.
+
+**Status: PROVEN.** Two consecutive walks of a demonstrated route (Chrome page →
+menu → History). Walk 1 searched six controls, learned `menu_button`, recovered
+from a wrong guess that closed the menu, found `open_history_menu_id`, learned
+it. Walk 2 tapped both remembered controls and nothing else. Both ended on
+`HistoryActivity`. Only view ids are stored, never indexes.
+
+Getting there uncovered six defects that all shared one shape — two parts of the
+system reading the same screen and disagreeing. Full accounting with evidence in
+COLD-REVIEW.md under "Replay: remembering the way".
+
+The two that mattered most, because neither was visible from the code:
+
+- The screen recorder saved Agent Ultra's own screens, so **every route ever
+  taught began with the agent itself**. The step recorder had excluded them for
+  months; the screen recorder is a different path and never learned.
+- The recorder fingerprinted a screen the instant it appeared, replay judged it
+  once settled. Same screen, two instants, two hashes, no possible match.
+
+**Also fixed:** task memory was filing the watching tools as lessons, so the
+agent memorised its own mistake ("when they say watch me, cancel watching").
+`ask.sh` was truncating every logged line at its last colon, which sent two
+rounds of debugging after a recipe store that was never empty.
+
+**New capability:** taps resolve by view id rather than list position, and the
+name the user gave a routine ranks the candidates — a replay's only statement of
+human intent.
+
+**Open:** route capture is not yet reliable (the same demonstration recorded
+three screens, then two, then three). Working, not yet trustworthy. Screen
+fingerprints are exact set-equality on view ids; stable across visits here but brittle
+to a promo card or an empty state.
+
+242 tests, 0 failures.
+
+## 2026-08-29 (later) — Route capture made deterministic
+
+**Status: PROVEN.** Three independent recordings of the same walk now produce
+byte-identical routes — same screen count, same fingerprints, same order — and
+those fingerprints match what the walker sees when it walks there. A route
+recorded this way was then walked twice: the first walk learned both hops, the
+second was a pure two-tap lookup ending on `HistoryActivity`.
+
+**Cause:** every accessibility event started its own thread, each slept to let
+the screen settle, and they all raced to record what they read. A 1200 ms
+throttle inside the recorder dropped whichever lost — sometimes the only one
+carrying a screen nothing else would report. Android fires a different number of
+events for the same navigation every time, so the recording varied with page
+load speed and thread scheduling.
+
+**Fix:** one sampler thread, one pending read, re-armed by every event; the
+screen is read once when the event stream goes quiet, at the same settle
+interval the replay uses. The recorder's own throttle is deleted — coalescing
+now has exactly one owner. The sampler reads the package at sample time so the
+tree and the app name come from the same moment.
+
+Held by a test stating the invariant directly: the same screens reported five
+times each and once each must produce the same route.
+
+243 tests, 0 failures.
+
+## 2026-08-29 (later still) — P1: the agent reports what it knows
+
+**Status: PROVEN.** Three routines now say three different true things about
+themselves, all from counted facts: never walked; walked once and knows both
+steps; knows both doors but has no recorded walk to claim. Proven on device by
+listing before and after a first walk.
+
+Everything is a count, never a judgement — no scores, no confidence levels.
+What the agent may claim about itself is one testable function, `Competence.describe()`.
+
+**Two real defects found building it.** A taught routine was never counted as run
+at all — `markRun` sits after the journey branch returns, so `runCount` stayed 0
+forever and "I have done this three times" was unsayable. And a door that moved
+was found, used, then thrown away, because the save check only fired on
+blank → known; an app update meant re-searching the same door on every run,
+permanently.
+
+**Honest limit:** the "app has changed" path is unit-tested, not device-proven.
+Forcing a real app to move a control is not something this harness can do.
+
+253 tests, 0 failures.
+
+## 2026-08-29 (later still) — P2: it argues when the screen disagrees
+
+**Status: PROVEN.** Asked to "pay 240" on a page reading Total £2,400.00 with a
+Confirm payment button, it stopped: *"I stopped before pressing 'Confirm
+payment': this screen says £2,400.00 and you said 240. Nothing was committed."*
+Nothing was pressed and the gate was never asked.
+
+It refuses rather than asking, deliberately. The gate can only ever say "about
+to press Pay", which is equally true of the right payment and the wrong one, and
+a person who has approved that card fifty times approves the fifty-first without
+reading it.
+
+**Three things the device run changed.** The check compares the user's words,
+never the model's — the model rewrote "pay 240 by pressing confirm payment" into
+a goal with no amount in it and silenced the check; a check reading the model's
+restatement is one the model can walk around. A disagreement now ends the run.
+And it ends the whole request, because even with the run ended the model called
+the navigator again with a reworded goal and spent fifteen more steps looking for
+another way in.
+
+**Deliberately narrow:** money only, and only when the user named an amount, the
+screen shows amounts, and none of them match. Compared as integers in minor
+units — 240 is a substring of 2400, which is the exact failure it exists to
+catch.
+
+**Limits:** wrong recipient, date or quantity all pass; an unmarked total is
+invisible; four currencies.
+
+262 tests, 0 failures.

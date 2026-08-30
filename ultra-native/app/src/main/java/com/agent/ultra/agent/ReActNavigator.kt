@@ -101,6 +101,9 @@ ACTION:"""
     suspend fun execute(goal: String, appHint: String): NavResult {
         if (!controller.serviceRunning) return NavResult(false, controller.serviceProblem, 0)
 
+
+        stopReason = null
+
         // Resolve and launch the target app
         val pkg = controller.findPackage(if (appHint.isBlank()) goal else appHint)
             ?: return NavResult(false, "no app matching '$appHint'", 0)
@@ -155,6 +158,9 @@ ACTION:"""
         var grace = 0
         var iter = 0
         while (iter < MAX_ITER + grace) {
+            // A judgement, not a failed step: end the run rather than let the
+            // model try a different way to do the thing we just refused.
+            stopReason?.let { return NavResult(false, it, iter) }
             iter++
             val aim = (if (planActive) plan.getOrNull(stage) else null)?.let {
                 "${it.description}  (part of: $goal)"
@@ -341,13 +347,185 @@ ACTION:"""
      * stopped working is information; a walker that keeps pressing buttons on
      * someone's phone is not.
      */
-    suspend fun walkRoute(name: String, route: List<ScreenJourney.Waypoint>): String {
-        if (!controller.serviceRunning) return "Error: ${controller.serviceProblem}"
-        if (route.size < 2) return "Error: \"$name\" has too little to follow."
+    /** What a walk did, and anything it learned worth keeping. */
+    /**
+     * @param completed reached the last screen of the route. Recorded rather
+     *   than inferred from the message, because "I got 1 of 2 steps in" and
+     *   "followed it" are both ordinary outcomes and only one of them is the
+     *   agent knowing how to do the job.
+     */
+    data class WalkResult(
+        val message: String,
+        val learned: List<ScreenJourney.Waypoint>,
+        val completed: Boolean = false,
+    )
+
+    /**
+     * Get back to the screen a hop is searching from, or admit we are lost.
+     *
+     * A wrong guess has to be undone, and undoing it is not always one press
+     * of back. Back on a browser's first page closes the browser. Opening a
+     * new tab leaves nothing to go back to. So this makes up to three moves —
+     * reopening the app when a guess threw us out, pressing back when we are
+     * in the right app on the wrong screen — and checks the fingerprint after
+     * each one.
+     *
+     * When it cannot get back, it says so and the hop stops. That is the
+     * important part. The alternative, and what this replaces, is a search
+     * that carries on pressing things wherever it happens to have landed.
+     */
+    private suspend fun restoreAnchor(
+        anchor: String,
+        pkg: String,
+        route: List<ScreenJourney.Waypoint>,
+        hop: Int,
+    ): Boolean {
+        if (anchor.isBlank()) return true   // screen we cannot fingerprint: as before
+        repeat(3) {
+            if (settledKey() == anchor) return true
+            if (controller.activePackage() != pkg) {
+                android.util.Log.i("UltraWalk", "left $pkg; reopening")
+                controller.launchApp(pkg)
+                delay(1800)
+            } else {
+                controller.back()
+                delay(1200)
+            }
+        }
+        // Some screens cannot be returned to; they have to be reached again.
+        //
+        // A menu is the clear case. Guess wrong inside Chrome's menu and the
+        // menu closes — back does not reopen it and neither does relaunching
+        // the app, so a search of a menu got exactly one guess before losing
+        // the screen it was searching. The route itself is the way back: the
+        // walker already knows which control opened that menu, because it
+        // learned it on the hop before.
+        if (replayTo(route, hop)) {
+            val landed = settledKey()
+            if (landed == anchor) {
+                android.util.Log.i("UltraWalk", "hop $hop: walked back to the screen")
+                return true
+            }
+            android.util.Log.i("UltraWalk", "walked back but landed somewhere else")
+        }
+        return false
+    }
+
+    /**
+     * Re-reach the screen a hop starts from by walking the route again.
+     *
+     * Only uses doors it has already learned. A replay that fell back to
+     * searching would be a second search running inside the first, pressing
+     * things to get back to where it was pressing things — so if any earlier
+     * hop is still unknown, this gives up and the walk reports honestly.
+     */
+    private suspend fun replayTo(route: List<ScreenJourney.Waypoint>, hop: Int): Boolean {
+        val needed = (1 until hop).map { route[it] }
+        if (needed.any { it.via.isBlank() }) {
+            android.util.Log.i("UltraWalk", "cannot walk back: an earlier hop is still unknown")
+            return false
+        }
+        if (!controller.launchApp(route.first().pkg)) {
+            android.util.Log.i("UltraWalk", "cannot walk back: ${route.first().pkg} would not open")
+            return false
+        }
+        delay(2500)
+        for (w in needed) {
+            // Wait for the door to appear rather than demanding it now.
+            //
+            // A wrong guess often leaves something over the app — tapping
+            // Chrome's bookmark button puts an edit sheet on top — and
+            // reopening the app puts us behind it, where the control we need
+            // is real but covered. One press of back clears that; a page still
+            // loading just needs a moment. Both look identical from here, so
+            // this alternates waiting with dismissing.
+            var choice: RouteWalker.Candidate? = null
+            for (look in 1..4) {
+                choice = RouteWalker.rememberedChoice(controller.screenFlat(), w.via)
+                if (choice != null) break
+                if (look % 2 == 0) controller.back()
+                delay(1200)
+            }
+            if (choice == null) {
+                android.util.Log.i("UltraWalk", "cannot walk back: ${w.via} is not on this screen")
+                return false
+            }
+            android.util.Log.i("UltraWalk", "walking back through ${w.via}")
+            if (!tapCandidate(choice)) return false
+            delay(1800)
+        }
+        return true
+    }
+
+    /**
+     * Watch what a tap opened for a few seconds before judging it.
+     *
+     * A screen that has just been opened is not finished. Chrome's History
+     * page arrives as a frame and fills in afterwards, and the two states
+     * fingerprint differently — so a walk that read it once, immediately,
+     * decided it had landed somewhere it had never been, pressed back, and
+     * went looking for a door it had already opened.
+     *
+     * Returns as soon as it sees the screen it wants, or as soon as it is
+     * clear nothing moved. Only a screen that is genuinely something else
+     * costs the full wait.
+     */
+    private suspend fun awaitArrival(want: String, anchor: String): String {
+        var seen = ""
+        repeat(4) {
+            seen = settledKey()
+            if (seen == want) return seen
+            if (seen == anchor) return seen   // nothing happened; no point waiting
+            delay(1000)
+        }
+        return seen
+    }
+
+    /** The fingerprint of whatever is on top right now, or "" if unreadable. */
+    private suspend fun screenKey(): String {
+        val nodes = ScreenStructure.parse(controller.screenTree())
+        val fp = ScreenSignature.of(controller.activePackage(), nodes)
+        return if (fp.known) fp.key else ""
+    }
+
+    /**
+     * The fingerprint of a screen that has stopped changing.
+     *
+     * A screen in motion fingerprints as something that will never be seen
+     * again. A web page part-way through loading carries a reload button and a
+     * progress bar; a second later it carries neither, and the two hash to
+     * different screens. The walk anchored itself to one of those ghosts,
+     * pressed a reload button that had no business being a candidate, and then
+     * could not match its own anchor no matter where it went.
+     *
+     * So: read twice, a moment apart, and only believe a fingerprint that
+     * holds still. It costs about a second. It buys an anchor that means
+     * something.
+     */
+    private suspend fun settledKey(): String {
+        var last = screenKey()
+        repeat(3) {
+            delay(900)
+            val now = screenKey()
+            if (now.isNotBlank() && now == last) return now
+            last = now
+        }
+        return ""
+    }
+
+    suspend fun walkRoute(name: String, route: List<ScreenJourney.Waypoint>): WalkResult {
+        if (!controller.serviceRunning)
+            return WalkResult("Error: ${controller.serviceProblem}", route, completed = false)
+        if (route.size < 2)
+            return WalkResult("Error: \"$name\" has too little to follow.", route, completed = false)
 
         val start = route.first()
-        if (!controller.launchApp(start.pkg)) return "Error: could not open ${start.pkg}"
+        if (!controller.launchApp(start.pkg))
+            return WalkResult("Error: could not open ${start.pkg}", route, completed = false)
         delay(2000)
+
+        // Filled in as the walk succeeds, so the next one is a lookup.
+        val learned = route.toMutableList()
 
         var hop = 1
         var steps = 0
@@ -364,8 +542,23 @@ ACTION:"""
 
             val tried = mutableSetOf<String>()
             var moved = false
+            // The screen this hop is searching from.
+            //
+            // A list of controls and a list of ones already tried mean nothing
+            // on their own — they mean something *on one screen*. Without this
+            // the walk drifted: a wrong guess sent it out of Chrome, reopening
+            // landed on a different tab, and it carried on searching there,
+            // ticking off a new tab page's microphone and camera buttons as
+            // though they were candidates for a hop that started on a web
+            // page. Twelve tries, none of them on the screen in question, and
+            // the menu button it needed sat unexamined the whole time.
+            val anchor = settledKey()
             for (attempt in 1..RouteWalker.TRIES_PER_HOP) {
                 if (steps++ >= MAX_ITER) break
+                if (!restoreAnchor(anchor, target.pkg, learned, hop)) {
+                    android.util.Log.i("UltraWalk", "hop $hop: lost the screen I was searching from")
+                    break
+                }
                 // Choose from the same dump the tap indexes into. Choosing from
                 // the tree and tapping by flat index meant the two disagreed
                 // about which node an index named.
@@ -375,11 +568,20 @@ ACTION:"""
                 // read after that returns almost nothing — the walk used to
                 // give up on hop one because of it.
                 var flatNow = controller.screenFlat()
-                var choice = RouteWalker.candidatesFromFlat(flatNow, tried).firstOrNull()
+                // The door that worked last time, first. A route walked once
+                // should not be searched again — that is the whole point of
+                // having walked it.
+                var choice = RouteWalker.rememberedChoice(flatNow, target.via, tried)
+                if (choice != null) {
+                    android.util.Log.i("UltraWalk", "hop $hop: remembered ${target.via}")
+                }
+                if (choice == null) {
+                    choice = RouteWalker.candidatesFor(flatNow, tried, name).firstOrNull()
+                }
                 if (choice == null) {
                     delay(1200)
                     flatNow = controller.screenFlat()
-                    choice = RouteWalker.candidatesFromFlat(flatNow, tried).firstOrNull()
+                    choice = RouteWalker.candidatesFor(flatNow, tried, name).firstOrNull()
                 }
                 if (choice == null) break
                 lastFlat = flatNow
@@ -388,43 +590,68 @@ ACTION:"""
                     "UltraWalk",
                     "hop $hop: trying ${choice.vid.ifBlank { "[" + choice.index + "]" }}",
                 )
-                if (!tapNodeIndex(choice.index)) continue
+                if (!tapCandidate(choice)) continue
                 delay(1200)
 
-                val after = ScreenStructure.parse(controller.screenTree())
-                if (ScreenJourney.arrivedAt(target, controller.activePackage(), after)) {
+                val afterKey = awaitArrival(target.key, anchor)
+                if (afterKey == target.key) {
+                    // Only a control the app named is worth remembering. An
+                    // index is a position in one reading of one screen and
+                    // means something else next time.
+                    if (choice.vid.isNotBlank() && learned[hop].via != choice.vid) {
+                        learned[hop] = learned[hop].copy(via = choice.vid)
+                        android.util.Log.i("UltraWalk", "hop $hop: learned the way is ${choice.vid}")
+                    }
                     android.util.Log.i("UltraWalk", "hop $hop/${route.size - 1} reached")
                     hop++
                     moved = true
                     break
                 }
-                // Wrong door. Undo it before trying the next one, or the search
-                // wanders instead of searching.
+                android.util.Log.i(
+                    "UltraWalk",
+                    "hop $hop: landed on ${afterKey.ifBlank { "an unreadable screen" }}, " +
+                        "wanted ${target.key}",
+                )
+                // A control that changed nothing needs no undoing.
                 //
-                // Back can leave the app altogether — pressing it on a
-                // browser's first page closes the browser — and the next read
-                // then finds nothing, which the walk read as "no candidates
-                // left" and gave up on hop one every time. If back took us out,
-                // go back in.
+                // This is where the walk kept destroying its own position. It
+                // pressed Chrome's reload button, the page reloaded to exactly
+                // the screen it was already on, and the walk pressed back to
+                // "undo" it — which closed the browser, because a page opened
+                // by a link has no history behind it. It then could not find
+                // its way back to a screen it had never actually left. One
+                // wasted candidate cost it the entire hop.
+                //
+                // So: undo only what moved. If we are still on the anchor, the
+                // control did nothing worth reversing, and the next candidate
+                // gets tried from exactly where this one started.
+                if (afterKey == anchor) continue
+
+                // Wrong door, and it did open onto something. Close it before
+                // trying the next one, or the search wanders instead of
+                // searching. Whether back is enough is checked at the top of
+                // the next attempt, which is the only place that can tell.
                 controller.back()
                 delay(1200)
-                if (controller.activePackage() != target.pkg) {
-                    android.util.Log.i("UltraWalk", "back left ${target.pkg}; reopening")
-                    controller.launchApp(target.pkg)
-                    delay(1800)
-                }
             }
             if (!moved) {
-                return "I got ${hop - 1} of ${route.size - 1} steps into \"$name\" and could " +
-                    "not find the way to the next screen. Either the app has changed, or the " +
-                    "next step is something I will not press on a guess."
+                return WalkResult(
+                    "I got ${hop - 1} of ${route.size - 1} steps into \"$name\" and could " +
+                        "not find the way to the next screen. Either the app has changed, or the " +
+                        "next step is something I will not press on a guess.",
+                    learned,
+                    completed = false,
+                )
             }
         }
 
-        return if (hop >= route.size)
-            "Followed \"$name\" — all ${route.size - 1} steps."
-        else
-            "I got ${hop - 1} of ${route.size - 1} steps into \"$name\" before running out of tries."
+        val allTheWay = hop >= route.size
+        return WalkResult(
+            if (allTheWay) "Followed \"$name\" — all ${route.size - 1} steps."
+            else "I got ${hop - 1} of ${route.size - 1} steps into \"$name\" before running out of tries.",
+            learned,
+            completed = allTheWay,
+        )
     }
 
     /** a11y flat nodes → indexed TAPPABLE/TYPEABLE/SCROLLABLE lists (visible-only). */
@@ -556,6 +783,28 @@ ACTION:"""
      * on — an advert loading, a page settling — and the honest response is to
      * look again, not to tap whatever is there now.
      */
+    /**
+     * Press a candidate by its id where it has one, by position otherwise.
+     *
+     * The index came from a dump read a moment ago and the screen may have
+     * moved since. An id has not.
+     */
+    private suspend fun tapCandidate(c: RouteWalker.Candidate): Boolean {
+        if (c.vid.isBlank()) return tapNodeIndex(c.index)
+        if (!approveTap(c.label, "tap_index(${c.index})")) return false
+        return when (val outcome = controller.clickByViewId(c.vid, c.index, "")) {
+            "ok" -> true
+            "gone" -> {
+                android.util.Log.i("UltraWalk", "${c.vid} left the screen before it could be pressed")
+                false
+            }
+            else -> {
+                android.util.Log.i("UltraWalk", "press on ${c.vid} came back $outcome")
+                false
+            }
+        }
+    }
+
     private suspend fun tapNodeIndex(index: Int): Boolean {
         val label = labelForIndex(index).orEmpty()
         if (!approveTap(label, "tap_index($index)")) return false
@@ -595,12 +844,86 @@ ACTION:"""
     private var lastRefusal: String? = null
 
     /**
+     * What the **user** typed, as they typed it.
+     *
+     * Not the goal the navigator was handed. The model rewrites a request
+     * before calling the navigator — asked to "pay 240 by pressing confirm
+     * payment", it called the tool with "press confirm payment button after
+     * entering 240", which no longer names an amount the way a person naming
+     * an amount does.
+     *
+     * That matters beyond inconvenience. A check that reads the model's own
+     * restatement of a request is a check the model can walk around by
+     * restating it, and a safety property that depends on the model being
+     * cooperative is not a safety property. The comparison is against the
+     * person's words or it does not happen.
+     */
+    var userRequest: String = ""
+        set(value) {
+            field = value
+            stoppedOnDisagreement = null   // a new message answers the old question
+        }
+
+    /**
+     * Set when the screen contradicted the request, and the run must end.
+     *
+     * Refusing the tap alone was not enough. Watched on the phone: the tap was
+     * refused three times and the model simply called the navigator again with
+     * the amount removed from its goal — "press confirm payment button" — and
+     * would have kept going. The check held because it reads the user's words,
+     * but an agent that quietly retries a thing it has judged wrong is
+     * obedient, not sensible. A disagreement ends the run and says why.
+     */
+    private var stopReason: String? = null
+
+    /**
+     * Held across the whole request, not one navigation run.
+     *
+     * Ending the run was still not enough. Watched on the phone: refused once,
+     * the model called the navigator again with the same goal and spent
+     * fifteen more steps looking for another way in. It never reached the
+     * button — the check would have caught it again — but an agent that has
+     * decided something is wrong and then keeps trying has not really decided
+     * anything. Cleared when the user says something new, because their next
+     * message is the answer to the question this raised.
+     */
+    var stoppedOnDisagreement: String? = null
+        private set
+
+    /**
      * Stop and ask before a tap that commits something. Everything else runs
      * untouched — a gate that fires on every tap gets waved through.
      */
     private suspend fun approveTap(label: String, action: String): Boolean {
         val reason = ActionGate.commitmentIn(label) ?: return true
         val pkg = controller.activePackage()
+
+        // Before asking, check whether this is even the right thing to ask
+        // about.
+        //
+        // A confirmation card is a question, and a person who has approved the
+        // same question fifty times answers the fifty-first without reading it.
+        // That is not carelessness, it is what habituation does, and a design
+        // that relies on the user catching the one bad case in fifty is a
+        // design that has quietly moved the responsibility onto them.
+        //
+        // So when the screen contradicts what was asked for, this does not ask.
+        // It stops and says which numbers disagree. Refusing is a judgement the
+        // agent is in a position to make; approving a payment the user never
+        // described is not.
+        // Read fresh rather than trusting the cache. A commitment is rare and
+        // the screen it lands on is the one that matters; a stale reading here
+        // would compare the request against the page before the total appeared.
+        val screenNow = controller.screenFlat()
+        Disagreement.contradiction(userRequest, screenNow)?.let { why ->
+            stopReason = "I stopped before pressing \"$label\": $why. " +
+                "Nothing was committed. Tell me which is right and I will carry on."
+            stoppedOnDisagreement = stopReason
+            lastRefusal = stopReason
+            android.util.Log.i("UltraNav", "DISAGREE refused \"$label\": $why")
+            return false
+        }
+
         val approved = ActionGate.approve(action, label, pkg ?: "this app", reason)
         if (!approved) {
             android.util.Log.i("UltraNav", "action refused by operator: \"$label\"")

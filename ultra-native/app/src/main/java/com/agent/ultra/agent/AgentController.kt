@@ -140,6 +140,11 @@ class AgentController(private val context: Context) {
 
     /** Click the node at [index] in the last flat dump, refusing if what is
      * there now is not what was seen. See the service for why. */
+    suspend fun clickByViewId(vid: String, fallbackIndex: Int, expectedLabel: String): String =
+        withContext(Dispatchers.IO) {
+            service?.clickByViewId(vid, fallbackIndex, expectedLabel) ?: "failed"
+        }
+
     suspend fun clickByIndex(index: Int, expectedLabel: String): String =
         withContext(Dispatchers.IO) {
             service?.clickByIndex(index, expectedLabel) ?: "failed"

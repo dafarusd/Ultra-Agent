@@ -1,6 +1,7 @@
 package com.agent.ultra
 
 import com.agent.ultra.agent.Demonstration
+import com.agent.ultra.agent.ScreenStructure
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -144,5 +145,96 @@ class DemonstrationTest {
         assertTrue("it names the controls by the app's own ids", text.contains("login"))
         assertTrue(text.contains("pay_button"))
         assertTrue(text.contains("com.bank"))
+    }
+
+    /**
+     * The user has to open Agent Ultra to say "stop watching", so its screens
+     * are always in the sample. They are never part of the route.
+     */
+    @Test
+    fun `the agent's own screens never enter a route`() {
+        Demonstration.cancel()
+        Demonstration.start()
+        val nodes = (1..8).map { i ->
+            ScreenStructure.Node(
+                index = i, parent = 0, depth = 1, text = "row $i", desc = "",
+                clickable = true, top = i * 10, bottom = i * 10 + 8,
+                cls = "TextView", vid = "ask_field_$i",
+            )
+        }
+        Demonstration.noteScreen("com.agent.ultra", nodes)
+        Thread.sleep(1700)
+        Demonstration.noteScreen("com.android.chrome", nodes)
+        Thread.sleep(1700)
+        Demonstration.stop()   // commits the screen they ended on
+        val route = Demonstration.journey
+        assertTrue(route.none { it.pkg == "com.agent.ultra" })
+        assertEquals(listOf("com.android.chrome"), route.map { it.pkg })
+        Demonstration.cancel()
+    }
+
+    /**
+     * A screen flickered past on the way somewhere is not a waypoint; a screen
+     * the user stayed on is, and it is committed when they move off it.
+     */
+    @Test
+    fun `only a screen the user stayed on joins a route`() {
+        Demonstration.cancel()
+        Demonstration.start()
+        fun nodes(tag: String) = (1..8).map { i ->
+            ScreenStructure.Node(
+                index = i, parent = 0, depth = 1, text = "row $i", desc = "",
+                clickable = true, top = i * 10, bottom = i * 10 + 8,
+                cls = "TextView", vid = "${tag}_row_$i",
+            )
+        }
+        // A frame that flickers past: left almost immediately.
+        Demonstration.noteScreen("com.android.settings", nodes("loading"))
+        Thread.sleep(1300)
+        Demonstration.noteScreen("com.android.settings", nodes("settled"))
+        assertTrue("a flicker is not a waypoint", Demonstration.journey.isEmpty())
+        // The settled one is stayed on, then left.
+        Thread.sleep(1700)
+        Demonstration.noteScreen("com.android.settings", nodes("next"))
+        assertEquals(1, Demonstration.journey.size)
+        Demonstration.cancel()
+    }
+
+    /**
+     * The route must depend on which screens were visited, never on how many
+     * times each one was reported.
+     *
+     * This is the invariant that was broken. Android fires a different number
+     * of events for the same navigation every time — a page that loads slowly
+     * fires more than one that loads fast — and the recorder turned that into a
+     * different route. The same walk recorded three screens, then two, then
+     * three. Nothing downstream can be trusted while the recording itself is a
+     * coin toss.
+     */
+    @Test
+    fun `repeated reports of one screen do not change the route`() {
+        fun nodes(tag: String) = (1..8).map { i ->
+            ScreenStructure.Node(
+                index = i, parent = 0, depth = 1, text = "row $i", desc = "",
+                clickable = true, top = i * 10, bottom = i * 10 + 8,
+                cls = "TextView", vid = "${tag}_row_$i",
+            )
+        }
+        fun record(reportsPerScreen: Int): List<String> {
+            Demonstration.cancel()
+            Demonstration.start()
+            for (screen in listOf("home", "menu", "history")) {
+                repeat(reportsPerScreen) { Demonstration.noteScreen("com.android.chrome", nodes(screen)) }
+                Thread.sleep(1600)   // the user stays a moment on each
+            }
+            Demonstration.stop()
+            val route = Demonstration.journey.map { it.digest }
+            Demonstration.cancel()
+            return route
+        }
+        val chatty = record(5)
+        val quiet = record(1)
+        assertEquals("a screen reported five times is still one screen", quiet, chatty)
+        assertEquals(3, quiet.size)
     }
 }

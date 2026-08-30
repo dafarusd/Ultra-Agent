@@ -97,6 +97,25 @@ class Recipes(private val dao: RecipeDao) {
         return name
     }
 
+    /**
+     * Update just the route of a taught routine, keeping everything else.
+     *
+     * Used after a walk that worked out which control leads where. Rewriting
+     * the whole row would silently drop the recorded taps stored beside it —
+     * they are not relied on, but quietly discarding stored data because it is
+     * currently unused is how data goes missing.
+     */
+    suspend fun updateJourney(rawName: String, routeJson: String): Boolean {
+        val name = normalizeForName(rawName)
+        val row = dao.byName(name) ?: return false
+        return try {
+            val existing = JSONObject(row.stepsJson)
+            existing.put("journey", JSONArray(routeJson))
+            dao.upsert(row.copy(stepsJson = existing.toString()))
+            true
+        } catch (_: Exception) { false }
+    }
+
     /** The route of a routine learned by watching, or null if it is a tool recipe. */
     suspend fun journeyOf(rawName: String): String? {
         val row = dao.byName(normalize(rawName)) ?: return null
@@ -147,13 +166,91 @@ class Recipes(private val dao: RecipeDao) {
         dao.upsert(row.copy(lastRun = System.currentTimeMillis(), runCount = row.runCount + 1))
     }
 
+
+    /**
+     * Record what a walk actually did, and keep whatever it worked out.
+     *
+     * Replaces a bare run counter. A count of runs cannot tell "walked it end
+     * to end" from "gave up on the first hop", and an agent that reports the
+     * second as the first is worse than one that reports nothing.
+     *
+     * Stored inside the recipe payload rather than in new columns: the payload
+     * is already a JSON object built to hold more than one thing, and a
+     * schema migration to hold three integers would be a migration written for
+     * the convenience of the writer.
+     */
+    suspend fun noteWalk(
+        rawName: String,
+        completed: Boolean,
+        routeJson: String,
+        doorsMoved: Int,
+    ): Boolean {
+        val row = dao.byName(normalizeForName(rawName)) ?: return false
+        return try {
+            val payload = JSONObject(row.stepsJson)
+            payload.put("journey", JSONArray(routeJson))
+            val history = payload.optJSONObject("history") ?: JSONObject()
+            history.put("attempted", history.optInt("attempted") + 1)
+            if (completed) history.put("completed", history.optInt("completed") + 1)
+            if (doorsMoved > 0) history.put("moved", history.optInt("moved") + doorsMoved)
+            payload.put("history", history)
+            dao.upsert(
+                row.copy(
+                    stepsJson = payload.toString(),
+                    lastRun = System.currentTimeMillis(),
+                    runCount = row.runCount + 1,
+                )
+            )
+            true
+        } catch (_: Exception) { false }
+    }
+
+    /** What the agent knows about a taught routine, or null if it is a tool recipe. */
+    suspend fun competenceOf(rawName: String): Competence? {
+        val row = dao.byName(normalize(rawName)) ?: return null
+        return competenceIn(row.stepsJson)
+    }
+
+    /** The same, read straight from a stored payload. */
+    private fun competenceIn(stepsJson: String): Competence? {
+        val route = routeIn(stepsJson) ?: return null
+        val history = try { JSONObject(stepsJson).optJSONObject("history") } catch (_: Exception) { null }
+        return Competence.of(
+            route,
+            walksCompleted = history?.optInt("completed") ?: 0,
+            walksAttempted = history?.optInt("attempted") ?: 0,
+            doorsMoved = history?.optInt("moved") ?: 0,
+        )
+    }
+
+    /** The route stored inside a recipe payload, or null if it holds tool steps. */
+    private fun routeIn(stepsJson: String): List<ScreenJourney.Waypoint>? = try {
+        val o = JSONObject(stepsJson)
+        if (o.has("journey")) ScreenJourney.fromJson(o.getJSONArray("journey").toString()) else null
+    } catch (_: Exception) { null }
+
     suspend fun list(): String {
         val all = dao.list()
         if (all.isEmpty()) return "No recipes saved yet. Run a task, then say: save that as <name>"
         return "Saved recipes:\n" + all.joinToString("\n") { r ->
-            val steps = parse(r.stepsJson).joinToString(" → ") { it.tool }
-            val runs = if (r.runCount > 0) " (run ${r.runCount}×)" else ""
-            "• ${r.name}: $steps$runs"
+            // A routine taught by demonstration has no tool steps — it is a
+            // route through screens. Listing it by its (empty) step list
+            // printed a bare name and nothing else, so the one place that
+            // answers "what have I taught you" said nothing about the things
+            // actually taught.
+            val route = routeIn(r.stepsJson)
+            if (route != null) {
+                // A taught routine is described by what the agent knows about
+                // it, not by how many screens it happens to contain. "3
+                // screens" tells the user nothing they can act on; "you showed
+                // me this, but I have never walked it myself" does.
+                "• ${r.name}: ${ScreenJourney.describe(route)} — " +
+                    (competenceIn(r.stepsJson)?.describe() ?: "")
+            } else {
+                val steps = parse(r.stepsJson).joinToString(" → ") { it.tool }
+                val runs = if (r.runCount > 0) " (run ${r.runCount}×)" else ""
+                "• ${r.name}: ${steps.ifBlank { "nothing recorded" }}$runs"
+            }
         }
     }
 

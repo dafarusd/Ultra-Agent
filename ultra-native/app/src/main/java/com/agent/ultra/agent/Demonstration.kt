@@ -165,7 +165,11 @@ object Demonstration {
 
     /** The screens passed through, which is the part that actually works. */
     private var route = listOf<ScreenJourney.Waypoint>()
-    @Volatile private var lastSample = 0L
+
+    /** The screen we are on now, not yet judged worth recording. */
+    private var pendingKey = ""
+    private var pendingWaypoint: ScreenJourney.Waypoint? = null
+    private var pendingSince = 0L
 
     val journey: List<ScreenJourney.Waypoint> get() = synchronized(this) { route.toList() }
 
@@ -180,14 +184,72 @@ object Demonstration {
     @Synchronized
     fun noteScreen(pkg: String, nodes: List<ScreenStructure.Node>) {
         if (!recording) return
+        // Our own screens are not part of anyone's route.
+        //
+        // The step recorder has always known this; the screen recorder did
+        // not, and nobody noticed because the two are different code paths
+        // that were written months apart. Every route was therefore recorded
+        // starting from Agent Ultra, because the user necessarily opens Agent
+        // Ultra to say "stop watching". Replaying one then tried to launch the
+        // agent from inside the agent, matched its own screen as the first
+        // waypoint before doing anything at all, and reported reaching a step
+        // it had not taken.
+        if (pkg.isBlank() || pkg == OWN_PACKAGE) return
+        // No throttle here any more, and that is the point.
+        //
+        // Coalescing events belongs in one place, and that place is the
+        // sampler, which now waits for the event stream to go quiet and reads
+        // once. A second throttle here was not a safety net — it silently
+        // dropped whichever racing thread arrived second, which was sometimes
+        // the one carrying a screen nothing else would report. Two owners of
+        // one decision is how a recording became a coin toss.
         val now = System.currentTimeMillis()
-        if (now - lastSample < SAMPLE_THROTTLE_MS) return
-        lastSample = now
-        val before = route.size
-        route = ScreenJourney.append(route, ScreenJourney.waypointOf(pkg, nodes))
-        if (route.size != before) {
-            android.util.Log.i("UltraLearn", "screen ${route.size}: $pkg")
+        // A screen counts once the user has left it, having stayed a while.
+        //
+        // Two earlier designs were wrong in opposite directions. Recording
+        // every sample captured pages part-way through loading — a progress
+        // bar and a reload button hash to a screen that exists for under a
+        // second and never recurs, and a route built from those cannot be
+        // walked. Requiring two samples of the same screen then recorded
+        // almost nothing, because a screen that has settled stops producing
+        // the events that would sample it: the design depended on the absence
+        // it was trying to detect.
+        //
+        // Leaving is the reliable signal. Moving to a new screen always fires
+        // an event, so the previous one can be judged then — and judged on how
+        // long the user stayed, which is what separates a page someone read
+        // from a frame that flickered past on the way to it.
+        val seen = ScreenJourney.waypointOf(pkg, nodes) ?: return
+        if (seen.key == pendingKey) return
+        confirmPending()
+        pendingKey = seen.key
+        pendingWaypoint = seen
+        pendingSince = now
+    }
+
+    /**
+     * Commit the screen we were on, if the user actually stopped there.
+     *
+     * Called when a new screen appears and again when watching stops, because
+     * the last screen of a demonstration is usually the point of it — the user
+     * arrives at History and says "stop watching", and nothing else comes
+     * along to push it out.
+     */
+    private fun confirmPending() {
+        val w = pendingWaypoint ?: return
+        if (System.currentTimeMillis() - pendingSince < DWELL_MS) {
+            pendingWaypoint = null
+            return
         }
+        val before = route.size
+        route = ScreenJourney.append(route, w)
+        if (route.size != before) {
+            // The digest is logged so two recordings of the same walk can be
+            // compared. It is a hash of which view ids a screen is built from
+            // and holds nothing that was on the screen.
+            android.util.Log.i("UltraLearn", "screen ${route.size}: ${w.pkg}/${w.digest}")
+        }
+        pendingWaypoint = null
     }
 
     val isRecording: Boolean get() = recording
@@ -214,7 +276,9 @@ object Demonstration {
         com.agent.ultra.AgentAccessibilityService.drainPendingLogs()
         captured.clear()
         route = emptyList()
-        lastSample = 0L
+        pendingKey = ""
+        pendingWaypoint = null
+        pendingSince = 0L
         startedAt = System.currentTimeMillis()
         recording = true
         android.util.Log.i("UltraLearn", "watching — nothing was kept from before this moment")
@@ -257,6 +321,7 @@ object Demonstration {
     @Synchronized
     fun stop(): List<Step> {
         collect()
+        confirmPending()   // the screen they ended on is usually the point
         recording = false
         val result = captured.toList()
         captured.clear()
@@ -270,6 +335,9 @@ object Demonstration {
         recording = false
         captured.clear()
         route = emptyList()
+        pendingKey = ""
+        pendingWaypoint = null
+        pendingSince = 0L
         com.agent.ultra.AgentAccessibilityService.drainPendingLogs()
     }
 
@@ -278,12 +346,17 @@ object Demonstration {
     fun soFar(): List<Step> { collect(); return captured.toList() }
 
     private const val OWN_PACKAGE = "com.agent.ultra"
+    /**
+     * How long a screen must hold before it is part of a route.
+     *
+     * Long enough that a page mid-load does not qualify, short enough that a
+     * menu someone opens and immediately taps through still does.
+     */
+    private const val DWELL_MS = 1500L
+
     private const val MAX_STEPS = 40
     private const val MIN_STEPS = 2
 
-    /** One navigation fires several window events; reading the whole tree for
-     * each is wasted work on the phone of someone mid-demonstration. */
-    private const val SAMPLE_THROTTLE_MS = 1200L
 
     /** Below this, nothing was demonstrated — the request simply came back
      * round to the model too fast. */

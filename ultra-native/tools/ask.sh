@@ -25,4 +25,9 @@ for i in $(seq 1 $((TIMEOUT / 3))); do
   sleep 3
   if adb logcat -d 2>/dev/null | grep -q "UltraBrain.*RUN COMPLETE"; then break; fi
 done
-adb logcat -d 2>/dev/null | grep -E "UltraBrain|UltraGate|UltraNav|OpenAiClient" | sed 's/^.*: //'
+# Strip ONLY logcat's own prefix. The old `s/^.*: //` was greedy and cut to the
+# LAST colon on the line, so every message containing one came back truncated:
+# a recipe listing printed as blank lines, and two rounds of debugging went
+# looking for a store that was never actually empty.
+adb logcat -d 2>/dev/null | grep -E "UltraBrain|UltraGate|UltraNav|UltraWalk|UltraLearn|OpenAiClient" \
+  | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ [A-Z] [A-Za-z_]+: //'

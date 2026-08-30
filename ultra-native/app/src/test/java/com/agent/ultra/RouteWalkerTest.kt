@@ -121,4 +121,70 @@ class RouteWalkerTest {
         assertEquals("", c.first().vid)
         assertEquals("@1", RouteWalker.keyOf(c.first()))
     }
+
+    /**
+     * An icon button with no text is still a button, and the app's own id is
+     * the only name it has. Chrome's menu button carries a description; a
+     * "delete" icon in a file manager often carries nothing at all, and a
+     * search that read only labels would tap it.
+     */
+    @Test
+    fun `a risky view id is refused even with no label`() {
+        val flat = """[
+          {"i":0,"c":true,"t":"","d":"","vid":"delete_button"},
+          {"i":1,"c":true,"t":"","d":"","vid":"history_button"}
+        ]"""
+        val names = RouteWalker.candidatesFromFlat(flat).map { it.vid }
+        assertFalse("delete_button" in names)
+        assertTrue("history_button" in names)
+    }
+
+    /** Underscores separate words, so a two-word phrase is caught in an id. */
+    @Test
+    fun `a two word risk phrase is caught inside a view id`() {
+        val flat = """[{"i":0,"c":true,"t":"","d":"","vid":"place_order_cta"}]"""
+        assertTrue(RouteWalker.candidatesFromFlat(flat).isEmpty())
+    }
+
+    /**
+     * "New tab" is safe to press and still belongs last: there is no history
+     * behind a blank page, so back cannot return the search to where it was.
+     */
+    @Test
+    fun `a control that opens a new context is tried last, not refused`() {
+        val flat = """[
+          {"i":0,"c":true,"t":"","d":"New tab","vid":"optional_toolbar_button"},
+          {"i":1,"c":true,"t":"","d":"Customize and control","vid":"menu_button"}
+        ]"""
+        val order = RouteWalker.candidatesFromFlat(flat).map { it.vid }
+        assertEquals(listOf("menu_button", "optional_toolbar_button"), order)
+    }
+
+    /**
+     * The routine's name is the only statement of intent in a replay. A menu
+     * of icon buttons and named rows should offer the one the user named.
+     */
+    @Test
+    fun `a control echoing the routine name is tried first`() {
+        val flat = """[
+          {"i":0,"c":true,"t":"","d":"Forward","vid":"button_one"},
+          {"i":1,"c":true,"t":"","d":"Bookmark","vid":"button_two"},
+          {"i":2,"c":true,"t":"","d":"","vid":"open_history_menu_id"},
+          {"i":3,"c":true,"t":"","d":"","vid":"downloads_menu_id"}
+        ]"""
+        val first = RouteWalker.candidatesFromFlat(flat, emptySet(), "chrome history").first()
+        assertEquals("open_history_menu_id", first.vid)
+    }
+
+    /** With nothing in common, the order is exactly what it was before. */
+    @Test
+    fun `an unrelated routine name changes nothing`() {
+        val flat = """[
+          {"i":0,"c":true,"t":"","d":"Forward","vid":"button_one"},
+          {"i":1,"c":true,"t":"","d":"","vid":"downloads_menu_id"}
+        ]"""
+        val withGoal = RouteWalker.candidatesFromFlat(flat, emptySet(), "pay the gas bill").map { it.vid }
+        val without = RouteWalker.candidatesFromFlat(flat).map { it.vid }
+        assertEquals(without, withGoal)
+    }
 }

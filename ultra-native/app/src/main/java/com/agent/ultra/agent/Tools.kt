@@ -126,8 +126,15 @@ class Tools(
                         "I was not watching anything. Do not start watching now — tell the " +
                             "user to say \"watch me\" when they are ready to show you."
                     else {
-                        val route = Demonstration.journey
+                        // Stop first, then read. Stopping is what commits the
+                        // screen the user ended on, and that screen is usually
+                        // the whole point of the demonstration — they arrive at
+                        // History and say "stop watching". Reading the route
+                        // before stopping judged a route one screen short of
+                        // the one that was recorded, and threw away good
+                        // demonstrations as "nothing was recorded".
                         val steps = Demonstration.stop()
+                        val route = Demonstration.journey
                         val name = params.optString("name").trim()
                         when {
                             // The route is what actually works. Android reports
@@ -181,6 +188,9 @@ class Tools(
                     else "Error: could not open $url"
                 }
                 "react_navigate" -> {
+                    // Already judged this request wrong; do not go round again.
+                    navigator?.stoppedOnDisagreement?.let { return it }
+
                     val goal = params.optString("goal")
                     val hint = params.optString("appHint")
                     val nav = navigator ?: return "Error: navigator not wired"

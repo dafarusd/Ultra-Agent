@@ -1,5 +1,7 @@
 package com.agent.ultra
 
+import com.agent.ultra.agent.Brain
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,5 +43,17 @@ class RecipeGuardTest {
     fun `an ordinary routine is untouched`() {
         val tools = listOf("app_launch", "react_navigate", "notification_read")
         assertEquals(tools, realSteps(tools))
+    }
+
+    /**
+     * Task memory and the recipe store are different stores with different
+     * exclusion lists. Both must refuse to remember the tools that exist to
+     * manage remembering.
+     */
+    @Test
+    fun `task memory never stores the watching tools`() {
+        for (t in listOf("watch_me", "stop_watching", "cancel_watching")) {
+            assertTrue("$t must not be stored as a shortcut step", t in Brain.RECIPE_TOOLS)
+        }
     }
 }

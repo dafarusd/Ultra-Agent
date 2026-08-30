@@ -155,3 +155,89 @@ class ScreenJourneyTest {
         assertFalse("a hash means nothing to a person", text.contains("aaa"))
     }
 }
+
+/**
+ * Remembering which control leads where.
+ *
+ * A route walked once should not be searched again — that is the whole reason
+ * for walking it the first time.
+ */
+class RouteMemoryTest {
+
+    private fun wp(d: String, via: String = "") =
+        ScreenJourney.Waypoint("com.app", d, "IDS", via)
+
+    @Test
+    fun `a learned door survives storage`() {
+        val route = listOf(wp("aaa"), wp("bbb", "menu_button"))
+        val back = ScreenJourney.fromJson(ScreenJourney.toJson(route))
+        assertEquals("menu_button", back[1].via)
+    }
+
+    @Test
+    fun `a route read from an older save simply knows nothing yet`() {
+        // Written before routes remembered anything. It must load and search,
+        // not fail.
+        val old = """[{"pkg":"com.app","d":"aaa","c":"IDS"},{"pkg":"com.app","d":"bbb","c":"IDS"}]"""
+        val route = ScreenJourney.fromJson(old)
+        assertEquals(2, route.size)
+        assertEquals("", route[1].via)
+    }
+
+    @Test
+    fun `learning is recognised as worth saving`() {
+        val before = listOf(wp("aaa"), wp("bbb"))
+        val after = listOf(wp("aaa"), wp("bbb", "menu_button"))
+        assertTrue(ScreenJourney.learnedSomethingNew(before, after))
+    }
+
+    @Test
+    fun `a walk that learned nothing new is not saved again`() {
+        val known = listOf(wp("aaa"), wp("bbb", "menu_button"))
+        assertFalse(ScreenJourney.learnedSomethingNew(known, known))
+    }
+
+    @Test
+    fun `a route of a different shape is never merged`() {
+        // If the stored route and the walked one disagree about their length,
+        // something is wrong and overwriting would be worse than doing nothing.
+        val before = listOf(wp("aaa"), wp("bbb"))
+        val after = listOf(wp("aaa"), wp("bbb", "x"), wp("ccc", "y"))
+        assertFalse(ScreenJourney.learnedSomethingNew(before, after))
+    }
+
+    /**
+     * A door moving is the app changing under us, and it has to be both saved
+     * and counted. The old check only noticed a blank hop becoming known, so a
+     * control that moved was found, used, and then forgotten — leaving the
+     * agent to search for the same door again on every run, forever.
+     */
+    @Test
+    fun `a door that moved is saved and counted as a change`() {
+        val before = listOf(
+            ScreenJourney.Waypoint("p", "a", "IDS"),
+            ScreenJourney.Waypoint("p", "b", "IDS", "old_button"),
+        )
+        val after = listOf(
+            ScreenJourney.Waypoint("p", "a", "IDS"),
+            ScreenJourney.Waypoint("p", "b", "IDS", "new_button"),
+        )
+        assertTrue(ScreenJourney.learnedSomethingNew(before, after))
+        assertEquals(1, ScreenJourney.doorsThatMoved(before, after))
+    }
+
+    /** Learning a door for the first time is not the app changing. */
+    @Test
+    fun `learning a blank hop is not counted as a change`() {
+        val before = listOf(
+            ScreenJourney.Waypoint("p", "a", "IDS"),
+            ScreenJourney.Waypoint("p", "b", "IDS", ""),
+        )
+        val after = listOf(
+            ScreenJourney.Waypoint("p", "a", "IDS"),
+            ScreenJourney.Waypoint("p", "b", "IDS", "menu_button"),
+        )
+        assertTrue(ScreenJourney.learnedSomethingNew(before, after))
+        assertEquals(0, ScreenJourney.doorsThatMoved(before, after))
+    }
+}

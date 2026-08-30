@@ -311,16 +311,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                     // this handler already runs on main — calling it here would
                     // deadlock the whole service.
                     if (com.agent.ultra.agent.Demonstration.INSTANCE.isRecording()) {
-                        final String journeyPkg = pkg;
-                        new Thread(() -> {
-                            try {
-                                com.agent.ultra.agent.Demonstration.INSTANCE.noteScreen(
-                                    journeyPkg,
-                                    com.agent.ultra.agent.ScreenStructure.INSTANCE.parse(getScreenTree()));
-                            } catch (Exception e) {
-                                Log.w(TAG, "journey sample failed: " + e.getMessage());
-                            }
-                        }, "ultra-journey").start();
+                        scheduleJourneySample();
                     }
                     break;
                 }
@@ -397,14 +388,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                     // the cost is a tree parse every second or so, and only
                     // while someone is deliberately being watched.
                     if (com.agent.ultra.agent.Demonstration.INSTANCE.isRecording()) {
-                        final String contentPkg = currentPackage;
-                        new Thread(() -> {
-                            try {
-                                com.agent.ultra.agent.Demonstration.INSTANCE.noteScreen(
-                                    contentPkg,
-                                    com.agent.ultra.agent.ScreenStructure.INSTANCE.parse(getScreenTree()));
-                            } catch (Exception ignored) {}
-                        }, "ultra-journey-content").start();
+                        scheduleJourneySample();
                     }
                     long now = System.currentTimeMillis();
                     if (now - lastContentChangedLog > CONTENT_THROTTLE_MS) {
@@ -651,6 +635,64 @@ public class AgentAccessibilityService extends AccessibilityService {
      * @return "ok", "moved" when the label no longer matches, "gone" when
      *   there is no such index, or "failed" when both click and tap refused.
      */
+    /**
+     * Press a control by the app's own id for it, falling back to position.
+     *
+     * Position has burned this codebase three times now. Choosing from the
+     * tree and tapping by flat index meant two traversals disagreed about
+     * which node an index named; choosing from a dump a moment old means the
+     * screen itself has moved on. The label guard catches that only when the
+     * control has a label, and a great many do not — Chrome's whole overflow
+     * menu is rows with an id and no text, which is exactly where a replay
+     * spends its time.
+     *
+     * An id is what the developer called that control. It survives the screen
+     * being re-read, re-laid out, and renumbered.
+     */
+    public String clickByViewId(String vid, int fallbackIndex, String expectedLabel) {
+        if (vid == null || vid.isEmpty()) return clickByIndex(fallbackIndex, expectedLabel);
+        AtomicReference<String> result = new AtomicReference<>("gone");
+        CountDownLatch latch = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            AccessibilityNodeInfo root = null;
+            try {
+                if (!checkPackageAllowed()) { result.set("failed"); return; }
+                root = targetWindowRoot();
+                if (root == null) { result.set("gone"); return; }
+                java.util.List<AccessibilityNodeInfo> order = new java.util.ArrayList<>();
+                collectInFlatOrder(root, order);
+                int found = -1;
+                for (int i = 0; i < order.size(); i++) {
+                    if (vid.equals(shortName(idOf(order.get(i))))) { found = i; break; }
+                }
+                for (AccessibilityNodeInfo n : order) {
+                    try { n.recycle(); } catch (Exception ignored) {}
+                }
+                if (found < 0) {
+                    Log.i(TAG, "CLICK_VID: " + vid + " is not on this screen");
+                    result.set("gone");
+                    return;
+                }
+                if (found != fallbackIndex) {
+                    Log.i(TAG, "CLICK_VID: " + vid + " moved from [" + fallbackIndex + "] to [" + found + "]");
+                }
+                result.set("resolved:" + found);
+            } catch (Exception e) {
+                Log.e(TAG, "CLICK_VID failed: " + e.getMessage());
+                result.set("failed");
+            } finally {
+                if (root != null) root.recycle();
+                latch.countDown();
+            }
+        });
+        try { latch.await(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        String r = result.get();
+        if (r.startsWith("resolved:")) {
+            return clickByIndex(Integer.parseInt(r.substring(9)), expectedLabel);
+        }
+        return r;
+    }
+
     public String clickByIndex(int index, String expectedLabel) {
         AtomicReference<String> result = new AtomicReference<>("gone");
         CountDownLatch latch = new CountDownLatch(1);
@@ -974,6 +1016,62 @@ public class AgentAccessibilityService extends AccessibilityService {
      * produce the same order. A cap only one of them obeys is not a cap, it is
      * a disagreement.
      */
+    /**
+     * The one thread that samples screens during a demonstration.
+     *
+     * There used to be no such thing: every window and content event started a
+     * thread of its own, each slept, and then all of them raced to record what
+     * they had read. Whichever arrived first won and the rest were dropped by a
+     * throttle, so the number of screens a demonstration recorded depended on
+     * how many events each screen happened to fire and how the scheduler felt
+     * about it. The same walk through Chrome recorded three screens, then two,
+     * then three.
+     *
+     * One thread, one pending read, and every new event pushes that read
+     * further out. A screen is sampled once, when its event stream goes quiet,
+     * which is the same moment the replay considers a screen settled. Bursts of
+     * events cost nothing but a rescheduled task.
+     */
+    private final java.util.concurrent.ScheduledExecutorService journeySampler =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "ultra-journey");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private java.util.concurrent.ScheduledFuture<?> pendingJourneySample;
+
+    /**
+     * Read the screen once the events about it have stopped arriving.
+     *
+     * Deliberately reads the package at sample time rather than carrying the
+     * one from the event that armed it: the tree and the name of the app it
+     * belongs to have to come from the same moment, or a fast navigation
+     * records one app's screen under another's name.
+     */
+    private synchronized void scheduleJourneySample() {
+        if (pendingJourneySample != null) pendingJourneySample.cancel(false);
+        pendingJourneySample = journeySampler.schedule(() -> {
+            try {
+                if (!com.agent.ultra.agent.Demonstration.INSTANCE.isRecording()) return;
+                com.agent.ultra.agent.Demonstration.INSTANCE.noteScreen(
+                        currentPackage,
+                        com.agent.ultra.agent.ScreenStructure.INSTANCE.parse(getScreenTree()));
+            } catch (Exception e) {
+                Log.w(TAG, "journey sample failed: " + e.getMessage());
+            }
+        }, SETTLE_BEFORE_SAMPLE_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * How long to let a screen finish before recording what it looks like.
+     *
+     * Matched to the replay's own settle wait. The two must agree: a route is
+     * only walkable if the screens in it were fingerprinted the same way they
+     * will be recognised.
+     */
+    private static final long SETTLE_BEFORE_SAMPLE_MS = 1800L;
+
     static final int FLAT_NODE_LIMIT = 1200;
 
     private void flattenNode(AccessibilityNodeInfo node, JSONArray flat, int parent, int depth) {
