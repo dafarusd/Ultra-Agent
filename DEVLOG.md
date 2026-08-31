@@ -2666,3 +2666,51 @@ and package contents were checked instead; QC section 8 — watch a safety featu
 refuse on the build being shipped — was not satisfied. Logged in
 `vault/publishing/log.md` with the follow-up owed: install 2.2.0, watch it
 refuse, then either record the pass or withdraw.
+
+## 2026-08-31 (later) — 2.2.0 verified, and the outreach around it
+
+**Device verification closed.** 2.2.0 installs over the previous build, launches,
+the accessibility service binds, and it was watched refusing on the shipped
+build: `DISAGREE refused "Confirm payment": this screen says £2,400.00 and you
+said 240`. QC section 8 is satisfied on the artefact that shipped rather than on
+one like it. `git diff` confirms 2.2.0 contains no source change since the
+29 Aug proof, only the version bump, so the eight-taps-to-two claim on the
+public page still stands. Release stands, nothing withdrawn.
+
+**Published to X** (`@Dafarusd`, account verified before posting): the 2.2.0
+announcement with the link at character ~236 so it sits inside the fold, a
+follow-up in the same thread on the payment-mismatch stop, and a reply to a
+reader who asked whether a ~4.4GB model stays resident when the agent jumps to
+the browser. Answered honestly — it stays resident because the agent is a
+service rather than the foreground app, so no per-turn reload; what you pay is
+the low-memory killer, and 7B scores too big on the test phone anyway.
+
+**Reddit assessed and deliberately skipped.** `u/Adventurous-Win6029` has 1 post
+karma at two weeks old. r/LocalLLaMA — the only sub that fits — bans LLM-written
+copy and bots posting as humans, and enforces it visibly: the top comment on the
+thread I looked at was a mod-adjacent user telling the OP to rewrite their post
+in their own words. A promo link from that account breaks three rules at once.
+The realistic cost was the account, not the post.
+
+**Better lever found and used.** The OP of that thread, `Onion99`, is building
+Agro — a cross-platform on-device agent in Kotlin, same problem, same month —
+and had publicly asked for architecture critique. Their thread was locked, but
+Issues were open, so the feedback went there instead:
+`github.com/Onion99/Agro/issues/2`, under `dafarusd`. Five measured findings:
+the `TYPE_VIEW_CLICKED` measurement, watching screens rather than clicks,
+fingerprinting only settled screens, choosing and acting having to read the same
+list, and the deny-list failure where a blocked code went to the clipboard and
+then a file. Platform behaviour and design lessons only, no internals.
+
+**Tooling note worth keeping.** GitHub's new-issue form swallows the first
+keystroke burst after a click. The first attempt looked filled, submitted an
+empty form, and reset without an error. Anything that fills a web form should
+type, screenshot, then submit — and verify against the destination afterwards
+rather than trusting the click.
+
+**Vault backed up for the first time.** It had no second copy anywhere; `QC.md`
+and `qc/` were untracked, so the gate everything passes before going public
+existed as loose files in one working tree. Now committed, and
+`<backup-script>` pushes both Agent Ultra and the vault when the drive is
+plugged in. Verified: `vault.git` created on the drive, 284 MiB, containing
+`QC.md`, `qc/prepublish.sh` and `publishing/log.md`.
