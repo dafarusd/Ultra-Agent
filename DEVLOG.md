@@ -2646,3 +2646,23 @@ catch.
 invisible; four currencies.
 
 262 tests, 0 failures.
+
+## 2026-08-31 — 2.2.0 published
+
+Version bumped to `2.2.0-native` (versionCode 11) and published to
+`Ultra-Agent-Release`: APK, README and the site all point at it, all serving
+200, 8,719,220 bytes, signed with the real release key. 2.1.3 stays in the repo
+so no existing link dies.
+
+Public copy gained the capabilities that landed on 29 Aug — route learning by
+demonstration, competence reporting — and three refusals that were never
+described publicly: the payment-mismatch stop, a code being unable to leave the
+app it was read in, and never pressing pay/send/delete while searching. Limits
+were added rather than trimmed.
+
+**Shipped without device verification, deliberately and on request.** The test
+phone was unplugged and the owner asked for the release to go up first. R8 keeps
+and package contents were checked instead; QC section 8 — watch a safety feature
+refuse on the build being shipped — was not satisfied. Logged in
+`vault/publishing/log.md` with the follow-up owed: install 2.2.0, watch it
+refuse, then either record the pass or withdraw.
