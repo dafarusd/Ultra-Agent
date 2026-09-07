@@ -67,8 +67,16 @@ Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObserv
 
 - **Gate audit log** (`GateAuditLog.kt`) — JSONL file on device, one line per gate decision. Fields: timestamp, tool name, outcome (ALLOWED/BLOCKED/OVERRIDDEN), rule triggered, observation counts (high/low, tool-only high, tool-only low-only). No args, no message content, no PII — safe for public sharing. All three gate checkpoints (cloud, local, recipe) plus operator overrides log here. FileProvider added to manifest for share intent. Export button in Settings bundles the log with a device fingerprint header (RAM MB, Android SDK version, device manufacturer+model). 4 unit tests. Total 343.
 
+- **Risk scoring scaffold** (`gate/RiskScorer.kt`) — 0-100 risk score per gate decision. Four signal components:
+  - Effect tier (0-40): EGRESS=40, MUTATE=20, RESOLVE=10, READ=0
+  - Observation quality (0-25): tree-only=25, no tool obs=5, has HIGH=0
+  - Taint exposure (0-25): secret found in egress args=25, else 0
+  - Argument traceability (0-20): untraced args (length>5, not in user request) — 1 untraced=10, 2+=20
+
+  Score doesn't block anything — existing rules still govern enforcement. Score is attached to `Gate.Verdict`, written to every audit log entry under a `"risk"` JSON object with `total`, `effect`, `obs`, `taint`, `trace` fields. All 8 audit log call sites in Brain.kt pass the score through. Conservative defaults — the whole point is to collect real data via the audit log export, then calibrate thresholds before the score becomes enforcement. 14 tests (RiskScorerTest.kt). Total 357.
+
 **Open:**
-- Risk scoring calibration — gate audit log now collects the data; community export enables crowdsourced threshold tuning
+- Risk scoring threshold calibration — blocked on real community usage data from gate audit log exports
 - PrismML llama.cpp fork evaluation — would unlock Bonsai Q1_0/Q2_0 models on 4GB phones (572 MB for 4B params)
 - More event triggers — battery low, charging state, app install, etc.
 
