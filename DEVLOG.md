@@ -50,12 +50,15 @@ Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObserv
 
 **Status:** RUNTIME-PROVEN. Gate rule blocks egress when agent acts on screen reads alone, passes when system API data is present.
 
+**Also built this session:**
+
+- **SMS verification code auto-extract** (`SmsCodeDetector.kt`) — deterministic regex, no LLM. Notification listener detects incoming SMS with 4-8 digit codes near verification keywords, copies to clipboard, shows a toast. Off by default, Settings toggle added. 19 unit tests. Total 332.
+- **Out-of-band verification for device toggles** — `verifyAction()` now covers WiFi (WifiManager.isWifiEnabled), Bluetooth (BluetoothAdapter.isEnabled), DND (NotificationManager.currentInterruptionFilter), and volume (AudioManager.getStreamVolume). Each queries the system API after the toggle and reports VERIFIED/UNVERIFIED. Caught a real bug on device: model sends `{"level": 0.5}` but tool expects `{"percent": 50}`.
+
 **Open:**
 - Risk scoring calibration — needs real usage data to set thresholds
-- Out-of-band verification — flashlight from SensorManager, not tree (donk8r item 2/4)
 - Alternative on-device models — Bonsai-9B, Needle2, PrismML 4B
-- SMS pin auto-detect — event-driven trigger layer
-- Event-based triggers — respond to incoming SMS/notifications without manual activation
+- Event-based triggers — respond to incoming SMS/notifications without manual activation (beyond the SMS code extractor)
 
 ---
 
@@ -145,9 +148,9 @@ out-of-band (battery, flashlight). No code changes made.
 
 ## Current State
 
-**Last updated:** 2026-09-07 (Confidence scoring + low_confidence_egress gate rule; 313 tests)
+**Last updated:** 2026-09-07 (Confidence scoring + low_confidence_egress gate rule; 332 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **313/313**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **332/332**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
