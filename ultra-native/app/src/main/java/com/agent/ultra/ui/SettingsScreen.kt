@@ -538,7 +538,7 @@ fun SettingsScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text("System event triggers", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Toast when battery drops low, recovers, or the charger is plugged/unplugged.",
+                    "Toast on battery low/ok, charger plug/unplug, screen on/off, headphones, app install/remove.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )

@@ -117,7 +117,7 @@ class EventTriggerTest {
         EventTrigger.registerDefaults()
         EventTrigger.registerDefaults()
         assertEquals(1, fieldCount("triggers"))
-        assertEquals(3, fieldCount("systemTriggers"))
+        assertEquals(6, fieldCount("systemTriggers"))
     }
 
     @Test
@@ -140,14 +140,23 @@ class EventTriggerTest {
     }
 
     @Test
-    fun `system trigger names are distinct`() {
+    fun `all system trigger names are distinct`() {
         EventTrigger.registerDefaults()
         val names = listOf(
             EventTrigger.BatteryLowTrigger.name,
             EventTrigger.BatteryOkTrigger.name,
             EventTrigger.ChargingTrigger.name,
+            EventTrigger.ScreenTrigger.name,
+            EventTrigger.HeadphoneTrigger.name,
+            EventTrigger.AppInstallTrigger.name,
         )
         assertEquals(names.size, names.toSet().size)
+    }
+
+    @Test
+    fun `registerDefaults registers all 6 system triggers`() {
+        EventTrigger.registerDefaults()
+        assertEquals(6, fieldCount("systemTriggers"))
     }
 
     @Test
@@ -166,13 +175,44 @@ class EventTriggerTest {
     }
 
     @Test
+    fun `screen trigger has correct name`() {
+        assertEquals("screen_state", EventTrigger.ScreenTrigger.name)
+    }
+
+    @Test
+    fun `headphone trigger has correct name`() {
+        assertEquals("headphones", EventTrigger.HeadphoneTrigger.name)
+    }
+
+    @Test
+    fun `app install trigger has correct name`() {
+        assertEquals("app_install", EventTrigger.AppInstallTrigger.name)
+    }
+
+    @Test
     fun `charging trigger data reflects intent action`() {
-        // Can't test evaluate (needs SharedPrefs), but verify the data
-        // shape matches what the executor receives on device.
         val connected = Action(Action.Type.TOAST, "Charger connected", "connected")
         val disconnected = Action(Action.Type.TOAST, "Charger disconnected", "disconnected")
         assertEquals("connected", connected.data)
         assertEquals("disconnected", disconnected.data)
         assertNotEquals(connected.label, disconnected.label)
+    }
+
+    @Test
+    fun `headphone trigger data reflects state`() {
+        val plugged = Action(Action.Type.TOAST, "Headphones connected", "connected")
+        val unplugged = Action(Action.Type.TOAST, "Headphones disconnected", "disconnected")
+        assertEquals("connected", plugged.data)
+        assertEquals("disconnected", unplugged.data)
+        assertNotEquals(plugged.label, unplugged.label)
+    }
+
+    @Test
+    fun `app install trigger data carries package name`() {
+        val install = Action(Action.Type.TOAST, "App installed: com.example.app", "com.example.app")
+        val remove = Action(Action.Type.TOAST, "App removed: com.example.app", "com.example.app")
+        assertEquals("com.example.app", install.data)
+        assertEquals("com.example.app", remove.data)
+        assertNotEquals(install.label, remove.label)
     }
 }

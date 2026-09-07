@@ -160,12 +160,61 @@ object EventTrigger {
         }
     }
 
+    object ScreenTrigger : SystemTrigger {
+        override val name = "screen_state"
+        override val intentFilter: IntentFilter
+            get() = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            }
+
+        override fun evaluate(context: Context, intent: Intent): Action? {
+            if (!com.agent.ultra.ui.UltraPrefs.systemTriggers(context)) return null
+            val on = intent.action == Intent.ACTION_SCREEN_ON
+            return Action(Action.Type.TOAST, if (on) "Screen on" else "Screen off", if (on) "on" else "off")
+        }
+    }
+
+    object HeadphoneTrigger : SystemTrigger {
+        override val name = "headphones"
+        override val intentFilter: IntentFilter
+            get() = IntentFilter(Intent.ACTION_HEADSET_PLUG)
+
+        override fun evaluate(context: Context, intent: Intent): Action? {
+            if (!com.agent.ultra.ui.UltraPrefs.systemTriggers(context)) return null
+            val plugged = intent.getIntExtra("state", 0) == 1
+            val label = if (plugged) "Headphones connected" else "Headphones disconnected"
+            return Action(Action.Type.TOAST, label, if (plugged) "connected" else "disconnected")
+        }
+    }
+
+    object AppInstallTrigger : SystemTrigger {
+        override val name = "app_install"
+        override val intentFilter: IntentFilter
+            get() = IntentFilter().apply {
+                addAction(Intent.ACTION_PACKAGE_ADDED)
+                addAction(Intent.ACTION_PACKAGE_REMOVED)
+                addDataScheme("package")
+            }
+
+        override fun evaluate(context: Context, intent: Intent): Action? {
+            if (!com.agent.ultra.ui.UltraPrefs.systemTriggers(context)) return null
+            val pkg = intent.data?.schemeSpecificPart ?: return null
+            val removed = intent.action == Intent.ACTION_PACKAGE_REMOVED
+            val label = if (removed) "App removed: $pkg" else "App installed: $pkg"
+            return Action(Action.Type.TOAST, label, pkg)
+        }
+    }
+
     fun registerDefaults() {
         if (triggers.isEmpty()) register(SmsCodeTrigger)
         if (systemTriggers.isEmpty()) {
             registerSystem(BatteryLowTrigger)
             registerSystem(BatteryOkTrigger)
             registerSystem(ChargingTrigger)
+            registerSystem(ScreenTrigger)
+            registerSystem(HeadphoneTrigger)
+            registerSystem(AppInstallTrigger)
         }
     }
 }
