@@ -300,6 +300,12 @@ class LocalModelEngine(private val context: Context) {
                 "Strong for its size on instruction following and structured output.",
             ),
             ModelChoice(
+                "Gemma 4 E2B (2.8B, Q4_K_M)",
+                "https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF/resolve/main/google_gemma-4-E2B-it-Q4_K_M.gguf",
+                "gemma4-e2b-q4km.gguf", 3302,
+                "Google's latest small model. Better reasoning than Gemma 3 at similar speed. Needs 6GB+ RAM.",
+            ),
+            ModelChoice(
                 "Qwen2.5 7B (Q4_K_M)",
                 "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
                 "qwen25-7b-q4km.gguf", 4466,
