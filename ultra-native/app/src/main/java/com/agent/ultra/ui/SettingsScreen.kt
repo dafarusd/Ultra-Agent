@@ -530,6 +530,25 @@ fun SettingsScreen(
             })
         }
 
+        var sysTriggers by remember { mutableStateOf(UltraPrefs.systemTriggers(context)) }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("System event triggers", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Toast when battery drops low, recovers, or the charger is plugged/unplugged.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            Switch(checked = sysTriggers, onCheckedChange = {
+                sysTriggers = it
+                UltraPrefs.setSystemTriggers(context, it)
+            })
+        }
+
         // ── Voice ─────────────────────────────────────────────────────
         SectionTitle("VOICE")
         var speak by remember { mutableStateOf(UltraPrefs.speakAnswers(context)) }

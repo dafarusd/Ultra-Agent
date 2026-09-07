@@ -52,6 +52,17 @@ object UltraPrefs {
             .edit().putBoolean(K_SPEAK, on).apply()
     }
 
+    private const val K_SYSTEM_TRIGGERS = "system_triggers"
+
+    fun systemTriggers(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(K_SYSTEM_TRIGGERS, false)
+
+    fun setSystemTriggers(context: Context, on: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(K_SYSTEM_TRIGGERS, on).apply()
+    }
+
     private const val K_SMS_CODE = "auto_extract_sms_code"
 
     /** Auto-copy verification codes from incoming SMS to the clipboard. Off

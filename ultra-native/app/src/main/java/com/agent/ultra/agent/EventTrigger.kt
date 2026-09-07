@@ -1,6 +1,10 @@
 package com.agent.ultra.agent
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.util.Log
 
 /**
@@ -8,8 +12,9 @@ import android.util.Log
  * the LLM. Each trigger is a pure function: event in, action out (or null
  * to skip). No brain, no cloud, no latency.
  *
- * The notification listener calls [evaluate] on every incoming notification.
- * Triggers that need preferences check them themselves.
+ * Two kinds:
+ * - [Trigger]: fires on incoming notifications (the listener calls [evaluate]).
+ * - [SystemTrigger]: fires on system broadcasts (registered via [startSystemTriggers]).
  */
 object EventTrigger {
 
@@ -28,11 +33,25 @@ object EventTrigger {
         fun evaluate(context: Context, pkg: String, title: String, text: String): Action?
     }
 
+    interface SystemTrigger {
+        val name: String
+        val intentFilter: IntentFilter
+        fun evaluate(context: Context, intent: Intent): Action?
+    }
+
     private val triggers = mutableListOf<Trigger>()
+    private val systemTriggers = mutableListOf<SystemTrigger>()
+    private val receivers = mutableListOf<BroadcastReceiver>()
+    private var systemStarted = false
 
     fun register(trigger: Trigger) {
         triggers += trigger
         Log.i(TAG, "registered: ${trigger.name}")
+    }
+
+    fun registerSystem(trigger: SystemTrigger) {
+        systemTriggers += trigger
+        Log.i(TAG, "registered system: ${trigger.name}")
     }
 
     fun evaluate(context: Context, pkg: String, title: String, text: String): List<Action> {
@@ -47,6 +66,39 @@ object EventTrigger {
             }
         }
         return actions
+    }
+
+    fun interface ActionExecutor {
+        fun execute(action: Action)
+    }
+
+    fun startSystemTriggers(context: Context, executor: ActionExecutor) {
+        if (systemStarted) return
+        systemStarted = true
+        for (st in systemTriggers) {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context, intent: Intent) {
+                    try {
+                        val a = st.evaluate(ctx, intent) ?: return
+                        Log.i(TAG, "${st.name} fired: ${a.type} ${a.label}")
+                        executor.execute(a)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "${st.name} failed: ${e.message}")
+                    }
+                }
+            }
+            context.registerReceiver(receiver, st.intentFilter)
+            receivers += receiver
+            Log.i(TAG, "system receiver registered: ${st.name}")
+        }
+    }
+
+    fun stopSystemTriggers(context: Context) {
+        for (r in receivers) {
+            try { context.unregisterReceiver(r) } catch (_: Exception) {}
+        }
+        receivers.clear()
+        systemStarted = false
     }
 
     /** Built-in: SMS verification code → clipboard. */
@@ -67,7 +119,53 @@ object EventTrigger {
         }
     }
 
+    object BatteryLowTrigger : SystemTrigger {
+        override val name = "battery_low"
+        override val intentFilter: IntentFilter
+            get() = IntentFilter(Intent.ACTION_BATTERY_LOW)
+
+        override fun evaluate(context: Context, intent: Intent): Action? {
+            if (!com.agent.ultra.ui.UltraPrefs.systemTriggers(context)) return null
+            val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+            val level = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+            val pct = if (level > 0) "$level%" else "low"
+            return Action(Action.Type.TOAST, "Battery $pct", level.toString())
+        }
+    }
+
+    object BatteryOkTrigger : SystemTrigger {
+        override val name = "battery_ok"
+        override val intentFilter: IntentFilter
+            get() = IntentFilter(Intent.ACTION_BATTERY_OKAY)
+
+        override fun evaluate(context: Context, intent: Intent): Action? {
+            if (!com.agent.ultra.ui.UltraPrefs.systemTriggers(context)) return null
+            return Action(Action.Type.TOAST, "Battery recovered")
+        }
+    }
+
+    object ChargingTrigger : SystemTrigger {
+        override val name = "charging_state"
+        override val intentFilter: IntentFilter
+            get() = IntentFilter().apply {
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
+            }
+
+        override fun evaluate(context: Context, intent: Intent): Action? {
+            if (!com.agent.ultra.ui.UltraPrefs.systemTriggers(context)) return null
+            val plugged = intent.action == Intent.ACTION_POWER_CONNECTED
+            val label = if (plugged) "Charger connected" else "Charger disconnected"
+            return Action(Action.Type.TOAST, label, if (plugged) "connected" else "disconnected")
+        }
+    }
+
     fun registerDefaults() {
         if (triggers.isEmpty()) register(SmsCodeTrigger)
+        if (systemTriggers.isEmpty()) {
+            registerSystem(BatteryLowTrigger)
+            registerSystem(BatteryOkTrigger)
+            registerSystem(ChargingTrigger)
+        }
     }
 }

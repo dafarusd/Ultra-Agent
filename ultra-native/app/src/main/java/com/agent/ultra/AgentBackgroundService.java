@@ -7,10 +7,13 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
+import android.widget.Toast;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import com.agent.ultra.agent.EventTrigger;
 
 public class AgentBackgroundService extends Service {
     private static final String TAG = "AgentBgSvc";
@@ -32,6 +35,16 @@ public class AgentBackgroundService extends Service {
             .build();
         startForeground(NOTIFICATION_ID, notification);
         Log.i(TAG, "Background service started");
+
+        EventTrigger.INSTANCE.registerDefaults();
+        Handler mainHandler = new Handler(getMainLooper());
+        EventTrigger.INSTANCE.startSystemTriggers(this, (EventTrigger.ActionExecutor) action -> {
+            if (action.getType() == EventTrigger.Action.Type.TOAST) {
+                mainHandler.post(() ->
+                    Toast.makeText(AgentBackgroundService.this, action.getLabel(), Toast.LENGTH_SHORT).show()
+                );
+            }
+        });
     }
 
     @Override
@@ -45,6 +58,7 @@ public class AgentBackgroundService extends Service {
 
     @Override
     public void onDestroy() {
+        EventTrigger.INSTANCE.stopSystemTriggers(this);
         Log.i(TAG, "Background service destroyed");
         super.onDestroy();
     }
