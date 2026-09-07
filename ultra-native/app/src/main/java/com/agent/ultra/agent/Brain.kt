@@ -275,7 +275,9 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
                 failures++
                 continue
             }
-            GateAuditLog.record(appContext, step.tool, GateAuditLog.Outcome.ALLOWED, null, episode.observations, verdict.riskScore)
+            val auditOutcome = if (verdict.autoApproved) GateAuditLog.Outcome.AUTO_APPROVED else GateAuditLog.Outcome.ALLOWED
+            if (verdict.autoApproved) android.util.Log.i("UltraGate", "RECIPE AUTO-APPROVE ${step.tool} (risk=${verdict.riskScore?.total})")
+            GateAuditLog.record(appContext, step.tool, auditOutcome, verdict.rule, episode.observations, verdict.riskScore)
             val result = tools.execute(step.tool, step.params)
             episode.observeSecrets(result)
             episode.observeTool(step.tool, result.take(80))
@@ -517,7 +519,9 @@ JSON:"""
                 emit("Blocked by policy gate: ${verdict.violations.firstOrNull()?.hint}")
                 return true
             }
-            GateAuditLog.record(appContext, call.first, GateAuditLog.Outcome.ALLOWED, null, episode.observations, verdict.riskScore)
+            val localOutcome = if (verdict.autoApproved) GateAuditLog.Outcome.AUTO_APPROVED else GateAuditLog.Outcome.ALLOWED
+            if (verdict.autoApproved) android.util.Log.i("UltraGate", "LOCAL AUTO-APPROVE ${call.first} (risk=${verdict.riskScore?.total})")
+            GateAuditLog.record(appContext, call.first, localOutcome, verdict.rule, episode.observations, verdict.riskScore)
             android.util.Log.i("UltraBrain", "LOCAL TOOL: ${call.first} ${call.second.toString().take(80)}")
             val result = tools.execute(call.first, call.second)
             episode.observeSecrets(result)
@@ -627,7 +631,9 @@ JSON:"""
                 lastToolFailed = true
                 continue
             }
-            GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.ALLOWED, null, episode.observations, verdict.riskScore)
+            val cloudOutcome = if (verdict.autoApproved) GateAuditLog.Outcome.AUTO_APPROVED else GateAuditLog.Outcome.ALLOWED
+            if (verdict.autoApproved) android.util.Log.i("UltraGate", "AUTO-APPROVE ${toolCall.first} (risk=${verdict.riskScore?.total})")
+            GateAuditLog.record(appContext, toolCall.first, cloudOutcome, verdict.rule, episode.observations, verdict.riskScore)
 
             // Confirmation notice for destructive tools — UX layer; the gate
             // above is the enforcement layer.

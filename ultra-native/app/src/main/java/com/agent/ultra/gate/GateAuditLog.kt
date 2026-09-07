@@ -20,7 +20,7 @@ object GateAuditLog {
     private const val FILE_NAME = "gate_audit.jsonl"
     private const val MAX_BYTES = 512 * 1024L
 
-    enum class Outcome { ALLOWED, BLOCKED, OVERRIDDEN }
+    enum class Outcome { ALLOWED, BLOCKED, OVERRIDDEN, AUTO_APPROVED }
 
     fun record(
         context: Context,

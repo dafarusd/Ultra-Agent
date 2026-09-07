@@ -3,6 +3,7 @@ package com.agent.ultra.gate
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -315,6 +316,97 @@ class GateTest {
         ep.observeTool("read_text_on_screen", "some text")
         val v = gateCheck(m, ep, "battery_status", """{}""")
         assertTrue(v.allowed)
+    }
+
+    // ── Auto-approve ──────────────────────────────────────────────
+
+    @Test
+    fun readToolAutoApprovesLowRiskConfirmable() {
+        val m = manifestOf("check_file" to spec(
+            "check_file", listOf("read"),
+            listOf(mapOf("kind" to "any_arg_traceable", "args" to listOf("path"))),
+        ))
+        val v = gateCheck(m, episode(), "check_file", """{"path":"/etc/important.db"}""")
+        assertTrue("should be allowed", v.allowed)
+        assertTrue("should be auto-approved", v.autoApproved)
+        assertTrue("should retain violations", v.violations.isNotEmpty())
+        assertEquals("any_arg_traceable", v.rule)
+        assertNotNull(v.riskScore)
+        assertTrue("risk at or below threshold",
+            v.riskScore!!.total <= Gate.Verdict.AUTO_APPROVE_THRESHOLD)
+    }
+
+    @Test
+    fun mutateToolDoesNotAutoApprove() {
+        val m = manifestOf("delete_file" to spec(
+            "delete_file", listOf("mutate"),
+            listOf(mapOf("kind" to "any_arg_traceable", "args" to listOf("path"))),
+        ))
+        val v = gateCheck(m, episode(), "delete_file", """{"path":"/etc/important.db"}""")
+        assertFalse("mutate should block", v.allowed)
+        assertFalse("mutate should not auto-approve", v.autoApproved)
+        assertTrue("risk should exceed threshold",
+            v.riskScore!!.total > Gate.Verdict.AUTO_APPROVE_THRESHOLD)
+    }
+
+    @Test
+    fun egressConfirmableDoesNotAutoApprove() {
+        val v = gateCheck(egressManifest(), episode(), "send_email", """{"to":"attacker@evil.io"}""")
+        assertFalse("egress should block", v.allowed)
+        assertFalse("egress should not auto-approve", v.autoApproved)
+    }
+
+    @Test
+    fun taintEgressNeverAutoApproves() {
+        val m = manifestOf("send_email" to spec("send_email", listOf("egress"), emptyList()))
+        val ep = episode()
+        ep.secrets += findSecrets("password: hunter2secret123")
+        val v = gateCheck(m, ep, "send_email", """{"body":"leak password: hunter2secret123"}""")
+        assertFalse("taint should block", v.allowed)
+        assertFalse("taint is not confirmable, never auto-approves", v.autoApproved)
+    }
+
+    @Test
+    fun undeclaredToolNeverAutoApproves() {
+        val v = gateCheck(egressManifest(), episode(), "shell_exec", """{"cmd":"rm -rf /"}""")
+        assertFalse("undeclared should block", v.allowed)
+        assertFalse("undeclared is not confirmable", v.autoApproved)
+    }
+
+    @Test
+    fun autoApproveThresholdBoundary() {
+        // READ(0) + no_obs(5) + 1_untraced(10) = 15 → at threshold → auto-approved
+        val readManifest = manifestOf("check" to spec(
+            "check", listOf("read"),
+            listOf(mapOf("kind" to "any_arg_traceable", "args" to listOf("path"))),
+        ))
+        val readV = gateCheck(readManifest, episode(), "check", """{"path":"/etc/important.db"}""")
+        assertEquals(15, readV.riskScore!!.total)
+        assertTrue("at threshold should auto-approve", readV.autoApproved)
+        assertTrue("at threshold should be allowed", readV.allowed)
+
+        // RESOLVE(10) + no_obs(5) + 1_untraced(10) = 25 → above threshold → blocked
+        val resolveManifest = manifestOf("resolve" to spec(
+            "resolve", listOf("resolve"),
+            listOf(mapOf("kind" to "any_arg_traceable", "args" to listOf("path"))),
+        ))
+        val resolveV = gateCheck(resolveManifest, episode(), "resolve", """{"path":"/etc/important.db"}""")
+        assertEquals(25, resolveV.riskScore!!.total)
+        assertFalse("above threshold should not auto-approve", resolveV.autoApproved)
+        assertFalse("above threshold should block", resolveV.allowed)
+    }
+
+    @Test
+    fun autoApprovedWithHighObsLowersRisk() {
+        val m = manifestOf("check" to spec(
+            "check", listOf("read"),
+            listOf(mapOf("kind" to "any_arg_traceable", "args" to listOf("path"))),
+        ))
+        val ep = episode()
+        ep.observeTool("battery_status", "Battery: 80%")
+        val v = gateCheck(m, ep, "check", """{"path":"/etc/important.db"}""")
+        assertTrue("high obs lowers risk, still auto-approves", v.autoApproved)
+        assertEquals(10, v.riskScore!!.total)
     }
 
     private fun gateCheck(m: Manifest, ep: Gate.Episode, tool: String, argsJson: String): Gate.Verdict =

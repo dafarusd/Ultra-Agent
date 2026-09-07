@@ -70,6 +70,7 @@ class Gate(private val manifest: Manifest) {
         val allowed: Boolean,
         val violations: List<Violation> = emptyList(),
         val riskScore: RiskScorer.Score? = null,
+        val autoApproved: Boolean = false,
     ) {
         val rule: String? get() = violations.firstOrNull()?.rule
         val confirmable: Boolean
@@ -82,6 +83,14 @@ class Gate(private val manifest: Manifest) {
                 "recipient_traceable", "any_arg_traceable", "atom_in_request",
                 "domain_in_request", "origin_subset", "low_confidence_egress",
             )
+
+            /**
+             * Risk score at or below this threshold auto-approves confirmable
+             * blocks. Conservative default — covers READ (0) and RESOLVE (10)
+             * with small obs gap, never EGRESS (40+) or MUTATE+untraced (30+).
+             * Will be tuned with community gate audit data.
+             */
+            const val AUTO_APPROVE_THRESHOLD = 15
         }
     }
 
@@ -173,8 +182,13 @@ class Gate(private val manifest: Manifest) {
         }
 
         val risk = RiskScorer.score(spec, ep.observations, ep.secrets, args, ep.effectiveRequestNorm)
-        return if (violations.isEmpty()) Verdict(true, riskScore = risk)
-        else Verdict(false, violations, riskScore = risk)
+        if (violations.isEmpty()) return Verdict(true, riskScore = risk)
+
+        val candidateVerdict = Verdict(false, violations, riskScore = risk)
+        if (candidateVerdict.confirmable && risk.total <= Verdict.AUTO_APPROVE_THRESHOLD) {
+            return Verdict(true, violations, riskScore = risk, autoApproved = true)
+        }
+        return candidateVerdict
     }
 
     companion object {

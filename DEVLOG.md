@@ -95,7 +95,17 @@ Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObserv
 - **Risk:** fork maintenance — if PrismML stops rebasing, Ultra is pinned to stale llama.cpp. Ternary support is partially landing in mainline already.
 - **Recommendation:** side-branch build, verify both Gemma 3 1B Q4_K_M (regression) and Bonsai-4B Q1_0 (new), swap if both pass.
 
+- **Risk-based auto-approve** — when a gate decision is confirmable AND risk score ≤ 15, auto-approve instead of blocking. Addresses clearingai's feedback ("the gate will hold, the operator won't") and arthaudm's scaling question. Implementation:
+  - `Gate.kt` — `Verdict` gained `autoApproved: Boolean`, `AUTO_APPROVE_THRESHOLD = 15`. `enforceCall()` returns auto-approved verdicts for low-risk confirmable violations.
+  - `GateAuditLog.kt` — `AUTO_APPROVED` added to `Outcome` enum.
+  - `Brain.kt` — all 3 audit log call sites (recipe, local, cloud) emit `AUTO_APPROVED` outcome and `UltraGate` logcat line when auto-approve fires.
+  - Threshold of 15 covers READ (effect=0) and RESOLVE (effect=10) with small observation gap. Never covers EGRESS (effect=40+) or MUTATE+untraced (30+). Non-confirmable rules (taint_egress, undeclared_tool, spoof_check) can never auto-approve.
+  - 7 new tests in GateTest.kt: low-risk READ auto-approves, MUTATE doesn't, EGRESS doesn't, taint never, undeclared never, boundary (risk=15 passes, risk=25 blocks), high obs lowers risk.
+
+  Total tests: 376. Status: SOURCE-FIXED, TEST-PROVEN. Runtime proof requires an agent conversation that triggers a low-risk confirmable gate decision — the logcat marker is `UltraGate: AUTO-APPROVE <tool> (risk=<n>)`.
+
 **Open:**
+- Auto-approve RUNTIME-UNPROVEN — needs agent conversation on device to hit a low-risk confirmable gate path
 - Risk scoring threshold calibration — blocked on real community usage data from gate audit log exports
 - PrismML JNI build swap — research done, side-branch build needed to verify standard model regression + Bonsai loading
 
