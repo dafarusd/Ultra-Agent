@@ -509,6 +509,26 @@ fun SettingsScreen(
             }
         }) { Text("Delete notification log") }
 
+        var smsCode by remember { mutableStateOf(UltraPrefs.autoExtractSmsCode(context)) }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Auto-copy verification codes", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "When an SMS with a verification code arrives, copy the code to " +
+                        "the clipboard automatically. Needs the notification listener.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            Switch(checked = smsCode, onCheckedChange = {
+                smsCode = it
+                UltraPrefs.setAutoExtractSmsCode(context, it)
+            })
+        }
+
         // ── Voice ─────────────────────────────────────────────────────
         SectionTitle("VOICE")
         var speak by remember { mutableStateOf(UltraPrefs.speakAnswers(context)) }
