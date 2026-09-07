@@ -28,6 +28,7 @@ object GateAuditLog {
         outcome: Outcome,
         rule: String?,
         observations: ObservationLog,
+        riskScore: RiskScorer.Score? = null,
     ) {
         try {
             val entry = JSONObject().apply {
@@ -39,6 +40,7 @@ object GateAuditLog {
                 put("obs_low", observations.lowCount())
                 put("obs_tool_high", if (observations.hasHighToolObservation()) 1 else 0)
                 put("obs_tool_low_only", if (observations.hasLowToolOnly()) 1 else 0)
+                if (riskScore != null) put("risk", riskScore.toJson())
             }
             val f = file(context)
             f.appendText(entry.toString() + "\n")

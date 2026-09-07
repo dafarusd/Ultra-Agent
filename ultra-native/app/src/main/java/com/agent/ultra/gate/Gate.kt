@@ -69,9 +69,7 @@ class Gate(private val manifest: Manifest) {
     data class Verdict(
         val allowed: Boolean,
         val violations: List<Violation> = emptyList(),
-        /** True when every violation is traceability-class — i.e. an operator
-         * confirmation could legitimately cure it. Taint, spoof, and
-         * undeclared-tool violations are never confirmable. */
+        val riskScore: RiskScorer.Score? = null,
     ) {
         val rule: String? get() = violations.firstOrNull()?.rule
         val confirmable: Boolean
@@ -174,7 +172,9 @@ class Gate(private val manifest: Manifest) {
             if (why != null) violations += Violation(c.name, c.arg, why)
         }
 
-        return if (violations.isEmpty()) Verdict(true) else Verdict(false, violations)
+        val risk = RiskScorer.score(spec, ep.observations, ep.secrets, args, ep.effectiveRequestNorm)
+        return if (violations.isEmpty()) Verdict(true, riskScore = risk)
+        else Verdict(false, violations, riskScore = risk)
     }
 
     companion object {

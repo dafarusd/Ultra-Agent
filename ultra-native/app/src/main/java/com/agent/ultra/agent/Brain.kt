@@ -268,14 +268,14 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
         for ((i, step) in steps.withIndex()) {
             val verdict = gate.enforceCall(episode, step.tool, step.params)
             if (!verdict.allowed) {
-                GateAuditLog.record(appContext, step.tool, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations)
+                GateAuditLog.record(appContext, step.tool, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations, verdict.riskScore)
                 val hint = verdict.violations.firstOrNull()?.hint ?: "blocked"
                 android.util.Log.i("UltraGate", "RECIPE BLOCK ${step.tool}: $hint")
                 lines += "${i + 1}. ${step.tool} — blocked by policy gate ($hint)"
                 failures++
                 continue
             }
-            GateAuditLog.record(appContext, step.tool, GateAuditLog.Outcome.ALLOWED, null, episode.observations)
+            GateAuditLog.record(appContext, step.tool, GateAuditLog.Outcome.ALLOWED, null, episode.observations, verdict.riskScore)
             val result = tools.execute(step.tool, step.params)
             episode.observeSecrets(result)
             episode.observeTool(step.tool, result.take(80))
@@ -512,12 +512,12 @@ JSON:"""
             }
             val verdict = gate.enforceCall(episode, call.first, call.second)
             if (!verdict.allowed) {
-                GateAuditLog.record(appContext, call.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations)
+                GateAuditLog.record(appContext, call.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations, verdict.riskScore)
                 android.util.Log.i("UltraGate", "LOCAL BLOCK ${call.first}: ${verdict.violations.firstOrNull()?.hint}")
                 emit("Blocked by policy gate: ${verdict.violations.firstOrNull()?.hint}")
                 return true
             }
-            GateAuditLog.record(appContext, call.first, GateAuditLog.Outcome.ALLOWED, null, episode.observations)
+            GateAuditLog.record(appContext, call.first, GateAuditLog.Outcome.ALLOWED, null, episode.observations, verdict.riskScore)
             android.util.Log.i("UltraBrain", "LOCAL TOOL: ${call.first} ${call.second.toString().take(80)}")
             val result = tools.execute(call.first, call.second)
             episode.observeSecrets(result)
@@ -607,7 +607,7 @@ JSON:"""
                 val blockMsg = Gate.renderBlock(verdict)
                 android.util.Log.i("UltraGate", "BLOCK ${toolCall.first}: ${verdict.violations.firstOrNull()?.hint}")
                 if (verdict.confirmable) {
-                    GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations)
+                    GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations, verdict.riskScore)
                     val targets = verdict.violations.mapNotNull { v ->
                         v.arg?.let { a -> toolCall.second.optString(a).takeIf { it.isNotBlank() } }
                     }.distinct()
@@ -619,7 +619,7 @@ JSON:"""
                     emit("Paused by policy gate: $desc")
                     return
                 }
-                GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations)
+                GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations, verdict.riskScore)
                 messages += OpenAiClient.ChatMessage("assistant", raw)
                 messages += OpenAiClient.ChatMessage("user",
                     "[RESULT: ${toolCall.first}] STATUS: blocked\nDATA: $blockMsg\nDECIDE: Continue with the rest of the task, or answer the user.")
@@ -627,7 +627,7 @@ JSON:"""
                 lastToolFailed = true
                 continue
             }
-            GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.ALLOWED, null, episode.observations)
+            GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.ALLOWED, null, episode.observations, verdict.riskScore)
 
             // Confirmation notice for destructive tools — UX layer; the gate
             // above is the enforcement layer.
