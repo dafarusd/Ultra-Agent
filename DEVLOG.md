@@ -55,10 +55,13 @@ Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObserv
 - **SMS verification code auto-extract** (`SmsCodeDetector.kt`) — deterministic regex, no LLM. Notification listener detects incoming SMS with 4-8 digit codes near verification keywords, copies to clipboard, shows a toast. Off by default, Settings toggle added. 19 unit tests. Total 332.
 - **Out-of-band verification for device toggles** — `verifyAction()` now covers WiFi (WifiManager.isWifiEnabled), Bluetooth (BluetoothAdapter.isEnabled), DND (NotificationManager.currentInterruptionFilter), and volume (AudioManager.getStreamVolume). Each queries the system API after the toggle and reports VERIFIED/UNVERIFIED. Caught a real bug on device: model sends `{"level": 0.5}` but tool expects `{"percent": 50}`.
 
+- **Event trigger framework** (`EventTrigger.kt`) — generic system for deterministic reactions to phone events. Triggers are pure functions: notification in, action out. SmsCodeTrigger refactored out of UltraNotificationService into this framework. Failing triggers don't break the chain. 7 unit tests. Total 339.
+- **Gemma 4 E2B added to local model presets** — 2.8B param, Q4_K_M quant (3.3GB). Newer architecture than Gemma 3 1B with better reasoning. Needs 6GB+ RAM so won't fit Galaxy A15 4GB, but available for higher-end devices. URL verified, file size confirmed.
+
 **Open:**
 - Risk scoring calibration — needs real usage data to set thresholds
-- Alternative on-device models — Bonsai-9B, Needle2, PrismML 4B
-- Event-based triggers — respond to incoming SMS/notifications without manual activation (beyond the SMS code extractor)
+- Alternative on-device models — Bonsai-9B, Needle2, PrismML 4B (research ongoing)
+- More event triggers — battery low, charging state, app install, etc.
 
 ---
 
