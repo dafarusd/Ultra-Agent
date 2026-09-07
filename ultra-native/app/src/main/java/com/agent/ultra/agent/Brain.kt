@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.agent.ultra.gate.Gate
+import com.agent.ultra.gate.GateAuditLog
 import com.agent.ultra.gate.Manifest
 import com.agent.ultra.provider.OpenAiClient
 import com.agent.ultra.provider.ProviderConfig
@@ -22,30 +23,30 @@ import java.util.Locale
  * detector, structured result feedback. Conversation-bleed fix in the port:
  * each request starts from a fresh message list with a capped history window.
  */
-class Brain(context: Context, private val local: com.agent.ultra.local.LocalModelEngine) {
+class Brain(private val appContext: Context, private val local: com.agent.ultra.local.LocalModelEngine) {
 
-    private val controller = AgentController(context)
+    private val controller = AgentController(appContext)
     private val tools: Tools
     private val client: OpenAiClient?
     private val gate: Gate
-    private val taskMemory = com.agent.ultra.data.UltraDatabase.get(context).taskMemory()
-    private val recipes = Recipes(com.agent.ultra.data.UltraDatabase.get(context).recipes())
+    private val taskMemory = com.agent.ultra.data.UltraDatabase.get(appContext).taskMemory()
+    private val recipes = Recipes(com.agent.ultra.data.UltraDatabase.get(appContext).recipes())
 
     /** Called with the final user-facing answer of a run. The voice session
      * speaks it; the chat screen speaks it when speak-back is enabled. */
     var onAnswer: ((String) -> Unit)? = null
 
     init {
-        val cfg = ProviderConfig.load(context)
+        val cfg = ProviderConfig.load(appContext)
         client = if (cfg.isUsable) OpenAiClient(cfg) else null
-        tools = Tools(context, controller)
+        tools = Tools(appContext, controller)
         if (client != null) tools.navigator = ReActNavigator(controller, client).also {
-            it.screenMemory = com.agent.ultra.data.UltraDatabase.get(context).screenMemory()
+            it.screenMemory = com.agent.ultra.data.UltraDatabase.get(appContext).screenMemory()
         }
         tools.recipes = recipes
-        tools.screenMemory = com.agent.ultra.data.UltraDatabase.get(context).screenMemory()
+        tools.screenMemory = com.agent.ultra.data.UltraDatabase.get(appContext).screenMemory()
         tools.recipeRunner = { name -> runRecipe(name) }
-        gate = Gate(loadManifest(context))
+        gate = Gate(loadManifest(appContext))
     }
 
     private fun loadManifest(context: Context): Manifest = Manifest.fromAssets(context)
@@ -80,9 +81,9 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             emit("Cancelled: ${p.description}")
             return
         }
-        // The operator's tap mints the targets as user-attested for this episode.
         p.targets.forEach { p.episode.confirm(it) }
         p.episode.observeOperatorConfirmation(p.tool)
+        GateAuditLog.record(appContext, p.tool, GateAuditLog.Outcome.OVERRIDDEN, null, p.episode.observations)
         android.util.Log.i("UltraGate", "CONFIRMED ${p.tool} targets=${p.targets}")
         val resultText = tools.execute(p.tool, p.params)
         p.episode.observeSecrets(resultText)
@@ -267,12 +268,14 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         for ((i, step) in steps.withIndex()) {
             val verdict = gate.enforceCall(episode, step.tool, step.params)
             if (!verdict.allowed) {
+                GateAuditLog.record(appContext, step.tool, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations)
                 val hint = verdict.violations.firstOrNull()?.hint ?: "blocked"
                 android.util.Log.i("UltraGate", "RECIPE BLOCK ${step.tool}: $hint")
                 lines += "${i + 1}. ${step.tool} — blocked by policy gate ($hint)"
                 failures++
                 continue
             }
+            GateAuditLog.record(appContext, step.tool, GateAuditLog.Outcome.ALLOWED, null, episode.observations)
             val result = tools.execute(step.tool, step.params)
             episode.observeSecrets(result)
             episode.observeTool(step.tool, result.take(80))
@@ -509,10 +512,12 @@ JSON:"""
             }
             val verdict = gate.enforceCall(episode, call.first, call.second)
             if (!verdict.allowed) {
+                GateAuditLog.record(appContext, call.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations)
                 android.util.Log.i("UltraGate", "LOCAL BLOCK ${call.first}: ${verdict.violations.firstOrNull()?.hint}")
                 emit("Blocked by policy gate: ${verdict.violations.firstOrNull()?.hint}")
                 return true
             }
+            GateAuditLog.record(appContext, call.first, GateAuditLog.Outcome.ALLOWED, null, episode.observations)
             android.util.Log.i("UltraBrain", "LOCAL TOOL: ${call.first} ${call.second.toString().take(80)}")
             val result = tools.execute(call.first, call.second)
             episode.observeSecrets(result)
@@ -602,8 +607,7 @@ JSON:"""
                 val blockMsg = Gate.renderBlock(verdict)
                 android.util.Log.i("UltraGate", "BLOCK ${toolCall.first}: ${verdict.violations.firstOrNull()?.hint}")
                 if (verdict.confirmable) {
-                    // Resolve/confirm channel: pause and ask the operator.
-                    // Their tap mints the targets user-attested (SPEC §2 R4, live).
+                    GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations)
                     val targets = verdict.violations.mapNotNull { v ->
                         v.arg?.let { a -> toolCall.second.optString(a).takeIf { it.isNotBlank() } }
                     }.distinct()
@@ -615,6 +619,7 @@ JSON:"""
                     emit("Paused by policy gate: $desc")
                     return
                 }
+                GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.BLOCKED, verdict.rule, episode.observations)
                 messages += OpenAiClient.ChatMessage("assistant", raw)
                 messages += OpenAiClient.ChatMessage("user",
                     "[RESULT: ${toolCall.first}] STATUS: blocked\nDATA: $blockMsg\nDECIDE: Continue with the rest of the task, or answer the user.")
@@ -622,6 +627,7 @@ JSON:"""
                 lastToolFailed = true
                 continue
             }
+            GateAuditLog.record(appContext, toolCall.first, GateAuditLog.Outcome.ALLOWED, null, episode.observations)
 
             // Confirmation notice for destructive tools — UX layer; the gate
             // above is the enforcement layer.

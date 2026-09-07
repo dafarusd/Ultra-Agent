@@ -1,5 +1,6 @@
 package com.agent.ultra.ui
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -571,6 +572,38 @@ fun SettingsScreen(
                 } catch (_: Exception) { /* try the next one */ }
             }
         }) { Text("Choose assistant app") }
+
+        // ── Gate audit log ────────────────────────────────────────────
+        SectionTitle("GATE AUDIT LOG")
+        val auditCount = remember(savedFlash) { com.agent.ultra.gate.GateAuditLog.entryCount(context) }
+        val auditSize = remember(savedFlash) { com.agent.ultra.gate.GateAuditLog.fileSizeBytes(context) }
+        Text(
+            if (auditCount == 0) "No gate decisions recorded yet."
+            else "$auditCount decisions (${auditSize / 1024} KB)",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            "Every gate decision — allowed, blocked, or overridden — is logged here " +
+                "with the tool name and observation state. No message content, no args, " +
+                "no personal data. Safe to share publicly.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(
+                enabled = auditCount > 0,
+                onClick = {
+                    val intent = com.agent.ultra.gate.GateAuditLog.shareIntent(context)
+                    context.startActivity(Intent.createChooser(intent, "Share gate audit log"))
+                },
+            ) { Text("Export & share") }
+            if (auditCount > 0) {
+                OutlinedButton(onClick = {
+                    com.agent.ultra.gate.GateAuditLog.delete(context)
+                    savedFlash = !savedFlash
+                }) { Text("Delete log") }
+            }
+        }
 
         // ── About ─────────────────────────────────────────────────────
         SectionTitle("ABOUT")
