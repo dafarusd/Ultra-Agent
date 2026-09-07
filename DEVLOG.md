@@ -58,9 +58,16 @@ Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObserv
 - **Event trigger framework** (`EventTrigger.kt`) — generic system for deterministic reactions to phone events. Triggers are pure functions: notification in, action out. SmsCodeTrigger refactored out of UltraNotificationService into this framework. Failing triggers don't break the chain. 7 unit tests. Total 339.
 - **Gemma 4 E2B added to local model presets** — 2.8B param, Q4_K_M quant (3.3GB). Newer architecture than Gemma 3 1B with better reasoning. Needs 6GB+ RAM so won't fit Galaxy A15 4GB, but available for higher-end devices. URL verified, file size confirmed.
 
+**Model research completed:**
+- Bonsai-1.7B Q1_0 (248 MB) and Bonsai-4B Q1_0 (572 MB) — incredible size-to-param ratio, but require PrismML's fork of llama.cpp. Ultra's JNI build uses standard llama.cpp. Not added to PRESETS — users would download weights that fail to load.
+- Gemma 4 E2B smallest quant (IQ2_M) is 2.29 GB — still too big for Galaxy A15 4GB target. Q4_K_M at 3.3 GB added for 6GB+ devices.
+- Bonsai models are the path forward for 4GB phones IF we switch to PrismML's llama.cpp fork. That's a JNI build change, not a preset change.
+
+**EventTriggerTest fixed:** reflection used `field.get(null)` on an instance field — Kotlin `object` properties are instance fields, not static. Changed to `field.get(EventTrigger)`. TestContext.java removed (test uses `ContextWrapper(null)`).
+
 **Open:**
 - Risk scoring calibration — needs real usage data to set thresholds
-- Alternative on-device models — Bonsai-9B, Needle2, PrismML 4B (research ongoing)
+- PrismML llama.cpp fork evaluation — would unlock Bonsai Q1_0/Q2_0 models on 4GB phones (572 MB for 4B params)
 - More event triggers — battery low, charging state, app install, etc.
 
 ---

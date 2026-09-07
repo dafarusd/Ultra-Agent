@@ -13,13 +13,13 @@ class EventTriggerTest {
         val field = EventTrigger::class.java.getDeclaredField("triggers")
         field.isAccessible = true
         @Suppress("UNCHECKED_CAST")
-        (field.get(null) as MutableList<*>).clear()
+        (field.get(EventTrigger) as MutableList<*>).clear()
     }
 
     private fun triggerCount(): Int {
         val field = EventTrigger::class.java.getDeclaredField("triggers")
         field.isAccessible = true
-        return (field.get(null) as List<*>).size
+        return (field.get(EventTrigger) as List<*>).size
     }
 
     private fun ctx(): android.content.Context = android.content.ContextWrapper(null)
