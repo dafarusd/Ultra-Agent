@@ -75,17 +75,29 @@ Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObserv
 
   Score doesn't block anything — existing rules still govern enforcement. Score is attached to `Gate.Verdict`, written to every audit log entry under a `"risk"` JSON object with `total`, `effect`, `obs`, `taint`, `trace` fields. All 8 audit log call sites in Brain.kt pass the score through. Conservative defaults — the whole point is to collect real data via the audit log export, then calibrate thresholds before the score becomes enforcement. 14 tests (RiskScorerTest.kt). Total 357.
 
-- **System event triggers** — `EventTrigger` extended with `SystemTrigger` interface for broadcast-based events. Three built-in:
+- **System event triggers** — `EventTrigger` extended with `SystemTrigger` interface for broadcast-based events. Six built-in:
   - `battery_low` (ACTION_BATTERY_LOW) — toasts current battery percentage
   - `battery_ok` (ACTION_BATTERY_OKAY) — toasts recovery
   - `charging_state` (POWER_CONNECTED/DISCONNECTED) — toasts plug/unplug
+  - `screen_state` (SCREEN_ON/SCREEN_OFF) — toasts screen state
+  - `headphones` (HEADSET_PLUG) — toasts connect/disconnect
+  - `app_install` (PACKAGE_ADDED/PACKAGE_REMOVED) — toasts app name
 
-  Receivers registered in `AgentBackgroundService`, cleaned up on destroy. Off by default — Settings toggle "System event triggers". Each trigger checks `UltraPrefs.systemTriggers()` before firing. Verified receivers registered via logcat on device. 6 new tests. Total 363.
+  Receivers registered in `AgentBackgroundService`, cleaned up on destroy. Off by default — Settings toggle "System event triggers". Each trigger checks `UltraPrefs.systemTriggers()` before firing. Charger connect/disconnect RUNTIME-PROVEN on device. All 6 receivers confirmed registered via logcat. 12 tests. Total 369.
+
+**PrismML llama.cpp fork evaluation (research, not code):**
+- Fork: `PrismML-Eng/llama.cpp`, branch `prism`. Tracks upstream with low-bit quant kernels added.
+- Enables binary/ternary quantization (Q1_0, Q2_0) for Bonsai models.
+- **Galaxy A15 targets:** Bonsai-4B Q1_0 at 572 MB, Ternary-Bonsai-1.7B Q2_0 at 442 MB — both fit 4GB RAM.
+- Android NDK build documented in `docs/android.md`, same CMake shape as upstream.
+- C API unchanged — `LlmNative` JNI bindings should work without modification.
+- **Risk:** ggml binary incompatibility — fork's README warns against mixing with stock builds. Standard GGUF models (Gemma 3 1B) should still load since fork tracks upstream, but needs verification.
+- **Risk:** fork maintenance — if PrismML stops rebasing, Ultra is pinned to stale llama.cpp. Ternary support is partially landing in mainline already.
+- **Recommendation:** side-branch build, verify both Gemma 3 1B Q4_K_M (regression) and Bonsai-4B Q1_0 (new), swap if both pass.
 
 **Open:**
 - Risk scoring threshold calibration — blocked on real community usage data from gate audit log exports
-- PrismML llama.cpp fork evaluation — would unlock Bonsai Q1_0/Q2_0 models on 4GB phones (572 MB for 4B params)
-- More event triggers — app install, screen on/off, headphones, etc.
+- PrismML JNI build swap — research done, side-branch build needed to verify standard model regression + Bonsai loading
 
 ---
 
