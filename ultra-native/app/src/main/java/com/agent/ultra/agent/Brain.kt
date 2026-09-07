@@ -785,6 +785,41 @@ JSON:"""
                     if (got.contains(want)) "\nVERIFIED: clipboard holds the text"
                     else "\nUNVERIFIED: clipboard reads '$got'"
                 }
+                "flashlight_toggle" -> {
+                    // CameraManager.setTorchMode is fire-and-forget, no query
+                    // API without a callback. Trust the return value for now.
+                    null
+                }
+                "wifi_toggle" -> {
+                    kotlinx.coroutines.delay(1000)
+                    val want = params.optBoolean("on", true)
+                    val actual = controller.isWifiEnabled()
+                    if (actual == want) "\nVERIFIED: WiFi is ${if (want) "on" else "off"}"
+                    else "\nUNVERIFIED: WiFi reports ${actual ?: "unknown"}, wanted ${if (want) "on" else "off"}"
+                }
+                "bluetooth_toggle" -> {
+                    kotlinx.coroutines.delay(1500)
+                    val want = params.optBoolean("on", true)
+                    val actual = controller.isBluetoothEnabled()
+                    if (actual == want) "\nVERIFIED: Bluetooth is ${if (want) "on" else "off"}"
+                    else "\nUNVERIFIED: Bluetooth reports ${actual ?: "unknown"}, wanted ${if (want) "on" else "off"}"
+                }
+                "do_not_disturb" -> {
+                    kotlinx.coroutines.delay(500)
+                    val want = params.optBoolean("on", true)
+                    val actual = controller.isDoNotDisturbOn()
+                    if (actual == want) "\nVERIFIED: DND is ${if (want) "on" else "off"}"
+                    else "\nUNVERIFIED: DND reports ${actual ?: "unknown"}, wanted ${if (want) "on" else "off"}"
+                }
+                "volume_set" -> {
+                    kotlinx.coroutines.delay(300)
+                    var want = params.optInt("percent", -1)
+                    if (want < 0) want = (params.optDouble("level", -1.0) * 100).toInt()
+                    val actual = controller.volumePercent()
+                    if (actual != null && want >= 0 && kotlin.math.abs(actual - want) <= 7)
+                        "\nVERIFIED: volume at $actual%"
+                    else "\nUNVERIFIED: volume at ${actual ?: "unknown"}%, wanted $want%"
+                }
                 else -> null
             }
         } catch (_: Exception) { null }

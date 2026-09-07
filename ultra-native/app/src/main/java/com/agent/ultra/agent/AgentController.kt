@@ -302,6 +302,29 @@ class AgentController(private val context: Context) {
         true
     } catch (_: Exception) { false }
 
+    // ── Out-of-band state queries (verification, not action) ────────────
+
+    fun isWifiEnabled(): Boolean? = try {
+        val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        wm.isWifiEnabled
+    } catch (_: Exception) { null }
+
+    fun isBluetoothEnabled(): Boolean? = try {
+        val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+        adapter?.isEnabled
+    } catch (_: Exception) { null }
+
+    fun isDoNotDisturbOn(): Boolean? = try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        nm.currentInterruptionFilter != android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+    } catch (_: Exception) { null }
+
+    fun volumePercent(stream: Int = AudioManager.STREAM_MUSIC): Int? = try {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val max = am.getStreamMaxVolume(stream)
+        if (max > 0) (am.getStreamVolume(stream) * 100) / max else null
+    } catch (_: Exception) { null }
+
     // ── Communication ───────────────────────────────────────────────────
 
     fun sendSms(to: String, message: String): Boolean = try {
