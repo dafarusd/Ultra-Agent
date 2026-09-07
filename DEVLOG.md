@@ -75,10 +75,17 @@ Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObserv
 
   Score doesn't block anything — existing rules still govern enforcement. Score is attached to `Gate.Verdict`, written to every audit log entry under a `"risk"` JSON object with `total`, `effect`, `obs`, `taint`, `trace` fields. All 8 audit log call sites in Brain.kt pass the score through. Conservative defaults — the whole point is to collect real data via the audit log export, then calibrate thresholds before the score becomes enforcement. 14 tests (RiskScorerTest.kt). Total 357.
 
+- **System event triggers** — `EventTrigger` extended with `SystemTrigger` interface for broadcast-based events. Three built-in:
+  - `battery_low` (ACTION_BATTERY_LOW) — toasts current battery percentage
+  - `battery_ok` (ACTION_BATTERY_OKAY) — toasts recovery
+  - `charging_state` (POWER_CONNECTED/DISCONNECTED) — toasts plug/unplug
+
+  Receivers registered in `AgentBackgroundService`, cleaned up on destroy. Off by default — Settings toggle "System event triggers". Each trigger checks `UltraPrefs.systemTriggers()` before firing. Verified receivers registered via logcat on device. 6 new tests. Total 363.
+
 **Open:**
 - Risk scoring threshold calibration — blocked on real community usage data from gate audit log exports
 - PrismML llama.cpp fork evaluation — would unlock Bonsai Q1_0/Q2_0 models on 4GB phones (572 MB for 4B params)
-- More event triggers — battery low, charging state, app install, etc.
+- More event triggers — app install, screen on/off, headphones, etc.
 
 ---
 
