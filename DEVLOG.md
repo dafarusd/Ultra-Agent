@@ -65,8 +65,10 @@ Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObserv
 
 **EventTriggerTest fixed:** reflection used `field.get(null)` on an instance field — Kotlin `object` properties are instance fields, not static. Changed to `field.get(EventTrigger)`. TestContext.java removed (test uses `ContextWrapper(null)`).
 
+- **Gate audit log** (`GateAuditLog.kt`) — JSONL file on device, one line per gate decision. Fields: timestamp, tool name, outcome (ALLOWED/BLOCKED/OVERRIDDEN), rule triggered, observation counts (high/low, tool-only high, tool-only low-only). No args, no message content, no PII — safe for public sharing. All three gate checkpoints (cloud, local, recipe) plus operator overrides log here. FileProvider added to manifest for share intent. Export button in Settings bundles the log with a device fingerprint header (RAM MB, Android SDK version, device manufacturer+model). 4 unit tests. Total 343.
+
 **Open:**
-- Risk scoring calibration — needs real usage data to set thresholds
+- Risk scoring calibration — gate audit log now collects the data; community export enables crowdsourced threshold tuning
 - PrismML llama.cpp fork evaluation — would unlock Bonsai Q1_0/Q2_0 models on 4GB phones (572 MB for 4B params)
 - More event triggers — battery low, charging state, app install, etc.
 
