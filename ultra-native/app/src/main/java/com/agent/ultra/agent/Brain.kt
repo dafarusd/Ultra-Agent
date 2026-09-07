@@ -82,9 +82,11 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
         }
         // The operator's tap mints the targets as user-attested for this episode.
         p.targets.forEach { p.episode.confirm(it) }
+        p.episode.observeOperatorConfirmation(p.tool)
         android.util.Log.i("UltraGate", "CONFIRMED ${p.tool} targets=${p.targets}")
         val resultText = tools.execute(p.tool, p.params)
         p.episode.observeSecrets(resultText)
+        p.episode.observeTool(p.tool, resultText.take(80))
         val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
         p.messages += OpenAiClient.ChatMessage("assistant", p.rawAssistant)
         p.messages += OpenAiClient.ChatMessage("user",
@@ -273,6 +275,7 @@ class Brain(context: Context, private val local: com.agent.ultra.local.LocalMode
             }
             val result = tools.execute(step.tool, step.params)
             episode.observeSecrets(result)
+            episode.observeTool(step.tool, result.take(80))
             if (result.startsWith("Error:")) failures++
             android.util.Log.i("UltraBrain", "RECIPE STEP ${step.tool}: ${result.take(80)}")
             lines += "${i + 1}. ${result.take(200)}"
@@ -513,6 +516,7 @@ JSON:"""
             android.util.Log.i("UltraBrain", "LOCAL TOOL: ${call.first} ${call.second.toString().take(80)}")
             val result = tools.execute(call.first, call.second)
             episode.observeSecrets(result)
+            episode.observeTool(call.first, result.take(80))
             val verification = verifyAction(call.first, call.second) ?: ""
             val failed = result.startsWith("Error:")
             answer((if (failed) "Tried on-device: $result" else "$result (on-device)") + verification)
@@ -641,6 +645,7 @@ JSON:"""
 
             val resultText = tools.execute(toolCall.first, toolCall.second)
             episode.observeSecrets(resultText)
+            episode.observeTool(toolCall.first, resultText.take(80))
             val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
             toolSequence += Triple(toolCall.first, toolCall.second, !failed)
             if (failed) anyToolFailed = true
@@ -685,6 +690,7 @@ JSON:"""
             // Every turn ended in a block or failure — never end silently.
             answer("I couldn't complete that — the policy gate stopped the action and I had no safe alternative. Try rephrasing, or confirm the target if I ask.")
         }
+        android.util.Log.i("UltraBrain", "OBSERVATIONS: ${episode.observations.summary()}")
         recordMemory(userInput, toolSequence, naturalFinish && !anyToolFailed)
     }
 

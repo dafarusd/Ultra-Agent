@@ -3,6 +3,131 @@
 This file is updated by Claude Code at the end of every work session.
 Read this file at the start of every session to understand previous work.
 
+## 2026-09-07 — Confidence scoring + low_confidence_egress gate rule
+
+**Source:** Reddit intel compiled from 3 active posts (r/AI_Agents 28 comments, r/LocalLLM 13 comments). Additional feedback since the 2026-09-05 entry:
+
+- **clearingai (r/AI_Agents, fraud ops background):** "The gate will hold. The operator won't." Every manual review queue in payments history decayed — month one you read the card, month six you tap on reflex. Evolve from review-everything to risk scoring. Gate already has the features: tool + args + request source. Hard part is calibrating without usage data.
+- **arthaudm (r/AI_Agents, builds mio):** Validated block-not-log and deterministic router. Asked how operator-tap scales with more tools. Still engaged — checked back Sep 7 asking about the tap flow.
+- **Alternative models (r/LocalLLM):** Bonsai-9B_Q1_0 on Motorola Edge 2024 (8GB, 3-4 tok/s decode). Needle2 as dedicated tool-calling model. PrismML 4B binary/ternary Qwen variant that might fit Galaxy A15.
+- **SMS pin → clipboard** concrete demand from r/LocalLLM. Ultra already has SMS + clipboard tools.
+
+**What was built:**
+
+The observation infrastructure — every fact the agent reads now carries a source and a confidence level, and the gate tracks them per-episode.
+
+New files:
+- `gate/Fact.kt` — data class: `tool`, `source: Source`, `confidence: Confidence`, `timestamp`. Source is one of SYSTEM_API, ACCESSIBILITY_TREE, OPERATOR_CONFIRMATION, USER_REQUEST. Confidence is HIGH or LOW. Tree = LOW by construction. System APIs = HIGH. Confidence decays: a HIGH fact older than 120s becomes LOW.
+- `gate/ObservationLog.kt` — per-episode store. Append-only within a request, queries for HIGH/LOW counts, summary for logcat.
+
+Modified files:
+- `gate/Gate.kt` — Episode now holds an `ObservationLog`. User request recorded as HIGH on creation. `observeTool(tool, summary)` tags by source. `observeOperatorConfirmation(tool)` records the operator's tap as HIGH.
+- `agent/Brain.kt` — every tool execution in the cloud loop, local loop, recipe loop, and operator-confirm flow calls `episode.observeTool()`. Operator confirmation calls `episode.observeOperatorConfirmation()`. End-of-run logs the observation summary.
+
+**Gate rule: `low_confidence_egress`**
+
+The first enforcement rule built on top of the observation data. Before any egress tool (sms_send, open_url, web_search), the gate checks: did the agent gather any HIGH confidence tool observations, or only screen reads?
+
+- Only tree reads (LOW) → **BLOCKED**, confirmable. Operator can verify and approve.
+- At least one system API result (HIGH) → pass.
+- Operator already confirmed something this episode → pass.
+- No tool observations yet (just the user request) → pass. Don't block before the agent has gathered info.
+
+Implementation: `ObservationLog` gained `toolObservations()`, `hasHighToolObservation()`, `hasLowToolOnly()` — all exclude the USER_REQUEST so the user's inherent HIGH doesn't mask a tree-only run. The check lives in `Gate.enforceCall()` alongside taint_egress, and `low_confidence_egress` is in the confirmable set.
+
+**Device verification:**
+
+| Test | Observations | Result |
+|---|---|---|
+| battery → web_search | 2 HIGH, 0 LOW | ALLOWED |
+| clock screen read → web_search | 1 HIGH (user), 1 LOW (tree) | **BLOCKED** low_confidence_egress |
+| battery → web_search (mixed) | 2 HIGH, 0 LOW | ALLOWED |
+
+**Test suite:** 313/313 (was 262). New tests:
+- `FactTest` — 18 tests: source classification, confidence decay, stale decay, sourceOf mapping for all tool categories
+- `ObservationLogTest` — 21 tests: empty, HIGH/LOW recording, mixed, operator, user request, stale decay, summary, truncation, toolObservations exclusion, hasHighToolObservation, hasLowToolOnly (with tree-only, empty, system API, operator confirm, stale decay)
+- `GateTest` — grew by 12: Episode observation tracking (6) + low_confidence_egress gate (6: blocks tree-only, passes with system API, passes with mixed, passes with no observations, cleared by operator confirm, doesn't apply to read tools)
+
+**Status:** RUNTIME-PROVEN. Gate rule blocks egress when agent acts on screen reads alone, passes when system API data is present.
+
+**Open:**
+- Risk scoring calibration — needs real usage data to set thresholds
+- Out-of-band verification — flashlight from SensorManager, not tree (donk8r item 2/4)
+- Alternative on-device models — Bonsai-9B, Needle2, PrismML 4B
+- SMS pin auto-detect — event-driven trigger layer
+- Event-based triggers — respond to incoming SMS/notifications without manual activation
+
+---
+
+## 2026-09-05 — External design input: confidence-scored observations (donk8r, r/AI_Agents)
+
+**Source:** Multi-round Reddit thread on r/AI_Agents post. donk8r builds mio (AI
+coworker in Slack) and has shipped the same block-not-log pattern. Three rounds
+of increasingly specific feedback, the last one implementation-level.
+
+**Key design ideas (all from donk8r, none implemented yet):**
+
+1. **Attach confidence to observations, not calls.** Currently Gate.kt checks
+   per-call against the manifest. donk8r's proposal: each fact the agent observes
+   carries `{value, source, confidence, timestamp}`. Battery=80 from
+   BatteryManager → high confidence. "Post published" from accessibility tree →
+   low. The policy becomes one rule ("high-privilege actions require
+   high-confidence recent facts") instead of per-tool logic.
+
+2. **Tree = low by construction.** Anything the accessibility tree told you is
+   low confidence by default. This is a single rule that covers hostile-app
+   scenarios without enumerating cases. Better than maintaining a trust list.
+
+3. **Confidence decay.** A high-confidence battery read from 10 minutes ago is
+   not a current fact. Timestamp every observation; the gate compares against the
+   age of the request. Prevents stale observations authorizing fresh privileged
+   actions — a production bug that passes unit tests because tests run fast.
+
+4. **Composition resistance as a side effect.** If tree observations are low
+   confidence and low confidence blocks escalation to high-privilege tools, the
+   clipboard-read → browser-open → exfiltrate chain gets blocked without taint
+   tracking. The composition problem and verifier overlap problem collapse into
+   one mechanism via confidence scoring.
+
+5. **Ranking shuffle validates model-external gate.** Defenses that held on one
+   model family broke on another in the 112-model gate sweep. A gate that sits
+   outside the model and checks a manifest holds regardless of which model
+   produced the call — the shuffle is the argument for the architecture.
+
+6. **Operator-tap must be a distinct confidence source (4th follow-up).**
+   The ActionGate card is a tree element — the operator taps it through the
+   same accessibility surface as hostile apps. If tree = low by default, then
+   operator approval = low by default, silently breaking the one flow that
+   carries the most trust. Fix: an explicit operator tap on the gate card is
+   not "the tree said something" — it's a human physically confirming within
+   the timeout window. That should be its own confidence event type sitting
+   above tree-default. One more event type, not a rule exception.
+
+**User feature request (Odd_Cauliflower_8004, r/LocalLLM):**
+- **Automatic SMS trigger:** wants Ultra to auto-detect incoming SMS
+  verification codes and copy to clipboard without being asked. The
+  accessibility service already sees notifications and SMS + clipboard
+  tools exist. Missing piece: event-driven trigger layer with permission
+  gating. Plumbing exists, policy question remains.
+
+**Implementation path (not started):**
+- New `Fact` data class: `value`, `source: Source`, `confidence: Level`,
+  `timestamp: Long`
+- Tag observations at source — BatteryManager/CameraManager → HIGH, tree → LOW
+- Gate.kt: one new rule — high-privilege actions require HIGH + recent
+- Confidence decay mirrors the 120s timeout pattern already in ActionGate.kt
+- Composition resistance falls out without separate taint tracking
+- ActionGate operator-tap: new `Source.OPERATOR_CONFIRMATION` type → HIGH
+  confidence, distinct from `Source.ACCESSIBILITY_TREE` → LOW
+- **Critical:** the high-confidence source for operator confirmation must be the
+  `onClick` callback in Ultra's own process — never the tree reporting the card
+  looks confirmed. If the tree read-back is the confidence source, verifier
+  overlap is rebuilt one level deeper. (donk8r's closing note, 5th follow-up)
+
+**Status:** DESIGN INPUT ONLY. Not validated against the codebase beyond
+confirming the current gate is per-call (Gate.kt) and some tools already verify
+out-of-band (battery, flashlight). No code changes made.
+
 ---
 
 ## How to Use This File
@@ -20,9 +145,9 @@ Read this file at the start of every session to understand previous work.
 
 ## Current State
 
-**Last updated:** 2026-08-29 (Session 16r — step-level action reliability; the History task completes in 4 steps)
+**Last updated:** 2026-09-07 (Confidence scoring + low_confidence_egress gate rule; 313 tests)
 
-**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **134/134**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
+**App status:** Agent Ultra is a native Kotlin / Jetpack Compose Android app in `ultra-native/`. Version `2.0.0-native`, minSdk 26, targetSdk 35, arm64-v8a only. Cloud brain runs on **Venice** (`llama-3.3-70b`); an on-device Gemma 3 1B model handles the offline and fast paths. 30 tools, all declared in the policy gate manifest. Hands-free assist sessions and named recipes ship as of Session 16. Device regression: **8/8 PASS**, unit tests **313/313**, including four real screen captures committed as fixtures (`amazon-search`, `hn-front`, `native-clock`, `native-settings`) so perception can be developed and regression-tested without a phone. Release builds are **R8-minified** (8,665,752 bytes); `proguard-rules.pro` keeps the JNI and service symbols, so it is not optional reading before touching either.
 
 **Published:** source is private at `github.com/dafarusd/Ultra-Agent` (branch `native`). The public face is `github.com/dafarusd/Ultra-Agent-Release` — APK, README, and the site at `dafarusd.github.io/Ultra-Agent-Release`. Anything written there is public copy: read `~/vault/publishing/CLAUDE.md` first and log it after.
 
@@ -42,7 +167,7 @@ Read this file at the start of every session to understand previous work.
 | `ui/Speaker.kt` | on-device text-to-speech with logged start/done |
 | `agent/AgentController.kt` | In-process device layer — a11y, launch, toggles, SMS, clipboard, location |
 | `agent/ReActNavigator.kt` | perceive → think → act → verify UI navigation, 15-iteration budget |
-| `gate/` | Kotlin port of the gatellml policy gate — origins, contracts, manifest, runtime |
+| `gate/` | Kotlin port of the gatellml policy gate — origins, contracts, manifest, runtime, observations |
 | `local/` | llama.cpp JNI shim + Gemma 3 1B engine, model download and load |
 | `provider/` | OpenAI-compatible client (streaming + non-streaming), provider config |
 | `data/` | Room — conversations, messages, task memory (DB v2) |

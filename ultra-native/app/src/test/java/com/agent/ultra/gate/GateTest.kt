@@ -195,6 +195,128 @@ class GateTest {
             """{"url":"https://www.evil-tracker.com"}""").allowed)
     }
 
+    // ── Observation tracking ────────────────────────────────────────
+
+    @Test
+    fun episodeRecordsUserRequestAsHighConfidence() {
+        val ep = episode()
+        assertEquals(1, ep.observations.size)
+        val f = ep.observations.all()[0]
+        assertEquals(Fact.Source.USER_REQUEST, f.source)
+        assertEquals(Fact.Confidence.HIGH, f.confidence)
+    }
+
+    @Test
+    fun observeToolRecordsSystemApiAsHigh() {
+        val ep = episode()
+        ep.observeTool("battery_status", "Battery: 80%")
+        assertEquals(2, ep.observations.size)
+        val f = ep.observations.all()[1]
+        assertEquals(Fact.Source.SYSTEM_API, f.source)
+        assertEquals(Fact.Confidence.HIGH, f.confidence)
+        assertEquals("battery_status", f.tool)
+    }
+
+    @Test
+    fun observeToolRecordsTreeAsLow() {
+        val ep = episode()
+        ep.observeTool("read_text_on_screen", "some text")
+        val f = ep.observations.all()[1]
+        assertEquals(Fact.Source.ACCESSIBILITY_TREE, f.source)
+        assertEquals(Fact.Confidence.LOW, f.confidence)
+    }
+
+    @Test
+    fun observeToolSkipsActions() {
+        val ep = episode()
+        ep.observeTool("react_navigate", "navigating")
+        assertEquals(1, ep.observations.size)
+    }
+
+    @Test
+    fun operatorConfirmationIsHigh() {
+        val ep = episode()
+        ep.observeOperatorConfirmation("sms_send")
+        val f = ep.observations.all().last()
+        assertEquals(Fact.Source.OPERATOR_CONFIRMATION, f.source)
+        assertEquals(Fact.Confidence.HIGH, f.confidence)
+    }
+
+    @Test
+    fun mixedObservationsTracked() {
+        val ep = episode()
+        ep.observeTool("read_text_on_screen")
+        ep.observeTool("battery_status")
+        ep.observeTool("describe_screen")
+        ep.observeOperatorConfirmation("sms_send")
+        // 1 user request + 3 tool observations + 1 operator = 5
+        assertEquals(5, ep.observations.size)
+        assertTrue(ep.observations.hasHighConfidenceRecent())
+        // 2 HIGH (user request + battery) + 1 operator = 3 HIGH
+        // 2 LOW (screen reads)
+        assertEquals(3, ep.observations.highCount())
+        assertEquals(2, ep.observations.lowCount())
+    }
+
+    // ── Low-confidence egress gate ───────────────────────────────────
+
+    @Test
+    fun lowConfidenceEgressBlocksTreeOnlyRun() {
+        val m = egressManifest()
+        val ep = episode("send the number on screen to alice@example.com")
+        ep.observeTool("read_text_on_screen", "+1-555-1234")
+        val v = gateCheck(m, ep, "send_email", """{"to":"alice@example.com"}""")
+        assertFalse(v.allowed)
+        assertEquals("low_confidence_egress", v.rule)
+        assertTrue("low_confidence_egress must be confirmable", v.confirmable)
+    }
+
+    @Test
+    fun lowConfidenceEgressPassesWithSystemApi() {
+        val m = egressManifest()
+        val ep = episode("email alice@example.com my battery level")
+        ep.observeTool("battery_status", "Battery: 80%")
+        val v = gateCheck(m, ep, "send_email", """{"to":"alice@example.com"}""")
+        assertTrue(v.allowed)
+    }
+
+    @Test
+    fun lowConfidenceEgressPassesWithMixedSources() {
+        val m = egressManifest()
+        val ep = episode("send alice@example.com the price on screen and battery")
+        ep.observeTool("read_text_on_screen", "$49.99")
+        ep.observeTool("battery_status", "Battery: 80%")
+        val v = gateCheck(m, ep, "send_email", """{"to":"alice@example.com"}""")
+        assertTrue(v.allowed)
+    }
+
+    @Test
+    fun lowConfidenceEgressPassesWithNoToolObservations() {
+        val m = egressManifest()
+        val ep = episode("email alice@example.com hello")
+        val v = gateCheck(m, ep, "send_email", """{"to":"alice@example.com"}""")
+        assertTrue(v.allowed)
+    }
+
+    @Test
+    fun lowConfidenceEgressClearedByOperatorConfirmation() {
+        val m = egressManifest()
+        val ep = episode("send the number on screen to alice@example.com")
+        ep.observeTool("read_text_on_screen", "+1-555-1234")
+        ep.observeOperatorConfirmation("read_text_on_screen")
+        val v = gateCheck(m, ep, "send_email", """{"to":"alice@example.com"}""")
+        assertTrue(v.allowed)
+    }
+
+    @Test
+    fun lowConfidenceEgressDoesNotApplyToReadTools() {
+        val m = manifestOf("battery_status" to spec("battery_status", listOf("read"), emptyList()))
+        val ep = episode("check battery")
+        ep.observeTool("read_text_on_screen", "some text")
+        val v = gateCheck(m, ep, "battery_status", """{}""")
+        assertTrue(v.allowed)
+    }
+
     private fun gateCheck(m: Manifest, ep: Gate.Episode, tool: String, argsJson: String): Gate.Verdict =
         Gate(m).enforceCall(ep, tool, JSONObject(argsJson))
 }

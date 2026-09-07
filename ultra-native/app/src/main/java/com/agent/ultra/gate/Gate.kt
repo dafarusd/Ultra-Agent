@@ -14,9 +14,21 @@ class Gate(private val manifest: Manifest) {
     class Episode(userRequest: String) {
         val requestNorm: String = norm(userRequest)
         val secrets = mutableListOf<String>()
+        val observations = ObservationLog()
         /** Targets the operator explicitly confirmed this episode (the
          * resolve/confirm channel — gatellml SPEC §2 R4 made live). */
         private val confirmed = mutableSetOf<String>()
+
+        init {
+            observations.record(
+                Fact(
+                    tool = "<user>",
+                    source = Fact.Source.USER_REQUEST,
+                    confidence = Fact.Confidence.HIGH,
+                    summary = userRequest.take(80),
+                )
+            )
+        }
 
         /** The effective trusted text: the request plus user-confirmed targets. */
         val effectiveRequestNorm: String
@@ -31,6 +43,24 @@ class Gate(private val manifest: Manifest) {
         /** Call after each tool result: collect secret-shaped material. */
         fun observeSecrets(toolResult: String) {
             secrets += findSecrets(toolResult)
+        }
+
+        /** Record that a tool produced an observation with a known source. */
+        fun observeTool(tool: String, resultSummary: String = "") {
+            val source = Fact.sourceOf(tool) ?: return
+            observations.record(tool, source, resultSummary)
+        }
+
+        /** Record that the operator confirmed an action via the gate card. */
+        fun observeOperatorConfirmation(tool: String) {
+            observations.record(
+                Fact(
+                    tool = tool,
+                    source = Fact.Source.OPERATOR_CONFIRMATION,
+                    confidence = Fact.Confidence.HIGH,
+                    summary = "operator confirmed $tool",
+                )
+            )
         }
     }
 
@@ -52,7 +82,7 @@ class Gate(private val manifest: Manifest) {
         companion object {
             private val CONFIRMABLE_RULES = setOf(
                 "recipient_traceable", "any_arg_traceable", "atom_in_request",
-                "domain_in_request", "origin_subset",
+                "domain_in_request", "origin_subset", "low_confidence_egress",
             )
         }
     }
@@ -128,6 +158,15 @@ class Gate(private val manifest: Manifest) {
                 violations += Violation("taint_egress", null,
                     "outbound arguments contain secret-shaped strings observed in tool output")
             }
+        }
+
+        // Low-confidence egress: if the agent gathered information but all of
+        // it came from screen reads (accessibility tree), egress requires
+        // operator confirmation. System API results or a prior operator
+        // confirmation clear this gate.
+        if (Effect.EGRESS in spec.effects && ep.observations.hasLowToolOnly()) {
+            violations += Violation("low_confidence_egress", null,
+                "outbound action backed only by screen reads (low confidence)")
         }
 
         for (c in spec.requires) {
