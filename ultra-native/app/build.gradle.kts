@@ -36,8 +36,8 @@ android {
         applicationId = "com.agent.ultra"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "2.3.0-native"
+        versionCode = 13
+        versionName = "2.3.1-native"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -94,6 +94,11 @@ android {
                 ?: signingConfigs.getByName("debug")
         }
         release {
+            // No debug-key fallback here. 2.3.0 was published debug-signed
+            // because this silently fell back, and a debug-signed APK can be
+            // updated by anyone: that key's password ships in the public SDK.
+            // Without the release key a release build now fails outright — see
+            // the taskGraph check below.
             signingConfig = signingConfigs.getByName(
                 if (releaseKeystore != null) "release"
                 else if (signingConfigs.findByName("legacyDebug") != null) "legacyDebug"
@@ -149,4 +154,19 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+}
+
+// A release build without the release key must fail, not quietly produce a
+// debug-signed APK that looks publishable. 2.3.0 went out that way: signed
+// CN=Android Debug, whose password is inside the public Android SDK, so anyone
+// could sign an update over it. Debug builds are unaffected.
+gradle.taskGraph.whenReady {
+    if (releaseKeystore == null &&
+        allTasks.any { it.name.startsWith("assembleRelease") || it.name.startsWith("bundleRelease") }
+    ) {
+        throw GradleException(
+            "No keystore.properties: this machine does not hold the release key. " +
+                "Use assembleDebug, or add keystore.properties before building a release."
+        )
+    }
 }
