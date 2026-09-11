@@ -47,11 +47,16 @@ android {
     signingConfigs {
         // Same keystore the Expo builds used (android/app/debug.keystore, copied
         // here) — install-over continuity on devices carrying a Build 29/30 install.
-        create("legacyDebug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        // Kept OUT of git since 2026-09-11 (gitignored; backup in ~/keys): anyone
+        // holding it can sign an update over those installs. When it's absent —
+        // a fresh clone — builds use the SDK's standard debug key instead.
+        if (file("debug.keystore").exists()) {
+            create("legacyDebug") {
+                storeFile = file("debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
 
         // The real signing key, for anything that leaves this machine.
@@ -85,11 +90,14 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("legacyDebug")
+            signingConfig = signingConfigs.findByName("legacyDebug")
+                ?: signingConfigs.getByName("debug")
         }
         release {
             signingConfig = signingConfigs.getByName(
-                if (releaseKeystore != null) "release" else "legacyDebug"
+                if (releaseKeystore != null) "release"
+                else if (signingConfigs.findByName("legacyDebug") != null) "legacyDebug"
+                else "debug"
             )
             isMinifyEnabled = true
             isShrinkResources = true
