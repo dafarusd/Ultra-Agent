@@ -45,3 +45,6 @@ keystore.properties
 build-*.apk
 logdump.txt
 screen_test.png
+
+# Replit build config, kept locally, out of the repo
+.replit
