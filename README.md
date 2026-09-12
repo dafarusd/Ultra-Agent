@@ -1,0 +1,72 @@
+# Agent Ultra
+
+An Android agent that drives real apps on the phone. A small language model runs
+on the device itself, reads the screen through the accessibility service, and
+taps. When a step is beyond it, it escalates to a cloud model. A policy gate on
+the device can refuse the model before anything destructive happens.
+
+The signed APK is a free download: **[Ultra-Agent-Release](https://github.com/dafarusd/Ultra-Agent-Release)**.
+
+## What's in here
+
+- `ultra-native/` — the current app. Native Kotlin, Jetpack Compose, minSdk 26,
+  arm64. This is what ships.
+- `ultra-native/app/src/main/cpp/` — llama.cpp through a JNI bridge, so the
+  on-device model runs without a server.
+- `DEVLOG.md` — what changed, why, and the bugs that mattered. Append-only.
+- `CLAUDE.md`, `SKILLS_REFERENCE.md` — how this repo is worked on.
+- Everything else at the root, including `app/`, `src/`, `server/` and the
+  `*_PROOF.md` files, is the earlier Expo/React Native version. It is history,
+  not the product.
+
+## How it works
+
+- **On-device brain.** Gemma 3 1B, loaded through llama.cpp. It plans the next
+  action from what's on screen.
+- **Cloud escalation.** When the 1B can't do the step, the request goes to a
+  cloud model on your own API key. No key ships in this repo.
+- **The gate.** Tool calls pass a policy gate that runs on the phone. It refuses
+  destructive calls rather than asking the model to behave. It exists because of
+  an incident during development: the brain sent messages nobody asked for.
+
+## Build it
+
+```
+cd ultra-native
+./gradlew assembleDebug
+```
+
+A fresh clone signs debug builds with the Android SDK's own debug key. Release
+signing needs a `keystore.properties` that is not in this repo, and a release
+build **fails** without it rather than falling back to a debug key — 2.3.0 was
+published debug-signed because the old fallback did exactly that.
+
+Current version: **2.3.1** (versionCode 13). 376 JVM unit tests under
+`ultra-native/app/src/test`.
+
+## Honest limits
+
+- The 1B echoes its few-shot examples before answering. The parser handles it;
+  the logs are ugly.
+- Screen reading depends on what each app exposes to the accessibility service.
+  Apps that draw their own widgets are harder.
+- Cloud escalation sends screen context to whichever provider you configure.
+  That is your decision to make per task, and the gate is what stands between a
+  cloud model and a destructive action.
+
+## License
+
+See `LICENSE` if present at the root; otherwise all rights reserved pending a
+licence decision.
+
+---
+
+Built by Dafarus — local-first software and hardware you own.
+
+Follow the work on X: [@Dafarusd](https://x.com/Dafarusd)
+
+My companies:
+- Steel Valley Burners — [Facebook](https://www.facebook.com/steelvalleyburners)
+- Keephaven — [keephaven.co](https://keephaven.co) · [X](https://x.com/Keephaven) · [Facebook](https://www.facebook.com/profile.php?id=61592155452190)
+
+More work: [gate](https://github.com/dafarusd/gate) · [Sentinel](https://github.com/dafarusd/sentinel-public) · [Agent Ultra](https://github.com/dafarusd/Ultra-Agent-Release) · [EveryVoice](https://github.com/dafarusd/everyvoice) · [Mind Meld](https://github.com/dafarusd/mindmeld) · [monero-swap](https://github.com/dafarusd/monero-swap)
