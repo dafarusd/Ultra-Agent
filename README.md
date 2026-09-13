@@ -31,6 +31,13 @@ The signed APK is a free download: **[Ultra-Agent-Release](https://github.com/da
 
 ## Build it
 
+The native library needs llama.cpp built for arm64 first. It isn't vendored
+here. Clone llama.cpp, build it with the Android NDK's CMake toolchain for
+`arm64-v8a` with `-DGGML_OPENMP=OFF`, then copy `libllama.a` and the
+`libggml*.a` libraries into `~/llama-android/lib` and the headers into
+`~/llama-android/include` — that's the path `ultra-native/app/src/main/cpp/CMakeLists.txt`
+reads. The llama.cpp commit behind the published APKs isn't pinned yet.
+
 ```
 cd ultra-native
 ./gradlew assembleDebug
@@ -54,10 +61,28 @@ Current version: **2.3.1** (versionCode 13). 376 JVM unit tests under
   That is your decision to make per task, and the gate is what stands between a
   cloud model and a destructive action.
 
+## Credit
+
+Some of the design came from people who pushed back on the first release:
+
+- **u/clearingai** pointed out that a person approving every gate decision
+  decays the way manual review queues always have — careful in month one,
+  tapping on reflex by month six. Risk scoring and risk-based auto-approve
+  (2.3.0) came out of that.
+- **u/donk8r** argued, over several rounds, that confidence belongs on what the
+  agent observes rather than on each call. That became confidence-scored
+  observations and the `low_confidence_egress` gate rule.
+- **u/arthaudm** asked how the operator tap holds up as the tool list grows.
+  Auto-approving low-risk decisions is part of the answer.
+
+The reasoning, and what's still unsolved, is in `DEVLOG.md`.
+
 ## License
 
-See `LICENSE` if present at the root; otherwise all rights reserved pending a
-licence decision.
+AGPL-3.0-only. See `LICENSE` and `NOTICE`. A commercial license is available
+for proprietary or closed-source use that the AGPL's copyleft doesn't permit —
+see `NOTICE`. llama.cpp is MIT; the Gemma weights are downloaded at runtime under
+Google's own terms.
 
 ---
 
