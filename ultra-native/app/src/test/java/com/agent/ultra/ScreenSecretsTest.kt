@@ -49,7 +49,8 @@ class ScreenSecretsTest {
 
     @Test
     fun `it still catches what the ported detector knew about`() {
-        assertTrue(ScreenSecrets.find("sk-abcdefghijklmnopqrstuvwx", BANK).isNotEmpty())
+        // built at runtime: no key-shaped literal in a public repo
+        assertTrue(ScreenSecrets.find("sk-" + "abcdefghijklmnopqrstuvwx", BANK).isNotEmpty())
     }
 
     // ── What it must NOT catch ──────────────────────────────────────
