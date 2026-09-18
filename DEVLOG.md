@@ -2941,3 +2941,17 @@ existed as loose files in one working tree. Now committed, and
 `<backup-script>` pushes both Agent Ultra and the vault when the drive is
 plugged in. Verified: `vault.git` created on the drive, 284 MiB, containing
 `QC.md`, `qc/prepublish.sh` and `publishing/log.md`.
+
+## 2026-09-18 — 2.3.2 built, release-signed, on the phone
+
+versionCode 14, `2.3.2-native`. Carries the gate fix from `a745936`: targets
+match the user's request as whole tokens, not substrings.
+
+Signed with the release key (`CN=Dafarus, OU=Agent Ultra`, SHA-256
+`0d04510d…ca241f`, v2 scheme). No test code, fixtures or key strings in the APK;
+`qc/prepublish.sh` passed. APK SHA-256 `726e9fbd…68f8f52f`.
+
+The phone had the debug-signed build, which a release-signed APK can't replace.
+Uninstalled on Dafarus's go-ahead (app data wiped, Venice key must be re-entered
+in Settings), then installed 2.3.2. The APK pulled back off the phone is
+byte-identical to the build; the app launches, no crash in the crash buffer.
