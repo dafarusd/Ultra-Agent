@@ -21,6 +21,10 @@ val releaseKeystore: Properties? =
     }
 
 android {
+    // The shared gate vectors (src/test/resources/gate_vectors.json) are also read on the
+    // device by SharedVectorsDeviceTest: one file, no copy to drift.
+    sourceSets.getByName("androidTest").assets.srcDir("src/test/resources")
+
     testOptions {
         // ScreenStructure logs which method chose the records, which is the
         // only way to tell on a device whether the template match or the

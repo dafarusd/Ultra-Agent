@@ -3,6 +3,56 @@
 This file is updated by Claude Code at the end of every work session.
 Read this file at the start of every session to understand previous work.
 
+## 2026-09-18 — Gate ported up to the Python gate; shared vectors run on the phone
+
+**Subsystem:** E (Permissions / Security) — `gate/` only. No brain, provider or UI change.
+
+**Why:** the gatellml research gate (Python) found and fixed ~20 defects today in two adversarial
+rounds. The Kotlin port had the worst of them: it traced targets by **substring**
+(`norm(a) !in requestNorm`), so a recipient that sits inside the one the user named passed —
+`ce@example.com` for `alice@example.com`, a shorter number inside the number typed.
+
+**What changed** (patch built and tested in gatellml's northstar-loop work, applied here):
+- Whole-token tracing everywhere (`tracesToRequest`); `saidByUser` delegates to it.
+- A second address hidden behind a traced one is refused; any-TLD and IPv4 host checks; `www.`
+  is the same site (the 2026-08-27 on-device rule, kept).
+- Default contracts for egress arguments the manifest never declared.
+- Secret-leak check survives case, spacing, reversal, rot13, base64 (also with text in front),
+  hex, percent-encoding, a dropped `sk-` prefix, and a split across two arguments.
+- Bare numbers: an id must follow its noun or an id word ("file 13", "with ID 13"); a 1-3 digit
+  number is never a person; a required recipient left empty names nobody.
+- `TargetTraceable` contract; optional arguments (`optional_args`) and stringly nulls.
+- **Kelvin-sign homoglyph guard** — see below.
+
+**Shared vectors:** `app/src/test/resources/gate_vectors.json` (88 cases) is the same file the
+Python gate runs. `SharedVectorsTest` (JVM) and new `SharedVectorsDeviceTest` (instrumented, reads
+the same file via androidTest assets — `build.gradle.kts` sourceSets) must both agree with Python.
+
+**Device verification (Galaxy A15, SM-S156V, Android 16):**
+
+| Check | Result |
+|---|---|
+| unit suite (JVM) | 380/380 |
+| shared vectors on the phone (`am instrument`) | first run **1 of 87 disagreed**; after fix **87/87 agree** (1 skipped: needs the Created origin, which phone tools do not use) |
+
+The one on-device disagreement was real and invisible to the JVM: `mi\u212ae@example.com` (Kelvin
+sign) was ALLOWED on the phone. Android's ICU regex treats `\w` as Unicode, read the whole address
+and lowercased it to `mike@example.com`; the desktop JVM's ASCII `\w` had split it and blocked it
+by accident. Fixed in `tracesToRequest`: a non-ASCII character that lowercases into ASCII never
+traces. **PROVEN** on device for the gate's verdicts on these 88 cases.
+
+**Not proven:** a live agent run through the brain with the new gate (the tool loop was not
+exercised end to end today). Status for the full app path: **SOURCE-FIXED, GATE VERDICTS
+DEVICE-VERIFIED, END-TO-END RUNTIME-UNPROVEN.**
+
+**Install notes:** installed with `adb install -r` (same `legacyDebug` key as the 2.2.0 build on the
+phone, so data and settings survive). Never use `connectedAndroidTest` on the daily phone — it
+uninstalls the app afterwards. Play Protect holds a sideloaded install behind a dialog on the phone
+("Send / Don't send"); `adb install` hangs silently until someone taps it.
+
+**Next:** one live run of a sending task through the brain on the phone with the new gate
+(e.g. "text <a named number> I'm late" allowed; a number inside it refused).
+
 ## 2026-09-07 — Confidence scoring + low_confidence_egress gate rule
 
 **Source:** Reddit intel compiled from 3 active posts (r/AI_Agents 28 comments, r/LocalLLM 13 comments). Additional feedback since the 2026-09-05 entry:

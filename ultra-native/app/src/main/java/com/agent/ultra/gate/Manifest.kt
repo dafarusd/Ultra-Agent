@@ -7,12 +7,15 @@ import org.json.JSONObject
  * the manifest is refused at runtime — deny by default.
  */
 
-enum class Effect { READ, MUTATE, EGRESS, RESOLVE }
+enum class Effect { READ, MUTATE, EGRESS, RESOLVE, CREATE }
 
 data class ToolSpec(
     val name: String,
     val effects: Set<Effect>,
     val requires: List<Contract>,
+    /** Arguments the tool marks optional. Only these may be "absent" when a model
+     * passes a stringly null (cc="None"); on a REQUIRED argument "None" is a value. */
+    val optionalArgs: Set<String> = emptySet(),
 )
 
 class Manifest(private val specs: Map<String, ToolSpec>) {
@@ -57,11 +60,14 @@ class Manifest(private val specs: Map<String, ToolSpec>) {
                             "mutate" -> Effect.MUTATE
                             "egress" -> Effect.EGRESS
                             "resolve" -> Effect.RESOLVE
+                            "create" -> Effect.CREATE
                             else -> throw IllegalArgumentException("unknown effect in $name")
                         }
                     }
                 }
-                map[name] = ToolSpec(name, effects, contractsFromJson(t.optJSONArray("requires")))
+                val optional = mutableSetOf<String>()
+                t.optJSONArray("optional_args")?.let { a -> for (j in 0 until a.length()) optional += a.getString(j) }
+                map[name] = ToolSpec(name, effects, contractsFromJson(t.optJSONArray("requires")), optional)
             }
             return Manifest(map)
         }

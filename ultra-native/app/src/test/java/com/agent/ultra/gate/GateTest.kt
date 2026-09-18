@@ -409,6 +409,47 @@ class GateTest {
         assertEquals(10, v.riskScore!!.total)
     }
 
+    @Test fun confirmedBareNumberCountsAsNamed() {
+        val rm = manifestOf("delete_file" to spec("delete_file", listOf("mutate"), listOf(
+            mapOf("kind" to "any_arg_traceable", "args" to listOf("file_id")))))
+        val ep = episode("Cancel my 3 pm meeting.")
+        assertFalse(gateCheck(rm, ep, "delete_file", """{"file_id":"3"}""").allowed)
+        ep.confirm("3")
+        assertTrue(gateCheck(rm, ep, "delete_file", """{"file_id":"3"}""").allowed)
+    }
+
     private fun gateCheck(m: Manifest, ep: Gate.Episode, tool: String, argsJson: String): Gate.Verdict =
         Gate(m).enforceCall(ep, tool, JSONObject(argsJson))
+
+    /** Containment is not provenance: a target that merely sits inside one the
+     * user named is a different entity. Mirrors gatellml test_tracing_is_whole_token_not_substring. */
+    @Test fun substringTargetsAreBlocked() {
+        val req = "Send the report to alice@example.com, text 5551234567, check https://mybank.com/pay and delete file 1234."
+        val send = manifestOf("send_email" to spec("send_email", listOf("egress"), listOf(
+            mapOf("kind" to "recipient_traceable", "arg" to "to"),
+            mapOf("kind" to "atom_in_request", "arg" to "body"),
+            mapOf("kind" to "domain_in_request", "arg" to "body"))))
+        val rm = manifestOf("delete_file" to spec("delete_file", listOf("mutate"), listOf(
+            mapOf("kind" to "any_arg_traceable", "args" to listOf("file_id")))))
+        for (to in listOf("ce@example.com", "e@example.com", "alice@example.co", "555123456", "alice")) {
+            assertFalse(to, gateCheck(send, episode(req), "send_email", JSONObject().put("to", to).toString()).allowed)
+        }
+        for (body in listOf("see https://mybank.co", "go to bank.com now")) {
+            assertFalse(body, gateCheck(send, episode(req), "send_email",
+                JSONObject().put("to", "alice@example.com").put("body", body).toString()).allowed)
+        }
+        for (id in listOf("123", "234")) {
+            assertFalse(id, gateCheck(rm, episode(req), "delete_file", JSONObject().put("file_id", id).toString()).allowed)
+        }
+        assertTrue(gateCheck(send, episode(req), "send_email",
+            JSONObject().put("to", "alice@example.com").put("body", "pay at mybank.com").toString()).allowed)
+        assertTrue(gateCheck(rm, episode(req), "delete_file", JSONObject().put("file_id", "1234").toString()).allowed)
+    }
+
+    @Test fun absentOptionalArgumentIsNotAViolation() {
+        val send = manifestOf("send_email" to spec("send_email", listOf("egress"), listOf(
+            mapOf("kind" to "recipient_traceable", "arg" to "to"),
+            mapOf("kind" to "atom_in_request", "arg" to "cc"))))
+        assertTrue(gateCheck(send, episode(), "send_email", JSONObject().put("to", "alice@example.com").toString()).allowed)
+    }
 }
