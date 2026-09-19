@@ -46,6 +46,16 @@ class ScamGateTest {
         assertEquals("scam_followup", v.rule)
     }
 
+    /** Device run 2026-09-19: llama-3.3-70b drove "send 20 to $mike_torres88" into Cash App. */
+    @Test fun appDrivingToAFlaggedCashtagIsHeld() {
+        ScamWatch.remember(ScamSignals.assess("Unknown",
+            "Hi grandma its Jake, new number. Need 600 on cash app to \$mike_torres88 today, urgent."), "Unknown")
+        val v = check("open cash app and send 20 to \$mike_torres88 for lunch", "react_navigate",
+            """{"goal":"send ${'$'}20 to ${'$'}mike_torres88 for lunch","appHint":"Cash App"}""")
+        assertEquals("scam_followup", v.rule)
+        assertFalse(v.autoApproved)
+    }
+
     @Test fun searchingAboutItStaysFree() {
         val v = check("search is bail-help.top a scam", "web_search", """{"query":"is bail-help.top a scam"}""")
         assertTrue(v.violations.none { it.rule == "scam_followup" })

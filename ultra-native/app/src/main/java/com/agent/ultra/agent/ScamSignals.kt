@@ -130,6 +130,7 @@ object ScamSignals {
             (Sign.ODD_PAYMENT in signs && Sign.URGENCY in signs)
 
         // Order the reasons: what they want first, then how they push.
+        if (Sign.LOOKALIKE in signs) signs -= Sign.LINK        // one reason, not two, for one link
         val ordered = signs.sortedBy { if (it.ask) 0 else 1 }
         return Assessment(scam, ordered, if (scam) targets(body, hosts) else emptySet())
     }
