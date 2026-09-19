@@ -15,6 +15,7 @@ class AppMatchTest {
         App("Clock", "com.sec.android.app.clockpackage"),
         App("My Files", "com.sec.android.app.myfiles"),
         App("Chrome", "com.android.chrome"),
+        App("Google", "com.google.android.googlequicksearchbox"),
     )
 
     @Test fun saysMoreThanTheLabel() = assertEquals("com.samsung.android.app.notes", AppMatch.find("Samsung Notes", apps))
@@ -32,4 +33,10 @@ class AppMatchTest {
         assertNull(AppMatch.canonical("open the play store", "Chrome", apps))
     @Test fun canonicalWhenAlreadyTheirWords() =
         assertEquals("calculator", AppMatch.canonical("open the calculator", "calculator", apps))
+
+    @Test fun googleMapsIsNotTheGoogleApp() = assertEquals("com.google.android.apps.maps", AppMatch.find("google maps", apps))
+    @Test fun canonicalIsTheShortestName() {
+        assertEquals("chrome", AppMatch.canonical("in chrome open my bookmarks", "Chrome", apps))
+        assertEquals("maps", AppMatch.canonical("open google maps and search for coffee", "google maps", apps))
+    }
 }

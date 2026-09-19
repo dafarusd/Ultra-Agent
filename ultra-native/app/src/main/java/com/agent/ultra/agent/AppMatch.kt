@@ -35,9 +35,15 @@ object AppMatch {
         apps.firstOrNull { it.label.lowercase().contains(q) }?.let { return it.pkg }
         val qw = words(q)
         if (qw.isEmpty()) return null
-        apps.filter { a -> words(a.label).let { lw -> lw.isNotEmpty() && qw.containsAll(lw) } }
-            .maxByOrNull { it.label.length }?.let { return it.pkg }
-        return apps.firstOrNull { a -> (words(a.label) + words(a.pkg)).containsAll(qw) }?.pkg
+        // Every word said is in the label or package: "google maps" -> Maps
+        // (com.google.android.apps.maps). Checked before the looser rule below, which on a real
+        // phone sent "google maps" to the Google app, whose label is also inside the query
+        // (learnrun pass B, 2026-09-19).
+        apps.firstOrNull { a -> (words(a.label) + words(a.pkg)).containsAll(qw) }?.let { return it.pkg }
+        // The label is inside what was said; the label covering the most said words wins, then
+        // the longest ("google play store" -> Play Store, not Google).
+        return apps.filter { a -> words(a.label).let { lw -> lw.isNotEmpty() && qw.containsAll(lw) } }
+            .maxWithOrNull(compareBy<App>({ words(it.label).size }, { it.label.length }))?.pkg
     }
 
     /**
@@ -51,15 +57,16 @@ object AppMatch {
      */
     fun canonical(request: String, target: String, apps: List<App>): String? {
         val pkg = find(target, apps) ?: return null
+        val label = apps.firstOrNull { it.pkg == pkg }?.let { words(it.label) } ?: emptySet()
         val toks = request.lowercase().split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
-        for (n in 3 downTo 1) {
-            for (i in 0..toks.size - n) {
-                val span = toks.subList(i, i + n)
-                if (span.first() in FILLER || span.last() in FILLER) continue   // "open the play" is not a name
-                val phrase = span.joinToString(" ")
-                if (find(phrase, apps) == pkg) return phrase
-            }
-        }
-        return null
+        val spans = (1..3).flatMap { n ->
+            (0..toks.size - n).map { i -> toks.subList(i, i + n) }
+        }.filter { it.first() !in FILLER && it.last() !in FILLER }
+            .filter { find(it.joinToString(" "), apps) == pkg }
+        // The user's full name for it ("play store", not "play"), else the shortest that still
+        // means the same app ("maps" out of "google maps and"). Same package either way.
+        val best = spans.filter { it.toSet().containsAll(label) }.minByOrNull { it.size }
+            ?: spans.minByOrNull { it.size }
+        return best?.joinToString(" ")
     }
 }

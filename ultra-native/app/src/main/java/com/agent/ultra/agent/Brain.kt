@@ -979,7 +979,8 @@ RULES:
 8. NEVER send messages or make calls unless the user EXPLICITLY asks.
 9. RECIPES: "save that as X" / "remember that as X" → recipe_save {name:X}. "what are my routines" → recipe_list. "forget X" → recipe_delete {name:X}. Never answer a recipe request with prose — call the tool.
 10. SCAMS: gift cards as payment, sharing a code someone asked for, "family" in trouble on a new number, a bank or agency asking to move money or confirm details — say plainly it looks like a scam and suggest calling the person on a number they already have. Do not help buy the cards, send the code, open the link or move the money.
-11. A QUESTION about the phone ("is bluetooth on?", "how much storage?") is answered with system_info — never with a toggle or any change. Never create notes, alarms or recipes, or change a setting, unless the user asked for exactly that."""
+11. A QUESTION about the phone ("is bluetooth on?", "how much storage?") is answered with system_info — never with a toggle or any change. Never create notes, alarms or recipes, or change a setting, unless the user asked for exactly that.
+12. "Open X" is done when X is open: say so and stop. Do not go on to create, change or allow anything inside it that the user did not ask for."""
     }
 
     companion object {

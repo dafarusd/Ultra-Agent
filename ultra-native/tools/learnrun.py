@@ -52,7 +52,15 @@ def ask(task: str, timeout: int = 150) -> dict:
         time.sleep(1)
     sh("adb logcat -c")
     # Find the text field by its class, not its hint: leftover text hides the hint.
-    m = re.search(r'class="android.widget.EditText"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', screen())
+    pat = r'class="android.widget.EditText"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+    m = re.search(pat, screen())
+    if not m:                                  # a dialog or another app on top: back out, reopen, retry once
+        sh("adb shell input keyevent KEYCODE_BACK; adb shell input keyevent KEYCODE_BACK; adb shell input keyevent KEYCODE_HOME")
+        sh("adb shell am start -n com.agent.ultra/.MainActivity")
+        time.sleep(3)
+        if "The policy gate paused this action" in screen():
+            tap("Cancel"); time.sleep(1.5)
+        m = re.search(pat, screen())
     if not m:
         return {"error": "input not found"}
     x1, y1, x2, y2 = map(int, m.groups())
