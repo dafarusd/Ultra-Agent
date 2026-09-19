@@ -180,6 +180,11 @@ ACTION:"""
                 temperature = 0.1,
             ).getOrElse { return NavResult(false, "model call failed: ${it.message}", iter - 1) }
 
+            // The screen as the model saw it. Without this the log shows which action it chose and
+            // never what it was choosing from, so "why did it keep tapping instead of typing?"
+            // could not be answered from a run (AndroidWorld, 2026-09-19).
+            android.util.Log.i("UltraNav", "step $iter sees: ${observation.replace("\n", " | ").take(700)}")
+
             val action = extractAction(reply)
                 ?: return NavResult(false, "model gave no parseable action", iter - 1)
 
@@ -685,18 +690,26 @@ ACTION:"""
             val arr = JSONArray(flat)
             if (arr.length() == 0) return "Screen: empty or inaccessible"
             val screenH = 2400 // conservative; off-screen filter is a heuristic
+            val screenW = 1080.0
             val tappable = mutableListOf<String>()
             val typeable = mutableListOf<String>()
             val scrollable = mutableListOf<String>()
             for (i in 0 until arr.length()) {
                 val n = arr.getJSONObject(i)
                 val label = n.optString("t").ifBlank { n.optString("d") }.trim().take(50)
-                if (label.isBlank()) continue
+                val editable = n.optBoolean("e", false)
+                // An EMPTY text box has no text and usually no hint, and was dropped here with
+                // everything else unlabelled — so a note editor read as "no interactive elements"
+                // and the model tapped around it forever (AndroidWorld MarkorCreateNote,
+                // 2026-09-19). A field you can type into is worth listing whether or not it has
+                // anything written in it yet.
+                if (label.isBlank() && !editable && !(n.optBoolean("c", false))) continue
                 val y = n.optDouble("y", 0.0)
                 if (y < 0 || y > screenH) continue
                 val idx = n.optInt("i", i)
-                val editable = n.optBoolean("e", false)
-                val clickable = n.optBoolean("c", false)
+                // Tappable through an ancestor counts: the row handles the tap, the label sits on
+                // a child (see AgentAccessibilityService.flattenNode).
+                val clickable = n.optBoolean("c", false) || n.optBoolean("ca", false)
                 val scrollableN = n.optBoolean("s", false)
                 val hint = when {
                     editable -> " (input)"
@@ -704,15 +717,24 @@ ACTION:"""
                     clickable && label.lowercase().matches(Regex(".*\\b(settings|account|about|privacy|security|general|display|sound|battery)\\b.*")) -> " (menu-item)"
                     else -> ""
                 }
+                // An unlabelled button is usually the one that creates something: Markor's "+",
+                // a compose pencil, a floating action button. Dropped for having no words, they
+                // left the model with no way to make a new anything (AndroidWorld, 2026-09-19).
+                val named = label.ifBlank {
+                    val x = n.optDouble("x", 0.0)
+                    val side = if (x > screenW * 0.66) "right" else if (x < screenW * 0.33) "left" else "middle"
+                    val band = if (y > screenH * 0.75) "bottom" else if (y < screenH * 0.25) "top" else "middle"
+                    "(unlabelled button, $band $side)"
+                }
                 when {
-                    editable -> typeable += "  [$idx] $label$hint"
-                    clickable -> tappable += "  [$idx] $label$hint"
+                    editable -> typeable += "  [$idx] ${label.ifBlank { "(empty text box)" }}$hint"
+                    clickable -> tappable += "  [$idx] $named$hint"
                     scrollableN && tappable.isEmpty() -> scrollable += "  [$idx] $label"
                 }
             }
             val parts = mutableListOf<String>()
-            if (tappable.isNotEmpty()) parts += "TAPPABLE:\n" + tappable.take(20).joinToString("\n")
-            if (typeable.isNotEmpty()) parts += "TYPEABLE:\n" + typeable.take(5).joinToString("\n")
+            if (tappable.isNotEmpty()) parts += "TAPPABLE:\n" + tappable.take(26).joinToString("\n")
+            if (typeable.isNotEmpty()) parts += "TYPEABLE:\n" + typeable.take(8).joinToString("\n")
             if (scrollable.isNotEmpty()) parts += "SCROLLABLE:\n" + scrollable.take(3).joinToString("\n")
             if (parts.isEmpty()) "Screen has no interactive elements — try scroll(down) or back()"
             else parts.joinToString("\n\n")

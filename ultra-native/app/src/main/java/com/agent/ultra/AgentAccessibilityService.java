@@ -1075,6 +1075,19 @@ public class AgentAccessibilityService extends AccessibilityService {
     static final int FLAT_NODE_LIMIT = 1200;
 
     private void flattenNode(AccessibilityNodeInfo node, JSONArray flat, int parent, int depth) {
+        flattenNode(node, flat, parent, depth, false);
+    }
+
+    /**
+     * @param clickableParent an ancestor of this node handles taps.
+     *
+     * Android puts the click on the row and the words on a child TextView, so a menu read as
+     * "no interactive elements" though every line of it was tappable (AndroidWorld: Markor's
+     * More-options menu, 2026-09-19). The flag travels down as "ca" so a reader can offer the
+     * label and tap the row.
+     */
+    private void flattenNode(AccessibilityNodeInfo node, JSONArray flat, int parent, int depth,
+                             boolean clickableParent) {
         if (node == null || flat.length() >= FLAT_NODE_LIMIT) return;
         String text = node.getText() != null ? node.getText().toString().trim() : "";
         String desc = node.getContentDescription() != null ? node.getContentDescription().toString().trim() : "";
@@ -1093,6 +1106,7 @@ public class AgentAccessibilityService extends AccessibilityService {
                     obj.put("t", text);
                     obj.put("d", desc);
                     obj.put("c", node.isClickable());
+                    obj.put("ca", clickableParent);
                     obj.put("e", node.isEditable());
                     obj.put("s", node.isScrollable());
                     // The app's own name for this control, so a remembered one
@@ -1114,7 +1128,7 @@ public class AgentAccessibilityService extends AccessibilityService {
         for (int i = 0; i < Math.min(node.getChildCount(), 200); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
-                flattenNode(child, flat, myIndex, depth + 1);
+                flattenNode(child, flat, myIndex, depth + 1, clickableParent || node.isClickable());
                 child.recycle();
             }
         }
