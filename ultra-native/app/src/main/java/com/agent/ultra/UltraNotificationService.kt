@@ -70,8 +70,11 @@ class UltraNotificationService : NotificationListenerService() {
                 EventTrigger.Action.Type.WARN -> {
                     warned = a.data
                     Log.i(TAG, "SCAM WARN from=${pkg}: ${a.data}")
+                    // A notification stays until it is read; a toast is gone in seconds and may
+                    // not show at all over a full-screen app (seen on the A15 over YouTube).
+                    val posted = postWarning(title, a.label)
                     android.os.Handler(mainLooper).post {
-                        Toast.makeText(this, "Ultra: " + a.label, Toast.LENGTH_LONG).show()
+                        if (!posted) Toast.makeText(this, "Ultra: " + a.label, Toast.LENGTH_LONG).show()
                         // Said out loud too: the person most likely to fall for it may not read a toast.
                         if (com.agent.ultra.ui.UltraPrefs.speakAnswers(this)) {
                             speaker().speak("Careful. " + a.label + " Don't send money, codes or cards to it.")
@@ -99,6 +102,39 @@ class UltraNotificationService : NotificationListenerService() {
         return warned
     }
 
+    /** High-importance "looks like a scam" notification. False when Android won't show it
+     *  (POST_NOTIFICATIONS not granted), so the caller falls back to a toast. */
+    private fun postWarning(from: String, label: String): Boolean {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+            val nm = getSystemService(android.app.NotificationManager::class.java) ?: return false
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                nm.createNotificationChannel(android.app.NotificationChannel(
+                    SCAM_CHANNEL, "Scam warnings", android.app.NotificationManager.IMPORTANCE_HIGH,
+                ).apply { description = "A message that looks like a scam just arrived." })
+            }
+            val sender = from.ifBlank { "a message" }.take(40)
+            val n = androidx.core.app.NotificationCompat.Builder(this, SCAM_CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setContentTitle("Careful — this looks like a scam")
+                .setContentText("From $sender")
+                .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(
+                    "From $sender. $label Don't send money, codes or gift cards, and don't open its link. " +
+                        "If it says it's family or your bank, call them on a number you already have."))
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(SCAM_ID_BASE + (System.currentTimeMillis() % 1000).toInt(), n)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "scam warning notification failed: ${e.message}")
+            false
+        }
+    }
+
     private var speakerRef: com.agent.ultra.ui.Speaker? = null
     private fun speaker() = speakerRef ?: com.agent.ultra.ui.Speaker(this).also { speakerRef = it }
 
@@ -109,5 +145,7 @@ class UltraNotificationService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "UltraNotif"
+        private const val SCAM_CHANNEL = "ultra_scam_warnings"
+        private const val SCAM_ID_BASE = 7000
     }
 }

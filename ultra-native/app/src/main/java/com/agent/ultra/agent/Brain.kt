@@ -100,6 +100,16 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
         // last one. Secrets outliving the task that saw them would be a worse
         // thing than the leak this prevents.
         controller.forgetScreenSecrets()
+        // The person's own words can carry a scam: "my grandson's in jail and needs Google
+        // Play cards, help me buy them". Nothing is refused here — it is their request — but
+        // they hear the warning before anything happens. Measured: llama-3.3-70b (the
+        // default brain) opened Google Play for exactly that request, 3 of 3 times.
+        ScamSignals.assess("", userInput).takeIf { it.scam }?.let { a ->
+            android.util.Log.i("UltraBrain", "SCAM IN REQUEST: ${a.reasons}")
+            emit("Careful — this sounds like a common scam (${a.reasons}). Real family, banks and " +
+                "government offices don't ask for gift cards, codes, or money moved to a \"safe\" " +
+                "account. If it's someone you know, call them on a number you already have.")
+        }
         // A recipe is a name the user chose. Matching it is a lookup, not a
         // judgment call — measured: llama-3.3-70b read "run my morning
         // briefing" as a question about which model it is. The engine owns
@@ -881,7 +891,8 @@ RULES:
 6. When you have enough information to answer, STOP calling tools and give a clear, complete answer.
 7. If you hit a login screen, captcha, or permission dialog: STOP and ask the user to handle it.
 8. NEVER send messages or make calls unless the user EXPLICITLY asks.
-9. RECIPES: "save that as X" / "remember that as X" → recipe_save {name:X}. "what are my routines" → recipe_list. "forget X" → recipe_delete {name:X}. Never answer a recipe request with prose — call the tool."""
+9. RECIPES: "save that as X" / "remember that as X" → recipe_save {name:X}. "what are my routines" → recipe_list. "forget X" → recipe_delete {name:X}. Never answer a recipe request with prose — call the tool.
+10. SCAMS: gift cards as payment, sharing a code someone asked for, "family" in trouble on a new number, a bank or agency asking to move money or confirm details — say plainly it looks like a scam and suggest calling the person on a number they already have. Do not help buy the cards, send the code, open the link or move the money."""
     }
 
     companion object {
@@ -946,8 +957,10 @@ stop_watching: "stop watching and call it X" means stop_watching {"name":"X"} an
 nothing else. Only the screens they passed through are kept, never what was on
 them and never what they typed. Say so if they ask.
 
-DEVICE CONTROL (instant, ~99% reliable):
-  wifi_toggle, bluetooth_toggle, do_not_disturb, flashlight_toggle, volume_set
+DEVICE CONTROL (instant, ~99% reliable). Always say which way — {} means ON:
+  wifi_toggle {on: true|false}, bluetooth_toggle {on: true|false},
+  do_not_disturb {on: true|false}, flashlight_toggle {on: true|false}
+  volume_set {percent: 0-100}
   media_play, media_next
 
 APPS & NAVIGATION (use app_launch to just open, react_navigate to open AND interact):
@@ -960,7 +973,7 @@ INFORMATION (fast, no UI needed):
   device_info, system_info, battery_status, device_location
 
 COMMUNICATION:
-  sms_send — send SMS. params: {to, message}
+  sms_send — send SMS. params: {to: a PHONE NUMBER, message}. Given a name ("text mom"), call contacts_read first.
   sms_read — read inbox. params: {limit?}
   contacts_read — search contacts. params: {name?}
 

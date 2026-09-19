@@ -705,7 +705,7 @@ private val CAPABILITIES = listOf(
         listOf(android.Manifest.permission.READ_CALENDAR)),
     Capability("Location", "Answering where you are.",
         listOf(android.Manifest.permission.ACCESS_COARSE_LOCATION)),
-    Capability("Notifications", "Showing you what it is doing while it works.",
+    Capability("Notifications", "Scam warnings that stay until you read them, and what it is doing while it works.",
         listOf(android.Manifest.permission.POST_NOTIFICATIONS)),
 )
 

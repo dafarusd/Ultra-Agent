@@ -46,7 +46,7 @@ object ScamSignals {
         URGENCY("says it's urgent"),
         THREAT("threatens your account, or legal action", heavy = true),
         AUTHORITY("claims to be a bank, tax office, delivery firm or government", heavy = true),
-        FAMILY("says it's family on a new number", heavy = true),
+        FAMILY("says it's family in trouble or on a new number", heavy = true),
         PRIZE("says you've won or are owed money", heavy = true),
         SECRECY("asks you to keep it secret", heavy = true),
     }
