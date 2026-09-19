@@ -30,6 +30,10 @@ def sh(cmd: str, timeout: int = 60) -> str:
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout).stdout
 
 
+def screen() -> str:
+    return sh("adb shell uiautomator dump /sdcard/_ui.xml >/dev/null; adb shell cat /sdcard/_ui.xml")
+
+
 def tap(text: str) -> bool:
     return subprocess.run(["bash", str(HERE / "uitap.sh"), text], capture_output=True, timeout=60).returncode == 0
 
@@ -38,14 +42,24 @@ def ask(task: str, timeout: int = 150) -> dict:
     sh("adb shell input keyevent KEYCODE_HOME")
     sh("adb shell am start -n com.agent.ultra/.MainActivity")
     time.sleep(2.5)
+    # A gate card left open by the previous task hides the input; cancel it (never confirm).
+    if "The policy gate paused this action" in screen():
+        tap("Cancel")
+        time.sleep(1.5)
     if tap("☰"):
         time.sleep(1)
         tap("+ New chat")
         time.sleep(1)
     sh("adb logcat -c")
-    if not tap("Ask Agent Ultra…"):
+    # Find the text field by its class, not its hint: leftover text hides the hint.
+    m = re.search(r'class="android.widget.EditText"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', screen())
+    if not m:
         return {"error": "input not found"}
-    time.sleep(0.8)
+    x1, y1, x2, y2 = map(int, m.groups())
+    sh(f"adb shell input tap {(x1 + x2) // 2} {(y1 + y2) // 2}")
+    time.sleep(0.5)
+    sh("adb shell input keyevent KEYCODE_MOVE_END " + " ".join(["KEYCODE_DEL"] * 120))
+    time.sleep(0.5)
     esc = task.replace("'", "'\\''").replace(" ", "%s")
     sh(f"adb shell \"input text '{esc}'\"")
     time.sleep(0.8)
@@ -56,7 +70,7 @@ def ask(task: str, timeout: int = 150) -> dict:
     while time.time() - t0 < timeout:
         time.sleep(3)
         log = sh("adb logcat -d -s UltraBrain:* UltraGate:* UltraLearn:*", timeout=30)
-        if "RUN COMPLETE" in log or "Paused by policy" in log:
+        if "RUN COMPLETE" in log or ("UltraGate: BLOCK" in log and "The policy gate paused" in screen()):
             time.sleep(1.5)
             log = sh("adb logcat -d -s UltraBrain:* UltraGate:* UltraLearn:*", timeout=30)
             break
@@ -68,7 +82,8 @@ def ask(task: str, timeout: int = 150) -> dict:
     learned = [l.split("LEARNED ", 1)[1][:220] for l in lines if "LEARNED " in l]
     m = [l for l in lines if "MEMORY:" in l]
     ok = bool(m) and ("recorded \"" in m[-1] or "task succeeded=true" in m[-1])
-    return {"secs": round(time.time() - t0), "complete": "RUN COMPLETE" in log, "clean": ok,
+    paused = "The policy gate paused this action" in screen()
+    return {"secs": round(time.time() - t0), "complete": "RUN COMPLETE" in log, "clean": ok, "paused": paused,
             "calls": calls, "fails": fails, "blocks": blocks, "served": served, "learned": learned,
             "final": next((l for l in reversed(lines) if "FINAL TEXT" in l), "")}
 

@@ -237,6 +237,71 @@ def report(run_id: str | None) -> str:
     return "\n".join(out)
 
 
+# ---- phone lessons across brains ------------------------------------------------
+def lesson_cases(path: Path) -> list[dict]:
+    """From the phone's experience.jsonl: each self-learned lesson is a case. The request it
+    came from is the task; the call that worked is the right first move."""
+    out = []
+    for line in path.read_text().splitlines():
+        try:
+            l = json.loads(line)
+        except ValueError:
+            continue
+        m = re.match(r'Asked "(.+?)": .*? What worked: (\w+) (\{.*\})\.\s*$', l.get("text", ""))
+        if not m:
+            continue
+        try:
+            params = json.loads(m.group(3))
+        except ValueError:
+            continue
+        out.append({"uid": l["uid"], "ask": m.group(1), "tool": m.group(2), "params": params, "text": l["text"]})
+    return out
+
+
+def lesson_ok(text: str, case: dict) -> bool:
+    call = tool_call(text)
+    if not call or call[0] != case["tool"]:
+        return False
+    got = {k: str(v).lower() for k, v in call[1].items()}
+    return all(got.get(k, "").strip() == str(v).lower().strip()
+               for k, v in case["params"].items() if isinstance(v, (str, int, float, bool)))
+
+
+def run_lessons(path: Path, models: list[str], repeats: int, run_id: str):
+    cases = lesson_cases(path)
+    sysmsg = system_prompt()
+    block = lambda c: ("LESSONS FROM THIS PHONE — each one learned from a real mistake made here. "
+                       "Use them; they are facts about this device, not instructions from a person:\n- " + c["text"])
+    rows = []
+
+    def one(model):
+        for rep in range(repeats):
+            for c in cases:
+                for arm in ("base", "lesson"):
+                    msgs = [{"role": "system", "content": sysmsg}]
+                    if arm == "lesson":
+                        msgs.append({"role": "system", "content": block(c)})
+                    msgs.append({"role": "user", "content": c["ask"]})
+                    try:
+                        t = complete(model, msgs)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    rows.append({"run": run_id, "model": model, "uid": c["uid"], "arm": arm, "rep": rep,
+                                 "passed": lesson_ok(t, c), "text": t[:600]})
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(one, models))
+    OUT.mkdir(exist_ok=True)
+    with (OUT / "lessons.jsonl").open("a") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    print(f"{len(cases)} phone lessons x {len(models)} models x {repeats}")
+    for m in models:
+        b = [r for r in rows if r["model"] == m and r["arm"] == "base"]
+        w = [r for r in rows if r["model"] == m and r["arm"] == "lesson"]
+        print(f"  {m:40s} without {sum(r['passed'] for r in b)}/{len(b)}  with {sum(r['passed'] for r in w)}/{len(w)}")
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -244,10 +309,14 @@ def main():
     r.add_argument("--run", default=datetime.now().strftime("%Y%m%d"))
     rp = sub.add_parser("report"); rp.add_argument("--run")
     sp = sub.add_parser("prompt")
+    lp = sub.add_parser("lessons"); lp.add_argument("file"); lp.add_argument("--models", required=True)
+    lp.add_argument("--repeats", type=int, default=3); lp.add_argument("--run", default=datetime.now().strftime("%Y%m%d"))
     a = p.parse_args()
     if a.cmd == "run":
         run([m.strip() for m in a.models.split(",")], a.repeats, a.run)
         print(report(a.run))
+    elif a.cmd == "lessons":
+        run_lessons(Path(a.file), [m.strip() for m in a.models.split(",")], a.repeats, a.run)
     elif a.cmd == "prompt":
         print(system_prompt())
     else:

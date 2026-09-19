@@ -210,13 +210,8 @@ class AgentController(private val context: Context) {
         val pm = context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val apps = pm.queryIntentActivities(intent, 0)
-        // Exact package match first, then label contains
-        apps.firstOrNull { it.activityInfo.packageName.lowercase() == q }?.let {
-            return it.activityInfo.packageName
-        }
-        return apps.firstOrNull {
-            it.loadLabel(pm).toString().lowercase().contains(q)
-        }?.activityInfo?.packageName
+        // Ranking lives in AppMatch so it can be tested off the phone.
+        return AppMatch.find(q, apps.map { AppMatch.App(it.loadLabel(pm).toString(), it.activityInfo.packageName) })
     }
 
     fun listLaunchableApps(): List<Pair<String, String>> {

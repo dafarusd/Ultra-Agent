@@ -626,6 +626,10 @@ JSON:"""
                 break
             }
 
+            // The user's own words for the app, when the model named the same app differently
+            // (AppMatch.canonical): the gate then traces it, and the same package opens.
+            canonicalizeApp(userInput, toolCall.first, toolCall.second)
+
             // ── POLICY GATE (M3) — deterministic, no model judgment ──
             val verdict = gate.enforceCall(episode, toolCall.first, toolCall.second)
             if (!verdict.allowed) {
@@ -729,6 +733,19 @@ JSON:"""
         android.util.Log.i("UltraBrain", "OBSERVATIONS: ${episode.observations.summary()}")
         recordMemory(userInput, toolSequence, naturalFinish && !anyToolFailed)
         learnFromRun(userInput, runSteps, naturalFinish && !anyToolFailed)
+    }
+
+    private fun canonicalizeApp(userInput: String, tool: String, params: JSONObject) {
+        val key = when (tool) { "app_launch" -> "target"; "react_navigate" -> "appHint"; else -> return }
+        val named = params.optString(key).takeIf { it.isNotBlank() } ?: return
+        try {
+            val apps = controller.listLaunchableApps().map { AppMatch.App(it.first, it.second) }
+            val mine = AppMatch.canonical(userInput, named, apps) ?: return
+            if (mine != named.lowercase()) {
+                params.put(key, mine)
+                android.util.Log.i("UltraBrain", "APP NAME: \"$named\" -> the user's \"$mine\" (same app)")
+            }
+        } catch (_: Exception) {}
     }
 
     // ── Experience: the phone's own Northstar (agent/Experience.kt) ────
