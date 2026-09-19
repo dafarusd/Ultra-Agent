@@ -87,12 +87,13 @@ def ask(task: str, timeout: int = 150) -> dict:
     fails = [l.split("TOOL RESULT (fail): ", 1)[1][:160] for l in lines if "TOOL RESULT (fail)" in l]
     blocks = [l.split("BLOCK ", 1)[1][:160] for l in lines if "UltraGate: BLOCK" in l]
     served = [l.split("LESSONS SERVED: ", 1)[1] for l in lines if "LESSONS SERVED" in l]
+    hinted = any("MEMORY HINT injected" in l for l in lines)   # task memory: a past success for this request
     learned = [l.split("LEARNED ", 1)[1][:220] for l in lines if "LEARNED " in l]
     m = [l for l in lines if "MEMORY:" in l]
     ok = bool(m) and ("recorded \"" in m[-1] or "task succeeded=true" in m[-1])
     paused = "The policy gate paused this action" in screen()
     return {"secs": round(time.time() - t0), "complete": "RUN COMPLETE" in log, "clean": ok, "paused": paused,
-            "calls": calls, "fails": fails, "blocks": blocks, "served": served, "learned": learned,
+            "calls": calls, "fails": fails, "blocks": blocks, "served": served, "hinted": hinted, "learned": learned,
             "final": next((l for l in reversed(lines) if "FINAL TEXT" in l), "")}
 
 

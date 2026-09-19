@@ -3,6 +3,56 @@
 This file is updated by Claude Code at the end of every work session.
 Read this file at the start of every session to understand previous work.
 
+## 2026-09-19 (later) — The phone learns, and asks Claude on the laptop
+
+**Subsystems:** C (memory — new lessons store), A (prompt rules), D (settings_open, app matching,
+ask_claude), E (ActionGate words). Direction from Dafarus: Ultra and Northstar are one system,
+the link between him and AI; generate evidence now, never wait for it.
+
+**What changed:**
+- `agent/Experience.kt` + Room v7 `lessons`: the phone's own Northstar. A wall and its fix in a
+  finished run, a call failing twice (dead end), or a "no, I meant…" correction becomes a lesson;
+  recalled before each cloud run; every serve counted against the run's outcome; served 3x with
+  no good run = benched. `experience.jsonl` out / `northstar_lessons.jsonl` in, in Northstar's
+  import format — laptop side: `northstar phone pull|push|status`.
+- `ask_claude {question}`: the phone asks Claude Code on the laptop (vault/runtime/bridge/
+  ultra_bridge.py) through the USB cable (`adb reverse tcp:8787 tcp:8787`), token-checked,
+  read-only tools, vault/private and NO_CLAUDE_ENTRY denied by permission rules.
+- `settings_open {page}` (intents, no tapping); `system_info` reports Wi-Fi/Bluetooth/DND/dark
+  mode/location/volume/storage; rules 11 (a question never changes anything) and 12 ("open X"
+  means open it and stop).
+- `AppMatch`: "samsung notes" finds Notes, "google maps" finds Maps (not Google); the user's own
+  name for the app is passed to the gate when the model names the same package differently.
+- Navigator planner told to stay in the app; restart/reboot/power off/reset/erase/sign out/allow
+  added to ActionGate's commit words.
+- `tools/learnrun.py`: drives 22 everyday tasks on the phone, fresh chat each.
+
+**Measured on the A15 (22 tasks each pass):**
+| Pass | Build | Clean runs | Failed calls | Seconds |
+|---|---|---|---|---|
+| A | before fixes | 11/22 | 13 | 911 |
+| B | settings_open, status, rules 11, stricter lessons | 14/22 | 5 | 735 |
+| C | + app-name fixes, rule 12, planner/ActionGate | 14/22 | 5 | 778 |
+| D | same build as C | 19/22 | 2 | 831 |
+
+Honest reading: A→B→C is the fixes. C→D (same build) gained 5, but the new lessons store
+learned **nothing new** between them; likely task-memory shortcuts from C's successes plus
+run-to-run variance — not separated (learnrun now records memory hints for next time).
+The phone's automatic lesson capture is weak so far: 2 lessons in 88 runs, both from pass A's
+looser rule. The improvement today came from the laptop reading the phone's failures and fixing
+its code — which is the loop worth automating.
+
+Found and fixed along the way: "is bluetooth on right now" turned Bluetooth ON; "model number"
+created an unasked note; "open the weather app"/"open samsung notes" planned "Restart the phone".
+
+**Device-proven:** `ask_claude` end to end — "ask claude what the agent ultra devlog says is
+still not proven" → correct answer on the phone in 51 s. **PROVEN.** `northstar phone pull`
+brought the phone's 2 lessons to the laptop store. **PROVEN.**
+
+**Not proven:** `northstar phone push` into a real run; the dead-end lesson rule on device;
+dark mode (still fails: the gate refuses react_navigate into Settings after settings_open);
+Chrome bookmarks; calculator arithmetic via the UI.
+
 ## 2026-09-19 — Scam shield; toggle-parameter bug; brainbench
 
 **Subsystems:** E (gate), D (notification triggers), A (system prompt only). No navigator,
