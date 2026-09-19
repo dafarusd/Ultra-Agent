@@ -203,6 +203,7 @@ class Tools(
                 "battery_status" -> controller.batteryStatus()
                 "system_info" -> controller.deviceInfo() + " | " + controller.batteryStatus() +
                     " | " + controller.settingsStatus()
+                "ask_claude" -> askClaude(params.optString("question"))
                 "settings_open" -> {
                     val page = params.optString("page")
                     when {
@@ -592,6 +593,41 @@ class Tools(
     /** Web search: DDG instant-answer JSON first, Wikipedia second, HTML
      * scrape last (the scrape returned page boilerplate in this network
      * environment — proven in the M5 suite). */
+    /**
+     * Ask Claude on the owner's laptop, through the USB cable (laptop: vault/runtime/bridge/
+     * ultra_bridge.py; `adb reverse tcp:8787 tcp:8787`). Claude there reads files and notes,
+     * read-only, with the laptop's Northstar memory. The token is a file adb put in this app's
+     * external dir; without it, or without the cable, this says so plainly.
+     */
+    private suspend fun askClaude(question: String): String = withContext(Dispatchers.IO) {
+        if (question.isBlank()) return@withContext "Error: ask_claude needs a 'question'"
+        val token = try {
+            java.io.File(context.getExternalFilesDir(null), "ultra_bridge_token").readText().trim()
+        } catch (_: Exception) { "" }
+        if (token.isBlank()) return@withContext "Error: the laptop bridge is not set up on this phone (no token)."
+        try {
+            val c = java.net.URL("http://127.0.0.1:8787/ask").openConnection() as java.net.HttpURLConnection
+            c.requestMethod = "POST"
+            c.connectTimeout = 3000
+            c.readTimeout = 240_000
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.setRequestProperty("X-Ultra-Token", token)
+            c.outputStream.use { it.write(JSONObject().put("question", question.take(2000)).toString().toByteArray()) }
+            val code = c.responseCode
+            val body = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText().orEmpty()
+            if (code !in 200..299) return@withContext "Error: laptop bridge answered $code: ${body.take(120)}"
+            val o = JSONObject(body)
+            val answer = o.optString("answer")
+            if (o.optBoolean("error") || answer.isBlank()) "Error: Claude on the laptop could not answer."
+            else "Claude (on the laptop) says: $answer"
+        } catch (e: java.net.ConnectException) {
+            "Error: can't reach the laptop — it's only reachable over the USB cable with the bridge running."
+        } catch (e: Exception) {
+            "Error: laptop bridge failed: ${e.message?.take(100)}"
+        }
+    }
+
     private suspend fun webSearch(query: String): String = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext "Error: missing query"
         instantAnswer(query)?.let { return@withContext it }

@@ -139,6 +139,11 @@ TASKS = [
     ("wifi-page", "open the wifi settings page", {"tool": "settings_open", "ok": lambda p: has(p, "page", "wifi")}),
     ("dark-mode", "turn on dark mode", {"tool": ["settings_open", "react_navigate"], "forbid": ["note_create"]}),
     ("model-no", "what's this phone's model number", {"tool": ["system_info", "device_info", "settings_open"], "forbid": ["note_create"]}),
+    # the laptop bridge: his work goes to Claude on the laptop; everyday things don't
+    ("laptop-work", "what did I work on in sentinel last week", {"tool": "ask_claude", "ok": lambda p: has(p, "question", "sentinel")}),
+    ("laptop-notes", "ask claude what my keephaven launch plan says", {"tool": "ask_claude", "ok": lambda p: has(p, "question", "keephaven")}),
+    ("laptop-code", "is there a bug in the agent ultra gate code that the devlog says is still open?", {"tool": "ask_claude"}),
+    ("not-laptop", "what's the weather in Denver right now", {"tool": "web_search", "forbid": ["ask_claude"]}),
     # plain answers — no tool needed
     ("math", "what's 17 times 23", {"text": True}),
     ("chat", "thanks, that's all", {"text": True}),

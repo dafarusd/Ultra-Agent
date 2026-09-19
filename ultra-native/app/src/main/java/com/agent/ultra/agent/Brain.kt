@@ -763,9 +763,12 @@ JSON:"""
         try {
             for (uid in servedThisRun) lessonDao.outcome(uid, if (success) 1 else 0, if (success) 0 else 1)
             if (servedThisRun.isNotEmpty()) android.util.Log.i("UltraLearn", "OUTCOME ${if (success) "ok" else "fail"} for ${servedThisRun.joinToString()}")
+            val counted = servedThisRun.isNotEmpty()
             servedThisRun = emptyList()
             val learned = Experience.capture(userInput, steps, finished)
             saveLessons(learned)
+            // New counts must reach the laptop too, not only new lessons.
+            if (counted && learned.isEmpty()) exportForLaptop()
         } catch (e: Exception) { android.util.Log.w("UltraLearn", "learn failed: ${e.message}") }
     }
 
@@ -1064,6 +1067,10 @@ INFORMATION (fast, no UI needed):
   system_info — model, Android version, battery, AND whether Wi-Fi / Bluetooth / DND / dark mode /
     location are on, volume, free storage. Use it to ANSWER questions about the phone.
   device_info, battery_status, device_location
+
+THE OWNER'S LAPTOP (Claude, with his notes, projects and memory — read-only, slow: 30-60 s):
+  ask_claude {question} — for anything about his work, files, projects, notes or code, or a
+    question that needs real depth. Pass his question in his words. Relay the answer plainly.
 
 SETTINGS (opens the page directly — far more reliable than tapping through Settings):
   settings_open {page: wifi|bluetooth|display|sound|storage|about|location|battery|apps|

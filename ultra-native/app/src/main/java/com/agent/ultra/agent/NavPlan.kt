@@ -135,6 +135,10 @@ Rules:
   words. Not a sentence describing the page, and not the page's contents.
 - If you cannot name such text for a stage, write EXPECT: none.
 - Fewer stages is better. Do not pad.
+- Stay inside the app that is on screen. Never plan to restart, reset or power off the
+  phone, uninstall anything, sign out, grant a permission or change a setting unless
+  the task itself says to. If the task is already done on this screen, write
+  1. Nothing to do | EXPECT: none
 
 Format, one per line:
 1. <what to do> | EXPECT: <text that will be on screen>

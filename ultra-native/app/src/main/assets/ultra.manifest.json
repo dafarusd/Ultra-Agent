@@ -85,6 +85,12 @@
       ]
     },
     {
+      "name": "ask_claude",
+      "effects": [
+        "read"
+      ]
+    },
+    {
       "name": "device_info",
       "effects": [
         "read"

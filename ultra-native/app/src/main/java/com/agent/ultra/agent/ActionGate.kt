@@ -121,6 +121,10 @@ object ActionGate {
         "authorize", "authorise", "agree", "accept",
         "book", "reserve", "donate", "tip", "bid",
         "install", "uninstall",
+        // Irreversible for the phone itself. The navigator's planner proposed "Restart the
+        // phone" for "open the weather app" and "open samsung notes" (learnrun, 2026-09-19).
+        "restart", "reboot", "power off", "shut down", "reset", "factory reset",
+        "erase", "sign out", "log out", "allow",
         // Deliberately absent: "sign" and "apply". "Sign in" and "Apply
         // filters" appear constantly, and a gate that fires on ordinary
         // navigation gets approved reflexively, which is worse than no gate.
