@@ -79,8 +79,27 @@ object Experience {
      * successful call of the same family with different parameters is its fix.
      * A wall never got past is not a lesson — nobody knows the way round yet.
      */
-    fun capture(request: String, steps: List<Step>, now: Long = System.currentTimeMillis()): List<Lesson> {
+    fun capture(request: String, steps: List<Step>, finished: Boolean = true,
+                now: Long = System.currentTimeMillis()): List<Lesson> {
         val out = mutableListOf<Lesson>()
+        // A dead end: the same call failed twice. Pass A (2026-09-19) spent 15-20 navigator
+        // steps per repeat; the next run should not walk it a third time.
+        val seen = mutableMapOf<String, Int>()
+        for (st in steps) if (!st.ok) seen.merge(st.tool + st.params.toString(), 1, Int::plus)
+        for ((k, n) in seen) {
+            if (n < 2) continue
+            val st = steps.first { !it.ok && it.tool + it.params.toString() == k }
+            val err = errorLine(st.result)
+            out += Lesson(uid("deadend", st.tool + "|" + shape(err) + "|" + keyOf(request)),
+                "$request ${st.tool} $err",
+                ("Asked \"${request.take(80)}\": ${call(st)} failed twice — $err. " +
+                    "Do not try it again; use a different route (a direct tool, settings_open, or ask).").take(MAX_TEXT),
+                "self", now)
+        }
+        // A fix is only a fix if the run then finished: "app_launch Settings succeeded" after a
+        // failed navigation is not the way round when the task still wasn't done (pass A's two
+        // first lessons were exactly that).
+        if (!finished) return out
         val used = mutableSetOf<Int>()
         for ((i, bad) in steps.withIndex()) {
             if (bad.ok) continue

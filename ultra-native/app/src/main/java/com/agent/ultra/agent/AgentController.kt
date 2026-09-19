@@ -488,6 +488,67 @@ class AgentController(private val context: Context) {
         append(" | apps: ").append(listLaunchableApps().size)
     }
 
+    /**
+     * The current state of the settings people ask about, read — never changed.
+     *
+     * Measured (learnrun pass A, 2026-09-19): asked "is bluetooth on right now", the brain
+     * had nothing to read the answer from and called bluetooth_toggle {"on":true}. A
+     * question must have a read-only answer, or the model will answer it with an action.
+     */
+    fun settingsStatus(): String {
+        fun onOff(b: Boolean?) = when (b) { true -> "on"; false -> "off"; null -> "unknown" }
+        val night = try {
+            val ui = context.getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager
+            when (ui.nightMode) {
+                android.app.UiModeManager.MODE_NIGHT_YES -> "on"
+                android.app.UiModeManager.MODE_NIGHT_NO -> "off"
+                android.app.UiModeManager.MODE_NIGHT_AUTO -> "auto"
+                else -> if ((context.resources.configuration.uiMode and
+                        android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                    android.content.res.Configuration.UI_MODE_NIGHT_YES) "on" else "off"
+            }
+        } catch (_: Exception) { "unknown" }
+        val location = try {
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+            onOff(if (Build.VERSION.SDK_INT >= 28) lm.isLocationEnabled else null)
+        } catch (_: Exception) { "unknown" }
+        val storage = try {
+            val st = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+            "%.1f GB free of %.1f GB".format(st.availableBytes / 1e9, st.totalBytes / 1e9)
+        } catch (_: Exception) { "unknown" }
+        return "Wi-Fi ${onOff(isWifiEnabled())}${currentWifiSsid()?.let { " ($it)" } ?: ""} | " +
+            "Bluetooth ${onOff(isBluetoothEnabled())} | Do not disturb ${onOff(isDoNotDisturbOn())} | " +
+            "Dark mode $night | Location $location | Volume ${volumePercent() ?: "?"}% | Storage $storage"
+    }
+
+    /** Settings pages Android opens directly — no tapping through menus. */
+    val SETTINGS_PAGES = mapOf(
+        "wifi" to Settings.ACTION_WIFI_SETTINGS,
+        "bluetooth" to Settings.ACTION_BLUETOOTH_SETTINGS,
+        "display" to Settings.ACTION_DISPLAY_SETTINGS,
+        "sound" to Settings.ACTION_SOUND_SETTINGS,
+        "storage" to Settings.ACTION_INTERNAL_STORAGE_SETTINGS,
+        "about" to Settings.ACTION_DEVICE_INFO_SETTINGS,
+        "location" to Settings.ACTION_LOCATION_SOURCE_SETTINGS,
+        "battery" to Intent.ACTION_POWER_USAGE_SUMMARY,
+        "apps" to Settings.ACTION_APPLICATION_SETTINGS,
+        "notifications" to "android.settings.NOTIFICATION_SETTINGS",
+        "accessibility" to Settings.ACTION_ACCESSIBILITY_SETTINGS,
+        "date" to Settings.ACTION_DATE_SETTINGS,
+        "security" to Settings.ACTION_SECURITY_SETTINGS,
+        "network" to Settings.ACTION_WIRELESS_SETTINGS,
+        "airplane" to Settings.ACTION_AIRPLANE_MODE_SETTINGS,
+        "main" to Settings.ACTION_SETTINGS,
+    )
+
+    fun openSettings(page: String): Boolean {
+        if (!AgentAccessibilityService.agentMayUse("com.android.settings")) return false
+        val action = SETTINGS_PAGES[page.lowercase().trim()] ?: return false
+        return try {
+            context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
+        } catch (_: Exception) { false }
+    }
+
     fun currentWifiSsid(): String? = try {
         val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         @Suppress("DEPRECATION")

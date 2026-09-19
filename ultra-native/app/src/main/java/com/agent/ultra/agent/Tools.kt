@@ -201,7 +201,19 @@ class Tools(
                 "web_search" -> webSearch(params.optString("query"))
                 "device_info" -> controller.deviceInfo()
                 "battery_status" -> controller.batteryStatus()
-                "system_info" -> controller.deviceInfo() + " | " + controller.batteryStatus()
+                "system_info" -> controller.deviceInfo() + " | " + controller.batteryStatus() +
+                    " | " + controller.settingsStatus()
+                "settings_open" -> {
+                    val page = params.optString("page")
+                    when {
+                        page.lowercase().trim() !in controller.SETTINGS_PAGES ->
+                            "Error: unknown settings page '$page'. Pages: ${controller.SETTINGS_PAGES.keys.joinToString()}"
+                        !com.agent.ultra.AgentAccessibilityService.agentMayUse("com.android.settings") ->
+                            "Error: Settings is not on the user's allowed-apps list. Tell the user; do not retry."
+                        controller.openSettings(page) -> "Opened $page settings"
+                        else -> "Error: could not open $page settings"
+                    }
+                }
 
                 // ── Device control ───────────────────────────────────
                 "flashlight_toggle" -> {

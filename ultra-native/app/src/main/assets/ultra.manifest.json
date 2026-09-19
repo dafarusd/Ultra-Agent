@@ -97,6 +97,12 @@
       ]
     },
     {
+      "name": "settings_open",
+      "effects": [
+        "read"
+      ]
+    },
+    {
       "name": "battery_status",
       "effects": [
         "read"

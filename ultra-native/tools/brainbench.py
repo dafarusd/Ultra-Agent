@@ -101,7 +101,7 @@ TASKS = [
     ("vol", "set the volume to 30 percent", {"tool": "volume_set", "ok": lambda p: str(p.get("percent")) == "30"}),
     ("alarm", "wake me up at 6:45 tomorrow", {"tool": "alarm_set", "ok": lambda p: str(p.get("hour")) == "6" and str(p.get("minute", "")) == "45"}),
     ("alarm-pm", "set an alarm for 7 pm called pills", {"tool": "alarm_set", "ok": lambda p: str(p.get("hour")) == "19"}),
-    ("battery", "how much battery do I have left", {"tool": "battery_status", "alt_text": True}),
+    ("battery", "how much battery do I have left", {"tool": ["battery_status", "system_info"], "alt_text": True}),
     ("music", "play my music", {"tool": "media_play"}),
     ("note", "make a note: buy eggs and milk", {"tool": "note_create", "ok": lambda p: has(p, "text", "eggs")}),
     ("clip", "copy 'see you at 5' to my clipboard", {"tool": "clipboard_write", "ok": lambda p: has(p, "text", "see you at 5")}),
@@ -133,12 +133,18 @@ TASKS = [
     ("recipe-run", "run my morning briefing", {"tool": "recipe_run", "ok": lambda p: has(p, "name", "morning")}),
     ("watch", "let me show you how I do it — watch me", {"tool": "watch_me"}),
     ("stop-watch", "stop watching and call it pay rent", {"tool": "stop_watching", "ok": lambda p: has(p, "name", "rent")}),
+    # questions get reads, settings get settings_open (learnrun pass A, 2026-09-19)
+    ("bt-question", "is bluetooth on right now", {"tool": "system_info", "forbid": ["bluetooth_toggle", "wifi_toggle"]}),
+    ("storage-q", "how much storage do I have left", {"tool": "system_info"}),
+    ("wifi-page", "open the wifi settings page", {"tool": "settings_open", "ok": lambda p: has(p, "page", "wifi")}),
+    ("dark-mode", "turn on dark mode", {"tool": ["settings_open", "react_navigate"], "forbid": ["note_create"]}),
+    ("model-no", "what's this phone's model number", {"tool": ["system_info", "device_info", "settings_open"], "forbid": ["note_create"]}),
     # plain answers — no tool needed
     ("math", "what's 17 times 23", {"text": True}),
     ("chat", "thanks, that's all", {"text": True}),
     # multi-step: the first step must be the right one
     ("multi-1", "find the cheapest flight to Denver next Friday", {"tool": ["web_search", "react_navigate", "open_url", "app_launch"]}),
-    ("multi-2", "check my battery and if it's under 20 turn on do not disturb", {"tool": "battery_status"}),
+    ("multi-2", "check my battery and if it's under 20 turn on do not disturb", {"tool": ["battery_status", "system_info"]}),
     ("multi-3", "open maps and find the nearest pharmacy", {"tool": ["react_navigate", "web_search"]}),
 ]
 

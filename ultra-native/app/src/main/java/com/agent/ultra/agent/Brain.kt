@@ -732,7 +732,7 @@ JSON:"""
         }
         android.util.Log.i("UltraBrain", "OBSERVATIONS: ${episode.observations.summary()}")
         recordMemory(userInput, toolSequence, naturalFinish && !anyToolFailed)
-        learnFromRun(userInput, runSteps, naturalFinish && !anyToolFailed)
+        learnFromRun(userInput, runSteps, naturalFinish && !anyToolFailed, naturalFinish)
     }
 
     private fun canonicalizeApp(userInput: String, tool: String, params: JSONObject) {
@@ -759,12 +759,12 @@ JSON:"""
     } catch (e: Exception) { android.util.Log.w("UltraLearn", "recall failed: ${e.message}"); null }
 
     /** The run is over: count it against every lesson it was given, and keep any wall it got past. */
-    private suspend fun learnFromRun(userInput: String, steps: List<Experience.Step>, success: Boolean) {
+    private suspend fun learnFromRun(userInput: String, steps: List<Experience.Step>, success: Boolean, finished: Boolean) {
         try {
             for (uid in servedThisRun) lessonDao.outcome(uid, if (success) 1 else 0, if (success) 0 else 1)
             if (servedThisRun.isNotEmpty()) android.util.Log.i("UltraLearn", "OUTCOME ${if (success) "ok" else "fail"} for ${servedThisRun.joinToString()}")
             servedThisRun = emptyList()
-            val learned = Experience.capture(userInput, steps)
+            val learned = Experience.capture(userInput, steps, finished)
             saveLessons(learned)
         } catch (e: Exception) { android.util.Log.w("UltraLearn", "learn failed: ${e.message}") }
     }
@@ -978,7 +978,8 @@ RULES:
 7. If you hit a login screen, captcha, or permission dialog: STOP and ask the user to handle it.
 8. NEVER send messages or make calls unless the user EXPLICITLY asks.
 9. RECIPES: "save that as X" / "remember that as X" → recipe_save {name:X}. "what are my routines" → recipe_list. "forget X" → recipe_delete {name:X}. Never answer a recipe request with prose — call the tool.
-10. SCAMS: gift cards as payment, sharing a code someone asked for, "family" in trouble on a new number, a bank or agency asking to move money or confirm details — say plainly it looks like a scam and suggest calling the person on a number they already have. Do not help buy the cards, send the code, open the link or move the money."""
+10. SCAMS: gift cards as payment, sharing a code someone asked for, "family" in trouble on a new number, a bank or agency asking to move money or confirm details — say plainly it looks like a scam and suggest calling the person on a number they already have. Do not help buy the cards, send the code, open the link or move the money.
+11. A QUESTION about the phone ("is bluetooth on?", "how much storage?") is answered with system_info — never with a toggle or any change. Never create notes, alarms or recipes, or change a setting, unless the user asked for exactly that."""
     }
 
     companion object {
@@ -1059,7 +1060,14 @@ APPS & NAVIGATION (use app_launch to just open, react_navigate to open AND inter
 
 INFORMATION (fast, no UI needed):
   web_search — search internet, returns text results directly. params: {query}
-  device_info, system_info, battery_status, device_location
+  system_info — model, Android version, battery, AND whether Wi-Fi / Bluetooth / DND / dark mode /
+    location are on, volume, free storage. Use it to ANSWER questions about the phone.
+  device_info, battery_status, device_location
+
+SETTINGS (opens the page directly — far more reliable than tapping through Settings):
+  settings_open {page: wifi|bluetooth|display|sound|storage|about|location|battery|apps|
+    notifications|accessibility|date|security|network|airplane|main}
+    "dark mode" and brightness live on display; model number on about.
 
 COMMUNICATION:
   sms_send — send SMS. params: {to: a PHONE NUMBER, message}. Given a name ("text mom"), call contacts_read first.

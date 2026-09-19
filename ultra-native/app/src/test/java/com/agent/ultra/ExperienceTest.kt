@@ -83,4 +83,21 @@ class ExperienceTest {
         assertNull(Experience.fromJsonl("""{"uid":"Bad UID!","when":["x"],"text":"y"}"""))
         assertNull(Experience.fromJsonl("not json"))
     }
+
+    @Test fun noFixLessonWhenTheRunNeverFinished() {
+        val steps = listOf(step("react_navigate", """{"goal":"wifi"}""", false), step("app_launch", """{"target":"Settings"}""", true))
+        assertTrue(Experience.capture("open wifi settings", steps, finished = false).isEmpty())
+        assertEquals(1, Experience.capture("open wifi settings", steps, finished = true).size)
+    }
+
+    @Test fun sameCallFailingTwiceIsADeadEnd() {
+        val nav = """{"goal":"open WiFi settings","appHint":"Settings"}"""
+        val got = Experience.capture("open the wifi settings page", listOf(
+            step("react_navigate", nav, false, "Error: navigation incomplete after 15 steps"),
+            step("react_navigate", nav, false, "Error: navigation incomplete after 15 steps"),
+        ), finished = false)
+        assertEquals(1, got.size)
+        assertTrue(got[0].uid, got[0].uid.startsWith("ultra-deadend-"))
+        assertTrue(got[0].text.contains("failed twice") && got[0].text.contains("settings_open"))
+    }
 }
