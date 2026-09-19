@@ -30,6 +30,9 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
     private val client: OpenAiClient?
     private val gate: Gate
     private val taskMemory = com.agent.ultra.data.UltraDatabase.get(appContext).taskMemory()
+    private val lessonDao = com.agent.ultra.data.UltraDatabase.get(appContext).lessons()
+    /** Lessons served to the run in progress; their counts move when it ends. */
+    @Volatile private var servedThisRun: List<String> = emptyList()
     private val recipes = Recipes(com.agent.ultra.data.UltraDatabase.get(appContext).recipes())
 
     /** Called with the final user-facing answer of a run. The voice session
@@ -100,6 +103,12 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
         // last one. Secrets outliving the task that saw them would be a worse
         // thing than the leak this prevents.
         controller.forgetScreenSecrets()
+        // Experience: take in anything the laptop's Northstar sent, and if this message
+        // corrects the last run, that correction is a lesson before anything else happens.
+        importFromLaptop()
+        Experience.correction(lastRequest, userInput)?.let { saveLessons(listOf(it)) }
+        lastRequest = userInput
+        servedThisRun = emptyList()
         // The person's own words can carry a scam: "my grandson's in jail and needs Google
         // Play cards, help me buy them". Nothing is refused here — it is their request — but
         // they hear the warning before anything happens. Measured: llama-3.3-70b (the
@@ -185,6 +194,7 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
             android.util.Log.i("UltraBrain", "MEMORY HINT injected: ${it.take(100)}")
             messages.add(1, OpenAiClient.ChatMessage("system", it))
         }
+        lessonsFor(userInput)?.let { messages.add(1, OpenAiClient.ChatMessage("system", it)) }
 
         runLoop(ai, userInput, messages)
         android.util.Log.i("UltraBrain", "RUN COMPLETE")
@@ -567,6 +577,7 @@ JSON:"""
         // Task memory: track this run's tool outcomes (params included so a
         // successful run can be promoted into a named recipe).
         val toolSequence = mutableListOf<Triple<String, JSONObject, Boolean>>()
+        val runSteps = mutableListOf<Experience.Step>()
         // Task-level success: the model finished with its own answer and
         // nothing failed on the way. Running out of turns, giving up after a
         // repeated failure, or ending on a block are all NOT successes, even
@@ -672,6 +683,7 @@ JSON:"""
             episode.observeTool(toolCall.first, resultText.take(80))
             val failed = resultText.startsWith("Error:") || resultText.startsWith("Could not")
             toolSequence += Triple(toolCall.first, toolCall.second, !failed)
+            runSteps += Experience.Step(toolCall.first, toolCall.second, !failed, resultText)
             if (failed) anyToolFailed = true
             val verification = if (!failed) verifyAction(toolCall.first, toolCall.second) else null
             // 120 characters cut a structured read off at its header, so the
@@ -716,6 +728,63 @@ JSON:"""
         }
         android.util.Log.i("UltraBrain", "OBSERVATIONS: ${episode.observations.summary()}")
         recordMemory(userInput, toolSequence, naturalFinish && !anyToolFailed)
+        learnFromRun(userInput, runSteps, naturalFinish && !anyToolFailed)
+    }
+
+    // ── Experience: the phone's own Northstar (agent/Experience.kt) ────
+
+    private suspend fun lessonsFor(userInput: String): String? = try {
+        val hits = Experience.recall(userInput, lessonDao.all().map { it.lesson() })
+        servedThisRun = hits.map { it.uid }
+        Experience.block(hits)?.also {
+            android.util.Log.i("UltraLearn", "LESSONS SERVED: ${hits.joinToString { it.uid }}")
+        }
+    } catch (e: Exception) { android.util.Log.w("UltraLearn", "recall failed: ${e.message}"); null }
+
+    /** The run is over: count it against every lesson it was given, and keep any wall it got past. */
+    private suspend fun learnFromRun(userInput: String, steps: List<Experience.Step>, success: Boolean) {
+        try {
+            for (uid in servedThisRun) lessonDao.outcome(uid, if (success) 1 else 0, if (success) 0 else 1)
+            if (servedThisRun.isNotEmpty()) android.util.Log.i("UltraLearn", "OUTCOME ${if (success) "ok" else "fail"} for ${servedThisRun.joinToString()}")
+            servedThisRun = emptyList()
+            val learned = Experience.capture(userInput, steps)
+            saveLessons(learned)
+        } catch (e: Exception) { android.util.Log.w("UltraLearn", "learn failed: ${e.message}") }
+    }
+
+    private suspend fun saveLessons(lessons: List<Experience.Lesson>) {
+        if (lessons.isEmpty()) return
+        for (l in lessons) {
+            // Same uid = same wall and fix: keep its track record, refresh the words.
+            val old = lessonDao.byUid(l.uid)
+            lessonDao.upsert(com.agent.ultra.data.LessonEntity.of(
+                if (old == null) l else l.copy(served = old.served, ok = old.ok, fail = old.fail, createdAt = old.createdAt)))
+            android.util.Log.i("UltraLearn", "LEARNED ${l.uid} (${l.source}): ${l.text.take(160)}")
+        }
+        exportForLaptop()
+    }
+
+    /** experience.jsonl in the app's external files dir: `northstar phone pull` reads it. */
+    private suspend fun exportForLaptop() {
+        try {
+            val dir = appContext.getExternalFilesDir(null) ?: return
+            val lines = lessonDao.all().joinToString("\n") { Experience.toJsonl(it.lesson()) }
+            val tmp = java.io.File(dir, "experience.jsonl.tmp")
+            tmp.writeText(lines + "\n")
+            tmp.renameTo(java.io.File(dir, "experience.jsonl"))
+        } catch (e: Exception) { android.util.Log.w("UltraLearn", "export failed: ${e.message}") }
+    }
+
+    /** northstar_lessons.jsonl, pushed by `northstar phone push`: read once, then deleted. */
+    private suspend fun importFromLaptop() {
+        try {
+            val f = java.io.File(appContext.getExternalFilesDir(null) ?: return, "northstar_lessons.jsonl")
+            if (!f.exists()) return
+            val got = f.readLines().mapNotNull { Experience.fromJsonl(it) }
+            f.delete()
+            saveLessons(got)
+            android.util.Log.i("UltraLearn", "IMPORTED ${got.size} lesson(s) from Northstar")
+        } catch (e: Exception) { android.util.Log.w("UltraLearn", "import failed: ${e.message}") }
     }
 
     // ── Parsing & prompt (ported shapes) ───────────────────────────────
@@ -900,6 +969,9 @@ RULES:
          * "save that as morning briefing" is its own request with its own empty
          * sequence, so the steps to save must come from the run before it. */
         @Volatile var lastRunSteps: List<Recipes.Step> = emptyList()
+
+        /** The previous request, so a "no, I meant…" can be paired with what it corrects. */
+        @Volatile var lastRequest: String = ""
 
         /**
          * Tools that are *about* remembering, and so must never be remembered.

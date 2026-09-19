@@ -10,14 +10,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [ConversationEntity::class, MessageEntity::class,
         TaskShortcutEntity::class, ToolReliabilityEntity::class,
-        RecipeEntity::class, ScreenMemoryEntity::class],
-    version = 6,
+        RecipeEntity::class, ScreenMemoryEntity::class, LessonEntity::class],
+    version = 7,
 )
 abstract class UltraDatabase : RoomDatabase() {
     abstract fun conversations(): ConversationDao
     abstract fun taskMemory(): TaskMemoryDao
     abstract fun recipes(): RecipeDao
     abstract fun screenMemory(): ScreenMemoryDao
+    abstract fun lessons(): LessonDao
 
     companion object {
         @Volatile private var instance: UltraDatabase? = null
@@ -73,10 +74,28 @@ abstract class UltraDatabase : RoomDatabase() {
             }
         }
 
+        /** v6 → v7 adds lessons: the phone's own experience store (agent/Experience.kt). */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `lessons` (" +
+                        "`uid` TEXT NOT NULL, " +
+                        "`whenText` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, " +
+                        "`source` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`served` INTEGER NOT NULL, " +
+                        "`ok` INTEGER NOT NULL, " +
+                        "`fail` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`uid`))"
+                )
+            }
+        }
+
         fun get(context: Context): UltraDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext, UltraDatabase::class.java, "ultra.db"
-            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .fallbackToDestructiveMigration()  // last resort for older dev schemas
             .build().also { instance = it }
         }
