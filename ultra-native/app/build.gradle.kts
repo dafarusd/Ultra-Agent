@@ -45,7 +45,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
-        ndk { abiFilters += listOf("arm64-v8a") }
+        // The phone is arm64. `-Pbench` builds for the x86_64 emulator instead (AndroidWorld):
+        // same package, same output paths, no on-device model — CMakeLists skips non-arm64 ABIs,
+        // and LlmNative reports the library missing rather than dying.
+        ndk { abiFilters += listOf(if (project.hasProperty("bench")) "x86_64" else "arm64-v8a") }
     }
 
     signingConfigs {

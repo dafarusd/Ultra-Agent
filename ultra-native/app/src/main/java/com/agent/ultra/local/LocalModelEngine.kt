@@ -146,6 +146,7 @@ class LocalModelEngine(private val context: Context) {
      */
     fun ensureLoaded(): Boolean {
         if (loaded) return true
+        if (!LlmNative.available) return false          // build without llama.cpp (emulator)
         if (!modelPresent) {
             android.util.Log.w("UltraLlm", "model file missing: ${modelFile.absolutePath}")
             return false

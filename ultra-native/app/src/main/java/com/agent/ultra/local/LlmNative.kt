@@ -3,8 +3,18 @@ package com.agent.ultra.local
 /** JNI declarations for the llama.cpp shim (libultra_llm.so). */
 object LlmNative {
 
-    init {
+    /**
+     * False when libultra_llm.so isn't in this build — the x86_64 emulator build (-Pbench)
+     * has no llama.cpp. Every caller goes through [LocalModelEngine.ensureLoaded], which
+     * checks this, so an agent without an on-device model degrades to the cloud brain
+     * instead of throwing UnsatisfiedLinkError on first touch.
+     */
+    @JvmField val available: Boolean = try {
         System.loadLibrary("ultra_llm")
+        true
+    } catch (e: Throwable) {
+        android.util.Log.w("UltraLlm", "native model library not in this build: ${e.message}")
+        false
     }
 
     fun interface TokenCallback {

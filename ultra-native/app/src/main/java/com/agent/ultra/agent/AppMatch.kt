@@ -25,6 +25,26 @@ object AppMatch {
 
     private val FILLER = setOf("app", "the", "my", "application", "open")
 
+    /**
+     * What a person calls a job, mapped to words the app is actually called.
+     *
+     * "Run the stopwatch" names no app on this phone: the stopwatch lives in Clock, and the
+     * navigator failed with "no app matching 'Stopwatch'" (AndroidWorld, 2026-09-19). These are
+     * hints, tried only after the plain rules find nothing — never overriding a real match.
+     */
+    private val FEATURE_HINTS = mapOf(
+        "stopwatch" to "clock", "timer" to "clock", "alarm" to "clock", "alarms" to "clock",
+        "texts" to "messages", "text" to "messages", "sms" to "messages",
+        "photos" to "gallery", "pictures" to "gallery", "album" to "gallery", "albums" to "gallery",
+        "browser" to "chrome", "web" to "chrome", "internet" to "chrome",
+        "dialer" to "phone", "call" to "phone", "calls" to "phone",
+        "notes" to "notes", "note" to "notes", "markdown" to "markor",
+        "music" to "music", "song" to "music", "songs" to "music",
+        "events" to "calendar", "event" to "calendar", "schedule" to "calendar",
+        "files" to "files", "downloads" to "files", "folder" to "files",
+        "settings" to "settings", "preferences" to "settings",
+    )
+
     private fun words(s: String) = s.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length > 1 && it !in FILLER }.toSet()
 
     fun find(query: String, apps: List<App>): String? {
@@ -42,8 +62,15 @@ object AppMatch {
         apps.firstOrNull { a -> (words(a.label) + words(a.pkg)).containsAll(qw) }?.let { return it.pkg }
         // The label is inside what was said; the label covering the most said words wins, then
         // the longest ("google play store" -> Play Store, not Google).
-        return apps.filter { a -> words(a.label).let { lw -> lw.isNotEmpty() && qw.containsAll(lw) } }
-            .maxWithOrNull(compareBy<App>({ words(it.label).size }, { it.label.length }))?.pkg
+        apps.filter { a -> words(a.label).let { lw -> lw.isNotEmpty() && qw.containsAll(lw) } }
+            .maxWithOrNull(compareBy<App>({ words(it.label).size }, { it.label.length }))?.let { return it.pkg }
+        // Last: what the person is asking for rather than what it is called.
+        for (w in qw) {
+            val hint = FEATURE_HINTS[w] ?: continue
+            if (hint == w) continue
+            find(hint, apps)?.let { return it }
+        }
+        return null
     }
 
     /**

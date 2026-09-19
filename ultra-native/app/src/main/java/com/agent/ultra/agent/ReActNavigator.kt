@@ -105,10 +105,18 @@ ACTION:"""
         stopReason = null
 
         // Resolve and launch the target app
-        val pkg = controller.findPackage(if (appHint.isBlank()) goal else appHint)
-            ?: return NavResult(false, "no app matching '$appHint'", 0)
-        if (!controller.launchApp(pkg)) return NavResult(false, "could not launch $pkg", 0)
-        delay(2500)
+        // An unknown app name is not a reason to stop: the thing the user asked about is often
+        // already on screen ("Run the stopwatch" named no app, and the run died here —
+        // AndroidWorld, 2026-09-19). Fall back to whatever is in front of us.
+        val named = controller.findPackage(if (appHint.isBlank()) goal else appHint)
+        val pkg = named ?: controller.foregroundPackage()
+            ?: return NavResult(false, "no app matching '$appHint' and nothing on screen", 0)
+        if (named != null || pkg != controller.foregroundPackage()) {
+            if (!controller.launchApp(pkg)) return NavResult(false, "could not launch $pkg", 0)
+            delay(2500)
+        } else {
+            android.util.Log.i("UltraNav", "no app matching '$appHint'; working on what's on screen ($pkg)")
+        }
 
         known = loadOrLearnControls(pkg)
 
@@ -215,7 +223,16 @@ ACTION:"""
                         ?.let { NavPlan.satisfied(it, observation) } ?: false
                     android.util.Log.i("UltraNav", "stage $stage/${plan.size} passed (nothing to check) at step $iter")
                     if (stage >= plan.size) {
-                        return NavResult(true, "all ${plan.size} stages done", iter)
+                        // The last stage had nothing to check, so "done" here means only that the
+                        // screen moved. AndroidWorld 2026-09-19: the plan for "Run the stopwatch"
+                        // was one uncheckable stage, "Tap Stopwatch" — the tab opened, the
+                        // stopwatch never started, and the run reported success. Carry on toward
+                        // the goal instead; the model still has to say done, or a later stage has
+                        // to check out.
+                        android.util.Log.i("UltraNav", "last stage was uncheckable — not calling that done")
+                        planActive = false
+                        history += "step $iter: the plan ran out and nothing confirmed the task is done — " +
+                            "do the action the task actually asks for, then answer done"
                     }
                 } else if (NavPlan.satisfied(here, observation)) {
                     stage++

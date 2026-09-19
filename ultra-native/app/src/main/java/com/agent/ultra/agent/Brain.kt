@@ -630,6 +630,10 @@ JSON:"""
             // (AppMatch.canonical): the gate then traces it, and the same package opens.
             canonicalizeApp(userInput, toolCall.first, toolCall.second)
 
+            // Logged BEFORE the gate: a blocked call never reached the TOOL CALL line below, so
+            // the log said a call was refused and never what it was (AndroidWorld run, 2026-09-19).
+            android.util.Log.i("UltraBrain", "TOOL ATTEMPT: ${toolCall.first} params=${toolCall.second.toString().take(200)}")
+
             // ── POLICY GATE (M3) — deterministic, no model judgment ──
             val verdict = gate.enforceCall(episode, toolCall.first, toolCall.second)
             if (!verdict.allowed) {

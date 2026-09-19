@@ -135,6 +135,9 @@ Rules:
   words. Not a sentence describing the page, and not the page's contents.
 - If you cannot name such text for a stage, write EXPECT: none.
 - Fewer stages is better. Do not pad.
+- The LAST stage must be the action that COMPLETES the task, not the screen you land on, and its
+  EXPECT must be text that appears only once it is done (starting a stopwatch: EXPECT: Pause).
+  Opening the right tab or screen is never the last stage.
 - Stay inside the app that is on screen. Never plan to restart, reset or power off the
   phone, uninstall anything, sign out, grant a permission or change a setting unless
   the task itself says to. If the task is already done on this screen, write

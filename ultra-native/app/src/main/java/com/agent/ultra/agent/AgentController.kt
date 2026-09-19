@@ -549,6 +549,10 @@ class AgentController(private val context: Context) {
         } catch (_: Exception) { false }
     }
 
+    /** The app in front of the user right now, as the accessibility service sees it. */
+    fun foregroundPackage(): String? =
+        AgentAccessibilityService.getInstance()?.getCurrentPackage()?.takeIf { it.isNotBlank() }
+
     fun currentWifiSsid(): String? = try {
         val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         @Suppress("DEPRECATION")

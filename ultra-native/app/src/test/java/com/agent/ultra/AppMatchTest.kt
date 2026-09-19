@@ -39,4 +39,12 @@ class AppMatchTest {
         assertEquals("chrome", AppMatch.canonical("in chrome open my bookmarks", "Chrome", apps))
         assertEquals("maps", AppMatch.canonical("open google maps and search for coffee", "google maps", apps))
     }
+
+    @Test fun featureWordFindsItsApp() {
+        assertEquals("com.sec.android.app.clockpackage", AppMatch.find("Stopwatch", apps))
+        assertEquals("com.sec.android.app.clockpackage", AppMatch.find("timer", apps))
+        assertEquals("com.sec.android.app.myfiles", AppMatch.find("downloads", apps))
+    }
+    @Test fun aRealNameStillWinsOverAHint() =
+        assertEquals("com.android.chrome", AppMatch.find("chrome", apps))
 }
