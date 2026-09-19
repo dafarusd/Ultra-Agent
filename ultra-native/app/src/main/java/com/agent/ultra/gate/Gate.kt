@@ -85,7 +85,12 @@ class Gate(private val manifest: Manifest) {
             private val CONFIRMABLE_RULES = setOf(
                 "recipient_traceable", "any_arg_traceable", "atom_in_request",
                 "domain_in_request", "origin_subset", "low_confidence_egress",
+                "scam_followup",
             )
+
+            /** Confirmable, but only by a person reading why: never auto-approved,
+             * whatever the risk score says. */
+            val NEVER_AUTO = setOf("scam_followup")
 
             /**
              * Risk score at or below this threshold auto-approves confirmable
@@ -193,6 +198,20 @@ class Gate(private val manifest: Manifest) {
                 "outbound action backed only by screen reads (low confidence)")
         }
 
+        // Scam follow-up: a number, link, email or cashtag that arrived in a message the
+        // scam detector flagged. The user naming it is not enough here — getting the user
+        // to name it is how the scam works. Outbound and app-driving tools only; a search
+        // for "is this number a scam" is the right thing to do and stays free.
+        if ((Effect.EGRESS in spec.effects || Effect.MUTATE in spec.effects) && function !in SCAM_FREE) {
+            for ((k, b) in bindings) {
+                if (ep.isConfirmed(b.value)) continue
+                val (flag, target) = ScamWatch.match(b.value) ?: continue
+                violations += Violation("scam_followup", k,
+                    "$target came from a message that looks like a scam (${flag.reasons})")
+                break
+            }
+        }
+
         // Egress completeness: an argument the manifest never declared is not a free
         // channel (an undeclared cc walked straight out of gatellml's travel policy).
         val requires = spec.requires.toMutableList()
@@ -227,14 +246,24 @@ class Gate(private val manifest: Manifest) {
         if (violations.isEmpty()) return Verdict(true, riskScore = risk)
 
         val candidateVerdict = Verdict(false, violations, riskScore = risk)
-        if (candidateVerdict.confirmable && risk.total <= Verdict.AUTO_APPROVE_THRESHOLD) {
+        if (candidateVerdict.confirmable && risk.total <= Verdict.AUTO_APPROVE_THRESHOLD &&
+            violations.none { it.rule in Verdict.NEVER_AUTO }) {
             return Verdict(true, violations, riskScore = risk, autoApproved = true)
         }
         return candidateVerdict
     }
 
     companion object {
+        /** Tools that may carry a flagged target without a confirm: looking it up is safe. */
+        private val SCAM_FREE = setOf("web_search")
+
         fun renderBlock(verdict: Verdict): String {
+            if (verdict.rule == "scam_followup") {
+                return "BLOCKED by security policy (scam_followup). " +
+                    verdict.violations.first { it.rule == "scam_followup" }.hint + ". " +
+                    "Tell the user this plainly, in one sentence, before anything else. Do not retry. " +
+                    "Only continue if the user confirms they know and trust this sender."
+            }
             val detail = verdict.violations.take(2).joinToString("; ") { it.hint }
             return "BLOCKED by security policy (${verdict.rule}). This action was not explicitly " +
                 "requested by the user (targets must be named in the user's original request). " +

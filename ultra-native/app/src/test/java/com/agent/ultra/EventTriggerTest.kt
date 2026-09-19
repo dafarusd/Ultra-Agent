@@ -116,7 +116,7 @@ class EventTriggerTest {
     fun `registerDefaults adds notification and system triggers once`() {
         EventTrigger.registerDefaults()
         EventTrigger.registerDefaults()
-        assertEquals(1, fieldCount("triggers"))
+        assertEquals(2, fieldCount("triggers"))     // sms_code + scam_shield
         assertEquals(6, fieldCount("systemTriggers"))
     }
 

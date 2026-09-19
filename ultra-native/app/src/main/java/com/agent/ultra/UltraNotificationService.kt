@@ -36,7 +36,7 @@ class UltraNotificationService : NotificationListenerService() {
             val title = extras.getCharSequence("android.title")?.toString() ?: ""
             val text = extras.getCharSequence("android.text")?.toString() ?: ""
 
-            runTriggers(sbn.packageName, title, text)
+            val warned = runTriggers(sbn.packageName, title, text)
 
             // Capture is standing collection, not a per-task read: without
             // this check every banking alert, message preview and two-factor
@@ -45,6 +45,7 @@ class UltraNotificationService : NotificationListenerService() {
             val line = buildString {
                 append(sbn.postTime)
                 append(" | ").append(sbn.packageName)
+                if (warned != null) append(" | [LOOKS LIKE A SCAM: ").append(warned).append("]")
                 if (title.isNotBlank()) append(" | ").append(title.take(60))
                 if (text.isNotBlank()) append(" | ").append(text.take(120))
                 append("\n")
@@ -60,10 +61,23 @@ class UltraNotificationService : NotificationListenerService() {
         }
     }
 
-    private fun runTriggers(pkg: String, title: String, text: String) {
+    /** Runs the triggers; returns the scam reasons when the scam shield fired. */
+    private fun runTriggers(pkg: String, title: String, text: String): String? {
         val actions = EventTrigger.evaluate(this, pkg, title, text)
+        var warned: String? = null
         for (a in actions) {
             when (a.type) {
+                EventTrigger.Action.Type.WARN -> {
+                    warned = a.data
+                    Log.i(TAG, "SCAM WARN from=${pkg}: ${a.data}")
+                    android.os.Handler(mainLooper).post {
+                        Toast.makeText(this, "Ultra: " + a.label, Toast.LENGTH_LONG).show()
+                        // Said out loud too: the person most likely to fall for it may not read a toast.
+                        if (com.agent.ultra.ui.UltraPrefs.speakAnswers(this)) {
+                            speaker().speak("Careful. " + a.label + " Don't send money, codes or cards to it.")
+                        }
+                    }
+                }
                 EventTrigger.Action.Type.CLIPBOARD_COPY -> {
                     try {
                         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -82,6 +96,15 @@ class UltraNotificationService : NotificationListenerService() {
                 }
             }
         }
+        return warned
+    }
+
+    private var speakerRef: com.agent.ultra.ui.Speaker? = null
+    private fun speaker() = speakerRef ?: com.agent.ultra.ui.Speaker(this).also { speakerRef = it }
+
+    override fun onDestroy() {
+        try { speakerRef?.shutdown() } catch (_: Exception) {}
+        super.onDestroy()
     }
 
     companion object {

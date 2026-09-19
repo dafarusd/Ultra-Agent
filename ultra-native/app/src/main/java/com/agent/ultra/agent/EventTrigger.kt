@@ -25,7 +25,7 @@ object EventTrigger {
         val label: String,
         val data: String = "",
     ) {
-        enum class Type { CLIPBOARD_COPY, TOAST }
+        enum class Type { CLIPBOARD_COPY, TOAST, WARN }
     }
 
     interface Trigger {
@@ -119,6 +119,30 @@ object EventTrigger {
         }
     }
 
+    /**
+     * Built-in: a message that looks like a scam → a spoken/visible warning, and its
+     * numbers and links held by [com.agent.ultra.gate.ScamWatch] so the gate asks
+     * before anything is sent to them. Any app's notification counts: scams arrive by
+     * SMS, WhatsApp, email and social apps alike.
+     */
+    object ScamTrigger : Trigger {
+        override val name = "scam_shield"
+
+        override fun evaluate(context: Context, pkg: String, title: String, text: String): Action? {
+            if (!com.agent.ultra.ui.UltraPrefs.scamShield(context)) return null
+            return check(pkg, title, text)
+        }
+
+        /** The context-free part, for tests. */
+        fun check(pkg: String, title: String, text: String): Action? {
+            if (pkg == "com.agent.ultra") return null          // never our own warnings
+            val a = ScamSignals.assess(title, text)
+            if (!a.scam) return null
+            com.agent.ultra.gate.ScamWatch.remember(a, title)
+            return Action(Action.Type.WARN, "This message looks like a scam: ${a.reasons}.", a.reasons)
+        }
+    }
+
     object BatteryLowTrigger : SystemTrigger {
         override val name = "battery_low"
         override val intentFilter: IntentFilter
@@ -207,7 +231,10 @@ object EventTrigger {
     }
 
     fun registerDefaults() {
-        if (triggers.isEmpty()) register(SmsCodeTrigger)
+        if (triggers.isEmpty()) {
+            register(SmsCodeTrigger)
+            register(ScamTrigger)
+        }
         if (systemTriggers.isEmpty()) {
             registerSystem(BatteryLowTrigger)
             registerSystem(BatteryOkTrigger)

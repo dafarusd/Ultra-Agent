@@ -530,6 +530,27 @@ fun SettingsScreen(
             })
         }
 
+        var scamShield by remember { mutableStateOf(UltraPrefs.scamShield(context)) }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Scam warnings", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Warn when a message looks like a scam, and ask before sending anything to " +
+                        "its numbers or links. Runs on the phone; nothing is saved. Needs the " +
+                        "notification listener.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            Switch(checked = scamShield, onCheckedChange = {
+                scamShield = it
+                UltraPrefs.setScamShield(context, it)
+            })
+        }
+
         var sysTriggers by remember { mutableStateOf(UltraPrefs.systemTriggers(context)) }
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),

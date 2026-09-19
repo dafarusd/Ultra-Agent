@@ -615,7 +615,9 @@ JSON:"""
                     val targets = verdict.violations.mapNotNull { v ->
                         v.arg?.let { a -> toolCall.second.optString(a).takeIf { it.isNotBlank() } }
                     }.distinct()
-                    val desc = describeAction(toolCall.first, toolCall.second)
+                    val scam = verdict.violations.firstOrNull { it.rule == "scam_followup" }
+                    val desc = (if (scam != null) "Careful: ${scam.hint}. " else "") +
+                        describeAction(toolCall.first, toolCall.second)
                     pendingConfirm = PendingConfirm(
                         desc, targets, toolCall.first, toolCall.second, raw,
                         messages, turn, episode, userInput,
