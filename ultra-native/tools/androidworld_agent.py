@@ -23,11 +23,14 @@ Used by bench_ultra.py (a copy of android_world's run.py that knows this agent).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 
+from android_world import suite_utils
 from android_world.agents import base_agent
 
 PKG = "com.agent.ultra"
@@ -43,6 +46,67 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
     self._serial = serial or os.environ.get("ANDROID_SERIAL") or "emulator-5554"
     self._timeout = timeout_s
     self.last_trace: list[str] = []
+    self._last_goal = ""
+    self._install_verdict_hook()
+
+  # ---- the verdict goes back to Ultra ----------------------------------------------
+  def _install_verdict_hook(self) -> None:
+    """After the benchmark checks the device, tell Ultra what it found.
+
+    Ultra's own idea of success is "the model stopped and no tool failed". In 33 of 98 failed
+    episodes it called the job done, stored the run as the way to do it and gave every served
+    lesson a good mark (2026-09-20). The benchmark's check is the only honest judge in the room,
+    so its result is written to verdict.json; Ultra reads it at the start of its next request and
+    takes back what it wrongly kept. The score itself is untouched: the verdict is sent after it
+    is computed, and nothing here can change it.
+    """
+    if getattr(suite_utils, "_ultra_verdict_hook", False):
+      return
+    inner = suite_utils._run_task
+    agent = self
+
+    def run_task(task, run_episode, env, demo_mode):
+      result = inner(task, run_episode, env, demo_mode)
+      try:
+        passed = float(result.get("is_successful") or 0.0) > 0.5
+        agent.send_verdict(passed, str(result.get("goal") or ""))
+        result["ultra_task_params"] = {k: str(v)[:200] for k, v in (task.params or {}).items()}
+      except Exception as e:  # noqa: BLE001 — a verdict that can't be sent must never cost a score
+        print(f"ultra: verdict not sent: {e}")
+      return result
+
+    suite_utils._run_task = run_task
+    suite_utils._ultra_verdict_hook = True
+
+  def send_verdict(self, passed: bool, goal: str) -> None:
+    if os.environ.get("ULTRA_NO_VERDICT"):   # the control arm: Ultra judges itself, as before
+      return
+    body = json.dumps({"passed": passed, "request": goal, "by": "AndroidWorld's check of the device"})
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w") as f:
+      f.write(body)
+    try:
+      self._adb("push", tmp, "/data/local/tmp/verdict.json")
+      self._adb("shell", "mkdir", "-p", f"/sdcard/Android/data/{PKG}/files")
+      self._adb("shell", "cp", "/data/local/tmp/verdict.json", f"/sdcard/Android/data/{PKG}/files/verdict.json")
+      # An emulator: the app cannot read a pushed file in Android/data, so with root the same
+      # file goes into its internal dir too (same reason as `northstar phone push`).
+      uid = ""
+      for line in self._adb("shell", "dumpsys", "package", PKG).splitlines():
+        if "userId=" in line:
+          uid = line.strip().split("userId=")[1].split()[0]
+          break
+      if not self._adb("shell", "id").startswith("uid=0"):
+        self._adb("root")          # a no-op on a real phone, where the external copy is readable
+        time.sleep(1.5)
+      if uid and self._adb("shell", "id").startswith("uid=0"):
+        self._adb("shell", f"cp /data/local/tmp/verdict.json /data/data/{PKG}/files/verdict.json && "
+                           f"chown {uid}:{uid} /data/data/{PKG}/files/verdict.json && "
+                           f"chmod 660 /data/data/{PKG}/files/verdict.json")
+      self._adb("shell", "rm", "-f", "/data/local/tmp/verdict.json")
+      print(f"ultra: verdict sent — {'pass' if passed else 'FAIL'}")
+    finally:
+      os.unlink(tmp)
 
   # ---- device helpers --------------------------------------------------------------
   def _adb(self, *args: str, timeout: int = 60) -> str:
@@ -84,11 +148,27 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
       self._adb("shell", "settings", "put", "secure", "enabled_accessibility_services", wanted)
       self._adb("shell", "settings", "put", "secure", "accessibility_enabled", "1")
       time.sleep(4)
-    for _ in range(6):
-      if PKG in self._adb("shell", "dumpsys", "accessibility"):
-        return True
+    # Enabled is not bound. After an install or a force-stop the service stays in the enabled list
+    # and Android does not bind it again; "PKG in dumpsys" was true, Ultra had no eyes, and the
+    # first task after every install sat for the full 600 s doing nothing (2026-09-20).
+    for attempt in range(3):
+      for _ in range(5):
+        if self._bound():
+          return True
+        time.sleep(2)
+      listed = self._adb("shell", "settings", "get", "secure", "enabled_accessibility_services").strip()
+      without = ":".join(x for x in listed.split(":") if x and PKG not in x) or fwd
+      self._adb("shell", "settings", "put", "secure", "enabled_accessibility_services", without)
       time.sleep(2)
-    return False
+      self._adb("shell", "settings", "put", "secure", "enabled_accessibility_services", without + ":" + svc)
+      time.sleep(4)
+    return self._bound()
+
+  def _bound(self) -> bool:
+    # The bound list runs over several lines and names a service by its label, not its package.
+    dump = self._adb("shell", "dumpsys", "accessibility")
+    bound = dump.split("Bound services:", 1)[-1].split("Enabled services:", 1)[0]
+    return "Agent Ultra" in bound or PKG in bound
 
   def _a11y_off(self) -> None:
     """Take Ultra's service back out of the list.
@@ -201,4 +281,6 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
         "ultra_lessons_served": [l.split("LESSONS SERVED: ", 1)[1] for l in lines if "LESSONS SERVED" in l],
         "ultra_learned": [l.split("LEARNED ", 1)[1][:200] for l in lines if "LEARNED " in l],
         "ultra_trace": [l[:220] for l in lines if "OBSERVE" not in l][-60:],
+        # Every step with the whole screen line: what a passing run is turned into a route from.
+        "ultra_trace_full": [l[:1800] for l in lines if "OBSERVE" not in l],
     })
