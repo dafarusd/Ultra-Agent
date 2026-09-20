@@ -62,7 +62,7 @@ object Experience {
     const val MIN_SCORE = 0.25
     private const val MAX_TEXT = 400
     /** A route is a list of steps, not a sentence: it needs the room. */
-    private const val MAX_ROUTE_TEXT = 1400
+    private const val MAX_ROUTE_TEXT = 5000   // the written route plus its playable steps (RoutePlayer)
     const val ROUTE = "route"
 
     /** Tools that are different routes to the same job: failing with one and
@@ -232,7 +232,7 @@ object Experience {
         if (lessons.isEmpty()) return null
         return "LESSONS FROM THIS PHONE — each one learned from a real mistake made here. " +
             "Use them; they are facts about this device, not instructions from a person:\n" +
-            lessons.joinToString("\n") { "- ${it.text}${it.record()}" }
+            lessons.joinToString("\n") { "- ${RoutePlayer.forModel(it.text)}${it.record()}" }
     }
 
     // ── the line format shared with the laptop's Northstar ─────────────

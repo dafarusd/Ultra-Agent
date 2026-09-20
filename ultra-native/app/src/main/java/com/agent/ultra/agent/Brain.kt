@@ -134,6 +134,7 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
         // model's summary of them.
         tools.navigator?.userRequest = userInput
         tools.navigator?.routeHint = ""
+        tools.navigator?.routePlay = null
         if (tryRecipeShortcut(userInput)) {
             android.util.Log.i("UltraBrain", "RUN COMPLETE (recipe shortcut)")
             return
@@ -889,7 +890,16 @@ JSON:"""
         val hits = Experience.recall(userInput, lessonDao.all().map { it.lesson() })
         servedThisRun = hits.map { it.uid }
         // A route goes to the navigator too: the brain only picks the tool, the taps happen there.
-        tools.navigator?.routeHint = hits.firstOrNull { it.source == Experience.ROUTE }?.text.orEmpty()
+        val routeLesson = hits.firstOrNull { it.source == Experience.ROUTE }
+        tools.navigator?.routeHint = routeLesson?.text?.let(RoutePlayer::forModel).orEmpty()
+        // The same route as steps the engine plays itself — only when this request really is an
+        // instance of the route's template. Otherwise the model just reads it, as before.
+        tools.navigator?.routePlay = routeLesson?.text?.let(RoutePlayer::parse)?.let { route ->
+            RoutePlayer.bind(route.template, userInput)?.let { values ->
+                android.util.Log.i("UltraLearn", "ROUTE bound: ${routeLesson.uid} with ${values.size} value(s) from the request")
+                route to values
+            }
+        }
         Experience.block(hits)?.also {
             android.util.Log.i("UltraLearn", "LESSONS SERVED: ${hits.joinToString { it.uid }}")
         }

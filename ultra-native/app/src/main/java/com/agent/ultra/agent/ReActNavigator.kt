@@ -164,6 +164,13 @@ ACTION:"""
         if (goalSatisfied(goal, observation)) {
             return NavResult(true, "already showing the goal", 0)
         }
+        // A route a check has passed is played before any model is asked anything. What it
+        // can't finish, the model picks up from where it stopped.
+        val played = playRoute(pkg)
+        if (played != null) {
+            if (played.finished) return NavResult(true, played.note, played.steps)
+            observation = observe()
+        }
         // Ask for a plan before acting. A failure here is not fatal: an empty
         // plan runs the old single-goal loop, which is what happened before
         // any of this existed.
@@ -202,6 +209,7 @@ ACTION:"""
         var unparseable = 0
         var leftAppFor = 0
         val history = mutableListOf<String>()
+        if (played != null) history += played.note
 
         // Steps spent because something else took the screen are not steps the
         // agent wasted. Measured: an alarm app taking the foreground mid-task
@@ -1034,6 +1042,58 @@ ACTION:"""
         return controller.swipe(540, if (down) 1650 else 750, 540, if (down) 750 else 1650, 350)
     }
 
+    private data class Played(val finished: Boolean, val steps: Int, val note: String)
+
+    /**
+     * Play this call's share of the bound route, one action at a time, through the same
+     * executeAction every model-chosen action goes through — so the action gate still asks before
+     * a commitment and typing is still checked before a keystroke. It stops the moment a step
+     * doesn't fit what is on the screen (nothing with those words, or the action changed
+     * nothing); whatever is left is the model's, told what has been done.
+     */
+    private suspend fun playRoute(pkg: String): Played? {
+        val (route, values) = routePlay ?: return null
+        val navCalls = route.calls.filter { it.tool == "react_navigate" }
+        val call = navCalls.getOrNull(routeCallsPlayed) ?: return null
+        routeCallsPlayed++
+        val script = RoutePlayer.script(call, values)
+        if (script.actions.isEmpty()) return null
+        var done = 0
+        for ((n, said) in script.actions.withIndex()) {
+            stopReason?.let { return Played(false, done, "route stopped: $it") }
+            val before = observe()
+            val textBefore = screenText(lastFlat)
+            val isTap = said.startsWith("tap(") || said.startsWith("long_press(")
+            val action = if (!isTap) said else {
+                val idx = resolveTap(said.replaceFirst("long_press", "tap"), labelled, listedIndexes)
+                if (idx == null) {
+                    android.util.Log.i("UltraNav", "ROUTE step ${n + 1}/${script.actions.size}: $said — nothing on this screen has those words; the model takes over")
+                    return Played(false, done, "A route that has passed a check was followed for $done step(s); its next step, $said, did not fit this screen. Carry on from here.")
+                }
+                (if (said.startsWith("long_press")) "long_press" else "tap") + "($idx)"
+            }
+            val ok = executeAction(action, before)
+            delay(900)
+            val after = observe()
+            val changed = after != before || screenText(lastFlat) != textBefore
+            val refusal = lastRefusal
+            lastRefusal = null
+            android.util.Log.i("UltraNav", "ROUTE step ${n + 1}/${script.actions.size} played: $said -> " +
+                (if (refusal != null) "NOT DONE: $refusal" else if (changed) "screen changed" else if (ok) "no change" else "failed"))
+            if (refusal != null || !(changed || (ok && said.startsWith("scroll_to")))) {
+                return Played(false, done, "A route that has passed a check was followed for $done step(s); then $said did not work here" +
+                    (refusal?.let { " ($it)" } ?: "") + ". Carry on from here.")
+            }
+            done++
+            if (controller.activePackage().let { it.isNotBlank() && it != pkg && it != OWN_PACKAGE }) {
+                return Played(false, done, "A route was followed for $done step(s) and the phone is now outside the app. Carry on from here.")
+            }
+        }
+        val more = routeCallsPlayed < navCalls.size
+        return if (script.complete)
+            Played(true, done, "followed a route that has passed a check: $done steps" + if (more) " (the route has another part)" else "")
+        else Played(false, done, "A route that has passed a check was followed for $done step(s); the rest of it could not be played. Finish the job from here.")
+    }
     /** Resolve an [index] from the flat list to on-screen coordinates and tap. */
     /**
      * Tap what the model chose, or say why not.
@@ -1120,13 +1180,22 @@ ACTION:"""
      * person's words or it does not happen.
      */
     var userRequest: String = ""
-
-    /** The route lesson recalled for this request, if any (Brain sets it; empty = none). */
-    var routeHint: String = ""
         set(value) {
             field = value
             stoppedOnDisagreement = null   // a new message answers the old question
         }
+
+    /** The route lesson recalled for this request, if any (Brain sets it; empty = none). */
+    var routeHint: String = ""
+
+    /**
+     * The same route as steps the engine can play, already bound to this request's values — or
+     * null when there is none, or the request is not an instance of its template. Brain sets it
+     * once per run; each react_navigate call in the run plays the next call's steps.
+     */
+    var routePlay: Pair<RoutePlayer.Route, Map<String, String>>? = null
+        set(value) { field = value; routeCallsPlayed = 0 }
+    private var routeCallsPlayed = 0
 
     /**
      * Set when the screen contradicted the request, and the run must end.
