@@ -36,6 +36,10 @@ object AppMatch {
         "stopwatch" to "clock", "timer" to "clock", "alarm" to "clock", "alarms" to "clock",
         "texts" to "messages", "text" to "messages", "sms" to "messages",
         "photos" to "gallery", "pictures" to "gallery", "album" to "gallery", "albums" to "gallery",
+        // Taking one is the camera's job, looking at them is the gallery's: "Take one photo" named
+        // no app, "camera" didn't trace to the request, and the policy gate (rightly) refused it
+        // (AndroidWorld CameraTakePhoto, 2026-09-20).
+        "photo" to "camera", "picture" to "camera", "selfie" to "camera", "video" to "camera",
         "browser" to "chrome", "web" to "chrome", "internet" to "chrome",
         "dialer" to "phone", "call" to "phone", "calls" to "phone",
         "notes" to "notes", "note" to "notes", "markdown" to "markor",

@@ -1240,6 +1240,8 @@ DEVICE CONTROL (instant, ~99% reliable). Always say which way — {} means ON:
 APPS & NAVIGATION (use app_launch to just open, react_navigate to open AND interact):
   app_launch — open app (no interaction). params: {target}
   react_navigate — open app AND do things inside it (tap, type, scroll). params: {goal, appHint}
+    It can work ANY app's screen — camera shutter, a form, a list — so "take a photo" or "record a
+    video" is react_navigate in the camera, never "I can't do that".
   open_url — open a URL in browser. params: {url}
 
 INFORMATION (fast, no UI needed):
