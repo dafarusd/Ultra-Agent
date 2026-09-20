@@ -86,4 +86,19 @@ class NavigatorPromptTest {
             assertTrue("missing $action", p.contains(action))
         }
     }
+
+    // 36 of 98 failed AndroidWorld episodes repeated an action already marked NO CHANGE (2026-09-20).
+    @Test
+    fun actionsThatDidNothingOnThisScreenAreNamedAsUnavailable() {
+        val p = ReActNavigator.buildPrompt("create note", "TAPPABLE:\n  [1] (unlabelled button, top left)", emptyList(),
+            dead = listOf("tap(1)", "scroll(down)"))
+        assertTrue(p, p.contains("tap(1), scroll(down)") && p.contains("not available"))
+    }
+
+    @Test
+    fun aRouteIsShownToEveryStepAndAbsentWhenThereIsNone() {
+        val with = ReActNavigator.buildPrompt("create note", "TAPPABLE:\n  [1] x", emptyList(), route = "1. tap \"New\"")
+        assertTrue(with, with.contains("A ROUTE THAT WORKED BEFORE") && with.contains("1. tap \"New\""))
+        assertFalse(ReActNavigator.buildPrompt("create note", "TAPPABLE:\n  [1] x", emptyList()).contains("ROUTE"))
+    }
 }

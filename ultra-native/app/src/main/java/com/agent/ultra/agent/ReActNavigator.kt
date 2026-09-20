@@ -41,6 +41,8 @@ class ReActNavigator(
             repeatedNoOp: Int = 0,
             leftAppFor: Int = 0,
             target: String = "",
+            dead: Collection<String> = emptyList(),
+            route: String = "",
         ): String {
             val stuck = if (repeatedNoOp >= 2)
                 "You are repeating yourself. Try back(), or type the destination directly."
@@ -49,11 +51,17 @@ class ReActNavigator(
             val strayed = if (leftAppFor >= 2)
                 "You have been outside $target for $leftAppFor steps. Press back() until you are back in it."
             else ""
-            val notes = listOf(stuck, strayed).filter { it.isNotBlank() }
+            // Named, not hinted at: "do not repeat this" in HISTORY was ignored in 36 of 98 failed
+            // AndroidWorld episodes (2026-09-20). These are also refused in code if chosen.
+            val tried = if (dead.isNotEmpty())
+                "Already tried on this exact screen and nothing happened, so they are not available: " +
+                    dead.joinToString(", ") + ". Choose something else."
+            else ""
+            val notes = listOf(stuck, strayed, tried).filter { it.isNotBlank() }
             val noteBlock = if (notes.isEmpty()) "" else "\nNOTES:\n" + notes.joinToString("\n") { "- $it" } + "\n"
             val hist = if (history.isEmpty()) "" else "\nHISTORY:\n" + history.takeLast(6).joinToString("\n")
             return """You are driving an Android phone's UI to accomplish: "$goal"
-
+${NavPlan.routeBlock(route)}
 CURRENT SCREEN:
 $observation
 $hist$noteBlock
@@ -157,6 +165,9 @@ ACTION:"""
         var stuckCount = 0
         var lastAction = ""
         var repeatedNoOp = 0
+        // Actions that changed nothing, per exact screen: offered to the model as unavailable and
+        // refused if picked anyway.
+        val dead = mutableMapOf<String, MutableSet<String>>()
         var leftAppFor = 0
         val history = mutableListOf<String>()
 
@@ -175,7 +186,8 @@ ACTION:"""
             val aim = (if (planActive) plan.getOrNull(stage) else null)?.let {
                 "${it.description}  (part of: $goal)"
             } ?: goal
-            val prompt = buildPrompt(aim, observation, history, repeatedNoOp, leftAppFor, pkg)
+            val deadHere = dead[observation].orEmpty()
+            val prompt = buildPrompt(aim, observation, history, repeatedNoOp, leftAppFor, pkg, deadHere, routeHint)
             val reply = client.complete(
                 listOf(OpenAiClient.ChatMessage("user", prompt)),
                 maxTokens = 600,
@@ -185,7 +197,7 @@ ACTION:"""
             // The screen as the model saw it. Without this the log shows which action it chose and
             // never what it was choosing from, so "why did it keep tapping instead of typing?"
             // could not be answered from a run (AndroidWorld, 2026-09-19).
-            android.util.Log.i("UltraNav", "step $iter sees: ${observation.replace("\n", " | ").take(700)}")
+            android.util.Log.i("UltraNav", "step $iter sees: ${observation.replace("\n", " | ").take(1600)}")
 
             val action = extractAction(reply)
                 ?: return NavResult(false, "model gave no parseable action", iter - 1)
@@ -198,7 +210,16 @@ ACTION:"""
                 continue
             }
 
+            // The model was told this action does nothing here and chose it anyway. Asking again
+            // costs a model call; doing it again costs a step and teaches nothing.
+            if (action in deadHere) {
+                android.util.Log.i("UltraNav", "step $iter action: $action — REFUSED, dead on this screen")
+                history += "step $iter: $action → REFUSED: already tried on this exact screen, nothing happened. Choose a different action."
+                continue
+            }
+
             val before = observation
+            val textBefore = screenText(lastFlat)
             // Log the action and its outcome. Without this a failing run gives
             // no way to tell a bad choice from a good choice executed badly,
             // and both look like "the tap did not work".
@@ -206,7 +227,10 @@ ACTION:"""
             val ok = executeAction(action, observation)
             delay(900)
             observation = observe()
-            val changed = observation != before
+            // The list of things to tap is not the whole screen. A timer keypad looks the same
+            // after every digit while the display above it changes; judged by the list alone,
+            // each digit "did nothing" and the second 1 of 11 was refused (2026-09-20).
+            val changed = observation != before || screenText(lastFlat) != textBefore
 
             if (goalSatisfied(goal, observation)) {
                 return NavResult(true, "goal visible on screen after $iter steps", iter)
@@ -325,6 +349,7 @@ ACTION:"""
             val drift = if (drifted)
                 " — you are now in $onPkg, NOT $pkg. Use back() unless leaving was intended."
             else ""
+            if (!changed && refusal == null) dead.getOrPut(before) { mutableSetOf() } += action
             android.util.Log.i("UltraNav", "step $iter outcome: $outcome$drift")
             history += "step $iter: $action → $outcome$drift"
 
@@ -679,6 +704,14 @@ ACTION:"""
     }
 
     /** a11y flat nodes → indexed TAPPABLE/TYPEABLE/SCROLLABLE lists (visible-only). */
+    /** Every piece of text on the screen, tappable or not: what "did anything change" is judged on. */
+    private fun screenText(flat: String): String = try {
+        val arr = JSONArray(flat)
+        (0 until arr.length()).joinToString("\n") { i ->
+            arr.getJSONObject(i).let { it.optString("t") + "|" + it.optString("d") }
+        }
+    } catch (_: Exception) { flat }
+
     private suspend fun observe(): String {
         val flat = controller.screenFlat()
         lastFlat = flat
@@ -900,6 +933,9 @@ ACTION:"""
      * person's words or it does not happen.
      */
     var userRequest: String = ""
+
+    /** The route lesson recalled for this request, if any (Brain sets it; empty = none). */
+    var routeHint: String = ""
         set(value) {
             field = value
             stoppedOnDisagreement = null   // a new message answers the old question
@@ -1108,7 +1144,7 @@ ACTION:"""
     private suspend fun requestPlan(goal: String, observation: String): List<NavPlan.Checkpoint> {
         return try {
             val reply = client.complete(
-                listOf(OpenAiClient.ChatMessage("user", NavPlan.prompt(goal, observation))),
+                listOf(OpenAiClient.ChatMessage("user", NavPlan.prompt(goal, observation, routeHint))),
                 maxTokens = 400,
                 temperature = 0.1,
             ).getOrNull() ?: return emptyList()

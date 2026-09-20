@@ -118,11 +118,17 @@ object NavPlan {
         return "reached $done of ${plan.size} stages, stuck on: $stuckOn"
     }
 
+    /** A route that finished a request like this one, as the planner and every step read it. */
+    fun routeBlock(route: String): String = if (route.isBlank()) "" else
+        "\nA ROUTE THAT WORKED BEFORE — the phone was checked afterwards and the job was done. " +
+            "Its values were different from yours; the steps are the same:\n$route\n" +
+            "Follow it. Where the screen in front of you differs from it, trust the screen.\n"
+
     /** The request that asks for a plan. Kept here beside the parser so the
      * shape asked for and the shape read are never edited apart. */
-    fun prompt(goal: String, observation: String): String =
+    fun prompt(goal: String, observation: String, route: String = ""): String =
         """You are driving an Android phone's UI to accomplish: "$goal"
-
+${routeBlock(route)}
 CURRENT SCREEN:
 $observation
 
