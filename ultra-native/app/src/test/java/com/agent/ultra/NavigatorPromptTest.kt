@@ -101,4 +101,18 @@ class NavigatorPromptTest {
         assertTrue(with, with.contains("A ROUTE THAT WORKED BEFORE") && with.contains("1. tap \"New\""))
         assertFalse(ReActNavigator.buildPrompt("create note", "TAPPABLE:\n  [1] x", emptyList()).contains("ROUTE"))
     }
+
+    // The model asked to enter 16 wrote tap(16), the Alarm tab (AndroidWorld, 2026-09-20).
+    @Test
+    fun aTapMeansTheWordsFirstAndAnIndexOnlyWhenOneWasListed() {
+        val words = listOf("1" to 3, "6" to 8, "0" to 13, "start" to 15, "alarm" to 16, "more options" to 1)
+        val listed = setOf(6)   // one wordless button, shown as [6]
+        assertTrue(ReActNavigator.resolveTap("tap(\"1\")", words, listed) == 3)
+        assertTrue(ReActNavigator.resolveTap("tap(\"Start\")", words, listed) == 15)
+        assertTrue("a bare digit is the key with that digit on it", ReActNavigator.resolveTap("tap(1)", words, listed) == 3)
+        assertTrue("an index that was listed stays an index", ReActNavigator.resolveTap("tap(6)", words, listed) == 6)
+        assertTrue("16 is neither listed nor anyone's words", ReActNavigator.resolveTap("tap(16)", words, listed) == null)
+        assertTrue(ReActNavigator.resolveTap("tap(\"Pause\")", words, listed) == null)
+        assertTrue(com.agent.ultra.agent.ModelOutput.action("ACTION: tap(\"Start\")") == "tap(\"Start\")")
+    }
 }

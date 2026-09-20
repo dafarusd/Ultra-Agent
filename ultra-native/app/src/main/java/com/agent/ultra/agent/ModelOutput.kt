@@ -105,6 +105,10 @@ object ModelOutput {
         Regex("""tap_index\(\s*\d+\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""type\(\s*\d*\s*,?\s*"[^"]*"\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""type\(\s*\d*\s*,?\s*'[^']*'\s*\)""", RegexOption.IGNORE_CASE),
+        // By its words: tap("Start"). An index is a handle, and a model asked to enter 16 on a
+        // keypad wrote tap(16) — the Alarm tab (AndroidWorld ClockTimerEntry, 2026-09-20).
+        Regex("""tap\(\s*"[^"]+"\s*\)""", RegexOption.IGNORE_CASE),
+        Regex("""tap\(\s*'[^']+'\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""tap\(\s*\d+(?:\s*,\s*\d+)?\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""scroll\(\s*(?:up|down)\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""back\(\)""", RegexOption.IGNORE_CASE),

@@ -34,6 +34,31 @@ class ReActNavigator(
          * model. The repeat hint was computed and never interpolated — it existed
          * in the source, was logged as shipped, and was never once sent.
          */
+        /**
+         * What a tap means, given what was listed. Elements with words are listed by their words
+         * and have no number to confuse with a value; only wordless ones carry an [index].
+         *   tap("Start") -> the element with those words
+         *   tap(6)       -> listed index 6 if there is one, else the element whose words are "6"
+         * Null when nothing fits: the model is told, not guessed for.
+         */
+        internal fun resolveTap(said: String, labelled: List<Pair<String, Int>>, listed: Set<Int>): Int? {
+            fun byWords(words: String): Int? {
+                val want = words.trim().lowercase()
+                labelled.firstOrNull { it.first == want }?.let { return it.second }
+                val starts = labelled.filter { it.first.startsWith(want) }
+                if (starts.size == 1) return starts[0].second
+                val has = labelled.filter { want.length >= 3 && it.first.contains(want) }
+                return if (has.size == 1) has[0].second else null
+            }
+            Regex("""^tap\(\s*["'](.+)["']\s*\)$""", RegexOption.IGNORE_CASE).find(said.trim())
+                ?.let { return byWords(it.groupValues[1]) }
+            Regex("""^tap(?:_index)?\(\s*(\d+)\s*\)$""", RegexOption.IGNORE_CASE).find(said.trim())?.let {
+                val n = it.groupValues[1].toInt()
+                return if (n in listed) n else byWords(n.toString())
+            }
+            return null
+        }
+
         internal fun buildPrompt(
             goal: String,
             observation: String,
@@ -66,12 +91,14 @@ CURRENT SCREEN:
 $observation
 $hist$noteBlock
 Reply with exactly ONE action on one line, one of:
-  tap(INDEX)        — tap a listed element by its [index]
+  tap("WORDS")      — tap a listed element by its words, e.g. tap("Start")
+  tap(INDEX)        — only for an element listed with an [index] because it has no words
   type("text")      — type into the first TYPEABLE field, then submit
   type(INDEX, "text") — type into a specific field
   scroll(down) / scroll(up)
   back()
   done              — only when the goal is visibly complete
+To enter 16 on a keypad, tap("1") and then tap("6").
 
 ACTION:"""
         }
@@ -168,6 +195,8 @@ ACTION:"""
         // Actions that changed nothing, per exact screen: offered to the model as unavailable and
         // refused if picked anyway.
         val dead = mutableMapOf<String, MutableSet<String>>()
+        // Taps asked for that nothing on the screen fits; cleared when the screen changes.
+        val missing = mutableSetOf<String>()
         var leftAppFor = 0
         val history = mutableListOf<String>()
 
@@ -187,7 +216,17 @@ ACTION:"""
                 "${it.description}  (part of: $goal)"
             } ?: goal
             val deadHere = dead[observation].orEmpty()
-            val prompt = buildPrompt(aim, observation, history, repeatedNoOp, leftAppFor, pkg, deadHere, routeHint)
+            // What did nothing here is taken off the list the model chooses from, and named by
+            // its words. Told "tap(13) is not available", it chose tap("0") fourteen more times:
+            // it never knew [13] was the 0 key (2026-09-20).
+            val deadWords = deadHere.map { a ->
+                Regex("""^tap\((\d+)\)$""").find(a)?.groupValues?.get(1)?.toIntOrNull()
+                    ?.let { n -> labelled.firstOrNull { it.second == n }?.first }?.let { "tap(\"$it\")" } ?: a
+            } + missing
+            val offered = observation.lines().filterNot { line ->
+                deadWords.any { d -> line.trim().lowercase().startsWith(d.removePrefix("tap(").removeSuffix(")")) }
+            }.joinToString("\n")
+            val prompt = buildPrompt(aim, offered, history, repeatedNoOp, leftAppFor, pkg, deadWords, routeHint)
             val reply = client.complete(
                 listOf(OpenAiClient.ChatMessage("user", prompt)),
                 maxTokens = 600,
@@ -199,16 +238,30 @@ ACTION:"""
             // could not be answered from a run (AndroidWorld, 2026-09-19).
             android.util.Log.i("UltraNav", "step $iter sees: ${observation.replace("\n", " | ").take(1600)}")
 
-            val action = extractAction(reply)
+            val said = extractAction(reply)
                 ?: return NavResult(false, "model gave no parseable action", iter - 1)
-
-            if (action.equals("done", true)) {
-                // Verify we're still on the expected app before accepting
-                val onPkg = controller.activePackage()
-                if (onPkg == pkg) return NavResult(true, "model reports goal complete", iter)
-                history += "step $iter: tried done but left target app ($onPkg)"
-                continue
+            // A tap is turned into the node index it names here, once, so the gate, the dead-action
+            // list and the tap itself all see the same thing they always have.
+            val isTap = Regex("""^tap(?:_index)?\(\s*(?:\d+|["'].+["'])\s*\)$""", RegexOption.IGNORE_CASE).matches(said.trim())
+            val action = if (!isTap) said else {
+                val idx = resolveTap(said, labelled, listedIndexes)
+                if (idx == null) {
+                    android.util.Log.i("UltraNav", "step $iter action: $said — nothing listed fits")
+                    history += "step $iter: $said → NOT DONE: nothing listed on this screen fits that. Tap by the exact words shown, e.g. tap(\"Start\")."
+                    // Asked twice for something that is not there: the stage wants a screen we
+                    // are already on ("Tap Timer" while the Timer tab is open burned 15 steps).
+                    if (said.trim() in missing && planActive && stage < plan.size - 1) {
+                        android.util.Log.i("UltraNav", "stage ${stage + 1}/${plan.size} skipped at step $iter: its target is not on this screen")
+                        stage++
+                        stageSteps = 0
+                        stagePreSatisfied = NavPlan.satisfied(plan[stage], observation)
+                    }
+                    missing += said.trim()
+                    continue
+                }
+                "tap($idx)"
             }
+            val byLabel = if (isTap && action != said.trim()) said else null
 
             // The model was told this action does nothing here and chose it anyway. Asking again
             // costs a model call; doing it again costs a step and teaches nothing.
@@ -223,7 +276,12 @@ ACTION:"""
             // Log the action and its outcome. Without this a failing run gives
             // no way to tell a bad choice from a good choice executed badly,
             // and both look like "the tap did not work".
-            android.util.Log.i("UltraNav", "step $iter action: $action")
+            // The words go in the log with the index: a route is built from this line, and an
+            // index means nothing on the next run.
+            val tappedWords = Regex("""^tap\((\d+)\)$""").find(action)?.groupValues?.get(1)?.toIntOrNull()
+                ?.let { n -> labelled.firstOrNull { it.second == n }?.first }
+            android.util.Log.i("UltraNav", "step $iter action: $action" +
+                (if (tappedWords != null) "  = \"$tappedWords\"" else "") + (if (byLabel != null) "  <- $said" else ""))
             val ok = executeAction(action, observation)
             delay(900)
             observation = observe()
@@ -350,6 +408,7 @@ ACTION:"""
                 " — you are now in $onPkg, NOT $pkg. Use back() unless leaving was intended."
             else ""
             if (!changed && refusal == null) dead.getOrPut(before) { mutableSetOf() } += action
+            if (changed) missing.clear()
             android.util.Log.i("UltraNav", "step $iter outcome: $outcome$drift")
             history += "step $iter: $action → $outcome$drift"
 
@@ -383,6 +442,9 @@ ACTION:"""
      * into a confident tap on the wrong thing.
      */
     private var lastFlat: String = ""
+    /** From the last observe(): words -> node index, and the indexes shown because they had no words. */
+    private var labelled: List<Pair<String, Int>> = emptyList()
+    private var listedIndexes: Set<Int> = emptySet()
 
     /**
      * Walk a route the user once showed us.
@@ -729,6 +791,9 @@ ACTION:"""
             val tappable = mutableListOf<String>()
             val typeable = mutableListOf<String>()
             val scrollable = mutableListOf<String>()
+            val readOnly = mutableListOf<String>()
+            val words = mutableListOf<Pair<String, Int>>()
+            val listed = mutableSetOf<Int>()
             for (i in 0 until arr.length()) {
                 val n = arr.getJSONObject(i)
                 val label = n.optString("t").ifBlank { n.optString("d") }.trim().take(50)
@@ -762,15 +827,31 @@ ACTION:"""
                     "(unlabelled button, $band $side)"
                 }
                 when {
-                    editable -> typeable += "  [$idx] ${label.ifBlank { "(empty text box)" }}$hint"
-                    clickable -> tappable += "  [$idx] $named$hint"
+                    editable -> { typeable += "  [$idx] ${label.ifBlank { "(empty text box)" }}$hint"; listed += idx }
+                    // By its words when it has any, and once: a tab's icon and its text are two
+                    // nodes with one label. A number beside a label gets read as a value — asked
+                    // to enter 16, the model tapped [16], the Alarm tab (2026-09-20).
+                    clickable && label.isNotBlank() -> if (words.none { it.first == label.lowercase() }) {
+                        words += label.lowercase() to idx
+                        tappable += "  \"$label\"$hint"
+                    }
+                    clickable -> { tappable += "  [$idx] $named$hint"; listed += idx }
                     scrollableN && tappable.isEmpty() -> scrollable += "  [$idx] $label"
+                    // Words that can't be tapped are still the screen: a timer's display, a
+                    // dialog's question, the name of the folder you are in. Without them the
+                    // model typed a time blind — 7s until the display was full, then more
+                    // (AndroidWorld ClockTimerEntry, 2026-09-20).
+                    label.isNotBlank() && label !in readOnly -> readOnly += label
                 }
             }
             val parts = mutableListOf<String>()
             if (tappable.isNotEmpty()) parts += "TAPPABLE:\n" + tappable.take(26).joinToString("\n")
             if (typeable.isNotEmpty()) parts += "TYPEABLE:\n" + typeable.take(8).joinToString("\n")
             if (scrollable.isNotEmpty()) parts += "SCROLLABLE:\n" + scrollable.take(3).joinToString("\n")
+            if (readOnly.isNotEmpty() && parts.isNotEmpty())
+                parts += "TEXT ON SCREEN (read-only, not tappable):\n" + readOnly.take(14).joinToString("\n") { "  $it" }
+            labelled = words
+            listedIndexes = listed
             if (parts.isEmpty()) "Screen has no interactive elements — try scroll(down) or back()"
             else parts.joinToString("\n\n")
         } catch (e: Exception) {
