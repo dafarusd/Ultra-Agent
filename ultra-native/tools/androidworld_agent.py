@@ -387,7 +387,14 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
       if len(asks) > answered:
         label, word = asks[-1]
         answered = len(asks)
-        ok = word.lower() in goal.lower() or label.lower() in goal.lower()
+        # A careful person reads the button, not just the verb. "Delete lines" inside a note's
+        # editor is not the "Delete" of "delete the note", and answering yes to it because the
+        # goal contains "delete" is how a harness rubber-stamps the wrong thing (it did, twice,
+        # 2026-09-20). Yes only when the button IS the verb the goal uses, or the goal names the
+        # whole button.
+        verb = label.strip().lower()
+        ok = (verb == word.lower() and re.search(rf"\b{re.escape(verb)}", goal.lower()) is not None) \
+            or (len(verb) > 3 and verb in goal.lower())
         # The question is an overlay on top of the app now, which a uiautomator dump of the
         # active window does not contain; Ultra logs where its two buttons are, and the harness
         # presses one the way a finger would. The old in-chat card is still looked for second.
