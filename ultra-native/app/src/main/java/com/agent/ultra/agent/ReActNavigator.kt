@@ -823,6 +823,14 @@ ACTION:"""
             val readOnly = mutableListOf<String>()
             val words = mutableListOf<Pair<String, Int>>()
             val listed = mutableSetOf<Int>()
+            val vidCount = mutableMapOf<String, Int>()
+            for (i in 0 until arr.length()) {
+                val n = arr.getJSONObject(i)
+                if (n.optString("t").isNotBlank() || n.optString("d").isNotBlank()) continue
+                if (!(n.optBoolean("c", false) || n.optBoolean("ca", false))) continue
+                val v = n.optString("vid").replace(Regex("[^A-Za-z0-9]+"), " ").trim().lowercase()
+                if (v.isNotEmpty()) vidCount.merge(v, 1, Int::plus)
+            }
             for (i in 0 until arr.length()) {
                 val n = arr.getJSONObject(i)
                 val label = n.optString("t").ifBlank { n.optString("d") }.trim().take(50)
@@ -849,11 +857,17 @@ ACTION:"""
                 // An unlabelled button is usually the one that creates something: Markor's "+",
                 // a compose pencil, a floating action button. Dropped for having no words, they
                 // left the model with no way to make a new anything (AndroidWorld, 2026-09-19).
+                // A button with no words still has the name its developer gave it (calendar_fab,
+                // delete_button). Simple Calendar's screen was twenty identical "(unlabelled
+                // button)" lines and even a strong model was blind on it (2026-09-20).
+                val vidWords = n.optString("vid").replace(Regex("[^A-Za-z0-9]+"), " ").trim().lowercase()
+                    .takeIf { it.length in 3..40 && it.any(Char::isLetter) }
                 val named = label.ifBlank {
                     val x = n.optDouble("x", 0.0)
                     val side = if (x > screenW * 0.66) "right" else if (x < screenW * 0.33) "left" else "middle"
                     val band = if (y > screenH * 0.75) "bottom" else if (y < screenH * 0.25) "top" else "middle"
-                    "(unlabelled button, $band $side)"
+                    if (vidWords != null) "(no text; the app calls it \"$vidWords\", $band $side)"
+                    else "(unlabelled button, $band $side)"
                 }
                 when {
                     editable -> { typeable += "  [$idx] ${label.ifBlank { "(empty text box)" }}$hint"; listed += idx }
@@ -863,6 +877,11 @@ ACTION:"""
                     clickable && label.isNotBlank() -> if (words.none { it.first == label.lowercase() }) {
                         words += label.lowercase() to idx
                         tappable += "  \"$label\"$hint"
+                    }
+                    // Its developer name works as its words when it is the only one so named.
+                    clickable && vidWords != null && vidCount[vidWords] == 1 && words.none { it.first == vidWords } -> {
+                        words += vidWords to idx
+                        tappable += "  \"$vidWords\" (a button with no text; this is the app's own name for it)"
                     }
                     clickable -> { tappable += "  [$idx] $named$hint"; listed += idx }
                     scrollableN && tappable.isEmpty() -> scrollable += "  [$idx] $label"
