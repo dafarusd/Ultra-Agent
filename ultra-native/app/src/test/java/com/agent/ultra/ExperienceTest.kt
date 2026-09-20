@@ -118,4 +118,32 @@ class ExperienceTest {
         val lesson = Experience.Lesson("u", "create a new note or file inside an app", "x", "northstar", 0)
         assertTrue(Experience.recall("Create a playlist called road trip in Retro Music", listOf(lesson)).isEmpty())
     }
+
+    // A run Ultra called done that an outside check found not done (AndroidWorld, 2026-09-20).
+    @Test fun aFailedVerdictNamesTheApproachThatDidNotDoTheJob() {
+        val l = Experience.verdict("Create a timer with 0 hours, 16 minutes, and 35 seconds.", listOf(
+            step("note_create", """{"text":"Timer"}""", true),
+            step("alarm_set", """{"hour":0,"minute":35}""", true),
+        ))
+        assertNotNull(l)
+        assertEquals("verdict", l!!.source)
+        assertTrue(l.text, l.text.contains("note_create → alarm_set") && l.text.contains("NOT done") && l.text.contains("react_navigate"))
+        // A different seed of the same task must find it.
+        assertEquals(1, Experience.recall("Create a timer with 1 hours, 5 minutes, and 20 seconds. Do not start the timer.", listOf(l)).size)
+    }
+
+    @Test fun aVerdictOnARunThatDidNothingTeachesNothing() {
+        assertNull(Experience.verdict("Run the stopwatch.", listOf(step("app_launch", """{"target":"x"}""", false))))
+    }
+
+    @Test fun aRouteFromNorthstarKeepsItsStepsAndIsFoundByADifferentSeed() {
+        val steps = (1..12).joinToString("\n") { "$it. tap \"Button number $it with a long label\"" }
+        val line = JSONObject().put("uid", "route-markor-create-note").put("kind", "route")
+            .put("when", org.json.JSONArray(listOf("Create a new note in Markor named <file_name> with the following text: <text>", "MarkorCreateNote")))
+            .put("text", "A run that PASSED a check of the device (1x):\n$steps").toString()
+        val l = Experience.fromJsonl(line)!!
+        assertEquals(Experience.ROUTE, l.source)
+        assertTrue("a route longer than a sentence must survive import", l.text.contains("Button number 12"))
+        assertEquals(1, Experience.recall("Create a new note in Markor named 2023_02_03_shy_frog.md with the following text: Carpe diem.", listOf(l)).size)
+    }
 }

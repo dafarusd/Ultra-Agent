@@ -61,6 +61,9 @@ object Experience {
     const val BENCH_AFTER = 3
     const val MIN_SCORE = 0.25
     private const val MAX_TEXT = 400
+    /** A route is a list of steps, not a sentence: it needs the room. */
+    private const val MAX_ROUTE_TEXT = 1400
+    const val ROUTE = "route"
 
     /** Tools that are different routes to the same job: failing with one and
      * succeeding with another is still a wall and its way round. */
@@ -128,6 +131,25 @@ object Experience {
         val text = "When asked \"${previousRequest.take(120)}\", the user corrected: \"${message.take(160)}\"."
         return Lesson(uid("correction", keyOf(previousRequest) + "|" + keyOf(message)),
             previousRequest, text, "correction", now)
+    }
+
+    /**
+     * A run Ultra reported done that a check OUTSIDE Ultra found not done: the benchmark reading
+     * the device's state, or the person saying "no, that's wrong".
+     *
+     * Ultra's own idea of success is "the model stopped and no tool failed". On AndroidWorld that
+     * was wrong in 33 of 98 failed episodes (2026-09-20) — "create a timer" done with note_create
+     * and alarm_set, 14 runs of 14 — and each one was stored as the way to do the job.
+     */
+    fun verdict(request: String, steps: List<Step>, now: Long = System.currentTimeMillis()): Lesson? {
+        val used = steps.filter { it.ok }.map { it.tool }.distinct()
+        if (request.isBlank() || used.isEmpty()) return null
+        val inApp = "react_navigate" in used
+        val text = ("Asked \"${request.take(80)}\": ${used.joinToString(" → ")} was reported done, but a check " +
+            "of the phone afterwards showed the job was NOT done. Don't take that approach again." +
+            if (inApp) " Inside the app, finish every part of the request before stopping."
+            else " Do the job inside the app itself with react_navigate.").take(MAX_TEXT)
+        return Lesson(uid("verdict", used.joinToString("|") + "|" + keyOf(request)), request, text, "verdict", now)
     }
 
     // ── recall ──────────────────────────────────────────────────────────
@@ -199,7 +221,9 @@ object Experience {
     fun fromJsonl(line: String, now: Long = System.currentTimeMillis()): Lesson? = try {
         val o = JSONObject(line)
         val uid = o.getString("uid")
-        val text = o.getString("text").take(MAX_TEXT)
+        // The steps of a run that an outside check passed (northstar/routes.py), not a sentence.
+        val route = o.optString("kind") == ROUTE || uid.startsWith("route-")
+        val text = o.getString("text").take(if (route) MAX_ROUTE_TEXT else MAX_TEXT)
         val w = o.opt("when")
         val whenText = when (w) {
             is JSONArray -> (0 until w.length()).joinToString(" ") { w.optString(it) }
@@ -207,7 +231,7 @@ object Experience {
             else -> ""
         }
         if (!UID.matches(uid) || text.isBlank() || whenText.isBlank()) null
-        else Lesson(uid, whenText, text, "northstar", now)
+        else Lesson(uid, whenText, text, if (route) ROUTE else "northstar", now)
     } catch (_: Exception) { null }
 
     // ── helpers ─────────────────────────────────────────────────────────

@@ -105,8 +105,14 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
         controller.forgetScreenSecrets()
         // Experience: take in anything the laptop's Northstar sent, and if this message
         // corrects the last run, that correction is a lesson before anything else happens.
+        importVerdict()
         importFromLaptop()
-        Experience.correction(lastRequest, userInput)?.let { saveLessons(listOf(it)) }
+        Experience.correction(lastRequest, userInput)?.let {
+            saveLessons(listOf(it))
+            // "no, that's wrong" is a verdict on the last run too, from the only judge there is
+            // on a real phone.
+            applyVerdict(false, "the user corrected it")
+        }
         lastRequest = userInput
         servedThisRun = emptyList()
         // The person's own words can carry a scam: "my grandson's in jail and needs Google
@@ -127,6 +133,7 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
         // person actually asked for, so it needs their words rather than the
         // model's summary of them.
         tools.navigator?.userRequest = userInput
+        tools.navigator?.routeHint = ""
         if (tryRecipeShortcut(userInput)) {
             android.util.Log.i("UltraBrain", "RUN COMPLETE (recipe shortcut)")
             return
@@ -382,7 +389,7 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
         userInput: String,
         sequence: List<Triple<String, JSONObject, Boolean>>,
         taskSucceeded: Boolean,
-    ) {
+    ): String? {
         try {
             val steps = sequence.filter { it.third && it.first !in RECIPE_TOOLS }
                 .map { Recipes.Step(it.first, it.second) }
@@ -409,11 +416,11 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
                 RegexOption.IGNORE_CASE).containsMatchIn(userInput)
             if (onlyOpened && wantsMore) {
                 android.util.Log.i("UltraBrain", "MEMORY: not recorded (only opened the app for an action request)")
-                return
+                return null
             }
             if (!taskSucceeded || steps.isEmpty()) {
                 android.util.Log.i("UltraBrain", "MEMORY: not recorded (task succeeded=$taskSucceeded)")
-                return
+                return null
             }
             val key = requestKey(userInput)
             val cur = taskMemory.shortcutFor(key)
@@ -430,7 +437,9 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
                 )
             )
             android.util.Log.i("UltraBrain", "MEMORY: recorded \"$key\" -> ${steps.joinToString(" → ") { it.tool }}")
+            return key
         } catch (_: Exception) {}
+        return null
     }
 
     private fun emit(text: String) {
@@ -746,8 +755,113 @@ JSON:"""
             answer("I couldn't complete that — the policy gate stopped the action and I had no safe alternative. Try rephrasing, or confirm the target if I ask.")
         }
         android.util.Log.i("UltraBrain", "OBSERVATIONS: ${episode.observations.summary()}")
-        recordMemory(userInput, toolSequence, naturalFinish && !anyToolFailed)
-        learnFromRun(userInput, runSteps, naturalFinish && !anyToolFailed, naturalFinish)
+        val credited = naturalFinish && !anyToolFailed
+        val served = servedThisRun
+        val memoryKey = recordMemory(userInput, toolSequence, credited)
+        val learned = learnFromRun(userInput, runSteps, credited, naturalFinish)
+        lastRun = LastRun(userInput, credited, served, learned, memoryKey, runSteps.toList())
+        saveLastRun()
+    }
+
+    /** What the last run did to memory, kept so an outside verdict can take it back. */
+    private data class LastRun(
+        val request: String,
+        val credited: Boolean,
+        val served: List<String>,
+        val learnedFixes: List<String>,
+        val memoryKey: String?,
+        val steps: List<Experience.Step>,
+    )
+    private var lastRun: LastRun? = null
+
+    // On disk as well as in memory: the process does not always live until the verdict comes.
+    // AndroidWorld stops every app between tasks, so the first verdict ever sent found nothing
+    // to apply to and was dropped without a word (2026-09-20).
+    private fun lastRunFile() = java.io.File(appContext.filesDir, "last_run.json")
+
+    private fun saveLastRun() {
+        val run = lastRun ?: return
+        try {
+            val o = JSONObject().put("request", run.request).put("credited", run.credited)
+                .put("served", org.json.JSONArray(run.served)).put("learned", org.json.JSONArray(run.learnedFixes))
+                .put("memoryKey", run.memoryKey ?: JSONObject.NULL)
+                .put("steps", org.json.JSONArray().also { arr ->
+                    run.steps.forEach { arr.put(JSONObject().put("tool", it.tool).put("params", it.params)
+                        .put("ok", it.ok).put("result", it.result.take(200))) }
+                })
+            lastRunFile().writeText(o.toString())
+        } catch (e: Exception) { android.util.Log.w("UltraLearn", "last run not saved: ${e.message}") }
+    }
+
+    private fun loadLastRun(): LastRun? = try {
+        val o = JSONObject(lastRunFile().readText())
+        fun strings(k: String) = o.optJSONArray(k)?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty()
+        val steps = o.optJSONArray("steps")?.let { a -> (0 until a.length()).map { i ->
+            val st = a.getJSONObject(i)
+            Experience.Step(st.getString("tool"), st.optJSONObject("params") ?: JSONObject(), st.optBoolean("ok"), st.optString("result"))
+        } }.orEmpty()
+        LastRun(o.getString("request"), o.getBoolean("credited"), strings("served"), strings("learned"),
+            if (o.isNull("memoryKey")) null else o.getString("memoryKey"), steps)
+    } catch (_: Exception) { null }
+
+    /**
+     * Someone other than Ultra says whether the last run did the job.
+     *
+     * A pass changes nothing: the run was already counted as one. A fail on a run Ultra had
+     * counted as a success takes all of it back — the stored "this is how" shortcut, the good
+     * mark on every lesson it was served, any fix it thought it had found — and leaves one
+     * lesson saying that approach doesn't do the job.
+     */
+    suspend fun applyVerdict(passed: Boolean, why: String) {
+        val run = lastRun ?: loadLastRun() ?: run {
+            android.util.Log.i("UltraLearn", "VERDICT ${if (passed) "pass" else "fail"} ($why): no record of the last run to apply it to")
+            return
+        }
+        lastRun = null
+        lastRunFile().delete()
+        try {
+            if (passed || !run.credited) {
+                android.util.Log.i("UltraLearn", "VERDICT ${if (passed) "pass" else "fail"} ($why): nothing to take back")
+                return
+            }
+            for (uid in run.served) lessonDao.recount(uid, -1, 1)
+            run.memoryKey?.let { key ->
+                val cur = taskMemory.shortcutFor(key)
+                if (cur != null && cur.successCount > 1) taskMemory.upsertShortcut(cur.copy(successCount = cur.successCount - 1))
+                else taskMemory.deleteShortcut(key)
+            }
+            for (uid in run.learnedFixes) lessonDao.delete(uid)
+            android.util.Log.i("UltraLearn", "VERDICT fail ($why): took back memory=${run.memoryKey != null}, " +
+                "${run.served.size} lesson outcome(s), ${run.learnedFixes.size} fix lesson(s)")
+            Experience.verdict(run.request, run.steps)?.let { saveLessons(listOf(it)) }
+            exportForLaptop()
+        } catch (e: Exception) { android.util.Log.w("UltraLearn", "verdict failed: ${e.message}") }
+    }
+
+    /** verdict.json, written by whoever checked the last run: {"passed":false,"request":"…"}. */
+    private suspend fun importVerdict() {
+        for (dir in listOfNotNull(appContext.getExternalFilesDir(null), appContext.filesDir)) {
+            val f = java.io.File(dir, "verdict.json")
+            if (!f.exists()) continue
+            try {
+                val o = JSONObject(f.readText())
+                f.delete()
+                // A verdict for some other request says nothing about this run.
+                val mine = (lastRun ?: loadLastRun())?.request
+                if (mine == null) {
+                    android.util.Log.i("UltraLearn", "VERDICT ignored: no record of the last run")
+                    return
+                }
+                if (Experience.tokens(o.optString("request")) != Experience.tokens(mine)) {
+                    android.util.Log.i("UltraLearn", "VERDICT ignored: it is for a different request")
+                    return
+                }
+                applyVerdict(o.getBoolean("passed"), o.optString("by", "outside check"))
+                return
+            } catch (e: Exception) {
+                android.util.Log.i("UltraLearn", "verdict file unreadable at ${dir.path}: ${e.message}")
+            }
+        }
     }
 
     private fun canonicalizeApp(userInput: String, tool: String, params: JSONObject) {
@@ -768,13 +882,15 @@ JSON:"""
     private suspend fun lessonsFor(userInput: String): String? = try {
         val hits = Experience.recall(userInput, lessonDao.all().map { it.lesson() })
         servedThisRun = hits.map { it.uid }
+        // A route goes to the navigator too: the brain only picks the tool, the taps happen there.
+        tools.navigator?.routeHint = hits.firstOrNull { it.source == Experience.ROUTE }?.text.orEmpty()
         Experience.block(hits)?.also {
             android.util.Log.i("UltraLearn", "LESSONS SERVED: ${hits.joinToString { it.uid }}")
         }
     } catch (e: Exception) { android.util.Log.w("UltraLearn", "recall failed: ${e.message}"); null }
 
     /** The run is over: count it against every lesson it was given, and keep any wall it got past. */
-    private suspend fun learnFromRun(userInput: String, steps: List<Experience.Step>, success: Boolean, finished: Boolean) {
+    private suspend fun learnFromRun(userInput: String, steps: List<Experience.Step>, success: Boolean, finished: Boolean): List<String> {
         try {
             for (uid in servedThisRun) lessonDao.outcome(uid, if (success) 1 else 0, if (success) 0 else 1)
             if (servedThisRun.isNotEmpty()) android.util.Log.i("UltraLearn", "OUTCOME ${if (success) "ok" else "fail"} for ${servedThisRun.joinToString()}")
@@ -784,7 +900,10 @@ JSON:"""
             saveLessons(learned)
             // New counts must reach the laptop too, not only new lessons.
             if (counted && learned.isEmpty()) exportForLaptop()
+            // Dead ends stay true whatever a later verdict says; a "fix" is only a fix if the job got done.
+            return learned.filter { "-self-" in it.uid }.map { it.uid }
         } catch (e: Exception) { android.util.Log.w("UltraLearn", "learn failed: ${e.message}") }
+        return emptyList()
     }
 
     private suspend fun saveLessons(lessons: List<Experience.Lesson>) {

@@ -42,6 +42,10 @@ interface LessonDao {
     @Query("UPDATE lessons SET served = served + 1, ok = ok + :ok, fail = fail + :fail WHERE uid = :uid")
     suspend fun outcome(uid: String, ok: Int, fail: Int)
 
+    /** A verdict arrived after the run was counted: move one outcome, don't count a new serve. */
+    @Query("UPDATE lessons SET ok = MAX(ok + :ok, 0), fail = MAX(fail + :fail, 0) WHERE uid = :uid")
+    suspend fun recount(uid: String, ok: Int, fail: Int)
+
     @Query("DELETE FROM lessons WHERE uid = :uid")
     suspend fun delete(uid: String)
 }
