@@ -132,8 +132,14 @@ class ExperienceTest {
         assertEquals(1, Experience.recall("Create a timer with 1 hours, 5 minutes, and 20 seconds. Do not start the timer.", listOf(l)).size)
     }
 
-    @Test fun aVerdictOnARunThatDidNothingTeachesNothing() {
+    @Test fun aVerdictOnARunWhereEveryCallFailedTeachesNothingNew() {
         assertNull(Experience.verdict("Run the stopwatch.", listOf(step("app_launch", """{"target":"x"}""", false))))
+    }
+
+    @Test fun answeringInWordsWhenTheJobWasToDoSomethingIsALesson() {
+        val l = Experience.verdict("Delete the file calm_owl_edited.mp3 from the Ringtones folder.", emptyList())!!
+        assertTrue(l.text, l.text.contains("without doing anything") && l.text.contains("react_navigate"))
+        assertEquals(1, Experience.recall("Delete the file q2a8_fancy_banana.mp3 from the Notifications folder.", listOf(l)).size)
     }
 
     @Test fun aRouteFromNorthstarKeepsItsStepsAndIsFoundByADifferentSeed() {
@@ -145,5 +151,14 @@ class ExperienceTest {
         assertEquals(Experience.ROUTE, l.source)
         assertTrue("a route longer than a sentence must survive import", l.text.contains("Button number 12"))
         assertEquals(1, Experience.recall("Create a new note in Markor named 2023_02_03_shy_frog.md with the following text: Carpe diem.", listOf(l)).size)
+    }
+
+    @Test fun aVerdictLessonIsJudgedOnTheApproachItWarnedAboutNotOnTheWholeTask() {
+        val l = Experience.verdict("Create a timer with 0 hours, 16 minutes, and 35 seconds.", listOf(
+            step("note_create", """{"text":"Timer"}""", true), step("alarm_set", """{"hour":0}""", true)))!!
+        assertEquals(false, Experience.verdictHeld(l, listOf(
+            step("note_create", """{"text":"T"}""", true), step("alarm_set", """{"hour":1}""", true))))
+        assertEquals(true, Experience.verdictHeld(l, listOf(step("react_navigate", """{"goal":"set timer"}""", false))))
+        assertNull(Experience.verdictHeld(Experience.Lesson("u", "w", "t", "self", 0), emptyList()))
     }
 }

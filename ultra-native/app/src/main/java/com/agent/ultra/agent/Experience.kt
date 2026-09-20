@@ -143,13 +143,35 @@ object Experience {
      */
     fun verdict(request: String, steps: List<Step>, now: Long = System.currentTimeMillis()): Lesson? {
         val used = steps.filter { it.ok }.map { it.tool }.distinct()
-        if (request.isBlank() || used.isEmpty()) return null
+        if (request.isBlank()) return null
+        // Answered in words and touched nothing: "delete the file X" got a reply and no tool call
+        // in 10 episodes, each counted as a clean success.
+        if (steps.isEmpty()) return Lesson(uid("verdict", "no-action|" + keyOf(request)), request,
+            ("Asked \"${request.take(80)}\": answered in words without doing anything on the phone, and a check " +
+                "afterwards showed the job was NOT done. This is a job to DO: open the app and do it with react_navigate.").take(MAX_TEXT),
+            "verdict", now)
+        if (used.isEmpty()) return null
         val inApp = "react_navigate" in used
         val text = ("Asked \"${request.take(80)}\": ${used.joinToString(" → ")} was reported done, but a check " +
             "of the phone afterwards showed the job was NOT done. Don't take that approach again." +
             if (inApp) " Inside the app, finish every part of the request before stopping."
             else " Do the job inside the app itself with react_navigate.").take(MAX_TEXT)
         return Lesson(uid("verdict", used.joinToString("|") + "|" + keyOf(request)), request, text, "verdict", now)
+    }
+
+    /**
+     * Did a verdict lesson do its job in this run? Its job is narrow — "don't take that approach
+     * again" — so it is judged on that, not on whether the whole task passed. Judged on the task,
+     * the lesson that moved "create a timer" off note_create + alarm_set and into the Clock app was
+     * benched after three runs, because the task still failed further on for other reasons
+     * (2026-09-20). Null for any other kind of lesson.
+     */
+    fun verdictHeld(lesson: Lesson, steps: List<Step>): Boolean? {
+        if (lesson.source != "verdict") return null
+        val used = steps.filter { it.ok }.map { it.tool }.distinct()
+        if ("without doing anything" in lesson.text) return steps.isNotEmpty()
+        val named = Regex("""": (.+?) was reported done""").find(lesson.text)?.groupValues?.get(1) ?: return null
+        return used.joinToString(" → ") != named
     }
 
     // ── recall ──────────────────────────────────────────────────────────

@@ -642,7 +642,7 @@ JSON:"""
                 }
                 finalText = raw
                 naturalFinish = true
-                android.util.Log.i("UltraBrain", "FINAL TEXT (${raw.length} chars)")
+                android.util.Log.i("UltraBrain", "FINAL TEXT (${raw.length} chars): ${raw.replace("\n", " ").take(200)}")
                 break
             }
 
@@ -892,7 +892,12 @@ JSON:"""
     /** The run is over: count it against every lesson it was given, and keep any wall it got past. */
     private suspend fun learnFromRun(userInput: String, steps: List<Experience.Step>, success: Boolean, finished: Boolean): List<String> {
         try {
-            for (uid in servedThisRun) lessonDao.outcome(uid, if (success) 1 else 0, if (success) 0 else 1)
+            for (uid in servedThisRun) {
+                // A verdict lesson is judged on the one thing it says, not on the whole task.
+                val held = lessonDao.byUid(uid)?.lesson()?.let { Experience.verdictHeld(it, steps) }
+                val good = held ?: success
+                lessonDao.outcome(uid, if (good) 1 else 0, if (good) 0 else 1)
+            }
             if (servedThisRun.isNotEmpty()) android.util.Log.i("UltraLearn", "OUTCOME ${if (success) "ok" else "fail"} for ${servedThisRun.joinToString()}")
             val counted = servedThisRun.isNotEmpty()
             servedThisRun = emptyList()
