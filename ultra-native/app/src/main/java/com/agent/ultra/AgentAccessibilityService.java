@@ -575,6 +575,18 @@ public class AgentAccessibilityService extends AccessibilityService {
                         }
                     }
                 }
+                // A window whose package reads null while it is still coming up passes the
+                // skip above and turns out to be Ultra's own chat: the navigator then drove
+                // Ultra's UI, tapping its ☰ forever (AndroidWorld, 2026-09-19). Check again
+                // once the root is in hand.
+                if (root != null) {
+                    CharSequence again = root.getPackageName();
+                    if (again != null && "com.agent.ultra".contentEquals(again)) {
+                        Log.i(TAG, "SCREEN_FLAT: BLOCKED self-read (window package resolved late)");
+                        root.recycle();
+                        root = null;
+                    }
+                }
                 if (root != null && isProtected(root)) {
                     Log.i(TAG, "SCREEN_FLAT: BLOCKED — protected app in front");
                     result.set(PROTECTED);
@@ -891,6 +903,18 @@ public class AgentAccessibilityService extends AccessibilityService {
                     if (root != null) {
                         CharSequence fbPkg = root.getPackageName();
                         if (fbPkg != null && "com.agent.ultra".contentEquals(fbPkg)) { root.recycle(); root = null; }
+                    }
+                }
+                // A window whose package reads null while it is still coming up passes the
+                // skip above and turns out to be Ultra's own chat: the navigator then drove
+                // Ultra's UI, tapping its ☰ forever (AndroidWorld, 2026-09-19). Check again
+                // once the root is in hand.
+                if (root != null) {
+                    CharSequence again = root.getPackageName();
+                    if (again != null && "com.agent.ultra".contentEquals(again)) {
+                        Log.i(TAG, "SCREEN_FLAT: BLOCKED self-read (window package resolved late)");
+                        root.recycle();
+                        root = null;
                     }
                 }
                 if (root != null && isProtected(root)) {

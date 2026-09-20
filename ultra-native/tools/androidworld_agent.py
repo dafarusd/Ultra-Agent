@@ -29,7 +29,6 @@ import subprocess
 import time
 
 from android_world.agents import base_agent
-from android_world.env import json_action
 
 PKG = "com.agent.ultra"
 DONE = "UltraBrain: RUN COMPLETE"
@@ -50,47 +49,36 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
     return subprocess.run(["adb", "-s", self._serial, *args], capture_output=True, text=True,
                           timeout=timeout).stdout
 
-  def _elements(self, wait: bool = True):
-    try:
-      return self.env.get_state(wait_to_stabilize=wait).ui_elements
-    except Exception:  # noqa: BLE001 — a missed read is retried, never fatal
-      return []
+  def _screen(self) -> str:
+    """uiautomator, not the benchmark's reader: with Ultra's service on, the harness's tree
+    comes back empty, while uiautomator keeps working (2026-09-19)."""
+    self._adb("shell", "uiautomator", "dump", "/sdcard/_ultra_ui.xml", timeout=90)
+    return self._adb("shell", "cat", "/sdcard/_ultra_ui.xml", timeout=60)
 
-  def _find_index(self, want: str = "", editable: bool = False, tries: int = 6):
-    """Index into the CURRENT element list — what execute_action(CLICK, index=…) expects."""
+  def _bounds(self, pattern: str, screen: str = ""):
+    m = re.search(pattern + r'[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', screen or self._screen())
+    if not m:
+      return None
+    x1, y1, x2, y2 = map(int, m.groups())
+    return (x1 + x2) // 2, (y1 + y2) // 2
+
+  def _tap_text(self, text: str, tries: int = 6) -> bool:
     for _ in range(tries):
-      for i, el in enumerate(self._elements(wait=True)):
-        if el.package_name and PKG not in str(el.package_name):
-          continue
-        if editable:
-          if el.is_editable:
-            return i, el
-          continue
-        label = " ".join(x for x in (el.text, el.content_description) if x)
-        if want and want.lower() in label.lower():
-          return i, el
+      at = self._bounds(f'text="{re.escape(text)}"')
+      if at:
+        self._adb("shell", "input", "tap", str(at[0]), str(at[1]))
+        return True
       time.sleep(1.5)
-    return None, None
-
-  def _click(self, index: int | None, el=None) -> bool:
-    if index is None:
-      return False
-    try:
-      self.env.execute_action(json_action.JSONAction(action_type=json_action.CLICK, index=index))
-      return True
-    except Exception:  # noqa: BLE001 — fall back to the pixel the element sits on
-      box = getattr(el, "bbox_pixels", None)
-      if box is None:
-        return False
-      self.env.execute_action(json_action.JSONAction(
-          action_type=json_action.CLICK, x=int((box.x_min + box.x_max) / 2),
-          y=int((box.y_min + box.y_max) / 2)))
-      return True
+    return False
 
   def _ensure_a11y(self) -> bool:
     """Add Ultra's accessibility service back alongside the benchmark's forwarder, never replacing it."""
     svc = f"{PKG}/{PKG}.AgentAccessibilityService"
+    fwd = "com.google.androidenv.accessibilityforwarder/com.google.androidenv.accessibilityforwarder.AccessibilityForwarder"
     current = self._adb("shell", "settings", "get", "secure", "enabled_accessibility_services").strip()
+    if fwd not in current:            # never leave the benchmark without its own eyes
+      current = fwd if current in ("null", "") else current + ":" + fwd
+      self._adb("shell", "settings", "put", "secure", "enabled_accessibility_services", current)
     if svc not in current:
       wanted = svc if current in ("null", "") else current + ":" + svc
       self._adb("shell", "settings", "put", "secure", "enabled_accessibility_services", wanted)
@@ -102,49 +90,61 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
       time.sleep(2)
     return False
 
+  def _a11y_off(self) -> None:
+    """Take Ultra's service back out of the list.
+
+    The benchmark's forwarder and Ultra's service cannot both read this emulator: with both on,
+    the harness logged "Could not get a11y tree, retrying" forever and no task finished; with only
+    the forwarder it reads 80 elements first try (2026-09-19). So Ultra's eyes are on only while
+    Ultra is working, and the benchmark reads the screen it scores by itself.
+    """
+    for _ in range(3):
+      current = self._adb("shell", "settings", "get", "secure", "enabled_accessibility_services").strip()
+      if PKG not in current:
+        break
+      kept = ":".join(x for x in current.split(":") if x and PKG not in x)
+      self._adb("shell", "settings", "put", "secure", "enabled_accessibility_services", kept or "null")
+      time.sleep(3)
+    # ...and wait until the benchmark can actually read the screen again before handing back.
+    time.sleep(3)
+
   def _open_fresh_chat(self) -> None:
     self._adb("shell", "am", "start", "-n", f"{PKG}/.MainActivity")
     time.sleep(3)
-    i, el = self._find_index("Cancel", tries=1)      # a gate card from the last task hides the input
-    if i is not None:
-      self._click(i, el)
+    screen = self._screen()
+    if "The policy gate paused this action" in screen:
+      self._tap_text("Cancel", tries=2)
       time.sleep(1.5)
-    i, el = self._find_index("☰", tries=1)           # each task starts with no history of the last
-    if i is not None:
-      self._click(i, el)
+    if self._tap_text("☰", tries=2):
       time.sleep(1.5)
-      j, el2 = self._find_index("New chat", tries=2)
-      if j is not None:
-        self._click(j, el2)
-        time.sleep(1.5)
+      self._tap_text("+ New chat", tries=2)
+      time.sleep(1.5)
 
   def _type_goal(self, goal: str) -> bool:
-    """Ultra's chat box is Compose: the benchmark's tree shows it as a TextView holding the hint,
-    never as an editable field, so it is found by that hint (2026-09-19)."""
     self.reason = ""
-    i, el = self._find_index(editable=True, tries=1)
-    if i is None:
-      i, el = self._find_index(HINT, tries=4)
-    if i is None:
+    at = self._bounds(r'class="android.widget.EditText"') or self._bounds(f'text="{HINT}[^"]*"')
+    if not at:
       self.reason = "input not found"
       return False
-    self._click(i, el)
+    self._adb("shell", "input", "tap", str(at[0]), str(at[1]))
+    time.sleep(0.8)
+    self._adb("shell", "input", "keyevent", "KEYCODE_MOVE_END", *(["KEYCODE_DEL"] * 160))
+    escaped = goal.replace("'", "'\\''").replace(" ", "%s")
+    self._adb("shell", f"input text '{escaped}'", timeout=120)
     time.sleep(1)
-    i2, _ = self._find_index(editable=True, tries=1)
-    self.env.execute_action(json_action.JSONAction(
-        action_type=json_action.INPUT_TEXT, text=goal, index=i2 if i2 is not None else i))
-    time.sleep(1.5)
-    j, el2 = self._find_index("Send", tries=4)
-    if j is None:
+    if not self._tap_text("Send", tries=5):
       self.reason = "send not found"
       return False
-    ok = self._click(j, el2)
-    if not ok:
-      self.reason = "send click failed"
-    return ok
+    return True
 
   def _hand_screen_back(self, lines: list[str]) -> str:
     """Bring the app the work happened in back to the front, without restarting it."""
+    # Only when Ultra's own chat ended up in front. Reordering an app that is ALREADY in front
+    # sends it back to its default screen — the Clock reopened on Alarm and the running stopwatch
+    # was no longer visible, so a task that had passed started failing (2026-09-19).
+    focus = self._adb("shell", "dumpsys", "window")  # adb, not the harness reader
+    if PKG not in focus.split("mCurrentFocus")[-1][:200]:
+      return "already in front"
     joined = "\n".join(lines)
     pkgs = re.findall(r"UltraNav: screen ([\w.]+)/", joined) + re.findall(r"Launched [^(]*\(([\w.]+)\)", joined)
     pkg = next((p for p in reversed(pkgs) if p and p != PKG), "")
@@ -161,10 +161,20 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
 
   # ---- the one interaction ---------------------------------------------------------
   def step(self, goal: str) -> base_agent.AgentInteractionResult:
+    """Order matters, and it is the whole trick:
+
+    1. Ultra's accessibility service OFF — the benchmark's reader works, so the goal can be
+       opened and typed into Ultra's chat through the harness's own UI tree.
+    2. Ultra's service ON — Ultra can see and drive the phone for its run.
+    Ultra's service is left ON: turning it off between tasks was tried and made every task fail
+    (the tasks that passed with it on stopped passing), so the harness retries its reads instead —
+    it recovers, Ultra does not (2026-09-19).
+    """
     self._adb("logcat", "-c")
     bound = self._ensure_a11y()
     self._open_fresh_chat()
-    if not self._type_goal(goal):
+    typed = self._type_goal(goal)
+    if not typed:
       return base_agent.AgentInteractionResult(
           done=True, data={"ultra_reached": False, "ultra_a11y": bound,
                            "ultra_reason": getattr(self, "reason", "")})

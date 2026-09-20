@@ -400,6 +400,17 @@ class Brain(private val appContext: Context, private val local: com.agent.ultra.
                 )
             }
 
+            // Opening an app is not how a job gets done. "Run the stopwatch" ended after one
+            // app_launch with nothing failing, so the run counted as a success and the shortcut
+            // "run the stopwatch -> app_launch" was stored and served back — teaching Ultra to
+            // stop at the front door (AndroidWorld, 2026-09-19).
+            val onlyOpened = steps.size == 1 && steps[0].tool == "app_launch"
+            val wantsMore = Regex("\\b(run|start|stop|set|create|add|make|send|delete|remove|turn|play|find|search|write|rename|move|copy|record)\\b",
+                RegexOption.IGNORE_CASE).containsMatchIn(userInput)
+            if (onlyOpened && wantsMore) {
+                android.util.Log.i("UltraBrain", "MEMORY: not recorded (only opened the app for an action request)")
+                return
+            }
             if (!taskSucceeded || steps.isEmpty()) {
                 android.util.Log.i("UltraBrain", "MEMORY: not recorded (task succeeded=$taskSucceeded)")
                 return
@@ -987,7 +998,7 @@ RULES:
 9. RECIPES: "save that as X" / "remember that as X" → recipe_save {name:X}. "what are my routines" → recipe_list. "forget X" → recipe_delete {name:X}. Never answer a recipe request with prose — call the tool.
 10. SCAMS: gift cards as payment, sharing a code someone asked for, "family" in trouble on a new number, a bank or agency asking to move money or confirm details — say plainly it looks like a scam and suggest calling the person on a number they already have. Do not help buy the cards, send the code, open the link or move the money.
 11. A QUESTION about the phone ("is bluetooth on?", "how much storage?") is answered with system_info — never with a toggle or any change. Never create notes, alarms or recipes, or change a setting, unless the user asked for exactly that.
-12. "Open X" is done when X is open: say so and stop. Do not go on to create, change or allow anything inside it that the user did not ask for."""
+12. "Open X" is done when X is open — but only when opening IS the whole request. If the request also asks for something to happen (run, start, set, create, add, send, delete, find), keep going until that thing is actually done and you can see it. Never create, change or allow anything the user did not ask for."""
     }
 
     companion object {

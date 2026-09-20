@@ -124,7 +124,10 @@ object ActionGate {
         // Irreversible for the phone itself. The navigator's planner proposed "Restart the
         // phone" for "open the weather app" and "open samsung notes" (learnrun, 2026-09-19).
         "restart", "reboot", "power off", "shut down", "reset", "factory reset",
-        "erase", "sign out", "log out", "allow",
+        "erase", "sign out", "log out",
+        // Deliberately NOT here: "allow". Permission dialogs say Allow and Don't allow on
+        // ordinary screens; gating both stopped a run dead on a contacts permission prompt
+        // (AndroidWorld, 2026-09-19) and would train tap-through on a real phone.
         // Deliberately absent: "sign" and "apply". "Sign in" and "Apply
         // filters" appear constantly, and a gate that fires on ordinary
         // navigation gets approved reflexively, which is worse than no gate.

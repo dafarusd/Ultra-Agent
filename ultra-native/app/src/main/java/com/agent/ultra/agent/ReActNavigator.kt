@@ -109,7 +109,9 @@ ACTION:"""
         // already on screen ("Run the stopwatch" named no app, and the run died here —
         // AndroidWorld, 2026-09-19). Fall back to whatever is in front of us.
         val named = controller.findPackage(if (appHint.isBlank()) goal else appHint)
-        val pkg = named ?: controller.foregroundPackage()
+        // Never fall back onto Ultra itself: with the chat in front, an unresolved app name sent the
+        // navigator tapping through its own UI (AndroidWorld, 2026-09-19).
+        val pkg = named ?: controller.foregroundPackage()?.takeIf { it != OWN_PACKAGE }
             ?: return NavResult(false, "no app matching '$appHint' and nothing on screen", 0)
         if (named != null || pkg != controller.foregroundPackage()) {
             if (!controller.launchApp(pkg)) return NavResult(false, "could not launch $pkg", 0)
