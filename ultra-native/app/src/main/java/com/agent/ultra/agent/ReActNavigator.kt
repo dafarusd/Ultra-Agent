@@ -93,6 +93,7 @@ $hist$noteBlock
 Reply with exactly ONE action on one line, one of:
   tap("WORDS")      — tap a listed element by its words, e.g. tap("Start")
   tap(INDEX)        — only for an element listed with an [index] because it has no words
+  long_press("WORDS") — press and hold: selects a file or a list row, opens its menu
   type("text")      — type into the first TYPEABLE field, then submit
   type(INDEX, "text") — type into a specific field
   scroll(down) / scroll(up)
@@ -197,6 +198,7 @@ ACTION:"""
         val dead = mutableMapOf<String, MutableSet<String>>()
         // Taps asked for that nothing on the screen fits; cleared when the screen changes.
         val missing = mutableSetOf<String>()
+        var unparseable = 0
         var leftAppFor = 0
         val history = mutableListOf<String>()
 
@@ -238,13 +240,21 @@ ACTION:"""
             // could not be answered from a run (AndroidWorld, 2026-09-19).
             android.util.Log.i("UltraNav", "step $iter sees: ${observation.replace("\n", " | ").take(1600)}")
 
-            val said = extractAction(reply)
-                ?: return NavResult(false, "model gave no parseable action", iter - 1)
+            val said = extractAction(reply) ?: run {
+                // One bad reply is not the end of the job, and what it said is the only clue to
+                // why: a whole task was lost at step 0 with nothing in the log (2026-09-20).
+                android.util.Log.i("UltraNav", "step $iter unparseable reply: ${reply.replace("\n", " ").take(300)}")
+                unparseable++
+                if (unparseable >= 3) return NavResult(false, "model gave no parseable action", iter - 1)
+                history += "step $iter: your reply was not one of the listed actions. Reply with exactly ONE action line, e.g. tap(\"Start\")."
+                null
+            } ?: continue
             // A tap is turned into the node index it names here, once, so the gate, the dead-action
             // list and the tap itself all see the same thing they always have.
-            val isTap = Regex("""^tap(?:_index)?\(\s*(?:\d+|["'].+["'])\s*\)$""", RegexOption.IGNORE_CASE).matches(said.trim())
+            val isTap = Regex("""^(?:tap(?:_index)?|long_press)\(\s*(?:\d+|["'].+["'])\s*\)$""", RegexOption.IGNORE_CASE).matches(said.trim())
+            val isLong = said.trim().startsWith("long_press", ignoreCase = true)
             val action = if (!isTap) said else {
-                val idx = resolveTap(said, labelled, listedIndexes)
+                val idx = resolveTap(said.trim().replaceFirst(Regex("^long_press", RegexOption.IGNORE_CASE), "tap"), labelled, listedIndexes)
                 if (idx == null) {
                     android.util.Log.i("UltraNav", "step $iter action: $said — nothing listed fits")
                     history += "step $iter: $said → NOT DONE: nothing listed on this screen fits that. Tap by the exact words shown, e.g. tap(\"Start\")."
@@ -259,7 +269,7 @@ ACTION:"""
                     missing += said.trim()
                     continue
                 }
-                "tap($idx)"
+                if (isLong) "long_press($idx)" else "tap($idx)"
             }
             val byLabel = if (isTap && action != said.trim()) said else null
 
@@ -287,7 +297,7 @@ ACTION:"""
             // and both look like "the tap did not work".
             // The words go in the log with the index: a route is built from this line, and an
             // index means nothing on the next run.
-            val tappedWords = Regex("""^tap\((\d+)\)$""").find(action)?.groupValues?.get(1)?.toIntOrNull()
+            val tappedWords = Regex("""^(?:tap|long_press)\((\d+)\)$""").find(action)?.groupValues?.get(1)?.toIntOrNull()
                 ?.let { n -> labelled.firstOrNull { it.second == n }?.first }
             android.util.Log.i("UltraNav", "step $iter action: $action" +
                 (if (tappedWords != null) "  = \"$tappedWords\"" else "") + (if (byLabel != null) "  <- $said" else ""))
@@ -426,7 +436,7 @@ ACTION:"""
             // In the model's own words: the screen is listed by words now, so "tap(9)" in its
             // history was an index it had never been shown. It could not tell it had already
             // tapped Timer, and tapped Timer, Clock, Timer, Clock for 15 steps (2026-09-20).
-            val shown = tappedWords?.let { "tap(\"$it\")" } ?: action
+            val shown = tappedWords?.let { (if (isLong) "long_press" else "tap") + "(\"$it\")" } ?: action
             history += "step $iter: $shown → $outcome$drift"
 
             // Stuck detector: same tree twice → scroll down once
@@ -888,6 +898,18 @@ ACTION:"""
         }
         Regex("tap\\((\\d+)\\)$", RegexOption.IGNORE_CASE).find(a)?.let { m ->
             return tapNodeIndex(m.groupValues[1].toInt())
+        }
+        Regex("long_press\\((\\d+)\\)$", RegexOption.IGNORE_CASE).find(a)?.let { m ->
+            // Press and hold at the node's centre. Same gate as a tap: what it lands on is judged
+            // by its words before anything is touched.
+            val index = m.groupValues[1].toInt()
+            val label = labelForIndex(index).orEmpty()
+            if (!approveTap(label, "long_press($index)")) return false
+            val arr = JSONArray(lastFlat.ifBlank { "[]" })
+            val n = (0 until arr.length()).firstOrNull { arr.getJSONObject(it).optInt("i", it) == index }
+                ?.let { arr.getJSONObject(it) } ?: return false
+            val x = n.optInt("x"); val y = n.optInt("y")
+            return controller.swipe(x, y, x, y, 900)
         }
         Regex("tap\\((\\d+)\\s*,\\s*(\\d+)\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
             val x = m.groupValues[1].toInt()

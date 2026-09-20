@@ -297,7 +297,14 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
     escaped = goal.replace("'", "'\\''").replace(" ", "%s")
     self._adb("shell", f"input text '{escaped}'", timeout=120)
     time.sleep(1)
-    if not self._tap_text("Send", tries=5):
+    # The dump misses now and then (a settling window, a dialog on top); a task is too much to
+    # lose to one bad look.
+    sent = self._tap_text("Send", tries=6)
+    if not sent:
+      if "keeps stopping" in self._screen():
+        self._tap_text("Close app", tries=2)
+      sent = self._tap_text("Send", tries=6)
+    if not sent:
       self.reason = "send not found"
       return False
     return True

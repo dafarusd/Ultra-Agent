@@ -117,6 +117,11 @@ object ModelOutput {
         Regex("""tap_index\(\s*\d+\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""type\(\s*\d*\s*,?\s*"[^"]*"\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""type\(\s*\d*\s*,?\s*'[^']*'\s*\)""", RegexOption.IGNORE_CASE),
+        // Select a file, open a row's menu: what a tap can't do (AndroidWorld FilesDeleteFile
+        // planned "long-press the file" and had no way to say it, 2026-09-20).
+        Regex("""long_press\(\s*"[^"]+"\s*\)""", RegexOption.IGNORE_CASE),
+        Regex("""long_press\(\s*'[^']+'\s*\)""", RegexOption.IGNORE_CASE),
+        Regex("""long_press\(\s*\d+\s*\)""", RegexOption.IGNORE_CASE),
         // By its words: tap("Start"). An index is a handle, and a model asked to enter 16 on a
         // keypad wrote tap(16) — the Alarm tab (AndroidWorld ClockTimerEntry, 2026-09-20).
         Regex("""tap\(\s*"[^"]+"\s*\)""", RegexOption.IGNORE_CASE),
