@@ -953,12 +953,22 @@ ACTION:"""
             // Empty selector → the service types into the FOCUSED editable field.
             // If nothing is focused (the proven Chrome failure: TEXT result=false
             // forever), tap the first editable node to focus it first.
-            val selector = if (idx == null) "" else labelForIndex(idx) ?: return false
+            // Always into the FOCUSED box. Finding the box again by its words fails the moment it
+            // already holds some: Markor's "Name" box arrives filled with "my_note", the lookup by
+            // that label found nothing to type into, and naming a new file failed for a strong
+            // model and a weak one alike (AndroidWorld MarkorCreateNote, 2026-09-20). So a box
+            // chosen by index is tapped to focus it first — focusing a text box commits nothing,
+            // and what gets typed is still checked below before a key is pressed.
+            val selector = ""
+            if (idx != null) {
+                controller.clickByIndex(idx, labelForIndex(idx).orEmpty())
+                delay(400)
+            }
             // Typing with no index used to tap "the first editable node on
             // screen", which is a guess that is wrong on any page with more
             // than one box. When this screen has been here before, the app's
             // own name for its input is known and is used instead.
-            if (idx == null && !focusKnownInput()) focusFirstEditable()
+            else if (!focusKnownInput()) focusFirstEditable()
             // Before the keystroke, not after. Typing it and then noticing is
             // not a check, it is a log entry about a leak that already happened.
             controller.refuseTyping(text)?.let { why ->
@@ -993,20 +1003,35 @@ ACTION:"""
             // model still spent 9 of 15 steps scrolling and searching for a file that was two
             // screens down, and never reached it (AndroidWorld FilesDeleteFile, 2026-09-20).
             val want = m.groupValues[1].trim().lowercase()
-            repeat(10) {
-                observe()
+            var last = ""
+            repeat(12) {
+                val now = observe()
                 if (labelled.any { it.first.contains(want) } || lastReadOnly.any { it.lowercase().contains(want) }) return true
-                if (!controller.scroll("down")) return false
+                if (now == last) return false          // the list stopped moving: it is not here
+                last = now
+                scrollEitherWay("down")
                 delay(700)
             }
             return false
         }
         Regex("scroll\\((up|down)\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
-            return controller.scroll(m.groupValues[1].lowercase())
+            return scrollEitherWay(m.groupValues[1].lowercase())
         }
         if (a.equals("back()", true)) return controller.back()
         if (a.equals("home()", true)) return controller.home()
         return false
+    }
+
+    /**
+     * Scroll by asking the list, and by a finger when the list won't answer. The Files app's
+     * list refused the accessibility scroll outright — scroll(down) FAILED four times while a
+     * file sat one screen below (AndroidWorld FilesDeleteFile, 2026-09-20). A swipe up the middle
+     * of the screen is what a person does, and it works on anything that scrolls at all.
+     */
+    private suspend fun scrollEitherWay(direction: String): Boolean {
+        if (controller.scroll(direction)) return true
+        val down = direction == "down"
+        return controller.swipe(540, if (down) 1650 else 750, 540, if (down) 750 else 1650, 350)
     }
 
     /** Resolve an [index] from the flat list to on-screen coordinates and tap. */
