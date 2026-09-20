@@ -1015,7 +1015,10 @@ ACTION:"""
             var last = ""
             repeat(12) {
                 val now = observe()
-                if (labelled.any { it.first.contains(want) } || lastReadOnly.any { it.lowercase().contains(want) }) return true
+                // The words themselves, not something that merely contains them: asked to find
+                // "q2a8_fancy_banana.mp3", a contains-match stopped at "edited_q2a8_fancy_banana.mp3"
+                // — the decoy the benchmark plants — and reported the file found (2026-09-20).
+                if (labelled.any { wordsMatch(it.first, want) } || lastReadOnly.any { wordsMatch(it.lowercase(), want) }) return true
                 if (now == last) return false          // the list stopped moving: it is not here
                 last = now
                 scrollEitherWay("down")
@@ -1042,6 +1045,10 @@ ACTION:"""
         val down = direction == "down"
         return controller.swipe(540, if (down) 1650 else 750, 540, if (down) 750 else 1650, 350)
     }
+
+    /** `label` is `want`, or has it as whole words ("file notes.md 10/15" has "notes.md"). */
+    private fun wordsMatch(label: String, want: String): Boolean =
+        label == want || Regex("(^|\\s)" + Regex.escape(want) + "(\\s|$)").containsMatchIn(label)
 
     private data class Played(val finished: Boolean, val steps: Int, val note: String)
 

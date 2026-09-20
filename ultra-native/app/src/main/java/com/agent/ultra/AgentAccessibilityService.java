@@ -894,7 +894,12 @@ public class AgentAccessibilityService extends AccessibilityService {
                 latch.countDown();
             }
         });
-        try { latch.await(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        boolean answered = false;
+        try { answered = latch.await(4, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        // A long click can start a drag or a selection inside the app and not return for seconds
+        // (the Files app). The press was delivered; whether it did anything is for the caller to
+        // judge from the screen, not something to report as "no longer on the screen".
+        if (!answered && longPress) return "ok";
         return result.get();
     }
 
