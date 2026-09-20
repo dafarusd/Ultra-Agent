@@ -50,6 +50,34 @@ cd ~/androidworld && ANDROID_SERIAL=emulator-5554 .venv/bin/python bench_ultra.p
   when Ultra's chat ended up there — and only then: reordering an app that is already in front
   sends it back to its default tab (the Clock reopened on Alarm and a passing task started failing).
 
+- **The judge can be blind.** AndroidWorld's checks that read the screen (the Clock tasks) go
+  through its accessibility forwarder, and on this emulator that reader returned 0 elements while
+  the right app was in front — a timer showing `00h 16m 35s` scored 0. The adapter now records what
+  the judge saw with every episode (`ultra_judge_saw`) and, when the forwarder gives nothing, has
+  the judge read through AndroidWorld's own second method (`A11yMethod.UIAUTOMATOR`). Read
+  `ultra_judge_saw` before believing a fail. Screen-reading scores from before 2026-09-20 03:10
+  can't be trusted as fails.
+- **The forwarder crashes on start now and then** (a null context in its own constructor thread).
+  Android's "keeps stopping" dialog then covers Ultra's chat: a task is lost as "input not found",
+  or "App info" gets tapped and the run sits on a Settings page for 600 s. The adapter sets
+  `hide_error_dialogs` and taps "Close app" if it still sees one.
+- **Don't `am force-stop` Ultra before a run** — its accessibility link dies and the next task does
+  nothing for the full 600 s. Wipe learned state with `sqlite3` on the live app instead.
+- **Run the harness with `python -u`.** Redirected to a file, its `print` lines sit in a buffer and
+  a working run looks hung.
+- **Your phone may be plugged in too.** Two devices means bare `adb` fails; everything here uses
+  `-s emulator-5554` / `ANDROID_SERIAL=emulator-5554`.
+
+## The verdict goes back to Ultra
+
+After AndroidWorld checks the device, the adapter writes `verdict.json` into Ultra's files dir.
+Ultra reads it at the start of its next request: a fail on a run it had counted as a success takes
+back the stored "this is how" shortcut, moves the good mark on every served lesson to a bad one,
+and leaves one lesson naming the approach that didn't do the job. `ULTRA_NO_VERDICT=1` switches it
+off (the control arm). The score is computed before the verdict is sent; nothing here can change it.
+
+Passing runs become routes on the laptop: `northstar bench routes [--push]`.
+
 ## Results
 
 | When | Set | Score |
