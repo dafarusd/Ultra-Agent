@@ -9,3 +9,6 @@ local.properties
 # Backup lives in ~/keys/agent-ultra-debug.keystore.
 app/debug.keystore
 tools/brainbench/
+tools/__pycache__/
+tools/learnrun*.log
+tools/learnrun/
