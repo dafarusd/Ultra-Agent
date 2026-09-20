@@ -3,6 +3,49 @@
 This file is updated by Claude Code at the end of every work session.
 Read this file at the start of every session to understand previous work.
 
+## 2026-09-19 (night) — Ultra on AndroidWorld; nine bugs the benchmark found
+
+**Subsystems:** D (perception, app matching), A (navigator plan, prompt rules), C (experience
+recall), E (ActionGate word list), H (x86_64 build switch).
+
+**Why:** everything measured until now was our own homework. AndroidWorld (Google Research, 116
+tasks across 20 real apps, the device's own state checked) grades from outside. Setup and how to
+re-run: `tools/androidworld.md`.
+
+**Built:**
+- `-Pbench` builds x86_64 without the llama.cpp JNI (CMake skips non-arm64, `LlmNative.available`
+  reports it missing). The phone's arm64 release path is untouched.
+- `tools/androidworld_agent.py` + `bench_ultra.py`: AndroidWorld sets the task and scores it, the
+  adapter hands the goal to Ultra over adb and waits for RUN COMPLETE. No self-grading.
+- The brain moved laptop-side (`vault/runtime/bridge/brain_proxy.py`): the emulator boots in 2023
+  so its TLS fails, and this also makes the brain a setting (`ULTRA_BRAIN=venice:MODEL|local:qwen`).
+
+**What the benchmark found, all of it live on the phone too:**
+| Bug | Effect |
+|---|---|
+| empty text box has no label and was dropped from the screen list | a note editor read as "no interactive elements" |
+| menu rows put the tap on the parent, the words on a child | open menus read as empty (`ca` flag added) |
+| unlabelled buttons dropped | no "+" anywhere, so nothing could be created |
+| window package resolving late slipped past the self-read check | the navigator drove Ultra's own chat in a loop |
+| navigator fell back to the foreground app when a name didn't resolve | that app was Ultra |
+| a plan whose last stage had nothing to check | "opened the Stopwatch tab" counted as done |
+| a run with no tool error stored as success | "run the stopwatch → app_launch" learned and replayed |
+| `allow` in ActionGate's commit words | every permission dialog blocked the run |
+| lesson recall required covering the whole request | not one lesson was ever served |
+
+**Measured:** first scored run **3/12** (12 tasks, 9 apps). The AndroidWorld paper's GPT-4 agent
+reports ~30% on the full 116. Lessons with vs without on six failing tasks: **0/6 and 0/6**, served
+on 2 of 6 — knowledge lessons do not supply skill. Accessibility config narrowed from `typeAllMask`
+at 50 ms to the six events Ultra uses at 200 ms: the benchmark's own reader went from looping on
+"Could not get a11y tree" to 3 reads in 0.1 s. 426/426 JVM tests.
+
+**Not proven:** any score above 3/12; route-shaped lessons (idea filed, not built); the on-device
+model path in the emulator (there is none by design).
+
+**Next:** per Dafarus (2026-09-20) the question is what NORTHSTAR learns from this work that makes
+the next piece of work better, for any agent — not how to raise Ultra's score alone. See
+`~/vault/runtime/NEXT-SESSION.md`.
+
 ## 2026-09-19 (later) — The phone learns, and asks Claude on the laptop
 
 **Subsystems:** C (memory — new lessons store), A (prompt rules), D (settings_open, app matching,
