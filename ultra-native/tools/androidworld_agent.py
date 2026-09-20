@@ -395,6 +395,17 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
         verb = label.strip().lower()
         ok = (verb == word.lower() and re.search(rf"\b{re.escape(verb)}", goal.lower()) is not None) \
             or (len(verb) > 3 and verb in goal.lower())
+        # An app's own "are you sure?" box says CONFIRM or OK, not Delete. A careful person reads
+        # the box: asked to delete an expense and shown "Delete this expense? CANCEL / CONFIRM",
+        # they press CONFIRM — and they don't press it on a box about anything else. The harness
+        # declined every such box and no delete in Pro Expense could finish (P11, 2026-09-20). So
+        # for a bare yes-button the screen under the question is read, and the answer is yes only
+        # when that screen talks about the very thing the goal's first word asks for.
+        if not ok and verb in ("confirm", "ok", "yes", "accept", "agree", "done", "submit"):
+            asked = re.match(r"\s*([A-Za-z]{4,})", goal)
+            stem = asked.group(1).lower()[:5] if asked else ""
+            under = re.sub(r"<[^>]*?(?:text|content-desc)=\"([^\"]*)\"[^>]*>", r" \1 ", self._screen()).lower()
+            ok = bool(stem) and stem in under
         # The question is an overlay on top of the app now, which a uiautomator dump of the
         # active window does not contain; Ultra logs where its two buttons are, and the harness
         # presses one the way a finger would. The old in-chat card is still looked for second.
