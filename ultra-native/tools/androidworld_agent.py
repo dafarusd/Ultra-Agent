@@ -370,11 +370,27 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
                            "ultra_reason": getattr(self, "reason", "")})
     t0 = time.time()
     log = ""
+    answered = 0
+    confirmed: list[str] = []
     while time.time() - t0 < self._timeout:
       time.sleep(4)
-      log = self._adb("logcat", "-d", "-s", "UltraBrain:V", "UltraGate:V", "UltraNav:V", "UltraLearn:V")
+      log = self._adb("logcat", "-d", "-s", "UltraBrain:V", "UltraGate:V", "UltraNav:V", "UltraLearn:V",
+                      "UltraActionGate:V")
       if DONE in log:
         break
+      # Ultra's action gate stops before pressing anything that commits ("Delete", "Send") and
+      # asks its person. In the benchmark the person is the task: nobody answered, the card timed
+      # out as a refusal, and "delete the note" could never be finished (2026-09-20). So the
+      # harness answers as the person who gave the task would — "Do it" only when the word on the
+      # button is something the goal itself asks for, "Don't" otherwise — and records each answer.
+      asks = re.findall(r'UltraActionGate: PAUSED: .* on "([^"]*)" in .* \(matched "([^"]*)"\)', log)
+      if len(asks) > answered:
+        label, word = asks[-1]
+        answered = len(asks)
+        ok = word.lower() in goal.lower() or label.lower() in goal.lower()
+        if self._tap_text("Do it" if ok else "Don't", tries=4):
+          confirmed.append(f"{'confirmed' if ok else 'declined'}: {label}")
+          print(f"ultra: gate asked about \"{label}\" — {'confirmed (the task asks for it)' if ok else 'declined'}")
     lines = [re.sub(r"^[0-9-]+ [0-9:.]+ +\d+ +\d+ [A-Z] ", "", x) for x in log.splitlines()]
     self.last_trace = lines
     time.sleep(2)
@@ -388,6 +404,7 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
         "ultra_calls": [l.split("TOOL CALL: ", 1)[1] for l in lines if "TOOL CALL: " in l],
         "ultra_fails": [l.split("TOOL RESULT (fail): ", 1)[1][:200] for l in lines if "TOOL RESULT (fail)" in l],
         "ultra_blocks": [l.split("BLOCK ", 1)[1][:200] for l in lines if "UltraGate: BLOCK" in l],
+        "ultra_gate_answers": confirmed,
         "ultra_lessons_served": [l.split("LESSONS SERVED: ", 1)[1] for l in lines if "LESSONS SERVED" in l],
         "ultra_learned": [l.split("LEARNED ", 1)[1][:200] for l in lines if "LEARNED " in l],
         "ultra_trace": [l[:220] for l in lines if "OBSERVE" not in l][-60:],
