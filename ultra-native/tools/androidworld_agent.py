@@ -71,6 +71,8 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
       saw: dict = {}
       judge = task.is_successful
 
+      from android_world.env import adb_utils, android_world_controller as awc
+
       def judged(e):
         # The judge reads the screen through the benchmark's own accessibility forwarder, and
         # with Ultra's service bound that reader returns NOTHING: activity DeskClock, 0 elements,
@@ -83,14 +85,29 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
         # own second method (A11yMethod.UIAUTOMATOR), not something of ours. Which one the judge
         # used is recorded with every episode.
         try:
-          from android_world.env import adb_utils, android_world_controller as awc
           agent._a11y_off()
-          els = e.get_state().ui_elements
+          # The forwarder first, and patiently: it is the reader the benchmark was written for,
+          # and it came back on its own for the second task of a run. uiautomator is the last
+          # resort because it cannot dump a screen that never goes idle (a RUNNING stopwatch), and
+          # AndroidWorld's helper then cats the PREVIOUS dump file: the judge of "run the
+          # stopwatch" was shown the last task's timer page and failed a run that had done
+          # Stopwatch -> Start (2026-09-20). So the old file is removed before every dump — a
+          # failed dump must read as nothing, never as some other screen.
+          e.controller._a11y_method = awc.A11yMethod.A11Y_FORWARDER_APP
           saw["reader"] = "forwarder"
+          els = []
+          for attempt in range(8):
+            els = e.get_state().ui_elements
+            if els:
+              break
+            if attempt == 3:
+              e.controller.refresh_env()
+            time.sleep(2)
           if not els:
             e.controller._a11y_method = awc.A11yMethod.UIAUTOMATOR
             saw["reader"] = "uiautomator"
             for _ in range(5):
+              agent._adb("shell", "rm", "-f", "/sdcard/window_dump.xml")
               els = e.get_state().ui_elements
               if els:
                 break
@@ -99,7 +116,16 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
           saw["texts"] = [t for t in ((x.text or x.content_description or "") for x in els) if t][:60]
         except Exception as ex:  # noqa: BLE001
           saw["error"] = f"{type(ex).__name__}: {ex}"
-        return judge(e)
+        # Whichever reader worked is the judge's for this one look, and the forwarder is put back
+        # after it: left on uiautomator, the next task's setup hit a failed dump
+        # ("cat /sdcard/window_dump.xml" non-zero) and the benchmark SKIPPED the task.
+        try:
+          return judge(e)
+        finally:
+          try:
+            e.controller._a11y_method = awc.A11yMethod.A11Y_FORWARDER_APP
+          except Exception:  # noqa: BLE001
+            pass
 
       task.is_successful = judged
       result = inner(task, run_episode, env, demo_mode)
@@ -263,7 +289,11 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
       return False
     self._adb("shell", "input", "tap", str(at[0]), str(at[1]))
     time.sleep(0.8)
-    self._adb("shell", "input", "keyevent", "KEYCODE_MOVE_END", *(["KEYCODE_DEL"] * 160))
+    # Longer than any goal: 160 deletes left the tail of a 200-character goal in the box, and the
+    # next task was sent as "Run the stopwatch.ollowing text: Ignorance is bliss." — which the
+    # policy gate, rightly, paused (2026-09-20).
+    for _ in range(2):
+      self._adb("shell", "input", "keyevent", "KEYCODE_MOVE_END", *(["KEYCODE_DEL"] * 250), timeout=120)
     escaped = goal.replace("'", "'\\''").replace(" ", "%s")
     self._adb("shell", f"input text '{escaped}'", timeout=120)
     time.sleep(1)
@@ -309,6 +339,11 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
     it recovers, Ultra does not (2026-09-19).
     """
     self._adb("logcat", "-c")
+    # The brain is reached through `adb reverse`, and that mapping dies whenever adbd restarts
+    # (adb root, a reconnect by the harness). Without it every model call fails and Ultra answers
+    # "Error: model call failed" to a whole round of tasks (2026-09-20). Cheap, so every task.
+    port = os.environ.get("ULTRA_BRAIN_PORT", "8799")
+    self._adb("reverse", f"tcp:{port}", f"tcp:{port}")
     bound = self._ensure_a11y()
     self._open_fresh_chat()
     typed = self._type_goal(goal)
