@@ -66,7 +66,44 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
     agent = self
 
     def run_task(task, run_episode, env, demo_mode):
+      # What the judge had in front of it when it judged. A timer set exactly right scored 0 and
+      # nothing on disk could say whether the judge saw a different screen (2026-09-20).
+      saw: dict = {}
+      judge = task.is_successful
+
+      def judged(e):
+        # The judge reads the screen through the benchmark's own accessibility forwarder, and
+        # with Ultra's service bound that reader returns NOTHING: activity DeskClock, 0 elements,
+        # a timer set exactly right scored 0. Every check that looks at the screen was blind.
+        # So Ultra's eyes come off before the judge looks, and go back on at the next task
+        # (_ensure_a11y now waits for the service to be bound again, which is what made
+        # "off between tasks" fail when it was first tried on 2026-09-19).
+        # Turning Ultra's service off was not enough (still 0 elements after 20 s), so when the
+        # forwarder gives the judge nothing it reads through uiautomator instead — AndroidWorld's
+        # own second method (A11yMethod.UIAUTOMATOR), not something of ours. Which one the judge
+        # used is recorded with every episode.
+        try:
+          from android_world.env import adb_utils, android_world_controller as awc
+          agent._a11y_off()
+          els = e.get_state().ui_elements
+          saw["reader"] = "forwarder"
+          if not els:
+            e.controller._a11y_method = awc.A11yMethod.UIAUTOMATOR
+            saw["reader"] = "uiautomator"
+            for _ in range(5):
+              els = e.get_state().ui_elements
+              if els:
+                break
+              time.sleep(2)
+          saw["activity"] = str(adb_utils.get_current_activity(e.controller)[0])
+          saw["texts"] = [t for t in ((x.text or x.content_description or "") for x in els) if t][:60]
+        except Exception as ex:  # noqa: BLE001
+          saw["error"] = f"{type(ex).__name__}: {ex}"
+        return judge(e)
+
+      task.is_successful = judged
       result = inner(task, run_episode, env, demo_mode)
+      result["ultra_judge_saw"] = saw
       try:
         passed = float(result.get("is_successful") or 0.0) > 0.5
         agent.send_verdict(passed, str(result.get("goal") or ""))
@@ -240,14 +277,17 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
     # Only when Ultra's own chat ended up in front. Reordering an app that is ALREADY in front
     # sends it back to its default screen — the Clock reopened on Alarm and the running stopwatch
     # was no longer visible, so a task that had passed started failing (2026-09-19).
-    focus = self._adb("shell", "dumpsys", "window")  # adb, not the harness reader
-    if PKG not in focus.split("mCurrentFocus")[-1][:200]:
-      return "already in front"
+    focus = self._adb("shell", "dumpsys", "window").split("mCurrentFocus")[-1][:200]  # adb, not the harness reader
     joined = "\n".join(lines)
     pkgs = re.findall(r"UltraNav: screen ([\w.]+)/", joined) + re.findall(r"Launched [^(]*\(([\w.]+)\)", joined)
     pkg = next((p for p in reversed(pkgs) if p and p != PKG), "")
     if not pkg:
       return ""
+    # "Not Ultra's chat" is not "the task's app": a run that ended with a screenshot left the
+    # launcher in front, this said "already in front", and a timer set exactly right (00h 16m 35s)
+    # scored 0 because the check wants Clock on screen (2026-09-20).
+    if pkg in focus:
+      return "already in front"
     brief = self._adb("shell", "cmd", "package", "resolve-activity", "--brief",
                       "-c", "android.intent.category.LAUNCHER", pkg).strip().splitlines()
     comp = next((l.strip() for l in brief if "/" in l), "")
