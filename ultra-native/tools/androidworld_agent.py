@@ -84,6 +84,7 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
         # forwarder gives the judge nothing it reads through uiautomator instead — AndroidWorld's
         # own second method (A11yMethod.UIAUTOMATOR), not something of ours. Which one the judge
         # used is recorded with every episode.
+        state, els = None, []
         try:
           agent._a11y_off()
           # The forwarder first, and patiently: it is the reader the benchmark was written for,
@@ -95,9 +96,9 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
           # failed dump must read as nothing, never as some other screen.
           e.controller._a11y_method = awc.A11yMethod.A11Y_FORWARDER_APP
           saw["reader"] = "forwarder"
-          els = []
           for attempt in range(8):
-            els = e.get_state().ui_elements
+            state = e.get_state()
+            els = state.ui_elements
             if els:
               break
             if attempt == 3:
@@ -108,7 +109,8 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
             saw["reader"] = "uiautomator"
             for _ in range(5):
               agent._adb("shell", "rm", "-f", "/sdcard/window_dump.xml")
-              els = e.get_state().ui_elements
+              state = e.get_state()
+              els = state.ui_elements
               if els:
                 break
               time.sleep(2)
@@ -119,10 +121,18 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
         # Whichever reader worked is the judge's for this one look, and the forwarder is put back
         # after it: left on uiautomator, the next task's setup hit a failed dump
         # ("cat /sdcard/window_dump.xml" non-zero) and the benchmark SKIPPED the task.
+        # The judge is handed the very screen that was just read and recorded. The forwarder only
+        # delivers a tree when the screen changes, so a second read a moment later came back empty:
+        # the record said "00h 16m 35s, DeskClock" and the score said 0 (2026-09-20). The check
+        # itself is AndroidWorld's, untouched; it looks at one snapshot instead of asking twice.
+        real_get_state = e.get_state
+        if state is not None and els:
+          e.get_state = lambda *a, **k: state
         try:
           return judge(e)
         finally:
           try:
+            e.get_state = real_get_state
             e.controller._a11y_method = awc.A11yMethod.A11Y_FORWARDER_APP
           except Exception:  # noqa: BLE001
             pass
