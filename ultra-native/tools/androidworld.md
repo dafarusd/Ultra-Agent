@@ -92,6 +92,14 @@ Passing runs become routes on the laptop: `northstar bench routes [--push]`.
 | 2026-09-19, first scored run | 12 tasks, 9 apps | **3/12 (25%)** |
 | 2026-09-19, with Northstar lessons | 6 tasks it fails | 0/6 with, 0/6 without |
 
+| 2026-09-20, routes played by the engine, seed 31 (P9) | the same 6 tasks, llama-3.3-70b | **1/6 without routes, 4/6 with** |
+| 2026-09-20, replication on seed 33 (P10) | the same 6 tasks, llama-3.3-70b | **1/6 without routes, 4/6 with** |
+
+Scores from 09-19 on the Clock tasks were judged by a blind judge (see above) and are not evidence.
+The routes come from claude-sonnet-5 practising on seeds 30 and 32 through Ultra's hands
+(3–4 of 6); the student never sees those seeds. Predictions and full results:
+`~/vault/runtime/PREDICTIONS.md`.
+
 For scale, the AndroidWorld paper's GPT-4 agent (M3A) reports ~30% on the full 116.
 
 **Do lessons help?** Not on these tasks. The same mechanism that takes a model from 0/29 to 27/29

@@ -34,13 +34,34 @@ wrong level. Steps a check has passed are structure, and the engine owns structu
 - Adapter: answers the gate's overlay as the person who gave the task would — only when the button
   IS the verb the goal uses ("Delete", not "Delete lines") — and records every answer.
 
-**Measured so far:** hand check with llama-3.3-70b on a timer value no run had used (3 h 7 m 9 s):
+**Measured (scored by AndroidWorld, predictions written first — `~/vault/runtime/PREDICTIONS.md` P8–P10):**
+the six tasks that were 0/6 twice on 09-19. Teacher = claude-sonnet-5 through Ultra's hands, practising
+on seeds 30 and 32. Student = llama-3.3-70b on seeds the practice never used, clean slate each arm.
+
+| | without routes | with routes |
+|---|---|---|
+| P8, seed 31 (first player build) | 1/6 | 3/6 |
+| P9, seed 31 (routes per kind, box ordinals, typed-text check fixed) | 1/6 | **4/6** |
+| P10, seed 33 (replication: same build, same routes, no new practice) | 1/6 | **4/6** |
+
+With routes the student passes stopwatch, timer, Markor create and Markor delete; on three of the
+four the engine plays every step and the model chooses none (14–26 s each); on the note the engine
+plays 4–6 steps and the model finishes. Without routes the same model chooses 86–125 steps per
+round and passes one task. The Markor delete goes through the action gate: it asks on its overlay
+and the harness answers as the person who gave the task would. P10's with-routes arm was re-run
+from the start after the emulator hung at 21 h uptime. Each full experiment cost about $1.10.
+Still 0 with or without: file delete (no teacher pass, so no route) and the calendar (month grid
+has no words to read).
+
+**First measurement, before the scored runs:** hand check with llama-3.3-70b on a timer value no run had used (3 h 7 m 9 s):
 the engine keyed 3-0-7-0-9, display `03h 07m 09s`, 28 s; the same model without a route took 2–3
 minutes and failed. Teacher round with the overlay: 3/6 including the first Markor delete in a
-full round. 445/445 JVM tests. P8 (the scored comparison) was running when this was written.
+full round. 447/447 JVM tests.
 
-**Not proven:** the scored student comparison (P8); the overlay on the real phone; a route whose
-new request needs a branch the practice run never took (a `.txt` note from a `.md` route).
+**Not proven:** anything beyond these six tasks — the 33-task set chosen by rule is scripted and
+not run; the overlay and the player on the real phone; the on-device 1B following routes;
+`scroll_to` whole-word matching and the long-click timeout (`1012187`, SOURCE-FIXED BUT
+RUNTIME-UNPROVEN — written after the scored build).
 
 ## 2026-09-20 (night) — an honest teacher for the phone; the navigator reads and speaks in words
 
