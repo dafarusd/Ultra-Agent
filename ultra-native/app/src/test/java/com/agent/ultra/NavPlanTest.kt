@@ -210,4 +210,13 @@ class NavPlanRealRepliesTest {
         assertFalse("stage 1 guides but does not gate", plan[0].checkable)
         assertTrue("stage 2 gates", plan[1].checkable)
     }
+
+    // "7:52:22" planned, "07h 52m 22s" shown (AndroidWorld ClockTimerEntry, 2026-09-20).
+    @Test
+    fun aNumberIsTheSameNumberHoweverItIsWritten() {
+        val screen = "TAPPABLE:\n  \"1\"\n  \"Start\"\n\nTEXT ON SCREEN (read-only, not tappable):\n  Timer\n  07h 52m 22s"
+        assertTrue(NavPlan.satisfied(NavPlan.Checkpoint("key it in", "7:52:22"), screen))
+        assertFalse(NavPlan.satisfied(NavPlan.Checkpoint("key it in", "7:52:22"), screen.replace("07h 52m 22s", "00h 07m 52s")))
+        assertFalse(NavPlan.satisfied(NavPlan.Checkpoint("key it in", "16:35"), screen))
+    }
 }

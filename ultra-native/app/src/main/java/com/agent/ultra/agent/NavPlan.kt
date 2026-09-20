@@ -93,7 +93,18 @@ object NavPlan {
      */
     fun satisfied(checkpoint: Checkpoint, observation: String): Boolean {
         if (!checkpoint.checkable) return false
-        return observation.contains(checkpoint.expect.trim(), ignoreCase = true)
+        val expect = checkpoint.expect.trim()
+        if (observation.contains(expect, ignoreCase = true)) return true
+        // A number is the same number however it is written. The plan said "7:52:22", the Clock
+        // showed "07h 52m 22s", the stage never counted as reached, and a timer that was already
+        // right was typed over until it was wrong (AndroidWorld ClockTimerEntry, 2026-09-20).
+        // Only when the expectation is mostly a number: three or more digits, and few letters.
+        val want = expect.filter(Char::isDigit).trimStart('0')
+        if (want.length < 3 || expect.count(Char::isLetter) > 6) return false
+        return observation.lineSequence().any { line ->
+            val got = line.filter(Char::isDigit).trimStart('0')
+            got == want && line.count(Char::isDigit) <= want.length + 3
+        }
     }
 
     /**
