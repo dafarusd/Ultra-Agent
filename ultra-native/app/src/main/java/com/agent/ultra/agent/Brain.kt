@@ -802,23 +802,41 @@ JSON:"""
     /** experience.jsonl in the app's external files dir: `northstar phone pull` reads it. */
     private suspend fun exportForLaptop() {
         try {
-            val dir = appContext.getExternalFilesDir(null) ?: return
             val lines = lessonDao.all().joinToString("\n") { Experience.toJsonl(it.lesson()) }
-            val tmp = java.io.File(dir, "experience.jsonl.tmp")
-            tmp.writeText(lines + "\n")
-            tmp.renameTo(java.io.File(dir, "experience.jsonl"))
+            for (dir in listOfNotNull(appContext.getExternalFilesDir(null), appContext.filesDir)) {
+                val tmp = java.io.File(dir, "experience.jsonl.tmp")
+                tmp.writeText(lines + "\n")
+                tmp.renameTo(java.io.File(dir, "experience.jsonl"))
+            }
         } catch (e: Exception) { android.util.Log.w("UltraLearn", "export failed: ${e.message}") }
     }
 
     /** northstar_lessons.jsonl, pushed by `northstar phone push`: read once, then deleted. */
     private suspend fun importFromLaptop() {
         try {
-            val f = java.io.File(appContext.getExternalFilesDir(null) ?: return, "northstar_lessons.jsonl")
-            if (!f.exists()) return
-            val got = f.readLines().mapNotNull { Experience.fromJsonl(it) }
-            f.delete()
+            // Two places: the app's external files dir (the phone, over adb push) and its
+            // internal one (an emulator, where a pushed file in Android/data is not readable by
+            // the app — the laptop writes it with adb root instead).
+            // Try each place and skip one that cannot be READ: on an emulator the external copy
+            // exists but is unreadable (EACCES), and stopping at it meant the readable internal
+            // copy was never used (2026-09-19).
+            var got: List<Experience.Lesson> = emptyList()
+            var from = ""
+            for (dir in listOfNotNull(appContext.getExternalFilesDir(null), appContext.filesDir)) {
+                val f = java.io.File(dir, "northstar_lessons.jsonl")
+                if (!f.exists()) continue
+                try {
+                    got = f.readLines().mapNotNull { Experience.fromJsonl(it) }
+                    from = dir.path
+                    f.delete()
+                    break
+                } catch (e: Exception) {
+                    android.util.Log.i("UltraLearn", "lesson file unreadable at ${dir.path}: ${e.message}")
+                }
+            }
+            if (got.isEmpty()) return
             saveLessons(got)
-            android.util.Log.i("UltraLearn", "IMPORTED ${got.size} lesson(s) from Northstar")
+            android.util.Log.i("UltraLearn", "IMPORTED ${got.size} lesson(s) from Northstar ($from)")
         } catch (e: Exception) { android.util.Log.w("UltraLearn", "import failed: ${e.message}") }
     }
 
