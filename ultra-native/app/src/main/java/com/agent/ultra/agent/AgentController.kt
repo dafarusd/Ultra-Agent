@@ -150,12 +150,17 @@ class AgentController(private val context: Context) {
             service?.clickByIndex(index, expectedLabel) ?: "failed"
         }
 
+    // The agent never answers its own question. While the action gate is waiting for the person,
+    // its "Do it" button is on screen, and a touch by coordinates is the one kind of touch that
+    // could land on it (taps by node can't: they only see the app's own windows).
     suspend fun tap(x: Int, y: Int): Boolean = withContext(Dispatchers.IO) {
-        service?.performTap(x, y) ?: false
+        if (ActionGate.asking) false else service?.performTap(x, y) ?: false
     }
 
     suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int): Boolean =
-        withContext(Dispatchers.IO) { service?.performSwipe(x1, y1, x2, y2, durationMs) ?: false }
+        withContext(Dispatchers.IO) {
+            if (ActionGate.asking) false else service?.performSwipe(x1, y1, x2, y2, durationMs) ?: false
+        }
 
     suspend fun clickNode(selector: String): Boolean = withContext(Dispatchers.IO) {
         service?.performClick(selector) ?: false

@@ -51,11 +51,24 @@ object ActionGate {
         waiter = d
         onUi { pending = Pending(action, label, app, reason) }
         android.util.Log.i(TAG, "PAUSED: $action on \"$label\" in $app (matched \"$reason\")")
-        // The navigator drives another app, so Ultra is in the background when
-        // this fires. A card nobody can see is a gate that silently denies
-        // everything after two minutes — bring the question to the front.
-        bringUltraForward()
+        // The navigator drives another app, so Ultra is in the background when this fires. A
+        // card nobody can see is a gate that silently denies everything after two minutes.
+        //
+        // The question goes ON TOP of the app it is about, as an accessibility overlay. Bringing
+        // Ultra forward instead made the app underneath redraw when it came back: Markor dropped
+        // its selection, "Delete" was gone, and an approved delete could never happen
+        // (2026-09-20). Only when the overlay cannot be drawn is Ultra brought forward, the old way.
+        val svc = com.agent.ultra.AgentAccessibilityService.getInstance()
+        val drawn = try {
+            svc?.showGateOverlay(
+                "Agent Ultra is about to press \u201C$label\u201D",
+                "in $app. This commits something (matched \u201C$reason\u201D). Nothing happens unless you say so.",
+                { resolve(true) }, { resolve(false) },
+            ) ?: false
+        } catch (e: Exception) { false }
+        if (!drawn) bringUltraForward()
         val ok = withTimeoutOrNull(TIMEOUT_MS) { d.await() } ?: false
+        try { svc?.hideGateOverlay() } catch (_: Exception) {}
         onUi { pending = null }
         waiter = null
         android.util.Log.i(TAG, "RESOLVED: ${if (ok) "approved" else "denied"} — \"$label\"")
@@ -66,8 +79,12 @@ object ActionGate {
         waiter?.complete(approved)
     }
 
+    /** True while a question is waiting for the person. */
+    val asking: Boolean get() = waiter?.isCompleted == false
+
     /** Deny anything outstanding — used when a run is abandoned. */
     fun cancelOutstanding() {
+        try { com.agent.ultra.AgentAccessibilityService.getInstance()?.hideGateOverlay() } catch (_: Exception) {}
         waiter?.complete(false)
         onUi { pending = null }
     }

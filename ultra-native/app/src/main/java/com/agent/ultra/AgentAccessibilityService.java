@@ -35,6 +35,113 @@ public class AgentAccessibilityService extends AccessibilityService {
     private static volatile UiTreeListener uiTreeListener = null;
 
     public static void setUiTreeListener(UiTreeListener l) { uiTreeListener = l; }
+
+    // ── The action gate's question, drawn over the app it is about ─────────────────────────────
+    //
+    // The gate used to bring Ultra to the front to ask "press Delete?". An app that redraws when
+    // it comes back loses what was selected: Markor dropped its selection, "Delete" was gone, and
+    // a delete the person had just approved could never happen (AndroidWorld MarkorDeleteNote,
+    // 2026-09-20 — and the same on a real phone). An accessibility overlay sits on top without
+    // taking focus, so the app underneath never pauses and nothing in it changes while the
+    // person decides. The gate itself is unchanged: it still asks, it still times out to "no".
+    private android.view.View gateOverlay;
+
+    /** Show the question. False if it could not be drawn — the caller then asks the old way. */
+    public boolean showGateOverlay(String headline, String detail, Runnable onYes, Runnable onNo) {
+        final AtomicBoolean shown = new AtomicBoolean(false);
+        final CountDownLatch latch = new CountDownLatch(1);
+        Runnable draw = () -> {
+            try {
+                removeGateOverlay();
+                float dp = getResources().getDisplayMetrics().density;
+                android.widget.LinearLayout card = new android.widget.LinearLayout(this);
+                card.setOrientation(android.widget.LinearLayout.VERTICAL);
+                int pad = (int) (18 * dp);
+                card.setPadding(pad, pad, pad, pad);
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setColor(0xF2101418);
+                bg.setCornerRadius(18 * dp);
+                bg.setStroke((int) (2 * dp), 0xFFE0A030);
+                card.setBackground(bg);
+
+                android.widget.TextView h = new android.widget.TextView(this);
+                h.setText(headline);
+                h.setTextColor(0xFFFFFFFF);
+                h.setTextSize(18);
+                h.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                card.addView(h);
+
+                android.widget.TextView d = new android.widget.TextView(this);
+                d.setText(detail);
+                d.setTextColor(0xFFC8D0D8);
+                d.setTextSize(14);
+                d.setPadding(0, (int) (6 * dp), 0, (int) (14 * dp));
+                card.addView(d);
+
+                android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+                row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+                android.widget.Button no = new android.widget.Button(this);
+                no.setText("Don't");
+                android.widget.Button yes = new android.widget.Button(this);
+                yes.setText("Do it");
+                // A touch that arrives through another window drawn on top is not the person's.
+                no.setFilterTouchesWhenObscured(true);
+                yes.setFilterTouchesWhenObscured(true);
+                no.setOnClickListener(v -> { removeGateOverlay(); onNo.run(); });
+                yes.setOnClickListener(v -> { removeGateOverlay(); onYes.run(); });
+                android.widget.LinearLayout.LayoutParams half =
+                        new android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                row.addView(no, half);
+                row.addView(yes, half);
+                card.addView(row);
+
+                android.view.WindowManager.LayoutParams lp = new android.view.WindowManager.LayoutParams(
+                        android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                        android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+                        android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                        android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        android.graphics.PixelFormat.TRANSLUCENT);
+                lp.gravity = android.view.Gravity.BOTTOM;
+                lp.y = (int) (64 * dp);
+                lp.horizontalMargin = 0.03f;
+                ((android.view.WindowManager) getSystemService(WINDOW_SERVICE)).addView(card, lp);
+                gateOverlay = card;
+                shown.set(true);
+                card.post(() -> {
+                    int[] a = new int[2];
+                    yes.getLocationOnScreen(a);
+                    int[] b = new int[2];
+                    no.getLocationOnScreen(b);
+                    Log.i("UltraActionGate", "OVERLAY shown: do_it=" + (a[0] + yes.getWidth() / 2) + ","
+                            + (a[1] + yes.getHeight() / 2) + " dont=" + (b[0] + no.getWidth() / 2) + ","
+                            + (b[1] + no.getHeight() / 2));
+                });
+            } catch (Exception e) {
+                Log.w("UltraActionGate", "overlay could not be drawn: " + e.getMessage());
+            }
+            latch.countDown();
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) draw.run();
+        else {
+            new Handler(Looper.getMainLooper()).post(draw);
+            try { latch.await(3, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        }
+        return shown.get();
+    }
+
+    public void hideGateOverlay() {
+        if (Looper.myLooper() == Looper.getMainLooper()) removeGateOverlay();
+        else new Handler(Looper.getMainLooper()).post(this::removeGateOverlay);
+    }
+
+    private void removeGateOverlay() {
+        if (gateOverlay == null) return;
+        try {
+            ((android.view.WindowManager) getSystemService(WINDOW_SERVICE)).removeView(gateOverlay);
+        } catch (Exception ignored) {}
+        gateOverlay = null;
+    }
     public static AgentAccessibilityService getInstance() {
         synchronized (instanceLock) { return instance; }
     }
