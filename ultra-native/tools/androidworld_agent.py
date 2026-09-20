@@ -189,9 +189,18 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
     time.sleep(3)
 
   def _open_fresh_chat(self) -> None:
+    # The benchmark's accessibility forwarder dies on start now and then (a null context in its
+    # own constructor thread), and Android's "keeps stopping" dialog then sits on top of Ultra's
+    # chat: the goal can't be typed and the task is lost as "input not found", or the dialog's
+    # "App info" gets tapped and the run sits on a Settings page for 600 s (2026-09-20).
+    self._adb("shell", "settings", "put", "global", "hide_error_dialogs", "1")
     self._adb("shell", "am", "start", "-n", f"{PKG}/.MainActivity")
     time.sleep(3)
     screen = self._screen()
+    if "keeps stopping" in screen or "isn't responding" in screen:
+      self._tap_text("Close app", tries=2)
+      time.sleep(1.5)
+      screen = self._screen()
     if "The policy gate paused this action" in screen:
       self._tap_text("Cancel", tries=2)
       time.sleep(1.5)
@@ -202,7 +211,16 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
 
   def _type_goal(self, goal: str) -> bool:
     self.reason = ""
-    at = self._bounds(r'class="android.widget.EditText"') or self._bounds(f'text="{HINT}[^"]*"')
+    # One look is not enough: the dump comes back empty while a window is still settling, and a
+    # single miss threw the whole task away as "input not found" in 24 s (2026-09-20).
+    at = None
+    for attempt in range(6):
+      at = self._bounds(r'class="android.widget.EditText"') or self._bounds(f'text="{HINT}[^"]*"')
+      if at:
+        break
+      if attempt % 2 == 1:
+        self._adb("shell", "am", "start", "-n", f"{PKG}/.MainActivity")
+      time.sleep(2)
     if not at:
       self.reason = "input not found"
       return False
