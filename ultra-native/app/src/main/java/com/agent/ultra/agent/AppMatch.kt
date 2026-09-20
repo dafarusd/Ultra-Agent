@@ -47,6 +47,10 @@ object AppMatch {
         "events" to "calendar", "event" to "calendar", "schedule" to "calendar",
         "files" to "files", "downloads" to "files", "folder" to "files",
         "settings" to "settings", "preferences" to "settings",
+        // What lives in Settings. On Android 13 an app can't switch Wi-Fi or Bluetooth itself: the
+        // toggle tool said "off", the check said still on, and the way round — Settings — was
+        // refused because "settings" isn't a word in "Turn wifi off" (AndroidWorld, 2026-09-20).
+        "wifi" to "settings", "bluetooth" to "settings", "brightness" to "settings", "airplane" to "settings",
     )
 
     private fun words(s: String) = s.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length > 1 && it !in FILLER }.toSet()
