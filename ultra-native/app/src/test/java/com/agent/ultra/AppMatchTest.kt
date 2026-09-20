@@ -47,4 +47,15 @@ class AppMatchTest {
     }
     @Test fun aRealNameStillWinsOverAHint() =
         assertEquals("com.android.chrome", AppMatch.find("chrome", apps))
+
+    // Both are labelled "Calendar"; only the package tells them apart (AndroidWorld, 2026-09-20).
+    @Test fun twoAppsWithOneLabelAreToldApartByThePackage() {
+        val apps = listOf(AppMatch.App("Calendar", "com.google.android.calendar"),
+            AppMatch.App("Calendar", "com.simplemobiletools.calendar.pro"))
+        assertEquals("com.simplemobiletools.calendar.pro", AppMatch.find("Simple Calendar Pro", apps))
+        assertEquals("com.google.android.calendar", AppMatch.find("google calendar", apps))
+        // Whatever words of the request it is rewritten to must still mean the same app — not "calendar".
+        val mine = AppMatch.canonical("In Simple Calendar Pro, create a calendar event", "Simple Calendar Pro", apps)!!
+        assertEquals("com.simplemobiletools.calendar.pro", AppMatch.find(mine, apps))
+    }
 }

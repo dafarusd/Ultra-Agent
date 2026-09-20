@@ -60,6 +60,13 @@ object AppMatch {
         // phone sent "google maps" to the Google app, whose label is also inside the query
         // (learnrun pass B, 2026-09-19).
         apps.firstOrNull { a -> (words(a.label) + words(a.pkg)).containsAll(qw) }?.let { return it.pkg }
+        // Two apps with one label: Simple Calendar Pro and Google Calendar are both "Calendar" on
+        // the launcher, and only the package tells them apart — com.simplemobiletools.calendar.pro,
+        // where "simple" is part of a longer word. Every word said must be in the label or INSIDE
+        // the package name. Without this "Simple Calendar Pro" opened Google Calendar
+        // (AndroidWorld SimpleCalendarAddOneEvent, 2026-09-20).
+        apps.filter { a -> qw.all { w -> w in words(a.label) || (w.length >= 3 && a.pkg.lowercase().contains(w)) } }
+            .minByOrNull { it.pkg.length }?.let { return it.pkg }
         // The label is inside what was said; the label covering the most said words wins, then
         // the longest ("google play store" -> Play Store, not Google).
         apps.filter { a -> words(a.label).let { lw -> lw.isNotEmpty() && qw.containsAll(lw) } }
