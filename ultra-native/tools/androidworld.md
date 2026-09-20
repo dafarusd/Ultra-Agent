@@ -55,8 +55,15 @@ cd ~/androidworld && ANDROID_SERIAL=emulator-5554 .venv/bin/python bench_ultra.p
 | When | Set | Score |
 |---|---|---|
 | 2026-09-19, first scored run | 12 tasks, 9 apps | **3/12 (25%)** |
+| 2026-09-19, with Northstar lessons | 6 tasks it fails | 0/6 with, 0/6 without |
 
 For scale, the AndroidWorld paper's GPT-4 agent (M3A) reports ~30% on the full 116.
+
+**Do lessons help?** Not on these tasks. The same mechanism that takes a model from 0/29 to 27/29
+on knowledge questions (`northstar transfer`) moved nothing here: 0/6 both arms, with lessons
+served on 2 of the 6 runs. These failures are skill — multi-step navigation inside an app — not
+missing facts, and a sentence cannot supply skill. The open idea is route-shaped lessons: replay
+the exact taps that finished a task as the navigator's plan.
 
 What the benchmark found in Ultra on day one, all of it live on the phone too: an empty text box
 was invisible; open menus read as empty; unlabelled buttons (every "+") were dropped; the navigator
