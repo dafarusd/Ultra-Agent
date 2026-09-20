@@ -76,6 +76,13 @@ back the stored "this is how" shortcut, moves the good mark on every served less
 and leaves one lesson naming the approach that didn't do the job. `ULTRA_NO_VERDICT=1` switches it
 off (the control arm). The score is computed before the verdict is sent; nothing here can change it.
 
+**The action gate in a benchmark.** Ultra stops before pressing anything that commits ("Delete",
+"Send") and asks its person, on an overlay drawn over the app. In the benchmark the person is the
+task, so the adapter answers: "Do it" only when the button IS the verb the goal uses ("Delete" for
+"delete the note" — not "Delete lines"), "Don't" otherwise. It presses the overlay's button at the
+position Ultra logs (`OVERLAY shown: do_it=x,y`), and every answer is kept in the episode
+(`ultra_gate_answers`). Ultra's gate is not changed by any of this.
+
 Passing runs become routes on the laptop: `northstar bench routes [--push]`.
 
 ## Results
