@@ -3,6 +3,45 @@
 This file is updated by Claude Code at the end of every work session.
 Read this file at the start of every session to understand previous work.
 
+## 2026-09-20 (day) — the gate asks on top of the app; routes are played by the engine
+
+**Subsystems:** E (action gate: where the question is shown), A (navigator: route player, typing,
+scrolling), C (experience: routes as data), H (AndroidWorld adapter).
+
+**Why:** two findings from the night. (1) The action gate brought Ultra forward to ask "press
+Delete?", Markor redrew when it came back and dropped its selection, so an approved delete could
+never happen — on a real phone too. Dafarus chose the fix: ask on an overlay. (2) A weak model given
+a written route kept falling off it in new ways each round; patching them one at a time was the
+wrong level. Steps a check has passed are structure, and the engine owns structure.
+
+**Built:**
+- `AgentAccessibilityService.showGateOverlay` + `ActionGate.approve`: the question is an
+  accessibility overlay (not focusable) over the app it is about; falls back to bringing Ultra
+  forward if it can't be drawn. The gate's rules, word list, 120 s timeout and "no answer is no"
+  are unchanged. While it is asking, the agent's own coordinate touches are refused
+  (`AgentController.tap/swipe`) — it never answers its own question. Seen on the emulator:
+  long-press, Delete, asked on top with the selection intact, approved, Markor's own confirm, OK, gone.
+- `agent/RoutePlayer.kt` (pure Kotlin): a route from Northstar carries `STEPS:` — the request's
+  template and the steps with values as slots. `bind()` takes the values from the person's own
+  request (no match, no replay); `script()` turns a call's steps into navigator actions, a keypad
+  step into one tap per digit. `ReActNavigator.playRoute` runs them through the same
+  `executeAction` as any model-chosen action, so the action gate and the typing check still
+  apply, and stops at the first step that doesn't fit the screen; the model carries on from
+  there, told what was done. The model never sees the `STEPS:` line.
+- Typing focuses the chosen box first instead of finding it again by its words (Markor's Name box
+  arrives filled); scrolling falls back to a finger swipe when a list refuses the accessibility
+  scroll (Files); a tool call's params are logged whole enough to rebuild a route from.
+- Adapter: answers the gate's overlay as the person who gave the task would — only when the button
+  IS the verb the goal uses ("Delete", not "Delete lines") — and records every answer.
+
+**Measured so far:** hand check with llama-3.3-70b on a timer value no run had used (3 h 7 m 9 s):
+the engine keyed 3-0-7-0-9, display `03h 07m 09s`, 28 s; the same model without a route took 2–3
+minutes and failed. Teacher round with the overlay: 3/6 including the first Markor delete in a
+full round. 445/445 JVM tests. P8 (the scored comparison) was running when this was written.
+
+**Not proven:** the scored student comparison (P8); the overlay on the real phone; a route whose
+new request needs a branch the practice run never took (a `.txt` note from a `.md` route).
+
 ## 2026-09-20 (night) — an honest teacher for the phone; the navigator reads and speaks in words
 
 **Subsystems:** C (experience: verdicts, routes), A (navigator: perception, actions, plan checks),
