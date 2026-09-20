@@ -97,6 +97,7 @@ Reply with exactly ONE action on one line, one of:
   type("text")      — type into the first TYPEABLE field, then submit
   type(INDEX, "text") — type into a specific field
   scroll(down) / scroll(up)
+  scroll_to("WORDS") — keep scrolling down until something with those words is on screen
   back()
   done              — only when the goal is visibly complete
 To enter 16 on a keypad, tap("1") and then tap("6").
@@ -960,6 +961,19 @@ ACTION:"""
             }
             controller.imeEnter()
             return true
+        }
+        Regex("""scroll_to\(\s*["'](.+)["']\s*\)""", RegexOption.IGNORE_CASE).find(a)?.let { m ->
+            // Finding a row in a long list is the engine's job. Given only scroll(down), a strong
+            // model still spent 9 of 15 steps scrolling and searching for a file that was two
+            // screens down, and never reached it (AndroidWorld FilesDeleteFile, 2026-09-20).
+            val want = m.groupValues[1].trim().lowercase()
+            repeat(10) {
+                observe()
+                if (labelled.any { it.first.contains(want) } || lastReadOnly.any { it.lowercase().contains(want) }) return true
+                if (!controller.scroll("down")) return false
+                delay(700)
+            }
+            return false
         }
         Regex("scroll\\((up|down)\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
             return controller.scroll(m.groupValues[1].lowercase())

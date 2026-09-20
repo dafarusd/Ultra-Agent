@@ -127,6 +127,8 @@ object ModelOutput {
         Regex("""tap\(\s*"[^"]+"\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""tap\(\s*'[^']+'\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""tap\(\s*\d+(?:\s*,\s*\d+)?\s*\)""", RegexOption.IGNORE_CASE),
+        Regex("""scroll_to\(\s*"[^"]+"\s*\)""", RegexOption.IGNORE_CASE),
+        Regex("""scroll_to\(\s*'[^']+'\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""scroll\(\s*(?:up|down)\s*\)""", RegexOption.IGNORE_CASE),
         Regex("""back\(\)""", RegexOption.IGNORE_CASE),
         Regex("""home\(\)""", RegexOption.IGNORE_CASE),
