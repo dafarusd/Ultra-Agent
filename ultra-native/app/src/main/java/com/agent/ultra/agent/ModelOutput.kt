@@ -50,7 +50,7 @@ object ModelOutput {
 
     /** A tool call, or null when the reply is simply prose. */
     fun toolCall(text: String): Pair<String, JSONObject>? {
-        val json = firstJsonObject(text) ?: return bareCall(text)
+        val json = firstJsonObject(text) ?: return bareCall(text) ?: cutShort(text)
         return try {
             val obj = JSONObject(json)
             val tool = obj.optString("tool")
@@ -65,6 +65,25 @@ object ModelOutput {
      * {…}"; it parsed as prose, and the run ended in six seconds having done nothing (2026-09-20).
      * Only when the whole reply is that one call: a sentence that mentions a tool is still prose.
      */
+    /**
+     * A call that stops before its closing brackets: `{"tool":"react_navigate","params":{"goal":"…'`
+     * and nothing after. llama-3.3-70b ended a reply there; it read as prose, the run "finished"
+     * having done nothing, and the task was lost (AndroidWorld MarkorCreateNote, 2026-09-20). Only
+     * a reply that BEGINS as a tool call is repaired, and only by closing what it left open.
+     */
+    private fun cutShort(text: String): Pair<String, JSONObject>? {
+        val t = text.trim().removePrefix("```json").removePrefix("```").trim()
+        if (!t.startsWith("{\"tool\"")) return null
+        for (tail in listOf("\"}}", "}}", "\"}", "}")) {
+            try {
+                val obj = JSONObject(t + tail)
+                val tool = obj.optString("tool")
+                if (tool.isNotBlank()) return tool to (obj.optJSONObject("params") ?: JSONObject())
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
     private fun bareCall(text: String): Pair<String, JSONObject>? {
         val m = Regex("""^\s*`{0,3}\s*([a-z][a-z_]{2,30})\s*(\{.*\})\s*`{0,3}\s*$""", RegexOption.DOT_MATCHES_ALL)
             .find(text.trim()) ?: return null

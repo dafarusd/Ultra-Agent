@@ -136,4 +136,13 @@ class ModelOutputTest {
         assertEquals("clock", got?.second?.optString("target"))
         assertNull("a sentence that mentions a tool is prose", ModelOutput.toolCall("I used app_launch {\"target\":\"clock\"} earlier and it worked."))
     }
+
+    // llama-3.3-70b stopped mid-call (AndroidWorld MarkorCreateNote, 2026-09-20).
+    @Test
+    fun aCallCutShortIsClosedAndStillACall() {
+        val got = ModelOutput.toolCall("{\"tool\":\"react_navigate\",\"params\":{\"goal\":\"Create a note with the text 'Cleanliness is next to godliness.'")
+        assertEquals("react_navigate", got?.first)
+        assertTrue(got!!.second.optString("goal").contains("Cleanliness"))
+        assertNull(ModelOutput.toolCall("The tool {\"tool\" is what I would call"))
+    }
 }
