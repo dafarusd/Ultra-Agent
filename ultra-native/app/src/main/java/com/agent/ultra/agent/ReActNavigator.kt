@@ -263,16 +263,25 @@ ACTION:"""
             }
             val byLabel = if (isTap && action != said.trim()) said else null
 
+            if (action.equals("done", true)) {
+                // Verify we're still on the expected app before accepting
+                val onPkg = controller.activePackage()
+                if (onPkg == pkg) return NavResult(true, "model reports goal complete", iter)
+                history += "step $iter: tried done but left target app ($onPkg)"
+                continue
+            }
+
             // The model was told this action does nothing here and chose it anyway. Asking again
             // costs a model call; doing it again costs a step and teaches nothing.
             if (action in deadHere) {
                 android.util.Log.i("UltraNav", "step $iter action: $action — REFUSED, dead on this screen")
-                history += "step $iter: $action → REFUSED: already tried on this exact screen, nothing happened. Choose a different action."
+                history += "step $iter: $said → REFUSED: already tried on this exact screen, nothing happened. Choose a different action."
                 continue
             }
 
             val before = observation
             val textBefore = screenText(lastFlat)
+            val readBefore = lastReadOnly
             // Log the action and its outcome. Without this a failing run gives
             // no way to tell a bad choice from a good choice executed badly,
             // and both look like "the tap did not work".
@@ -398,9 +407,13 @@ ACTION:"""
 
             val refusal = lastRefusal
             lastRefusal = null
+            // "screen changed" says nothing about what the tap did. With the display in front of
+            // it (00h 00m 01s) a model still pressed 1 again; told what appeared, it can count.
+            val appeared = lastReadOnly.filter { it !in readBefore }.take(3)
+            val nowShows = if (appeared.isEmpty()) "" else " — now shows: " + appeared.joinToString(", ") { "\"$it\"" }
             val outcome = when {
                 refusal != null -> "NOT DONE: $refusal"
-                changed -> "screen changed"
+                changed -> "screen changed$nowShows"
                 ok -> "NO CHANGE - do not repeat this"
                 else -> "FAILED - do not repeat this"
             }
@@ -410,7 +423,11 @@ ACTION:"""
             if (!changed && refusal == null) dead.getOrPut(before) { mutableSetOf() } += action
             if (changed) missing.clear()
             android.util.Log.i("UltraNav", "step $iter outcome: $outcome$drift")
-            history += "step $iter: $action → $outcome$drift"
+            // In the model's own words: the screen is listed by words now, so "tap(9)" in its
+            // history was an index it had never been shown. It could not tell it had already
+            // tapped Timer, and tapped Timer, Clock, Timer, Clock for 15 steps (2026-09-20).
+            val shown = tappedWords?.let { "tap(\"$it\")" } ?: action
+            history += "step $iter: $shown → $outcome$drift"
 
             // Stuck detector: same tree twice → scroll down once
             val prefix = observation.take(80)
@@ -445,6 +462,7 @@ ACTION:"""
     /** From the last observe(): words -> node index, and the indexes shown because they had no words. */
     private var labelled: List<Pair<String, Int>> = emptyList()
     private var listedIndexes: Set<Int> = emptySet()
+    private var lastReadOnly: List<String> = emptyList()
 
     /**
      * Walk a route the user once showed us.
@@ -852,6 +870,7 @@ ACTION:"""
                 parts += "TEXT ON SCREEN (read-only, not tappable):\n" + readOnly.take(14).joinToString("\n") { "  $it" }
             labelled = words
             listedIndexes = listed
+            lastReadOnly = readOnly.toList()
             if (parts.isEmpty()) "Screen has no interactive elements — try scroll(down) or back()"
             else parts.joinToString("\n\n")
         } catch (e: Exception) {

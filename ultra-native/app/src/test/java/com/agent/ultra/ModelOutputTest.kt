@@ -127,4 +127,13 @@ class ModelOutputTest {
     fun `typed text with a single quote style works too`() {
         assertEquals("""type('hello')""", ModelOutput.action("""type('hello')"""))
     }
+
+    // qwen3-235b, after a lesson worded "What worked: app_launch {…}" (2026-09-20).
+    @Test
+    fun aCallWrittenTheWayLessonsWriteThemIsStillACall() {
+        val got = ModelOutput.toolCall("app_launch {\"target\":\"clock\"}")
+        assertEquals("app_launch", got?.first)
+        assertEquals("clock", got?.second?.optString("target"))
+        assertNull("a sentence that mentions a tool is prose", ModelOutput.toolCall("I used app_launch {\"target\":\"clock\"} earlier and it worked."))
+    }
 }

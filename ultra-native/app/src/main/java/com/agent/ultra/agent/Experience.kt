@@ -151,11 +151,17 @@ object Experience {
                 "afterwards showed the job was NOT done. This is a job to DO: open the app and do it with react_navigate.").take(MAX_TEXT),
             "verdict", now)
         if (used.isEmpty()) return null
-        val inApp = "react_navigate" in used
+        // Working inside the app was the right approach; what went wrong is in the steps, and
+        // nobody knows which. Saying "don't take that approach again" about react_navigate sent
+        // the next run round in circles redoing a job it had just done right.
+        if ("react_navigate" in used) return Lesson(uid("verdict", "in-app|" + keyOf(request)), request,
+            ("Asked \"${request.take(80)}\": it was done inside the app and reported done, but a check of the phone " +
+                "afterwards showed the job was NOT done — a step was wrong or something was left unfinished. " +
+                "Do it in the app once, and check what the screen shows against every part of the request before saying done.").take(MAX_TEXT),
+            "verdict", now)
         val text = ("Asked \"${request.take(80)}\": ${used.joinToString(" → ")} was reported done, but a check " +
             "of the phone afterwards showed the job was NOT done. Don't take that approach again." +
-            if (inApp) " Inside the app, finish every part of the request before stopping."
-            else " Do the job inside the app itself with react_navigate.").take(MAX_TEXT)
+            " Do the job inside the app itself with react_navigate.").take(MAX_TEXT)
         return Lesson(uid("verdict", used.joinToString("|") + "|" + keyOf(request)), request, text, "verdict", now)
     }
 

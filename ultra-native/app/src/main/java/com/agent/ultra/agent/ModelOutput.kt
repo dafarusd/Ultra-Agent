@@ -50,13 +50,25 @@ object ModelOutput {
 
     /** A tool call, or null when the reply is simply prose. */
     fun toolCall(text: String): Pair<String, JSONObject>? {
-        val json = firstJsonObject(text) ?: return null
+        val json = firstJsonObject(text) ?: return bareCall(text)
         return try {
             val obj = JSONObject(json)
             val tool = obj.optString("tool")
-            if (tool.isBlank()) null
+            if (tool.isBlank()) bareCall(text)
             else tool to (obj.optJSONObject("params") ?: JSONObject())
         } catch (_: Exception) { null }
+    }
+
+    /**
+     * `app_launch {"target":"clock"}` — a call written the way lessons and the log write them.
+     * qwen3-235b answered exactly that after reading a lesson worded "What worked: app_launch
+     * {…}"; it parsed as prose, and the run ended in six seconds having done nothing (2026-09-20).
+     * Only when the whole reply is that one call: a sentence that mentions a tool is still prose.
+     */
+    private fun bareCall(text: String): Pair<String, JSONObject>? {
+        val m = Regex("""^\s*`{0,3}\s*([a-z][a-z_]{2,30})\s*(\{.*\})\s*`{0,3}\s*$""", RegexOption.DOT_MATCHES_ALL)
+            .find(text.trim()) ?: return null
+        return try { m.groupValues[1] to JSONObject(m.groupValues[2]) } catch (_: Exception) { null }
     }
 
     /**

@@ -598,6 +598,7 @@ JSON:"""
         // successful run can be promoted into a named recipe).
         val toolSequence = mutableListOf<Triple<String, JSONObject, Boolean>>()
         val runSteps = mutableListOf<Experience.Step>()
+        val finishedNavs = mutableSetOf<String>()
         // Task-level success: the model finished with its own answer and
         // nothing failed on the way. Running out of turns, giving up after a
         // repeated failure, or ending on a block are all NOT successes, even
@@ -698,7 +699,11 @@ JSON:"""
             // Duplicate-call dedupe: the same tool with identical params just
             // succeeded → tell the model it's done instead of re-firing.
             // (Observed on-device: open_url fired twice per task.)
-            if (lastTool == toolCall.first && !lastToolFailed &&
+            // A navigation that finished is finished for the whole run, whatever came between:
+            // the timer was set right (00h 16m 35s), then app_launch + the same react_navigate
+            // ran again over it and typed the digits a second time (2026-09-20).
+            val navAgain = toolCall.first == "react_navigate" && toolCall.second.toString() in finishedNavs
+            if (navAgain || lastTool == toolCall.first && !lastToolFailed &&
                 toolCall.second.toString() == lastParams) {
                 messages += OpenAiClient.ChatMessage("assistant", raw)
                 messages += OpenAiClient.ChatMessage("user",
@@ -713,6 +718,7 @@ JSON:"""
             toolSequence += Triple(toolCall.first, toolCall.second, !failed)
             runSteps += Experience.Step(toolCall.first, toolCall.second, !failed, resultText)
             if (failed) anyToolFailed = true
+            if (!failed && toolCall.first == "react_navigate") finishedNavs += toolCall.second.toString()
             val verification = if (!failed) verifyAction(toolCall.first, toolCall.second) else null
             // 120 characters cut a structured read off at its header, so the
             // rows the model actually reasoned over never reached the log. On
