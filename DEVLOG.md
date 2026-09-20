@@ -3,6 +3,60 @@
 This file is updated by Claude Code at the end of every work session.
 Read this file at the start of every session to understand previous work.
 
+## 2026-09-20 (night) — an honest teacher for the phone; the navigator reads and speaks in words
+
+**Subsystems:** C (experience: verdicts, routes), A (navigator: perception, actions, plan checks),
+B (brain: parser, repeat guard), D (app matching), H (AndroidWorld adapter).
+
+**Why:** Dafarus, 2026-09-20: Northstar and Ultra are both products and the loop is global —
+working on Ultra is how Northstar learns. Purpose, bar and predictions live in
+`~/vault/runtime/PURPOSE.md`, `THE-BAR.md`, `PREDICTIONS.md` (a prediction is written before each
+experiment and scored after).
+
+**Found first:** last night's "the failures are skill" was wrong. `northstar bench causes` over 98
+failed episodes: 36 repeat an action already marked NO CHANGE, 33 report success the benchmark
+denies (and store the run as the way to do the job), 29 use note_create/alarm_set/web_search
+instead of the app, 19 never navigate.
+
+**Built — experience:**
+- An outside verdict takes back what a false success taught (`Brain.applyVerdict`): the stored
+  shortcut, the good mark on every served lesson, any "fix" it thought it found; one lesson is
+  left naming the approach that didn't do the job. The benchmark sends it (`verdict.json`); a
+  "no, that's wrong" from the person calls the same path. The last run is kept on disk.
+- A verdict lesson is judged on what it warned about, not on the whole task (`verdictHeld`).
+- Route lessons from Northstar (`kind: route`, up to 1400 chars) reach the planner and every
+  navigator step.
+
+**Built — navigator:**
+- The screen is listed by its words; only wordless elements keep an `[index]`; a wordless button
+  is shown by the name its developer gave it. `tap("Start")`, `long_press("file")`,
+  `scroll_to("name")`; every tap is resolved in code (`resolveTap`).
+- Read-only text is shown (a timer's display), each outcome says what text appeared, and "did the
+  screen change" reads all text.
+- Actions that did nothing on a screen leave the offered list and are refused; a stage whose
+  target isn't there is skipped; one unparseable reply no longer ends the task.
+- A stage's expected number matches however it is written (7:52:22 = 07h 52m 22s). A `type()`
+  index that isn't a listed box falls back to the focused one.
+
+**Built — brain, apps:** a finished navigation isn't re-run in the same task; `tool {json}` as a
+whole reply is a call; the final answer is logged; two apps with one label are told apart by the
+package (Simple Calendar Pro vs Google Calendar).
+
+**The benchmark rig was lying, five ways** (all in `tools/androidworld.md`): the judge read 0
+screen elements at scoring time, then a stale screen; the forwarder's crash dialog covered Ultra's
+chat; the goal box kept the tail of the previous goal; `adb reverse` died mid-round; a surviving
+driver script ran a second experiment on the same emulator. Clock-task scores before 04:10 today
+are not evidence.
+
+**Measured:** teacher (claude-sonnet-5 through Ultra's hands) 2/6 then 3/6 on the six tasks that
+were 0/6 twice — first passes ever for timer, Markor create-note, and (single run) Markor
+delete-note. Student (llama-3.3-70b, unseen values): **1/6 without routes, 1/6 with** — the
+skeptic was right on the score. In the traces the routed student keyed the timer correctly
+(07h 52m 22s at step 6) and then didn't know it was finished. 437/437 JVM tests.
+
+**Not proven:** that routes raise a weak model's score (P4 running at the time of writing); any
+of this on the real phone; long_press and scroll_to on a task that passes because of them.
+
 ## 2026-09-19 (night) — Ultra on AndroidWorld; nine bugs the benchmark found
 
 **Subsystems:** D (perception, app matching), A (navigator plan, prompt rules), C (experience
