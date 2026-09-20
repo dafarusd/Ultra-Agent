@@ -100,4 +100,22 @@ class ExperienceTest {
         assertTrue(got[0].uid, got[0].uid.startsWith("ultra-deadend-"))
         assertTrue(got[0].text.contains("failed twice") && got[0].text.contains("settings_open"))
     }
+
+    @Test fun aLongGoalStillFindsItsLesson() {
+        val lesson = Experience.Lesson("u", "create a new note or file inside an app", "tap the unlabelled + button", "northstar", 0)
+        val hits = Experience.recall(
+            "Create a new note in Markor named 2023_01_26_wise_yacht.md with the following text: Ignorance is bliss.",
+            listOf(lesson))
+        assertEquals(listOf("u"), hits.map { it.uid })
+    }
+
+    @Test fun anUnrelatedGoalStillFindsNothing() {
+        val lesson = Experience.Lesson("u", "create a new note or file inside an app", "tap the unlabelled + button", "northstar", 0)
+        assertTrue(Experience.recall("Turn wifi off and tell me the battery level", listOf(lesson)).isEmpty())
+    }
+
+    @Test fun oneSharedWordIsNotEnough() {
+        val lesson = Experience.Lesson("u", "create a new note or file inside an app", "x", "northstar", 0)
+        assertTrue(Experience.recall("Create a playlist called road trip in Retro Music", listOf(lesson)).isEmpty())
+    }
 }

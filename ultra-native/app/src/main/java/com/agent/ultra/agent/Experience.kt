@@ -59,7 +59,7 @@ object Experience {
     data class Step(val tool: String, val params: JSONObject, val ok: Boolean, val result: String)
 
     const val BENCH_AFTER = 3
-    const val MIN_SCORE = 0.5
+    const val MIN_SCORE = 0.25
     private const val MAX_TEXT = 400
 
     /** Tools that are different routes to the same job: failing with one and
@@ -132,13 +132,44 @@ object Experience {
 
     // ── recall ──────────────────────────────────────────────────────────
 
+    /**
+     * How much of the lesson's own words this request contains, with the denominator capped.
+     *
+     * TaskMatch asks how much of the REQUEST a memory accounts for, which is right for replaying
+     * a whole task. A lesson is narrower than the job it helps with: "create a new note or file
+     * inside an app" shares three words with "Create a new note in Markor named
+     * 2023_01_26_wise_yacht.md with the following text: Ignorance is bliss." and scored 0.2, so
+     * on AndroidWorld not one lesson was ever served (2026-09-19). What matters is whether the
+     * lesson's subject is present, not what fraction of a long goal it covers.
+     */
+    fun match(request: Set<String>, lesson: Set<String>): Double {
+        if (request.isEmpty() || lesson.isEmpty()) return 0.0
+        val overlap = request.intersect(lesson).size.toDouble()
+        // A floor, not a ratio: two content words in common, a real share of the lesson's own
+        // subject, and a real share of the request once its length is capped. Ratios alone kept
+        // every lesson out — "create ... note" shares 2 of 5 lesson words with a 12-word goal.
+        // Two shared words for a real sentence; one will do for a short request ("open calculator
+        // please" has two content words and can only ever share one with a lesson).
+        if (overlap < (if (request.size >= 4) MIN_SHARED else 1)) return 0.0
+        val ofLesson = overlap / lesson.size
+        val ofRequest = overlap / minOf(request.size, COVERAGE_CAP)
+        if (ofLesson < 0.25 || ofRequest < 0.3) return 0.0
+        return ofLesson
+    }
+
+    /** Distinct content words a lesson and a request must share before the lesson is offered. */
+    const val MIN_SHARED = 2
+
+    /** Longer than this and a request is a paragraph; asking a lesson to cover it all is wrong. */
+    const val COVERAGE_CAP = 6
+
     /** The lessons that answer this request, best first. Benched ones are kept out. */
     fun recall(request: String, lessons: List<Lesson>, k: Int = 3): List<Lesson> {
         val mine = tokens(request)
         if (mine.isEmpty()) return emptyList()
         return lessons.asSequence()
             .filter { !it.benched }
-            .map { it to TaskMatch.score(mine, tokens(it.whenText)) }
+            .map { it to match(mine, tokens(it.whenText)) }
             .filter { it.second >= MIN_SCORE }
             .sortedWith(compareByDescending<Pair<Lesson, Double>> { it.second }.thenByDescending { it.first.ok })
             .take(k)
