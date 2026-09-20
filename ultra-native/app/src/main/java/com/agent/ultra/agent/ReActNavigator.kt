@@ -474,6 +474,7 @@ ACTION:"""
     private var labelled: List<Pair<String, Int>> = emptyList()
     private var listedIndexes: Set<Int> = emptySet()
     private var lastReadOnly: List<String> = emptyList()
+    private var typeableIndexes: Set<Int> = emptySet()
 
     /**
      * Walk a route the user once showed us.
@@ -823,6 +824,7 @@ ACTION:"""
             val readOnly = mutableListOf<String>()
             val words = mutableListOf<Pair<String, Int>>()
             val listed = mutableSetOf<Int>()
+            val boxes = mutableSetOf<Int>()
             val vidCount = mutableMapOf<String, Int>()
             for (i in 0 until arr.length()) {
                 val n = arr.getJSONObject(i)
@@ -870,7 +872,7 @@ ACTION:"""
                     else "(unlabelled button, $band $side)"
                 }
                 when {
-                    editable -> { typeable += "  [$idx] ${label.ifBlank { "(empty text box)" }}$hint"; listed += idx }
+                    editable -> { typeable += "  [$idx] ${label.ifBlank { "(empty text box)" }}$hint"; listed += idx; boxes += idx }
                     // By its words when it has any, and once: a tab's icon and its text are two
                     // nodes with one label. A number beside a label gets read as a value — asked
                     // to enter 16, the model tapped [16], the Alarm tab (2026-09-20).
@@ -901,6 +903,7 @@ ACTION:"""
             labelled = words
             listedIndexes = listed
             lastReadOnly = readOnly.toList()
+            typeableIndexes = boxes
             if (parts.isEmpty()) "Screen has no interactive elements — try scroll(down) or back()"
             else parts.joinToString("\n\n")
         } catch (e: Exception) {
@@ -941,7 +944,11 @@ ACTION:"""
             return controller.tap(x, y)
         }
         Regex("type\\(\\s*(\\d*)\\s*,?\\s*[\"']([^)]+)[\"']\\s*\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
-            val idx = m.groupValues[1].toIntOrNull()
+            // An index that is not one of the listed text boxes is a guess, not a choice: given a
+            // route that said type("name"), llama wrote type(1, "name"), [1] was not a box, and the
+            // same refused keystroke ate the rest of the run (AndroidWorld MarkorCreateNote,
+            // 2026-09-20). A guess falls back to what no index means: the focused or first box.
+            val idx = m.groupValues[1].toIntOrNull()?.takeIf { it in typeableIndexes }
             val text = m.groupValues[2]
             // Empty selector → the service types into the FOCUSED editable field.
             // If nothing is focused (the proven Chrome failure: TEXT result=false
