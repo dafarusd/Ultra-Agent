@@ -388,7 +388,18 @@ class UltraAgent(base_agent.EnvironmentInteractingAgent):
         label, word = asks[-1]
         answered = len(asks)
         ok = word.lower() in goal.lower() or label.lower() in goal.lower()
-        if self._tap_text("Do it" if ok else "Don't", tries=4):
+        # The question is an overlay on top of the app now, which a uiautomator dump of the
+        # active window does not contain; Ultra logs where its two buttons are, and the harness
+        # presses one the way a finger would. The old in-chat card is still looked for second.
+        time.sleep(1.5)
+        where = re.findall(r"OVERLAY shown: do_it=(\d+),(\d+) dont=(\d+),(\d+)",
+                           self._adb("logcat", "-d", "-s", "UltraActionGate:V"))
+        pressed = False
+        if where:
+          x, y = (where[-1][0], where[-1][1]) if ok else (where[-1][2], where[-1][3])
+          self._adb("shell", "input", "tap", x, y)
+          pressed = True
+        if pressed or self._tap_text("Do it" if ok else "Don't", tries=4):
           confirmed.append(f"{'confirmed' if ok else 'declined'}: {label}")
           print(f"ultra: gate asked about \"{label}\" — {'confirmed (the task asks for it)' if ok else 'declined'}")
     lines = [re.sub(r"^[0-9-]+ [0-9:.]+ +\d+ +\d+ [A-Z] ", "", x) for x in log.splitlines()]
