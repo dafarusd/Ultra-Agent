@@ -695,7 +695,7 @@ JSON:"""
                 emit("About to: $desc")
             }
 
-            android.util.Log.i("UltraBrain", "TOOL CALL: ${toolCall.first} params=${toolCall.second.toString().take(120)}")
+            android.util.Log.i("UltraBrain", "TOOL CALL: ${toolCall.first} params=${toolCall.second.toString().take(600)}")
 
             // Duplicate-call dedupe: the same tool with identical params just
             // succeeded → tell the model it's done instead of re-firing.
