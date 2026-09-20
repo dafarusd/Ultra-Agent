@@ -813,6 +813,20 @@ public class AgentAccessibilityService extends AccessibilityService {
     }
 
     public String clickByIndex(int index, String expectedLabel) {
+        return actByIndex(index, expectedLabel, false);
+    }
+
+    /**
+     * Press and hold the node at this index. The row is asked first (ACTION_LONG_CLICK on the
+     * nearest long-clickable ancestor): a held gesture selected a file in Markor but did nothing
+     * in the Files app, whose list only answers the accessibility action (AndroidWorld
+     * FilesDeleteFile, 2026-09-20). The gesture is the fallback.
+     */
+    public String longClickByIndex(int index, String expectedLabel) {
+        return actByIndex(index, expectedLabel, true);
+    }
+
+    private String actByIndex(int index, String expectedLabel, boolean longPress) {
         AtomicReference<String> result = new AtomicReference<>("gone");
         CountDownLatch latch = new CountDownLatch(1);
         new Handler(Looper.getMainLooper()).post(() -> {
@@ -848,20 +862,24 @@ public class AgentAccessibilityService extends AccessibilityService {
 
                 AccessibilityNodeInfo clickable = target;
                 int hops = 0;
-                while (clickable != null && !clickable.isClickable() && hops < 6) {
+                while (clickable != null && hops < 6
+                        && !(longPress ? clickable.isLongClickable() : clickable.isClickable())) {
                     clickable = clickable.getParent();
                     hops++;
                 }
                 boolean ok = false;
                 if (clickable != null) {
-                    ok = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                    Log.i(TAG, "CLICK_INDEX: ACTION_CLICK on \"" + actual + "\" result=" + ok);
+                    ok = clickable.performAction(longPress
+                            ? AccessibilityNodeInfo.ACTION_LONG_CLICK : AccessibilityNodeInfo.ACTION_CLICK);
+                    Log.i(TAG, "CLICK_INDEX: " + (longPress ? "ACTION_LONG_CLICK" : "ACTION_CLICK")
+                            + " on \"" + actual + "\" result=" + ok);
                 }
                 if (!ok) {
                     Rect b = new Rect();
                     target.getBoundsInScreen(b);
                     if (b.width() > 0 && b.height() > 0) {
-                        performTap(b.centerX(), b.centerY());
+                        if (longPress) performSwipe(b.centerX(), b.centerY(), b.centerX(), b.centerY(), 900);
+                        else performTap(b.centerX(), b.centerY());
                         Log.i(TAG, "CLICK_INDEX: fell back to a gesture at " + b.centerX() + "," + b.centerY());
                         ok = true;
                     }

@@ -890,15 +890,22 @@ JSON:"""
         val hits = Experience.recall(userInput, lessonDao.all().map { it.lesson() })
         servedThisRun = hits.map { it.uid }
         // A route goes to the navigator too: the brain only picks the tool, the taps happen there.
-        val routeLesson = hits.firstOrNull { it.source == Experience.ROUTE }
-        tools.navigator?.routeHint = routeLesson?.text?.let(RoutePlayer::forModel).orEmpty()
-        // The same route as steps the engine plays itself — only when this request really is an
-        // instance of the route's template. Otherwise the model just reads it, as before.
-        tools.navigator?.routePlay = routeLesson?.text?.let(RoutePlayer::parse)?.let { route ->
-            RoutePlayer.bind(route.template, userInput)?.let { values ->
-                android.util.Log.i("UltraLearn", "ROUTE bound: ${routeLesson.uid} with ${values.size} value(s) from the request")
-                route to values
+        // A route the engine can play: this request must be an instance of its template AND the
+        // same kind as what it was learned from (a .txt request is not an instance of the .md
+        // route). The first recalled route that is both gets played; failing that, the first
+        // route is only read by the model, as before.
+        val routes = hits.filter { it.source == Experience.ROUTE }
+        val playable = routes.firstNotNullOfOrNull { lesson ->
+            RoutePlayer.parse(lesson.text)?.let { route ->
+                RoutePlayer.bind(route.template, userInput)?.takeIf { RoutePlayer.sameKind(route, it) }
+                    ?.let { Triple(lesson, route, it) }
             }
+        }
+        val routeLesson = playable?.first ?: routes.firstOrNull()
+        tools.navigator?.routeHint = routeLesson?.text?.let(RoutePlayer::forModel).orEmpty()
+        tools.navigator?.routePlay = playable?.let { (lesson, route, values) ->
+            android.util.Log.i("UltraLearn", "ROUTE bound: ${lesson.uid} with ${values.size} value(s) from the request")
+            route to values
         }
         Experience.block(hits)?.also {
             android.util.Log.i("UltraLearn", "LESSONS SERVED: ${hits.joinToString { it.uid }}")

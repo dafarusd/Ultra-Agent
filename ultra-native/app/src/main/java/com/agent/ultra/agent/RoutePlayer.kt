@@ -21,9 +21,9 @@ import org.json.JSONObject
 object RoutePlayer {
 
     data class Op(val op: String, val words: String = "", val text: String = "", val dir: String = "",
-                  val slots: List<String> = emptyList())
+                  val slots: List<String> = emptyList(), val box: Int = 0)
     data class Call(val tool: String, val app: String, val steps: List<Op>)
-    data class Route(val template: String, val calls: List<Call>)
+    data class Route(val template: String, val calls: List<Call>, val practice: Map<String, String> = emptyMap())
 
     private const val MARK = "STEPS: "
 
@@ -43,9 +43,9 @@ object RoutePlayer {
                     val s = steps!!.getJSONObject(j)
                     val sl = s.optJSONArray("slots")
                     Op(s.optString("op"), s.optString("words"), s.optString("text"), s.optString("dir"),
-                        (0 until (sl?.length() ?: 0)).map { sl!!.getString(it) })
+                        (0 until (sl?.length() ?: 0)).map { sl!!.getString(it) }, s.optInt("box", 0))
                 })
-            })
+            }, o.optJSONObject("practice")?.let { p -> p.keys().asSequence().associateWith { p.optString(it) } } ?: emptyMap())
         }
     } catch (_: Exception) { null }
 
@@ -69,6 +69,18 @@ object RoutePlayer {
         val found = Regex(sb.toString(), setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
             .find(request.trim()) ?: return null
         return names.mapIndexed { i, n -> n to found.groupValues[i + 1].trim() }.toMap()
+    }
+
+    /**
+     * A route generalises VALUES, not KINDS. The `.md` route types a name without its extension and
+     * lets the dialog add `.md`; played for a `.txt` request it made the wrong file, perfectly
+     * (P8, 2026-09-20). So before anything is played the new values are compared in kind with the
+     * ones the route was learned from: the same file extension, a number where there was a number.
+     */
+    fun sameKind(route: Route, values: Map<String, String>): Boolean = route.practice.all { (slot, was) ->
+        val now = values[slot] ?: return@all false
+        fun ext(s: String) = Regex("""\.([A-Za-z0-9]{1,4})[.,;:!?]*$""").find(s.trim())?.groupValues?.get(1)?.lowercase().orEmpty()
+        ext(was) == ext(now) && was.trim().all(Char::isDigit) == now.trim().all(Char::isDigit)
     }
 
     /** Literal text of a template as a pattern: spacing is free, a closing full stop is optional. */
@@ -117,7 +129,9 @@ object RoutePlayer {
         for (op in call.steps) {
             val next: List<String>? = when (op.op) {
                 "tap", "long_press", "scroll_to" -> fill(op.words, values)?.takeIf(::sayable)?.let { listOf("${op.op}(\"$it\")") }
-                "type" -> fill(op.text, values)?.takeIf(::sayable)?.let { listOf("type(\"$it\")") }
+                "type" -> fill(op.text, values)?.takeIf(::sayable)?.let {
+                    listOf(if (op.box > 1) "type(#${op.box}, \"$it\")" else "type(\"$it\")")
+                }
                 "scroll" -> if (op.dir == "up" || op.dir == "down") listOf("scroll(${op.dir})") else null
                 "back" -> listOf("back()")
                 "keypad" -> keypadDigits(op.slots, values)?.map { "tap(\"$it\")" }

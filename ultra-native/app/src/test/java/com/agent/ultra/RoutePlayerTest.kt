@@ -68,4 +68,22 @@ class RoutePlayerTest {
         assertNotNull(RoutePlayer.parse(timer))
         assertTrue(RoutePlayer.parse("just a sentence") == null)
     }
+
+    // The .md route, played for a .txt request, made the wrong file perfectly (P8, 2026-09-20).
+    @Test fun aRequestOfADifferentKindIsNotAnInstanceOfTheRoute() {
+        val md = RoutePlayer.Route("Create a note named <v1> with the text: <v2>", emptyList(),
+            practice = mapOf("v1" to "wise_yacht.md", "v2" to "Ignorance is bliss."))
+        assertTrue(RoutePlayer.sameKind(md, mapOf("v1" to "shy_frog.md", "v2" to "Carpe diem.")))
+        assertFalse(RoutePlayer.sameKind(md, mapOf("v1" to "final_silly_violin.txt", "v2" to "Cleanliness.")))
+        val timer = RoutePlayer.Route("<v1> hours", emptyList(), practice = mapOf("v1" to "16"))
+        assertTrue(RoutePlayer.sameKind(timer, mapOf("v1" to "7")))
+        assertFalse(RoutePlayer.sameKind(timer, mapOf("v1" to "seven")))
+    }
+
+    @Test fun aValueTypedIntoTheSecondBoxSaysSo() {
+        val call = RoutePlayer.Call("react_navigate", "Markor", listOf(
+            RoutePlayer.Op("type", text = "<v1|stem>"), RoutePlayer.Op("type", text = ".txt", box = 2)))
+        assertEquals(listOf("type(\"shy_frog\")", "type(#2, \".txt\")"),
+            RoutePlayer.script(call, mapOf("v1" to "shy_frog.txt")).actions)
+    }
 }

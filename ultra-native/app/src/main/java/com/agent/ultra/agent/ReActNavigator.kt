@@ -482,7 +482,7 @@ ACTION:"""
     private var labelled: List<Pair<String, Int>> = emptyList()
     private var listedIndexes: Set<Int> = emptySet()
     private var lastReadOnly: List<String> = emptyList()
-    private var typeableIndexes: Set<Int> = emptySet()
+    private var typeableIndexes: List<Int> = emptyList()   // in screen order: a route says "the 2nd box"
 
     /**
      * Walk a route the user once showed us.
@@ -832,7 +832,7 @@ ACTION:"""
             val readOnly = mutableListOf<String>()
             val words = mutableListOf<Pair<String, Int>>()
             val listed = mutableSetOf<Int>()
-            val boxes = mutableSetOf<Int>()
+            val boxes = mutableListOf<Int>()
             val vidCount = mutableMapOf<String, Int>()
             for (i in 0 until arr.length()) {
                 val n = arr.getJSONObject(i)
@@ -911,7 +911,7 @@ ACTION:"""
             labelled = words
             listedIndexes = listed
             lastReadOnly = readOnly.toList()
-            typeableIndexes = boxes
+            typeableIndexes = boxes.toList()
             if (parts.isEmpty()) "Screen has no interactive elements — try scroll(down) or back()"
             else parts.joinToString("\n\n")
         } catch (e: Exception) {
@@ -936,11 +936,12 @@ ACTION:"""
             val index = m.groupValues[1].toInt()
             val label = labelForIndex(index).orEmpty()
             if (!approveTap(label, "long_press($index)")) return false
-            val arr = JSONArray(lastFlat.ifBlank { "[]" })
-            val n = (0 until arr.length()).firstOrNull { arr.getJSONObject(it).optInt("i", it) == index }
-                ?.let { arr.getJSONObject(it) } ?: return false
-            val x = n.optInt("x"); val y = n.optInt("y")
-            return controller.swipe(x, y, x, y, 900)
+            return when (controller.longClickByIndex(index, label)) {
+                "ok" -> true
+                "moved" -> { lastRefusal = "the screen changed before that could be pressed — look at it again"; false }
+                "gone" -> { lastRefusal = "[$index] is no longer on the screen — look at it again"; false }
+                else -> false
+            }
         }
         Regex("tap\\((\\d+)\\s*,\\s*(\\d+)\\)", RegexOption.IGNORE_CASE).find(a)?.let { m ->
             val x = m.groupValues[1].toInt()
@@ -996,7 +997,7 @@ ACTION:"""
             // wondering why the site would not open. Pressing enter on text
             // the field did not accept is how an agent searches for, or sends,
             // something nobody asked for.
-            val landed = textInFocusedField()
+            val landed = textInFocusedField(idx)
             if (landed != null && !landed.contains(text, ignoreCase = true)) {
                 lastRefusal = "the field holds \"$landed\", not \"$text\" — " +
                     "it did not accept that text, so try another way in"
@@ -1064,7 +1065,17 @@ ACTION:"""
             val before = observe()
             val textBefore = screenText(lastFlat)
             val isTap = said.startsWith("tap(") || said.startsWith("long_press(")
-            val action = if (!isTap) said else {
+            // type(#2,"…") is "the second text box on this screen": an index means nothing on
+            // another run, an ordinal does.
+            val boxed = Regex("""^type\(#(\d+),\s*(".*")\)$""").find(said)
+            val action = if (boxed != null) {
+                val at = typeableIndexes.getOrNull(boxed.groupValues[1].toInt() - 1)
+                if (at == null) {
+                    android.util.Log.i("UltraNav", "ROUTE step ${n + 1}/${script.actions.size}: $said — this screen has no such text box; the model takes over")
+                    return Played(false, done, "A route that has passed a check was followed for $done step(s); its next step, $said, did not fit this screen. Carry on from here.")
+                }
+                "type($at, ${boxed.groupValues[2]})"
+            } else if (!isTap) said else {
                 val idx = resolveTap(said.replaceFirst("long_press", "tap"), labelled, listedIndexes)
                 if (idx == null) {
                     android.util.Log.i("UltraNav", "ROUTE step ${n + 1}/${script.actions.size}: $said — nothing on this screen has those words; the model takes over")
@@ -1148,12 +1159,19 @@ ACTION:"""
     }
 
     /** What the focused text field holds now, or null if none can be read. */
-    private suspend fun textInFocusedField(): String? = try {
+    /**
+     * What the box that was typed into holds now. With an index it is THAT box: reading "the first
+     * box with text in it" checked a file's extension box against its name box, called a typed
+     * ".txt" a failure when it had worked, and the step was then missing from the route built from
+     * that run (AndroidWorld MarkorCreateNote, 2026-09-20).
+     */
+    private suspend fun textInFocusedField(index: Int? = null): String? = try {
         val arr = JSONArray(controller.screenFlat())
         var found: String? = null
         for (i in 0 until arr.length()) {
             val n = arr.getJSONObject(i)
             if (!n.optBoolean("e", false)) continue
+            if (index != null && n.optInt("i", i) != index) continue
             val t = n.optString("t")
             if (t.isNotBlank()) { found = t; break }
         }
