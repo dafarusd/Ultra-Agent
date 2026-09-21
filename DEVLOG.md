@@ -70,8 +70,8 @@ full round. 447/447 JVM tests.
 
 **Not proven:** the +8 bar on the 33 tasks; whether playing only clean routes recovers the lost task
 (the re-run was stopped before its student round); the overlay and the player on the real phone; the
-on-device 1B following routes; the camera and Settings hints (`7e0e674` and the commit before it);
-`scroll_to` whole-word matching and the long-click timeout (`1012187`, SOURCE-FIXED BUT
+on-device 1B following routes; the camera and Settings hints (`5bbbe26` and the commit before it);
+`scroll_to` whole-word matching and the long-click timeout (`cfa3765`, SOURCE-FIXED BUT
 RUNTIME-UNPROVEN — written after the scored build).
 
 ## 2026-09-20 (night) — an honest teacher for the phone; the navigator reads and speaks in words
