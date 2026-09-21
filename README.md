@@ -27,7 +27,13 @@ The signed APK is a free download: **[Ultra-Agent-Release](https://github.com/da
   cloud model on your own API key. No key ships in this repo.
 - **The gate.** Tool calls pass a policy gate that runs on the phone. It refuses
   destructive calls rather than asking the model to behave. It exists because of
-  an incident during development: the brain sent messages nobody asked for.
+  an incident during development: the brain sent messages nobody asked for. When a
+  tap would commit something — delete, send, pay — it stops and asks, on top of
+  the app you're in.
+- **Steps it was shown.** A job a stronger model finished once, and a check
+  outside the app confirmed, is kept as a short list of steps. The next request
+  of the same kind plays those steps with your own details. Every played step
+  still goes through the gate.
 
 ## Build it
 
@@ -48,11 +54,25 @@ signing needs a `keystore.properties` that is not in this repo, and a release
 build **fails** without it rather than falling back to a debug key — 2.3.0 was
 published debug-signed because the old fallback did exactly that.
 
-Current version: **2.3.1** (versionCode 13). 376 JVM unit tests under
+Current version: **2.4.0** (versionCode 15). 447 JVM unit tests under
 `ultra-native/app/src/test`.
+
+## Measured
+
+AndroidWorld, Google's public phone benchmark. It sets the task and checks the
+phone afterwards; nothing here grades. 33 simpler tasks picked by rule, details
+it had never seen: **8 done on its own, 13 with steps from one checked run** by
+a stronger model, which itself scores 13 and 14. On six tasks that all failed
+the day before: 1 of 6 without, 4 of 6 with — twice, on different details. No
+model was retrained. Every round, with the guess written down before it:
+[`ultra-native/tools/androidworld-results.md`](ultra-native/tools/androidworld-results.md).
 
 ## Honest limits
 
+- The benchmark runs are on an emulator with a cloud model, and the memory that
+  keeps the steps runs on a laptop beside it. The phone can't learn them by
+  itself yet. 20 of the 33 tasks still fail. Camera tasks and calendar grids are
+  two of them; picking one file out of look-alikes is another.
 - The 1B echoes its few-shot examples before answering. The parser handles it;
   the logs are ugly.
 - Screen reading depends on what each app exposes to the accessibility service.

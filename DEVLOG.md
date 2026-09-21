@@ -5,6 +5,11 @@ Read this file at the start of every session to understand previous work.
 
 ## 2026-09-20 (day) — the gate asks on top of the app; routes are played by the engine
 
+**Released as 2.4.0** (versionCode 15): signed with the release key (`0d04510d…ca241f`, v2),
+8,785,608 bytes, arm64, no test code or key strings inside. Installed over 2.3.2 on the Galaxy A15
+(pulled-back APK byte-identical): launches, service bound, drives the Clock app. The on-top confirm
+question was NOT reached on the phone (the run never got to a Delete tap) — emulator-verified only.
+
 **Subsystems:** E (action gate: where the question is shown), A (navigator: route player, typing,
 scrolling), C (experience: routes as data), H (AndroidWorld adapter).
 
