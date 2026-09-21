@@ -34,7 +34,7 @@ wrong level. Steps a check has passed are structure, and the engine owns structu
 - Adapter: answers the gate's overlay as the person who gave the task would — only when the button
   IS the verb the goal uses ("Delete", not "Delete lines") — and records every answer.
 
-**Measured (scored by AndroidWorld, predictions written first — `~/vault/runtime/PREDICTIONS.md` P8–P10):**
+**Measured (scored by AndroidWorld, predictions written first — `ultra-native/tools/androidworld-results.md`):**
 the six tasks that were 0/6 twice on 09-19. Teacher = claude-sonnet-5 through Ultra's hands, practising
 on seeds 30 and 32. Student = llama-3.3-70b on seeds the practice never used, clean slate each arm.
 
@@ -53,13 +53,24 @@ from the start after the emulator hung at 21 h uptime. Each full experiment cost
 Still 0 with or without: file delete (no teacher pass, so no route) and the calendar (month grid
 has no words to read).
 
+**The same design on 33 tasks chosen by rule (P11):** every AndroidWorld task with complexity ≤ 1.2
+that isn't question-answering and isn't a "…Verify" twin — 33 tasks, 11 apps. Teacher 13/33 (seed 30)
+and 14/33 (seed 32). Student on seed 31: **8/33 without routes, 13/33 with** — +5, and level with the
+teacher's own score. The bar written down beforehand was +8, so it is NOT met. Gained: audio recorder,
+timer, Markor delete, SMS reply, SMS reply-most-recent, Bluetooth off. Lost one: the student passes
+"new contact draft" alone, and with routes the engine played a 37-step route built from a flailing
+teacher run and wrecked it. Since then only a clean passing run is played (no wrong turns left in, no
+retries, at most 12 steps) — built, not yet re-measured. Time 3,576 s → 2,163 s; model-chosen steps
+616 → 291, plus 68 played by the engine. Cost $4.13. Rounds: `ultra-native/tools/androidworld-results.md`.
+
 **First measurement, before the scored runs:** hand check with llama-3.3-70b on a timer value no run had used (3 h 7 m 9 s):
 the engine keyed 3-0-7-0-9, display `03h 07m 09s`, 28 s; the same model without a route took 2–3
 minutes and failed. Teacher round with the overlay: 3/6 including the first Markor delete in a
 full round. 447/447 JVM tests.
 
-**Not proven:** anything beyond these six tasks — the 33-task set chosen by rule is scripted and
-not run; the overlay and the player on the real phone; the on-device 1B following routes;
+**Not proven:** the +8 bar on the 33 tasks; whether playing only clean routes recovers the lost task
+(the re-run was stopped before its student round); the overlay and the player on the real phone; the
+on-device 1B following routes; the camera and Settings hints (`7e0e674` and the commit before it);
 `scroll_to` whole-word matching and the long-click timeout (`1012187`, SOURCE-FIXED BUT
 RUNTIME-UNPROVEN — written after the scored build).
 

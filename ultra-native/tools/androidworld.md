@@ -94,11 +94,12 @@ Passing runs become routes on the laptop: `northstar bench routes [--push]`.
 
 | 2026-09-20, routes played by the engine, seed 31 (P9) | the same 6 tasks, llama-3.3-70b | **1/6 without routes, 4/6 with** |
 | 2026-09-20, replication on seed 33 (P10) | the same 6 tasks, llama-3.3-70b | **1/6 without routes, 4/6 with** |
+| 2026-09-20, 33 tasks chosen by rule, seed 31 (P11) | complexity ≤ 1.2, not question-answering, no "…Verify" twins | **8/33 without routes, 13/33 with** (teacher: 13/33 and 14/33) |
 
 Scores from 09-19 on the Clock tasks were judged by a blind judge (see above) and are not evidence.
 The routes come from claude-sonnet-5 practising on seeds 30 and 32 through Ultra's hands
-(3–4 of 6); the student never sees those seeds. Predictions and full results:
-`~/vault/runtime/PREDICTIONS.md`.
+(3–4 of 6); the student never sees those seeds. Every round, with the prediction written before
+it: `androidworld-results.md`.
 
 For scale, the AndroidWorld paper's GPT-4 agent (M3A) reports ~30% on the full 116.
 
